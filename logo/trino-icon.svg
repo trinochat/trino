@@ -1,0 +1,34 @@
+<svg width="256" height="256" viewBox="0 0 256 256" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <filter id="glow" x="-40%" y="-40%" width="180%" height="180%">
+      <feGaussianBlur stdDeviation="3.2" result="b"/>
+      <feMerge>
+        <feMergeNode in="b"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+    <pattern id="scan" width="6" height="4" patternUnits="userSpaceOnUse">
+      <rect width="6" height="1" y="0" fill="#22ff66" opacity="0.05"/>
+    </pattern>
+    <linearGradient id="edge" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#22ff66" stop-opacity="0.9"/>
+      <stop offset="1" stop-color="#0d4023" stop-opacity="0.9"/>
+    </linearGradient>
+  </defs>
+
+  <!-- terminal tile -->
+  <rect x="10" y="10" width="236" height="236" rx="40" fill="#070a07"/>
+  <rect x="10" y="10" width="236" height="236" rx="40" fill="url(#scan)"/>
+  <rect x="12" y="12" width="232" height="232" rx="38" fill="none" stroke="url(#edge)" stroke-width="4"/>
+
+  <!-- title bar dots -->
+  <circle cx="44" cy="46" r="5" fill="#ff5566"/>
+  <circle cx="64" cy="46" r="5" fill="#ffcc00"/>
+  <circle cx="84" cy="46" r="5" fill="#22ff66"/>
+
+  <!-- prompt >_ -->
+  <g filter="url(#glow)" stroke="#22ff66" stroke-width="15" stroke-linecap="round" stroke-linejoin="round" fill="none">
+    <polyline points="74,108 120,148 74,188"/>
+  </g>
+  <rect x="140" y="172" width="54" height="16" rx="4" fill="#22ff66" filter="url(#glow)"/>
+</svg>

@@ -1,0 +1,57 @@
+[package]
+name = "trino-gui"
+version = "0.1.0"
+description = "trino · encrypted chat"
+authors = ["davidalmeidac"]
+edition = "2021"
+
+[lib]
+name = "trino_gui_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = ["tray-icon", "image-png"] }
+tauri-plugin-opener = "2"
+tauri-plugin-notification = "2"
+
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# crypto primitives
+x25519-dalek = { version = "2", features = ["serde", "static_secrets"] }
+ed25519-dalek = { version = "2", features = ["serde", "rand_core"] }
+aes-gcm = "0.10"
+hkdf = "0.12"
+sha2 = "0.10"
+sha1 = "0.10"
+hmac = "0.12"
+pbkdf2 = { version = "0.12", features = ["simple"] }
+secp256k1 = { version = "0.29", features = ["rand-std", "global-context"] }
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
+rand_core = { version = "0.6", features = ["std"] }
+rand = "0.8"
+hex = "0.4"
+base64 = "0.22"
+zeroize = { version = "1", features = ["derive"] }
+
+# async + websocket
+tokio = { version = "1", features = ["full"] }
+tokio-tungstenite = { version = "0.24", features = ["rustls-tls-webpki-roots"] }
+futures-util = "0.3"
+
+# misc
+thiserror = "1"
+chrono = { version = "0.4", features = ["serde"] }
+dirs = "5"
+
+# On Linux, Tauri uses WebKitGTK, which denies getUserMedia (mic/camera) unless
+# the app handles the permission-request signal. Pinned to wry's version so the
+# webview types unify (no second copy of the crate).
+[target.'cfg(target_os = "linux")'.dependencies]
+webkit2gtk = "=2.0.2"
+
+[dev-dependencies]
+proptest = "1"

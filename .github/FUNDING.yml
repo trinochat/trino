@@ -1,0 +1,8 @@
+# Enables the "Sponsor" button on the GitHub repository.
+# Uncomment and fill in the handles you actually create — leave the rest out.
+
+# Replace with your GitHub Sponsors handle once you enable it.
+github: [trinochat]
+# ko_fi: your-handle
+# liberapay: your-handle
+# custom: ["https://your-donation-link"]
