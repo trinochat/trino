@@ -1,14 +1,10 @@
 pub mod blossom;
-pub mod call_signal;
-pub mod crypto;
-pub mod envelope;
-pub mod group;
-pub mod identity;
 pub mod nostr;
-pub mod ratchet;
-pub mod totp;
-pub mod vault;
-pub mod x3dh;
+
+// The protocol and cryptography now live in the `trino-core` crate so they can
+// be audited on their own and shared with the mobile client. They are re-exported
+// here so `crate::identity::…`, `crate::ratchet::…` etc. keep resolving.
+pub use trino_core::{call_signal, crypto, envelope, group, identity, ratchet, totp, vault, x3dh};
 
 mod commands;
 mod state;

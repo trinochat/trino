@@ -25,6 +25,7 @@ dist-ssr
 
 # Rust / Tauri
 src-tauri/target
+/target
 
 # Android build outputs (sources in gen/android stay committed)
 src-tauri/gen/android/.gradle

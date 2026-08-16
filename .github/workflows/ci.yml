@@ -13,31 +13,20 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  # The protocol core is the part an auditor reads and every client depends on.
-  # It is pure Rust with no Tauri or system libraries, so it gates fast and runs
-  # on every push before anything heavier is attempted.
-  core:
-    name: Protocol core
+  # The protocol core is tested in its own repository:
+  # https://github.com/trinochat/trino-core — this gates the application code.
+  rust-lint:
+    name: Rust format
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
       - uses: dtolnay/rust-toolchain@stable
         with:
-          components: rustfmt, clippy
-
-      - uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: . -> target
+          components: rustfmt
 
       - name: Format
-        run: cargo fmt -p trino-core -- --check
-
-      - name: Clippy
-        run: cargo clippy -p trino-core --all-targets -- -D warnings
-
-      - name: Tests
-        run: cargo test -p trino-core
+        run: cargo fmt --all -- --check
 
   # src-tauri/deny.toml already encodes the licence policy that keeps the
   # AGPL + commercial dual-licence viable, and fails on security advisories.
@@ -118,6 +107,13 @@ jobs:
 
       - name: Workspace tests
         run: cargo test --workspace
+
+      # Clippy needs the same system libraries as the build, so it runs here
+      # rather than in a job of its own. Once is enough — the lints are not
+      # platform-specific.
+      - name: Clippy
+        if: matrix.os == 'ubuntu-22.04'
+        run: cargo clippy --workspace --all-targets -- -D warnings
 
   mobile:
     name: Mobile (Flutter)

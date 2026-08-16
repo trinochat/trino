@@ -61,12 +61,14 @@ Backend tests:
 cargo test --workspace
 ```
 
-The protocol and cryptography live in [`crates/trino-core`](./crates/trino-core),
-which builds with no Tauri, no networking and no async runtime. To work on the
-part that matters most, that crate alone is enough:
+The protocol and cryptography are not in this repository. They live in
+[trinochat/trino-core](https://github.com/trinochat/trino-core), a pure crate
+with no Tauri, no networking and no async runtime, so it can be reviewed without
+this application around it. Reviewing that crate is the highest-value thing you
+can do:
 
 ```bash
-cargo test -p trino-core
+git clone https://github.com/trinochat/trino-core && cd trino-core && cargo test
 ```
 
 ## Contributing

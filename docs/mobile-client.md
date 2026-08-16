@@ -39,23 +39,25 @@ background behavior.
 ## Target Boundaries
 
 ```text
-crates/
-  trino-core/          pure protocol, identity, ratchet, groups, validation
-  trino-storage/       storage traits and encrypted record types
+trinochat/trino-core     separate repository — pure protocol, identity,
+                         ratchet, groups, validation
 
-apps/
-  desktop/             current Tauri host and desktop React interface
-  mobile/              independent mobile client and native bridge
+this repository
+  src-tauri/             Tauri host and desktop command layer
+  src/                   desktop React interface
+  apps/mobile/           independent mobile client and native bridge
 
-packages/
-  protocol-contracts/  generated DTOs, event schemas, compatibility fixtures
-  design-tokens/       colors, spacing, typography values only
+planned
+  trino-storage/         storage traits and encrypted record types
+  protocol-contracts/    generated DTOs, event schemas, compatibility fixtures
+  design-tokens/         colors, spacing, typography values only
 ```
 
-The current Rust modules should be extracted into `trino-core` only when they
-can compile without Tauri types or global desktop state. The desktop command
-layer then becomes an adapter around that core. The mobile app should expose
-the same operations through its own native bridge.
+The core has been extracted: it compiles without Tauri types or global desktop
+state, and now lives at <https://github.com/trinochat/trino-core>, consumed here
+as a pinned git dependency. The desktop command layer is an adapter around it.
+The mobile app should expose the same operations through its own native bridge
+onto that same crate, over FFI.
 
 ## Mobile Navigation
 

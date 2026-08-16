@@ -13,6 +13,12 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
+# Protocol + crypto core, shared with the mobile client. Lives in its own
+# repository so it can be audited on its own; Cargo.lock pins the exact commit,
+# so builds stay reproducible. To work on both at once, add a [patch] pointing
+# at a local checkout — do not commit it.
+trino-core = { git = "https://github.com/trinochat/trino-core", branch = "main" }
+
 tauri = { version = "2", features = ["tray-icon", "image-png"] }
 tauri-plugin-opener = "2"
 tauri-plugin-notification = "2"
