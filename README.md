@@ -7,8 +7,15 @@ server of its own**. Identity is a key you hold; messages travel over public
 > **Not affiliated with [Trino](https://trino.io), the distributed SQL query
 > engine.** Different project, different field — this one is a messenger.
 
-Desktop app built with Tauri 2 (Rust backend, React frontend). A separate
-Flutter client for Android and iOS lives in [`apps/mobile`](./apps/mobile).
+Desktop app built with Tauri 2 (Rust backend, React frontend), for Windows,
+macOS and Linux.
+
+A Flutter client for Android and iOS is **in early development** in
+[`apps/mobile`](./apps/mobile). It is currently **interface only**: it does not
+implement the protocol, does not connect to relays, and cannot send or receive a
+message. It is not shipped and not usable. The plan is to bind it to the same
+`trino-core` crate the desktop uses, over FFI, rather than reimplement the
+cryptography a second time — see [`docs/mobile-client.md`](./docs/mobile-client.md).
 
 ## What it does
 
@@ -51,7 +58,15 @@ npm run tauri build   # release bundles
 Backend tests:
 
 ```bash
-cd src-tauri && cargo test
+cargo test --workspace
+```
+
+The protocol and cryptography live in [`crates/trino-core`](./crates/trino-core),
+which builds with no Tauri, no networking and no async runtime. To work on the
+part that matters most, that crate alone is enough:
+
+```bash
+cargo test -p trino-core
 ```
 
 ## Contributing
