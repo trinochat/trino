@@ -32,6 +32,10 @@ pub struct InnerState {
     pub ratchets: HashMap<String, RatchetState>,
     pub associated_data: HashMap<String, Vec<u8>>,
     pub relays: Vec<Arc<NostrClient>>,
+    /// Read-only connections opened by the network-activity inspector. Kept
+    /// apart from `relays` so observing traffic never touches the messaging
+    /// subscriptions or the decryption pipeline. Empty unless the panel is open.
+    pub inspector_relays: Vec<Arc<NostrClient>>,
     pub current_peer: Option<String>,
     /// Event ids already processed, to dedup deliveries across multiple relays.
     pub seen_events: HashSet<String>,

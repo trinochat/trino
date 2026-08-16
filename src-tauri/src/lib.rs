@@ -121,6 +121,8 @@ pub fn run() {
             commands::forge,
             commands::unseal,
             commands::share_bundle,
+            commands::relay_inspect_start,
+            commands::relay_inspect_stop,
             commands::probe_node,
             commands::list_nodes,
             commands::connect_node,

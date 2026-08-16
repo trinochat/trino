@@ -250,6 +250,11 @@ fn zeroize_file_ref(file: &mut FileRef) {
 }
 
 fn clear_sensitive_state(inner: &mut InnerState) {
+    // Both callers already drop `relays`; the inspector's sockets are closed
+    // here so locking or wiping can never leave a connection behind.
+    for client in inner.inspector_relays.drain(..) {
+        client.close();
+    }
     if let Some(secret) = inner.totp_secret.as_mut() {
         secret.zeroize();
     }
@@ -571,6 +576,101 @@ pub async fn unseal(
         nostr_pub,
         relay_connection_started: true,
     })
+}
+
+/// What the transport relay can see about one event. Deliberately metadata
+/// only: the id, who published it, who it is addressed to, its size and its
+/// timestamp — exactly what a relay operator already observes. The encrypted
+/// content is never included.
+#[derive(Clone, Serialize)]
+pub struct RelayObservation {
+    pub relay: String,
+    pub id: String,
+    pub from: String,
+    pub to: String,
+    pub size: usize,
+    pub created_at: i64,
+}
+
+/// Open read-only connections to the relays this device is ACTUALLY using and
+/// stream back the metadata each one can see.
+///
+/// These are separate sockets from the messaging ones on purpose. The inspector
+/// subscribes to all trino traffic — that is the whole point, showing that the
+/// relay sees blobs it cannot read — whereas the messaging subscription is
+/// filtered to events addressed to us. Feeding strangers' events into the
+/// decryption pipeline would be wasteful at best and a footgun at worst.
+#[tauri::command]
+pub async fn relay_inspect_start(
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<Vec<String>, String> {
+    let urls: Vec<String> = {
+        let mut inner = state.inner.lock().await;
+        // Drop anything left over from a previous inspection first.
+        for client in inner.inspector_relays.drain(..) {
+            client.close();
+        }
+        inner.relays.iter().map(|c| c.url().to_string()).collect()
+    };
+    if urls.is_empty() {
+        return Err("no relay connections to inspect".to_string());
+    }
+
+    let mut connected = Vec::new();
+    for url in urls {
+        let app_for_events = app.clone();
+        let relay_for_events = url.clone();
+        let on_event: Arc<dyn Fn(NostrEvent) + Send + Sync> = Arc::new(move |event: NostrEvent| {
+            let to = event
+                .tags
+                .iter()
+                .find(|tag| tag.first().map(String::as_str) == Some("p"))
+                .and_then(|tag| tag.get(1))
+                .cloned()
+                .unwrap_or_default();
+            let _ = app_for_events.emit(
+                "relay-event",
+                RelayObservation {
+                    relay: relay_for_events.clone(),
+                    id: event.id.clone(),
+                    from: event.pubkey.clone(),
+                    to,
+                    size: event.content.len(),
+                    created_at: event.created_at,
+                },
+            );
+        });
+
+        match NostrClient::connect(&url, on_event).await {
+            Ok(client) => {
+                let _ = client
+                    .subscribe(&NostrFilter {
+                        kinds: Some(vec![TRINO_KIND]),
+                        limit: Some(40),
+                        ..Default::default()
+                    })
+                    .await;
+                state.inner.lock().await.inspector_relays.push(client);
+                connected.push(url);
+            }
+            Err(error) => dbg_log(&format!("  inspector relay FAIL: {} -> {}", url, error)),
+        }
+    }
+
+    if connected.is_empty() {
+        return Err("could not reach any relay".to_string());
+    }
+    Ok(connected)
+}
+
+#[tauri::command]
+pub async fn relay_inspect_stop(state: State<'_, AppState>) -> Result<(), String> {
+    let mut inner = state.inner.lock().await;
+    for client in inner.inspector_relays.drain(..) {
+        client.close();
+    }
+    Ok(())
 }
 
 #[tauri::command]

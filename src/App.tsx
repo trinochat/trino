@@ -116,6 +116,7 @@ import {
   onCallSignal,
   onResyncNeeded,
   onSessionEstablished,
+  onRelayEvent,
   openLink,
   type NodeInfo,
   type GroupInfo,
@@ -4909,50 +4910,56 @@ function RelayInspector({ onClose }: { onClose: () => void }) {
   const [events, setEvents] = useState<RelayEvt[]>([]);
   const [statusKey, setStatusKey] = useState('inspector.connecting');
   const [myPub, setMyPub] = useState('');
+  const [relays, setRelays] = useState<string[]>([]);
   useEffect(() => {
+    // The observation happens in Rust, over the relays this device is actually
+    // connected to. Opening a WebSocket here would only ever see whatever host
+    // the CSP happens to allow, which is not the same thing.
     let mine = '';
-    api
-      .getProfile()
-      .then(p => {
-        mine = p.nostr_pub || '';
-        setMyPub(mine);
-      })
-      .catch(() => {});
-    const ws = new WebSocket('wss://nos.lol');
-    ws.onopen = () => {
-      setStatusKey('inspector.connected');
-      ws.send(JSON.stringify(['REQ', 'trino', { kinds: [4848], limit: 40 }]));
-    };
-    ws.onmessage = e => {
-      let m: unknown;
+    let unlisten: (() => void) | undefined;
+    let cancelled = false;
+
+    (async () => {
       try {
-        m = JSON.parse(e.data);
+        const profile = await api.getProfile();
+        mine = profile.nostr_pub || '';
+        if (!cancelled) setMyPub(mine);
       } catch {
-        return;
+        /* the inspector still works without highlighting our own key */
       }
-      if (!Array.isArray(m) || m[0] !== 'EVENT') return;
-      const ev = m[2];
-      const pub = String(ev.pubkey || '');
-      const pTag = (ev.tags || []).find((t: string[]) => t[0] === 'p');
-      const toPub = pTag ? String(pTag[1]) : '';
-      setEvents(prev =>
-        [
-          {
-            id: String(ev.id),
-            from: pub.slice(0, 12),
-            to: toPub ? toPub.slice(0, 12) : '——',
-            size: String(ev.content || '').length,
-            time: new Date(ev.created_at * 1000).toLocaleTimeString(),
-            mineFrom: !!mine && pub === mine,
-            mineTo: !!mine && toPub === mine,
-          },
-          ...prev,
-        ].slice(0, 80),
-      );
+
+      try {
+        unlisten = await onRelayEvent(obs => {
+          setEvents(prev =>
+            [
+              {
+                id: obs.id,
+                from: obs.from.slice(0, 12),
+                to: obs.to ? obs.to.slice(0, 12) : '——',
+                size: obs.size,
+                time: new Date(obs.created_at * 1000).toLocaleTimeString(),
+                mineFrom: !!mine && obs.from === mine,
+                mineTo: !!mine && obs.to === mine,
+              },
+              ...prev.filter(e => e.id !== obs.id),
+            ].slice(0, 80),
+          );
+        });
+
+        const connected = await api.relayInspectStart();
+        if (cancelled) return;
+        setRelays(connected);
+        setStatusKey('inspector.connected');
+      } catch {
+        if (!cancelled) setStatusKey('inspector.connectionError');
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+      unlisten?.();
+      void api.relayInspectStop();
     };
-    ws.onerror = () => setStatusKey('inspector.connectionError');
-    ws.onclose = () => setStatusKey('inspector.disconnected');
-    return () => ws.close();
   }, []);
 
   const label = (pub: string, mine: boolean) =>
@@ -4964,6 +4971,11 @@ function RelayInspector({ onClose }: { onClose: () => void }) {
       <div className="border border-bg-line bg-bg-deep rounded p-2 text-[11px] leading-relaxed mb-3">
         {t('inspector.description')}
       </div>
+      {relays.length > 0 && (
+        <div className="text-phosphor-dim text-[10px] font-mono mb-2">
+          {t('inspector.relays')}: {relays.join(' · ')}
+        </div>
+      )}
       <div className="max-h-80 overflow-y-auto font-mono text-[11px] space-y-0.5">
         {events.length === 0 ? (
           <div className="text-phosphor-dim p-2">{t('inspector.waiting')}</div>

@@ -211,7 +211,28 @@ export const api = {
   resyncSession: (handle: string): Promise<void> => invoke('resync_session', { handle }),
   setAutostart: (enable: boolean): Promise<void> => invoke('set_autostart', { enable }),
   getAutostart: (): Promise<boolean> => invoke('get_autostart'),
+  // Returns the relays actually being observed, which are the ones this device
+  // is connected to — not a hardcoded list.
+  relayInspectStart: (): Promise<string[]> => invoke('relay_inspect_start'),
+  relayInspectStop: (): Promise<void> =>
+    invoke<void>('relay_inspect_stop').catch(() => {}),
 };
+
+// Metadata a transport relay can see about one event — never its content.
+export interface RelayObservation {
+  relay: string;
+  id: string;
+  from: string;
+  to: string;
+  size: number;
+  created_at: number;
+}
+
+export async function onRelayEvent(
+  cb: (event: RelayObservation) => void,
+): Promise<UnlistenFn> {
+  return await listen<RelayObservation>('relay-event', e => cb(e.payload));
+}
 
 export async function onMessageReceived(
   cb: (event: IncomingMessageEvent) => void,
