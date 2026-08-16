@@ -30,6 +30,14 @@ allow = [
 ]
 confidence-threshold = 0.8
 
+# The allow-list above governs DEPENDENCIES. These two crates are the project's
+# own, and are AGPL by design; cargo-deny evaluates the whole graph including
+# the roots, so without this the policy rejects the very code it protects.
+exceptions = [
+    { name = "trino-gui", allow = ["AGPL-3.0-only"] },
+    { name = "trino-core", allow = ["AGPL-3.0-only"] },
+]
+
 [bans]
 # Crates that would poison the dual-licence model if they ever appeared.
 deny = [
@@ -40,6 +48,17 @@ deny = [
 # Fail the build on known vulnerabilities.
 yanked = "deny"
 
+# Vulnerabilities always fail. Unmaintained crates only fail when THIS workspace
+# depends on them directly. Tauri's Linux stack drags in the gtk-rs GTK3
+# bindings (RUSTSEC-2024-0411..0420), proc-macro-error and the unic-* family,
+# all flagged unmaintained and none of them replaceable from here. Pinning
+# sixteen ignore entries would rot into noise; scoping the rule keeps the signal
+# that matters — one of OUR direct dependencies going unmaintained still fails.
+unmaintained = "workspace"
+
 [sources]
 unknown-registry = "deny"
 unknown-git = "deny"
+# The protocol core, consumed from its own repository. Cargo.lock pins the exact
+# commit, so this allows the source, not "whatever is on main".
+allow-git = ["https://github.com/trinochat/trino-core"]

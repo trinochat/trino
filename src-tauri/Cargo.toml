@@ -1,9 +1,10 @@
 [package]
 name = "trino-gui"
 version = "0.1.0"
-description = "trino · encrypted chat"
+description = "Trino Chat — end-to-end encrypted messenger"
 authors = ["davidalmeidac"]
 edition = "2021"
+license = "AGPL-3.0-only"
 
 [lib]
 name = "trino_gui_lib"
