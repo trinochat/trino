@@ -488,7 +488,38 @@ pub async fn unseal(
         let result = (|| {
             let bytes = std::fs::read(vault_path()).map_err(|_| "no vault".to_string())?;
             let blob = decode_vault(&bytes).map_err(|e| e.to_string())?;
-            unseal_vault(&blob, &passphrase, totp_code.trim()).map_err(|e| e.to_string())
+            let (mut identity, totp_secret) =
+                unseal_vault(&blob, &passphrase, totp_code.trim()).map_err(|e| e.to_string())?;
+
+            // Rotate the signed prekey if it has aged out, and expire retired
+            // ones. Without rotation, one leaked signed prekey would expose
+            // every initial message ever sent to us; retention is what keeps
+            // peers holding an older cached bundle (and their auto-heal
+            // re-handshakes) working across the change.
+            //
+            // This runs here, inside the unlock worker, because it is the only
+            // point where the identity and the passphrase are both available —
+            // the passphrase is zeroized immediately after.
+            if crate::identity::rotate_signed_prekey_if_due(
+                &mut identity,
+                chrono::Utc::now().timestamp(),
+            ) {
+                match seal_vault(&identity, &totp_secret, &passphrase)
+                    .map_err(|e| e.to_string())
+                    .and_then(|sealed| {
+                        std::fs::write(vault_path(), encode_vault(&sealed))
+                            .map_err(|e| e.to_string())
+                    }) {
+                    Ok(()) => dbg_log(&format!(
+                        "SPK rotated to id={} ({} retired retained)",
+                        identity.signed_prekey.id,
+                        identity.retired_signed_prekeys.len()
+                    )),
+                    // Keep the session usable; we simply retry next unlock.
+                    Err(e) => dbg_log(&format!("SPK rotation could not be persisted: {}", e)),
+                }
+            }
+            Ok::<_, String>((identity, totp_secret))
         })();
         passphrase.zeroize();
         totp_code.zeroize();
