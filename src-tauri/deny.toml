@@ -27,6 +27,9 @@ allow = [
     "BSL-1.0",
     "Unlicense",
     "OpenSSL",
+    # webpki-roots ships Mozilla's CA root store. CDLA-Permissive-2.0 is a
+    # permissive licence for DATA, with no copyleft reach into the binary.
+    "CDLA-Permissive-2.0",
 ]
 confidence-threshold = 0.8
 
