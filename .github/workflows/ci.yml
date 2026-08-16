@@ -1,0 +1,142 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  # The protocol core is the part an auditor reads and every client depends on.
+  # It is pure Rust with no Tauri or system libraries, so it gates fast and runs
+  # on every push before anything heavier is attempted.
+  core:
+    name: Protocol core
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: . -> target
+
+      - name: Format
+        run: cargo fmt -p trino-core -- --check
+
+      - name: Clippy
+        run: cargo clippy -p trino-core --all-targets -- -D warnings
+
+      - name: Tests
+        run: cargo test -p trino-core
+
+  # src-tauri/deny.toml already encodes the licence policy that keeps the
+  # AGPL + commercial dual-licence viable, and fails on security advisories.
+  # Nothing was enforcing it, so a `cargo update` could quietly break either.
+  supply-chain:
+    name: Dependencies
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          manifest-path: Cargo.toml
+          arguments: --workspace --config src-tauri/deny.toml
+          command: check
+
+  frontend:
+    name: Frontend
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      - name: Typecheck
+        run: npx tsc --noEmit
+
+      - name: Build
+        run: npm run build
+
+  # Proves the desktop client actually compiles and passes its tests on the
+  # three platforms we intend to ship a beta on. Bundling is not done here —
+  # see release.yml — but a green run means the code is buildable everywhere.
+  desktop:
+    name: Desktop (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Linux system dependencies (WebKitGTK, tray, dialogs)
+        if: matrix.os == 'ubuntu-22.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libjavascriptcoregtk-4.1-dev \
+            libappindicator3-dev \
+            librsvg2-dev \
+            libxdo-dev \
+            libssl-dev \
+            patchelf \
+            file
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: . -> target
+          key: ${{ matrix.os }}
+
+      # Tauri's build script expects the frontend bundle to exist.
+      - run: npm ci
+      - run: npm run build
+
+      - name: Workspace tests
+        run: cargo test --workspace
+
+  mobile:
+    name: Mobile (Flutter)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+
+      - name: Resolve dependencies
+        working-directory: apps/mobile
+        run: flutter pub get
+
+      - name: Analyze
+        working-directory: apps/mobile
+        run: flutter analyze
+
+      - name: Tests
+        working-directory: apps/mobile
+        run: flutter test
