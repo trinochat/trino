@@ -84,8 +84,11 @@ pub fn run() {
             #[cfg(target_os = "linux")]
             {
                 use tauri::Manager;
+                // ObjectExt, not Cast: `is::<T>()` lives on ObjectExt in glib
+                // 0.18. This only ever compiles on Linux, so nothing caught it
+                // until CI started building for Ubuntu.
                 use webkit2gtk::{
-                    glib::prelude::Cast, PermissionRequestExt, SettingsExt,
+                    glib::prelude::ObjectExt, PermissionRequestExt, SettingsExt,
                     UserMediaPermissionRequest, WebViewExt,
                 };
                 if let Some(win) = _app.get_webview_window("main") {
