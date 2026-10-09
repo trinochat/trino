@@ -42,10 +42,62 @@ export default {
           DEFAULT: '#ff5566',
           dim: '#5a1620',
         },
+        // Redesign tokens (src/design/tokens.ts), set on <html> as --t-*
+        // variables by src/design/apply.ts: `bg-ui-surface`, `text-ui-muted`,
+        // `bg-ui-bubble-me`... The namespace is `ui` and not `t` because
+        // Tailwind already reads `border-t-ink` and `rounded-t-lg` as "top
+        // side". The values are full colours, so there are no `/50` opacity
+        // modifiers: use the soft tokens (accent-soft, warn-bg, danger-bg).
+        ui: {
+          bg: 'var(--t-bg)',
+          side: 'var(--t-side)',
+          surface: 'var(--t-surface)',
+          raised: 'var(--t-raised)',
+          line: 'var(--t-line)',
+          ink: 'var(--t-ink)',
+          muted: 'var(--t-muted)',
+          accent: 'var(--t-accent)',
+          'accent-ink': 'var(--t-accent-ink)',
+          'accent-text': 'var(--t-accent-text)',
+          'accent-soft': 'var(--t-accent-soft)',
+          ok: 'var(--t-ok)',
+          warn: 'var(--t-warn)',
+          'warn-bg': 'var(--t-warn-bg)',
+          danger: 'var(--t-danger)',
+          'danger-bg': 'var(--t-danger-bg)',
+          badge: 'var(--t-badge)',
+          'badge-ink': 'var(--t-badge-ink)',
+          'avatar-bg': 'var(--t-avatar-bg)',
+          'avatar-fg': 'var(--t-avatar-fg)',
+          'bubble-in': 'var(--t-bubble-in)',
+          'bubble-in-ink': 'var(--t-bubble-in-ink)',
+          'bubble-in-line': 'var(--t-bubble-in-line)',
+          'bubble-me': 'var(--t-bubble-me)',
+          'bubble-me-ink': 'var(--t-bubble-me-ink)',
+          'bubble-me-muted': 'var(--t-bubble-me-muted)',
+          'bubble-me-line': 'var(--t-bubble-me-line)',
+          outer: 'var(--t-outer)',
+        },
       },
       fontFamily: {
         mono: ['"JetBrains Mono"', '"IBM Plex Mono"', '"Cascadia Code"', '"Fira Code"', 'monospace'],
+        // Redesign: `font-ui` for reading text, `font-ui-mono` only for keys,
+        // codes and times.
+        ui: 'var(--t-font)',
+        'ui-display': 'var(--t-display)',
+        'ui-mono': 'var(--t-mono)',
+        'ui-label': 'var(--t-label-font)',
       },
+      borderRadius: {
+        // Redesign: `rounded-ui`, `rounded-ui-lg`, `rounded-ui-bubble`...
+        ui: 'var(--t-radius)',
+        'ui-lg': 'var(--t-radius-lg)',
+        'ui-bubble': 'var(--t-bubble-radius)',
+        'ui-avatar': 'var(--t-avatar-radius)',
+      },
+      // No boxShadow entry for --t-shadow on purpose: it is `none` in Terminal,
+      // and `none` inside Tailwind's shadow list would also drop focus rings.
+      // Use `[box-shadow:var(--t-shadow)]`.
       animation: {
         'cursor-blink': 'blink 1s steps(1) infinite',
         'scanline': 'scanline 8s linear infinite',
