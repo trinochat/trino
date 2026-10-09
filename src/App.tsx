@@ -2,14 +2,14 @@ import {
   useState,
   useEffect,
   useRef,
-  useContext,
-  createContext,
   Component,
   type CSSProperties,
   type ReactNode,
 } from 'react';
 import { createPortal } from 'react-dom';
 import { I18nContext, makeT, detectLang, useT, LANGS, type Lang } from './lib/i18n';
+import { LangCtx, useDocumentLang, useLang } from './lib/i18n-context';
+import { ThemeCtx, useThemePreference } from './lib/theme-context';
 import {
   Activity,
   ArrowDown,
@@ -54,22 +54,10 @@ import {
   UsersRound,
   X,
 } from 'lucide-react';
-
-// Lets the Settings modal change the active language + re-render the whole app.
-const LangCtx = createContext<{ lang: Lang; setLang: (l: Lang) => void }>({
-  lang: 'en',
-  setLang: () => {},
-});
-const ThemeCtx = createContext<{
-  theme: ThemePreference;
-  setTheme: (theme: ThemePreference) => void;
-}>({
-  theme: loadThemePreference(),
-  setTheme: () => {},
-});
 import { QRCodeSVG } from 'qrcode.react';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { processFile, type ProcessedFile } from './lib/media';
+import { b64urlDecode, b64urlEncode, fromCompactCode, toCompactCode } from './lib/contact-code';
 import {
   ACCENT_OPTIONS,
   applyThemePreference,
@@ -250,6 +238,7 @@ function App() {
   const [status, setStatus] = useState<StatusResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [lang, setLangState] = useState<Lang>(detectLang);
+  useDocumentLang(lang);
   const [theme, setThemeState] = useState<ThemePreference>(loadThemePreference);
   const t = makeT(lang);
   const setLang = (l: Lang) => {
@@ -2391,8 +2380,8 @@ function ThemePreview({ preset, accent }: { preset: ThemePreset; accent: string 
 
 function SettingsModal({ onClose, onSaved }: { onClose: () => void; onSaved: () => void }) {
   const t = useT();
-  const { lang, setLang } = useContext(LangCtx);
-  const { theme, setTheme } = useContext(ThemeCtx);
+  const { lang, setLang } = useLang();
+  const { theme, setTheme } = useThemePreference();
   const [profile, setProfile] = useState<ProfileResponse | null>(null);
   const [handle, setHandle] = useState('');
   const [avatar, setAvatar] = useState<string | null>(null);
@@ -5351,43 +5340,6 @@ function Modal({
       </div>
     </div>
   );
-}
-
-// Compact shareable code: `trino1:<base64url(bundle without avatar)>`.
-// The avatar is dropped so the code stays small enough to fit in a QR.
-function b64urlEncode(str: string): string {
-  const bytes = new TextEncoder().encode(str);
-  let bin = '';
-  for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]!);
-  return btoa(bin).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
-}
-function b64urlDecode(s: string): string {
-  let b64 = s.replace(/-/g, '+').replace(/_/g, '/');
-  while (b64.length % 4) b64 += '=';
-  const bin = atob(b64);
-  const bytes = new Uint8Array(bin.length);
-  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
-  return new TextDecoder().decode(bytes);
-}
-
-function toCompactCode(bundleJson: string): string {
-  try {
-    const obj = JSON.parse(bundleJson);
-    delete obj.avatar;
-    return 'trino1:' + b64urlEncode(JSON.stringify(obj));
-  } catch {
-    return '';
-  }
-}
-
-function fromCompactCode(input: string): string | null {
-  const raw = input.trim();
-  if (!raw.startsWith('trino1:')) return null;
-  try {
-    return b64urlDecode(raw.slice(7));
-  } catch {
-    return null;
-  }
 }
 
 // Emoji safety number (SAS) for a chat: hash of both identity fingerprints,

@@ -140,7 +140,7 @@ const es: Dict = {
   'composer.replyingTo': 'respondiendo a',
   'composer.removeFile': 'quitar archivo',
   'composer.uploading': 'enviando',
-  'composer.optionalText': 'añade un mensaje opcional',
+  'composer.optionalText': 'agrega un mensaje opcional',
   'composer.attachFiles': 'adjuntar archivos',
   'composer.processFileError': 'no se pudo preparar el archivo. prueba con otro formato.',
 
@@ -152,7 +152,7 @@ const es: Dict = {
   'group.create': 'crear grupo',
   'group.createError': 'no se pudo crear el grupo. inténtalo de nuevo.',
   'group.addTitle': 'agregar miembro a',
-  'group.addDesc': 'elige un contacto para añadirlo al grupo.',
+  'group.addDesc': 'elige un contacto para agregarlo al grupo.',
   'group.noCandidates': 'todos tus contactos ya están en el grupo.',
   'group.adding': 'agregando…',
   'group.addError': 'no se pudo agregar el contacto al grupo.',
@@ -343,6 +343,91 @@ const es: Dict = {
   'empty.title': 'selecciona una conversación',
   'empty.sub': 'elige un chat o grupo para ver los mensajes',
   'empty.ready': 'trino está listo',
+
+  // Redesigned first run (R3). Sentence case; replaces forge.* and auth.*.
+  'onb.stepOf': 'Paso {n} de {total}',
+  'onb.welcomeTitle': 'Te damos la bienvenida a Trino',
+  'onb.welcomeBody': 'Mensajes y llamadas cifrados de extremo a extremo, sin número de teléfono y sin cuenta.',
+  'onb.langLabel': 'Idioma',
+  'onb.start': 'Empezar',
+  'onb.nameTitle': '¿Cómo quieres que te vean?',
+  'onb.nameBody': 'Tus contactos verán este nombre, que va incluido en tu código de contacto. Por ahora, tu foto solo se guarda en este equipo.',
+  'onb.nameLabel': 'Nombre',
+  'onb.addPhoto': 'Agregar foto',
+  'onb.errNameRequired': 'Escribe un nombre.',
+  'onb.passTitle': 'Crea una contraseña',
+  'onb.passBody': 'Protege tu identidad y tus chats en este equipo.',
+  'onb.passLabel': 'Contraseña',
+  'onb.pass2Label': 'Repite la contraseña',
+  'onb.showPassword': 'Mostrar contraseña',
+  'onb.hidePassword': 'Ocultar contraseña',
+  'onb.strength.weak': 'Fortaleza: débil',
+  'onb.strength.fair': 'Fortaleza: regular',
+  'onb.strength.good': 'Fortaleza: buena',
+  'onb.strength.strong': 'Fortaleza: muy buena',
+  'onb.errMismatch': 'Las contraseñas no coinciden.',
+  'onb.errTooShort': 'Usa al menos {min} caracteres.',
+  'onb.errTooCommon': 'Esa contraseña es muy común. Elige otra.',
+  'onb.noRecoveryTitle': 'Nadie puede recuperarla',
+  'onb.noRecoveryBody': 'Ni siquiera nosotros. Si la olvidas, tendrás que crear una identidad nueva y perderás tus chats y tus contactos. Guárdala en un gestor de contraseñas.',
+  'onb.styleTitle': 'Elige cómo se ve Trino',
+  'onb.styleBody': 'Puedes cambiarlo cuando quieras en Ajustes.',
+  'onb.calmaDesc': 'Limpio y sencillo, pensado para leer con comodidad.',
+  'onb.terminalDesc': 'Estilo consola: letra de máquina para claves y horas.',
+  'onb.previewIn': '¿Nos vemos?',
+  'onb.previewOut': 'A las 6',
+  'onb.twofaTitle': 'Verificación en dos pasos (opcional)',
+  'onb.twofaBody': 'Pide además un código de tu app autenticadora para abrir Trino en este equipo. Protege frente a quien use tu equipo; no sustituye una buena contraseña.',
+  'onb.twofaOn': 'Activar',
+  'onb.twofaLater': 'Ahora no',
+  'onb.twofaScan': 'Escanea este código con tu app autenticadora y escribe el código de 6 dígitos para comprobarlo.',
+  'onb.twofaQr': 'Código QR para tu app autenticadora',
+  'onb.twofaManual': '¿No puedes escanear? Escribe esta clave',
+  'onb.twofaCode': 'Código de 6 dígitos',
+  'onb.verify': 'Comprobar',
+  'onb.errCode': 'El código no es correcto. Prueba con el que muestra ahora tu app.',
+  'onb.twofaBack': 'Volver sin activarla',
+  'onb.creating': 'Creando tu identidad…',
+  'onb.errCreate': 'No se pudo crear tu identidad. Inténtalo de nuevo.',
+  'onb.doneTitle': 'Todo listo',
+  'onb.doneBody': 'Para empezar a hablar, las dos personas tienen que agregarse con su código. Comparte el tuyo y pide el de la otra persona.',
+  'onb.yourCode': 'Tu código',
+  'onb.copy': 'Copiar',
+  'onb.copied': 'Copiado',
+  'onb.showQr': 'Mostrar QR',
+  'onb.codeQr': 'Código QR de tu código de contacto',
+  'onb.addFirst': 'Agregar un contacto',
+  'onb.goChats': 'Ir a mis chats',
+  'onb.back': 'Atrás',
+  'onb.next': 'Continuar',
+
+  // Redesigned unlock (R3). Sentence case; replaces unseal.*.
+  'unlock2.title': 'Hola de nuevo, {name}',
+  'unlock2.lockedIdle': 'Trino se bloqueó tras {n} minutos sin actividad.',
+  'unlock2.lockedIdleOne': 'Trino se bloqueó tras 1 minuto sin actividad.',
+  'unlock2.lockedManual': 'Bloqueaste Trino.',
+  'unlock2.coldStart': 'Escribe tu contraseña para abrir tus chats.',
+  'unlock2.passLabel': 'Contraseña',
+  'unlock2.showPassword': 'Mostrar contraseña',
+  'unlock2.hidePassword': 'Ocultar contraseña',
+  'unlock2.codeLabel': 'Código de tu app autenticadora',
+  'unlock2.codeHint': 'El código cambia cada 30 segundos.',
+  'unlock2.codeRequired': 'Escribe también el código de tu app autenticadora.',
+  'unlock2.submit': 'Desbloquear',
+  'unlock2.unlocking': 'Desbloqueando…',
+  'unlock2.errPass': 'La contraseña no es correcta. Inténtalo de nuevo.',
+  'unlock2.errPassOrCode': 'La contraseña o el código no son correctos. Revisa los dos e inténtalo de nuevo.',
+  'unlock2.errUnlock': 'No se pudo desbloquear Trino. Inténtalo de nuevo.',
+  'unlock2.forgot': '¿Olvidaste la contraseña?',
+  'unlock2.forgotBody': 'Trino no puede recuperarla: nadie más tiene una copia. Si no la recuerdas, la única salida es borrar esta identidad y crear una nueva.',
+  'unlock2.forgotLoss': 'Perderás tus chats y tus contactos de este equipo. Para volver a hablar con alguien, las dos personas tendrán que agregarse otra vez con su código.',
+  'unlock2.wipe': 'Borrar identidad y empezar de cero',
+  'unlock2.wipeTitle': '¿Borrar esta identidad?',
+  'unlock2.wipeBody': 'Se borrarán de este equipo tu identidad, tus chats y tus contactos. No se puede deshacer.',
+  'unlock2.wipeConfirm': 'Borrar identidad y empezar de cero',
+  'unlock2.wipeCancel': 'Cancelar',
+  'unlock2.wiping': 'Borrando…',
+  'unlock2.errWipe': 'No se pudo borrar la identidad. Inténtalo de nuevo.',
 };
 
 const en: Dict = {
@@ -678,6 +763,91 @@ const en: Dict = {
   'empty.title': 'select a conversation',
   'empty.sub': 'choose a chat or group to view messages',
   'empty.ready': 'trino is ready',
+
+  // Redesigned first run (R3). Sentence case; replaces forge.* and auth.*.
+  'onb.stepOf': 'Step {n} of {total}',
+  'onb.welcomeTitle': 'Welcome to Trino',
+  'onb.welcomeBody': 'End-to-end encrypted messages and calls, with no phone number and no account.',
+  'onb.langLabel': 'Language',
+  'onb.start': 'Get started',
+  'onb.nameTitle': 'How should people see you?',
+  'onb.nameBody': 'Your contacts will see this name, which is included in your contact code. For now, your photo is only kept on this device.',
+  'onb.nameLabel': 'Name',
+  'onb.addPhoto': 'Add photo',
+  'onb.errNameRequired': 'Enter a name.',
+  'onb.passTitle': 'Create a password',
+  'onb.passBody': 'It protects your identity and chats on this device.',
+  'onb.passLabel': 'Password',
+  'onb.pass2Label': 'Repeat the password',
+  'onb.showPassword': 'Show password',
+  'onb.hidePassword': 'Hide password',
+  'onb.strength.weak': 'Strength: weak',
+  'onb.strength.fair': 'Strength: fair',
+  'onb.strength.good': 'Strength: good',
+  'onb.strength.strong': 'Strength: strong',
+  'onb.errMismatch': 'The passwords do not match.',
+  'onb.errTooShort': 'Use at least {min} characters.',
+  'onb.errTooCommon': 'That password is too common. Choose another one.',
+  'onb.noRecoveryTitle': 'Nobody can recover it',
+  'onb.noRecoveryBody': 'Not even us. If you forget it, you will have to create a new identity and your chats and contacts will be lost. Keep it in a password manager.',
+  'onb.styleTitle': 'Choose how Trino looks',
+  'onb.styleBody': 'You can change it anytime in Settings.',
+  'onb.calmaDesc': 'Clean and simple, made for comfortable reading.',
+  'onb.terminalDesc': 'Console style: monospace type for keys and times.',
+  'onb.previewIn': 'Meet up later?',
+  'onb.previewOut': 'At 6',
+  'onb.twofaTitle': 'Two-step verification (optional)',
+  'onb.twofaBody': 'Also asks for a code from your authenticator app to open Trino on this device. It protects against someone using your computer; it does not replace a strong password.',
+  'onb.twofaOn': 'Turn on',
+  'onb.twofaLater': 'Not now',
+  'onb.twofaScan': 'Scan this code with your authenticator app, then type the 6-digit code to check it.',
+  'onb.twofaQr': 'QR code for your authenticator app',
+  'onb.twofaManual': 'Cannot scan it? Enter this key instead',
+  'onb.twofaCode': '6-digit code',
+  'onb.verify': 'Check',
+  'onb.errCode': 'The code is incorrect. Try the one your app shows now.',
+  'onb.twofaBack': 'Go back without turning it on',
+  'onb.creating': 'Creating your identity…',
+  'onb.errCreate': 'Your identity could not be created. Try again.',
+  'onb.doneTitle': 'All set',
+  'onb.doneBody': 'To start talking, you both need to add each other with your codes. Share yours and ask for theirs.',
+  'onb.yourCode': 'Your code',
+  'onb.copy': 'Copy',
+  'onb.copied': 'Copied',
+  'onb.showQr': 'Show QR',
+  'onb.codeQr': 'QR code of your contact code',
+  'onb.addFirst': 'Add a contact',
+  'onb.goChats': 'Go to my chats',
+  'onb.back': 'Back',
+  'onb.next': 'Continue',
+
+  // Redesigned unlock (R3). Sentence case; replaces unseal.*.
+  'unlock2.title': 'Welcome back, {name}',
+  'unlock2.lockedIdle': 'Trino locked after {n} minutes without activity.',
+  'unlock2.lockedIdleOne': 'Trino locked after 1 minute without activity.',
+  'unlock2.lockedManual': 'You locked Trino.',
+  'unlock2.coldStart': 'Enter your password to open your chats.',
+  'unlock2.passLabel': 'Password',
+  'unlock2.showPassword': 'Show password',
+  'unlock2.hidePassword': 'Hide password',
+  'unlock2.codeLabel': 'Code from your authenticator app',
+  'unlock2.codeHint': 'The code changes every 30 seconds.',
+  'unlock2.codeRequired': 'Also enter the code from your authenticator app.',
+  'unlock2.submit': 'Unlock',
+  'unlock2.unlocking': 'Unlocking…',
+  'unlock2.errPass': 'The password is incorrect. Try again.',
+  'unlock2.errPassOrCode': 'The password or the code is incorrect. Check both and try again.',
+  'unlock2.errUnlock': 'Trino could not be unlocked. Try again.',
+  'unlock2.forgot': 'Forgot your password?',
+  'unlock2.forgotBody': 'Trino cannot recover it: nobody else has a copy. If you do not remember it, the only way out is to delete this identity and create a new one.',
+  'unlock2.forgotLoss': 'You will lose your chats and contacts on this device. To talk to someone again, you will both have to add each other again with your codes.',
+  'unlock2.wipe': 'Delete identity and start over',
+  'unlock2.wipeTitle': 'Delete this identity?',
+  'unlock2.wipeBody': 'Your identity, chats and contacts will be deleted from this device. This cannot be undone.',
+  'unlock2.wipeConfirm': 'Delete identity and start over',
+  'unlock2.wipeCancel': 'Cancel',
+  'unlock2.wiping': 'Deleting…',
+  'unlock2.errWipe': 'The identity could not be deleted. Try again.',
 };
 
 const pt: Dict = {
@@ -1013,25 +1183,154 @@ const pt: Dict = {
   'empty.title': 'selecione uma conversa',
   'empty.sub': 'escolha uma conversa ou grupo para ver as mensagens',
   'empty.ready': 'o trino está pronto',
+
+  // Redesigned first run (R3). Sentence case; replaces forge.* and auth.*.
+  'onb.stepOf': 'Etapa {n} de {total}',
+  'onb.welcomeTitle': 'Boas-vindas ao Trino',
+  'onb.welcomeBody': 'Mensagens e chamadas criptografadas de ponta a ponta, sem número de telefone e sem conta.',
+  'onb.langLabel': 'Idioma',
+  'onb.start': 'Começar',
+  'onb.nameTitle': 'Como você quer aparecer?',
+  'onb.nameBody': 'Seus contatos vão ver este nome, que vai incluído no seu código de contato. Por enquanto, sua foto fica só neste dispositivo.',
+  'onb.nameLabel': 'Nome',
+  'onb.addPhoto': 'Adicionar foto',
+  'onb.errNameRequired': 'Digite um nome.',
+  'onb.passTitle': 'Crie uma senha',
+  'onb.passBody': 'Ela protege sua identidade e suas conversas neste dispositivo.',
+  'onb.passLabel': 'Senha',
+  'onb.pass2Label': 'Repita a senha',
+  'onb.showPassword': 'Mostrar senha',
+  'onb.hidePassword': 'Ocultar senha',
+  'onb.strength.weak': 'Força: fraca',
+  'onb.strength.fair': 'Força: razoável',
+  'onb.strength.good': 'Força: boa',
+  'onb.strength.strong': 'Força: muito boa',
+  'onb.errMismatch': 'As senhas não coincidem.',
+  'onb.errTooShort': 'Use pelo menos {min} caracteres.',
+  'onb.errTooCommon': 'Essa senha é muito comum. Escolha outra.',
+  'onb.noRecoveryTitle': 'Ninguém pode recuperá-la',
+  'onb.noRecoveryBody': 'Nem nós. Se você esquecer, terá que criar uma identidade nova e perderá suas conversas e seus contatos. Guarde-a em um gerenciador de senhas.',
+  'onb.styleTitle': 'Escolha a aparência do Trino',
+  'onb.styleBody': 'Você pode mudar quando quiser em Configurações.',
+  'onb.calmaDesc': 'Limpo e simples, feito para ler com conforto.',
+  'onb.terminalDesc': 'Estilo console: letra monoespaçada para chaves e horários.',
+  'onb.previewIn': 'A gente se vê?',
+  'onb.previewOut': 'Às 6',
+  'onb.twofaTitle': 'Verificação em duas etapas (opcional)',
+  'onb.twofaBody': 'Pede também um código do seu app autenticador para abrir o Trino neste dispositivo. Protege contra quem usar seu computador; não substitui uma senha forte.',
+  'onb.twofaOn': 'Ativar',
+  'onb.twofaLater': 'Agora não',
+  'onb.twofaScan': 'Escaneie este código com seu app autenticador e digite o código de 6 dígitos para conferir.',
+  'onb.twofaQr': 'Código QR para o seu app autenticador',
+  'onb.twofaManual': 'Não consegue escanear? Digite esta chave',
+  'onb.twofaCode': 'Código de 6 dígitos',
+  'onb.verify': 'Conferir',
+  'onb.errCode': 'O código está incorreto. Tente o que o seu app mostra agora.',
+  'onb.twofaBack': 'Voltar sem ativar',
+  'onb.creating': 'Criando sua identidade…',
+  'onb.errCreate': 'Não foi possível criar sua identidade. Tente novamente.',
+  'onb.doneTitle': 'Tudo pronto',
+  'onb.doneBody': 'Para começar a conversar, as duas pessoas precisam se adicionar pelo código. Compartilhe o seu e peça o da outra pessoa.',
+  'onb.yourCode': 'Seu código',
+  'onb.copy': 'Copiar',
+  'onb.copied': 'Copiado',
+  'onb.showQr': 'Mostrar QR',
+  'onb.codeQr': 'Código QR do seu código de contato',
+  'onb.addFirst': 'Adicionar um contato',
+  'onb.goChats': 'Ir para minhas conversas',
+  'onb.back': 'Voltar',
+  'onb.next': 'Continuar',
+
+  // Redesigned unlock (R3). Sentence case; replaces unseal.*.
+  'unlock2.title': 'Olá de novo, {name}',
+  'unlock2.lockedIdle': 'O Trino foi bloqueado após {n} minutos sem atividade.',
+  'unlock2.lockedIdleOne': 'O Trino foi bloqueado após 1 minuto sem atividade.',
+  'unlock2.lockedManual': 'Você bloqueou o Trino.',
+  'unlock2.coldStart': 'Digite sua senha para abrir suas conversas.',
+  'unlock2.passLabel': 'Senha',
+  'unlock2.showPassword': 'Mostrar senha',
+  'unlock2.hidePassword': 'Ocultar senha',
+  'unlock2.codeLabel': 'Código do seu app autenticador',
+  'unlock2.codeHint': 'O código muda a cada 30 segundos.',
+  'unlock2.codeRequired': 'Digite também o código do seu app autenticador.',
+  'unlock2.submit': 'Desbloquear',
+  'unlock2.unlocking': 'Desbloqueando…',
+  'unlock2.errPass': 'A senha está incorreta. Tente novamente.',
+  'unlock2.errPassOrCode': 'A senha ou o código está incorreto. Confira os dois e tente novamente.',
+  'unlock2.errUnlock': 'Não foi possível desbloquear o Trino. Tente novamente.',
+  'unlock2.forgot': 'Esqueceu a senha?',
+  'unlock2.forgotBody': 'O Trino não pode recuperá-la: ninguém mais tem uma cópia. Se você não lembrar, a única saída é apagar esta identidade e criar uma nova.',
+  'unlock2.forgotLoss': 'Você vai perder suas conversas e seus contatos deste dispositivo. Para voltar a conversar com alguém, as duas pessoas vão precisar se adicionar de novo pelo código.',
+  'unlock2.wipe': 'Apagar identidade e começar do zero',
+  'unlock2.wipeTitle': 'Apagar esta identidade?',
+  'unlock2.wipeBody': 'Sua identidade, suas conversas e seus contatos serão apagados deste dispositivo. Não dá para desfazer.',
+  'unlock2.wipeConfirm': 'Apagar identidade e começar do zero',
+  'unlock2.wipeCancel': 'Cancelar',
+  'unlock2.wiping': 'Apagando…',
+  'unlock2.errWipe': 'Não foi possível apagar a identidade. Tente novamente.',
 };
 
 export const DICTS: Record<Lang, Dict> = { es, en, pt };
 
-export function detectLang(): Lang {
-  const saved = localStorage.getItem('lang');
-  if (saved === 'es' || saved === 'en' || saved === 'pt') return saved;
-  const nav = navigator.language.slice(0, 2).toLowerCase();
-  if (nav === 'es' || nav === 'pt') return nav;
+function isLang(value: unknown): value is Lang {
+  return LANGS.some(l => l.code === value);
+}
+
+/**
+ * The first tag whose primary subtag (case-insensitive) is a language Trino
+ * speaks: `es-CO` gives es and `pt-BR` gives pt. English when none is.
+ */
+export function pickLang(languages: readonly string[]): Lang {
+  for (const tag of languages) {
+    const primary = tag.split(/[-_]/, 1)[0]!.toLowerCase();
+    if (isLang(primary)) return primary;
+  }
   return 'en';
 }
 
-export function makeT(lang: Lang): (key: string) => string {
-  const d = DICTS[lang] ?? en;
-  return (key: string) => d[key] ?? en[key] ?? key;
+/** What `detectLang` reads from `navigator`; `languages` is missing in older webviews. */
+export interface LangNavigator {
+  readonly language: string;
+  readonly languages?: readonly string[];
 }
 
-export const I18nContext = createContext<(key: string) => string>((key) => key);
+/** The saved `lang` if it is valid, otherwise the system's preferred languages, in order. */
+export function detectLang(
+  storage: Pick<Storage, 'getItem'> = localStorage,
+  nav: LangNavigator = navigator,
+): Lang {
+  const saved = storage.getItem('lang');
+  if (isLang(saved)) return saved;
+  return pickLang(nav.languages?.length ? nav.languages : [nav.language]);
+}
 
-export function useT(): (key: string) => string {
+/** Values for the `{name}` placeholders of a text. */
+export type TVars = Readonly<Record<string, string | number | undefined>>;
+
+/** Looks a key up in the current language and fills its placeholders. */
+export type TFunction = (key: string, vars?: TVars) => string;
+
+const PLACEHOLDER = /\{(\w+)\}/g;
+
+/**
+ * Replaces each `{name}` with `String(vars[name])`, in one pass and literally.
+ * A placeholder without a value stays as it is, so it shows up in review.
+ */
+export function interpolate(template: string, vars?: TVars): string {
+  if (!vars) return template;
+  return template.replace(PLACEHOLDER, (placeholder, name: string) => {
+    const value = Object.prototype.hasOwnProperty.call(vars, name) ? vars[name] : undefined;
+    return value === undefined ? placeholder : String(value);
+  });
+}
+
+export function makeT(lang: Lang): TFunction {
+  const d = DICTS[lang] ?? en;
+  return (key, vars) => interpolate(d[key] ?? en[key] ?? key, vars);
+}
+
+export const I18nContext = createContext<TFunction>((key) => key);
+
+export function useT(): TFunction {
   return useContext(I18nContext);
 }
