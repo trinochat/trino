@@ -6,9 +6,12 @@ pub mod nostr;
 // here so `crate::identity::…`, `crate::ratchet::…` etc. keep resolving.
 pub use trino_core::{call_signal, crypto, envelope, group, identity, ratchet, totp, vault, x3dh};
 
+mod command_error;
 mod commands;
 mod fsutil;
+mod passphrase;
 mod state;
+mod totp_enrollment;
 
 use state::AppState;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -182,7 +185,10 @@ pub fn run() {
         .manage(AppState::default())
         .invoke_handler(tauri::generate_handler![
             commands::status,
+            commands::totp_begin,
+            commands::totp_verify,
             commands::forge,
+            commands::forge_legacy,
             commands::unseal,
             commands::share_bundle,
             commands::relay_inspect_start,

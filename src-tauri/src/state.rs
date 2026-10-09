@@ -2,6 +2,7 @@ use crate::group::{FileRef, GroupRoster};
 use crate::identity::{Identity, PublicBundle};
 use crate::nostr::NostrClient;
 use crate::ratchet::RatchetState;
+use crate::totp_enrollment::TotpEnrollment;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::PathBuf;
@@ -24,12 +25,20 @@ pub struct AppState {
     /// Set by the frontend while a call holds the microphone or camera. Read
     /// when the window is closed or the app quits, without taking `inner`.
     pub call_active: Arc<AtomicBool>,
+    /// Held for the whole of `forge`, `unseal`, `lock_vault` and `wipe`, so
+    /// one of them at a time creates, opens, closes or deletes the identity.
+    /// Kept apart from `inner` because they hold it across the slow key
+    /// derivation, which must not stall everything else.
+    pub session_gate: Mutex<()>,
 }
 
 #[derive(Default)]
 pub struct InnerState {
     pub identity: Option<Identity>,
     pub totp_secret: Option<Vec<u8>>,
+    /// A TOTP secret being set up for a new identity (`totp_begin`,
+    /// `totp_verify`), before any vault holds it. Memory only.
+    pub totp_enrollment: TotpEnrollment,
     pub handle: Option<String>,
     pub avatar: Option<String>,
     pub friends: HashMap<String, FriendRecord>,

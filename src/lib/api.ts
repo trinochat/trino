@@ -41,20 +41,72 @@ export interface StatusResponse {
   handle: string | null;
   nostr_pub: string | null;
   home_dir: string;
-}
-
-export interface ForgeResponse {
-  handle: string;
-  otpauth_uri: string;
-  bundle_json: string;
-  fingerprint: string;
+  // Whether unlocking will ask for a TOTP code, read from the vault header:
+  // null when there is no vault or it cannot be read. Only a hint for what to
+  // show; unlocking can still fail with `totp_required`.
+  totp_enabled: boolean | null;
 }
 
 export interface UnsealResponse {
   handle: string;
   fingerprint: string;
   nostr_pub: string;
+  // False when the session was open already: whoever opened it started the
+  // relay connections.
   relay_connection_started: boolean;
+}
+
+// What `forge` returns: the session it opened, as `unseal` describes it, and
+// the new identity's bundle to share.
+export interface ForgeResponse extends UnsealResponse {
+  bundle_json: string;
+}
+
+// TEMPORARY, for the old ForgeWizard in App.tsx: see `api.forge`.
+export interface LegacyForgeResponse extends ForgeResponse {
+  otpauth_uri: string;
+}
+
+// A new TOTP secret to add to an authenticator app, as a QR code or typed in.
+export interface TotpBeginResponse {
+  otpauth_uri: string;
+  secret_base32: string;
+}
+
+// What `forge`, `unseal`, `totp_begin` and `totp_verify` reject with: a code
+// for the UI to turn into its own text, and an English message for the log.
+// The names match `ErrorCode` in src-tauri/src/command_error.rs.
+export const COMMAND_ERROR_CODES = [
+  'passphrase_too_short',
+  'passphrase_too_common',
+  'totp_not_verified',
+  'vault_exists',
+  'no_vault',
+  'wrong_passphrase',
+  'totp_required',
+  'invalid_totp',
+  'unsupported_vault',
+  'io',
+  'internal',
+] as const;
+
+export type CommandErrorCode = (typeof COMMAND_ERROR_CODES)[number];
+
+export interface CommandError {
+  code: CommandErrorCode;
+  message: string;
+  // The minimum length, with `passphrase_too_short` only.
+  min?: number;
+}
+
+// Whether a rejected command carries a `CommandError`. The other commands
+// still reject with a plain string.
+export function isCommandError(error: unknown): error is CommandError {
+  if (typeof error !== 'object' || error === null) return false;
+  const { code, message } = error as { code?: unknown; message?: unknown };
+  return (
+    typeof message === 'string' && (COMMAND_ERROR_CODES as readonly unknown[]).includes(code)
+  );
 }
 
 export interface CallIceServer {
@@ -160,10 +212,32 @@ export interface StickerInfo {
 
 export const api = {
   status: (): Promise<StatusResponse> => invoke('status'),
-  forge: (handle: string, passphrase: string): Promise<ForgeResponse> =>
-    invoke('forge', { handle, passphrase }),
-  unseal: (passphrase: string, totpCode: string): Promise<UnsealResponse> =>
-    invoke('unseal', { passphrase, totpCode }),
+  // Starts setting up TOTP with a new secret, replacing any earlier one.
+  // `label` names the account in the authenticator app: the identity's name.
+  totpBegin: (label?: string): Promise<TotpBeginResponse> =>
+    invoke('totp_begin', { label: label ?? null }),
+  // Checks a code from the authenticator app; true confirms the secret.
+  totpVerify: (code: string): Promise<boolean> => invoke('totp_verify', { code }),
+  // The `forge` command: creates the identity and opens its session, so the
+  // chats follow without an unlock. With `useTotp`, the secret from
+  // `totpBegin` must have been confirmed through `totpVerify` first.
+  createIdentity: (
+    handle: string,
+    passphrase: string,
+    useTotp: boolean,
+  ): Promise<ForgeResponse> => invoke('forge', { handle, passphrase, useTotp }),
+  /**
+   * @deprecated TEMPORARY, only for the old ForgeWizard in App.tsx, which
+   * shows the TOTP QR code once the identity exists and never confirms a
+   * code. Like `forge` before R3.3, it seals a secret nobody has confirmed.
+   * New screens use `totpBegin`, `totpVerify` and `createIdentity`; R3.6
+   * removes this with the old screen.
+   */
+  forge: (handle: string, passphrase: string): Promise<LegacyForgeResponse> =>
+    invoke('forge_legacy', { handle, passphrase }),
+  // Leave `totpCode` out, or empty, for a vault without TOTP.
+  unseal: (passphrase: string, totpCode?: string | null): Promise<UnsealResponse> =>
+    invoke('unseal', { passphrase, totpCode: totpCode ?? null }),
   shareBundle: (): Promise<string> => invoke('share_bundle'),
   probeNode: (bundleJson: string, handle: string): Promise<NodeInfo> =>
     invoke('probe_node', { bundleJson, handle }),
