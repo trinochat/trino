@@ -7,6 +7,7 @@ pub mod nostr;
 pub use trino_core::{call_signal, crypto, envelope, group, identity, ratchet, totp, vault, x3dh};
 
 mod commands;
+mod fsutil;
 mod state;
 
 use state::AppState;

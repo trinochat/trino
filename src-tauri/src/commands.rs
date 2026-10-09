@@ -1,6 +1,7 @@
 use crate::blossom;
 use crate::call_signal::validate_call_signal;
 use crate::envelope::{decode_envelope, encode_envelope, Envelope};
+use crate::fsutil;
 use crate::group::{self, FileRef, GroupRoster, MemberBundle, RosterDecision};
 use crate::identity::{
     create_identity, decode_array_32, public_bundle_for, verify_bundle_binding, Identity,
@@ -24,6 +25,7 @@ use crate::x3dh::{initiate, respond, InitialMessage, X3dhError};
 use base64::Engine;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tauri::{AppHandle, Emitter, State};
 use zeroize::Zeroize;
@@ -364,6 +366,17 @@ fn remove_file_for_wipe(path: &std::path::Path, failures: &mut Vec<String>) {
     }
 }
 
+/// Delete `paths` for a wipe, together with any temporary copy of them that
+/// `fsutil::atomic_write` left behind because the app died while saving.
+fn remove_data_files(paths: &[PathBuf], failures: &mut Vec<String>) {
+    for path in paths {
+        for leftover in fsutil::leftover_temp_files(path) {
+            remove_file_for_wipe(&leftover, failures);
+        }
+        remove_file_for_wipe(path, failures);
+    }
+}
+
 fn remove_dir_for_wipe(path: &std::path::Path, failures: &mut Vec<String>) {
     if let Err(error) = std::fs::remove_dir_all(path) {
         if error.kind() != std::io::ErrorKind::NotFound {
@@ -400,6 +413,68 @@ pub async fn status(state: State<'_, AppState>) -> Result<StatusResponse, String
     })
 }
 
+/// Where the files of a new identity go. Passed in rather than read from
+/// `trino_home()` so tests can create an identity in a scratch directory.
+struct IdentityFiles {
+    home: PathBuf,
+    config: PathBuf,
+    friends: PathBuf,
+    vault: PathBuf,
+}
+
+impl IdentityFiles {
+    fn in_trino_home() -> Self {
+        IdentityFiles {
+            home: trino_home(),
+            config: config_path(),
+            friends: friends_path(),
+            vault: vault_path(),
+        }
+    }
+}
+
+/// Create the files of a new identity with `write`.
+///
+/// vault.bin goes LAST: `status` reports an identity as soon as it exists,
+/// and `unseal` cannot open one without config.json, so an interruption
+/// halfway must never leave a vault without the files it needs. If a step
+/// fails, the files and the data dir that this call created are removed
+/// again. Nothing that was there before is removed: a config.json or
+/// friends.json left by an earlier attempt is overwritten, as it always was.
+fn create_identity_files(
+    files: &IdentityFiles,
+    config: &[u8],
+    friends: &[u8],
+    vault: &[u8],
+    mut write: impl FnMut(&Path, &[u8]) -> std::io::Result<()>,
+) -> std::io::Result<()> {
+    let home_existed = files.home.exists();
+    std::fs::create_dir_all(&files.home)?;
+    harden_dir(&files.home);
+    let mut created: Vec<&Path> = Vec::new();
+    for (path, bytes) in [
+        (&files.config, config),
+        (&files.friends, friends),
+        (&files.vault, vault),
+    ] {
+        let existed = path.exists();
+        if let Err(error) = write(path, bytes) {
+            for path in created {
+                let _ = std::fs::remove_file(path);
+            }
+            if !home_existed {
+                // Only succeeds while empty, so nothing else can go with it.
+                let _ = std::fs::remove_dir(&files.home);
+            }
+            return Err(error);
+        }
+        if !existed {
+            created.push(path);
+        }
+    }
+    Ok(())
+}
+
 #[tauri::command]
 pub async fn forge(handle: String, passphrase: String) -> Result<ForgeResponse, String> {
     if vault_path().exists() {
@@ -415,9 +490,6 @@ pub async fn forge(handle: String, passphrase: String) -> Result<ForgeResponse, 
     let totp_secret = generate_totp_secret();
     let sealed = seal_vault(&identity, &totp_secret, &passphrase).map_err(|e| e.to_string())?;
 
-    std::fs::create_dir_all(trino_home()).map_err(|e| e.to_string())?;
-    harden_home();
-    std::fs::write(vault_path(), encode_vault(&sealed)).map_err(|e| e.to_string())?;
     let config = ConfigFile {
         handle: handle.clone(),
         nostr_pub: hex::encode(identity.nostr.pub_bytes),
@@ -425,19 +497,19 @@ pub async fn forge(handle: String, passphrase: String) -> Result<ForgeResponse, 
         created_at: chrono::Utc::now().timestamp(),
         avatar: None,
     };
-    std::fs::write(
-        config_path(),
-        serde_json::to_string_pretty(&config).map_err(|e| e.to_string())?,
-    )
-    .map_err(|e| e.to_string())?;
     let friends = FriendsFile {
         handle: handle.clone(),
         friends: vec![],
         blocked: vec![],
     };
-    std::fs::write(
-        friends_path(),
-        serde_json::to_string_pretty(&friends).map_err(|e| e.to_string())?,
+    let config_json = serde_json::to_string_pretty(&config).map_err(|e| e.to_string())?;
+    let friends_json = serde_json::to_string_pretty(&friends).map_err(|e| e.to_string())?;
+    create_identity_files(
+        &IdentityFiles::in_trino_home(),
+        config_json.as_bytes(),
+        friends_json.as_bytes(),
+        &encode_vault(&sealed),
+        fsutil::atomic_write,
     )
     .map_err(|e| e.to_string())?;
 
@@ -565,7 +637,7 @@ pub async fn unseal(
                 match seal_vault(&identity, &totp_secret, &passphrase)
                     .map_err(|e| e.to_string())
                     .and_then(|sealed| {
-                        std::fs::write(vault_path(), encode_vault(&sealed))
+                        fsutil::atomic_write(&vault_path(), &encode_vault(&sealed))
                             .map_err(|e| e.to_string())
                     }) {
                     Ok(()) => dbg_log(&format!(
@@ -585,7 +657,7 @@ pub async fn unseal(
     })
     .await
     .map_err(|_| "vault unlock worker failed".to_string())??;
-    harden_home(); // tighten perms on existing installs too
+    harden_dir(&trino_home()); // tighten perms on existing installs too
 
     let cfg_bytes = std::fs::read(config_path()).map_err(|e| e.to_string())?;
     let mut cfg: ConfigFile = serde_json::from_slice(&cfg_bytes).map_err(|e| e.to_string())?;
@@ -967,18 +1039,19 @@ pub async fn wipe(state: State<'_, AppState>) -> Result<(), String> {
     drop(inner);
 
     let mut failures = Vec::new();
-    for path in [
-        vault_path(),
-        friends_path(),
-        config_path(),
-        groups_path(),
-        group_invites_path(),
-        history_path(),
-        ratchets_path(),
-        trino_home().join("trino-gui.log"),
-    ] {
-        remove_file_for_wipe(&path, &mut failures);
-    }
+    remove_data_files(
+        &[
+            vault_path(),
+            friends_path(),
+            config_path(),
+            groups_path(),
+            group_invites_path(),
+            history_path(),
+            ratchets_path(),
+            trino_home().join("trino-gui.log"),
+        ],
+        &mut failures,
+    );
     remove_dir_for_wipe(&stickers_dir(), &mut failures);
     if failures.is_empty() {
         Ok(())
@@ -1591,12 +1664,14 @@ pub async fn prune_expired(state: State<'_, AppState>) -> Result<(), String> {
 
 /// Restrict the data dir to the owner (0700) on Unix so other local users can't
 /// read the vault/history/log. No-op on Windows (uses NTFS ACLs by default).
-fn harden_home() {
+fn harden_dir(dir: &Path) {
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        let _ = std::fs::set_permissions(trino_home(), std::fs::Permissions::from_mode(0o700));
+        let _ = std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700));
     }
+    #[cfg(not(unix))]
+    let _ = dir;
 }
 
 fn stickers_dir() -> std::path::PathBuf {
@@ -2627,20 +2702,14 @@ fn merge_group_members(
 
 fn persist_groups(inner: &crate::state::InnerState) -> Result<(), String> {
     let groups: Vec<&GroupRoster> = inner.groups.values().collect();
-    std::fs::write(
-        groups_path(),
-        serde_json::to_string_pretty(&groups).map_err(|e| e.to_string())?,
-    )
-    .map_err(|e| e.to_string())
+    let json = serde_json::to_string_pretty(&groups).map_err(|e| e.to_string())?;
+    fsutil::atomic_write(&groups_path(), json.as_bytes()).map_err(|e| e.to_string())
 }
 
 fn persist_group_invites(inner: &InnerState) -> Result<(), String> {
     let invites: Vec<&GroupInvite> = inner.group_invites.values().collect();
-    std::fs::write(
-        group_invites_path(),
-        serde_json::to_string_pretty(&invites).map_err(|e| e.to_string())?,
-    )
-    .map_err(|e| e.to_string())
+    let json = serde_json::to_string_pretty(&invites).map_err(|e| e.to_string())?;
+    fsutil::atomic_write(&group_invites_path(), json.as_bytes()).map_err(|e| e.to_string())
 }
 
 fn invite_info(invite: &GroupInvite) -> GroupInviteInfo {
@@ -2735,7 +2804,11 @@ fn save_history(inner: &InnerState) {
     let mut blob = Vec::with_capacity(nonce.len() + ct.len());
     blob.extend_from_slice(&nonce);
     blob.extend_from_slice(&ct);
-    let _ = std::fs::write(history_path(), blob);
+    // Not fatal, as before: a failed write keeps the previous history.bin
+    // whole, and the next save writes everything again.
+    if let Err(error) = fsutil::atomic_write(&history_path(), &blob) {
+        dbg_log(&format!("history.bin could not be saved: {error}"));
+    }
 }
 
 fn load_history(inner: &mut InnerState) {
@@ -2820,7 +2893,11 @@ fn save_ratchets(inner: &InnerState) {
     let mut blob = Vec::with_capacity(nonce.len() + ct.len());
     blob.extend_from_slice(&nonce);
     blob.extend_from_slice(&ct);
-    let _ = std::fs::write(ratchets_path(), blob);
+    // Not fatal, as before: a failed write keeps the previous ratchets.bin
+    // whole, and the next save writes every session again.
+    if let Err(error) = fsutil::atomic_write(&ratchets_path(), &blob) {
+        dbg_log(&format!("ratchets.bin could not be saved: {error}"));
+    }
 }
 
 fn load_ratchets(inner: &mut InnerState) {
@@ -2980,11 +3057,8 @@ pub async fn update_profile(
     let mut cfg: ConfigFile = serde_json::from_slice(&cfg_bytes).map_err(|e| e.to_string())?;
     cfg.handle = new_handle;
     cfg.avatar = avatar;
-    std::fs::write(
-        config_path(),
-        serde_json::to_string_pretty(&cfg).map_err(|e| e.to_string())?,
-    )
-    .map_err(|e| e.to_string())?;
+    let cfg_json = serde_json::to_string_pretty(&cfg).map_err(|e| e.to_string())?;
+    fsutil::atomic_write(&config_path(), cfg_json.as_bytes()).map_err(|e| e.to_string())?;
     // friends.json also stores our own handle at the top level.
     persist_friends(&inner)?;
     Ok(())
@@ -2996,12 +3070,8 @@ fn persist_friends(inner: &crate::state::InnerState) -> Result<(), String> {
         friends: inner.friends.values().cloned().collect(),
         blocked: inner.blocked.iter().cloned().collect(),
     };
-    std::fs::write(
-        friends_path(),
-        serde_json::to_string_pretty(&file).map_err(|e| e.to_string())?,
-    )
-    .map_err(|e| e.to_string())?;
-    Ok(())
+    let json = serde_json::to_string_pretty(&file).map_err(|e| e.to_string())?;
+    fsutil::atomic_write(&friends_path(), json.as_bytes()).map_err(|e| e.to_string())
 }
 
 #[allow(dead_code)]
@@ -3018,6 +3088,7 @@ fn build_filter_for_self(nostr_pub: &str) -> NostrFilter {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::fsutil::scratch::ScratchDir;
     use crate::group::roster_signing_bytes;
     use crate::identity::{ed25519_sign, generate_nostr_keypair, generate_x25519, Identity};
 
@@ -3616,5 +3687,151 @@ mod tests {
         ))
         .unwrap();
         assert_eq!(urls(&one), ["stun:stun.example.net:3478"]);
+    }
+
+    fn identity_files_in(home: PathBuf) -> IdentityFiles {
+        IdentityFiles {
+            config: home.join("config.json"),
+            friends: home.join("friends.json"),
+            vault: home.join("vault.bin"),
+            home,
+        }
+    }
+
+    /// Writes like `forge` does, except that `target` fails, as on a full disk.
+    fn failing_on(target: &Path) -> impl FnMut(&Path, &[u8]) -> std::io::Result<()> + '_ {
+        move |path, bytes| {
+            if path == target {
+                Err(std::io::Error::other("disk full"))
+            } else {
+                fsutil::atomic_write(path, bytes)
+            }
+        }
+    }
+
+    #[test]
+    fn a_new_identity_writes_its_vault_last() {
+        let scratch = ScratchDir::new("identity-order");
+        let files = identity_files_in(scratch.path().join("home"));
+        let mut order = Vec::new();
+
+        create_identity_files(&files, b"config", b"friends", b"vault", |path, bytes| {
+            order.push(path.to_path_buf());
+            fsutil::atomic_write(path, bytes)
+        })
+        .unwrap();
+
+        // `status` reports an identity once vault.bin exists, and `unseal`
+        // needs config.json: the vault must never exist without the rest.
+        assert_eq!(
+            order,
+            [
+                files.config.clone(),
+                files.friends.clone(),
+                files.vault.clone()
+            ]
+        );
+        assert_eq!(std::fs::read(&files.config).unwrap(), b"config");
+        assert_eq!(std::fs::read(&files.friends).unwrap(), b"friends");
+        assert_eq!(std::fs::read(&files.vault).unwrap(), b"vault");
+    }
+
+    #[test]
+    fn a_new_identity_that_cannot_be_finished_leaves_nothing_behind() {
+        let scratch = ScratchDir::new("identity-rollback");
+        let files = identity_files_in(scratch.path().join("home"));
+
+        let result = create_identity_files(
+            &files,
+            b"config",
+            b"friends",
+            b"vault",
+            failing_on(&files.vault),
+        );
+
+        assert!(result.is_err());
+        assert!(!files.config.exists(), "config.json was left behind");
+        assert!(!files.friends.exists(), "friends.json was left behind");
+        assert!(!files.vault.exists(), "vault.bin was left behind");
+        assert!(
+            !files.home.exists(),
+            "the data dir this call created was left behind"
+        );
+    }
+
+    #[test]
+    fn a_failed_new_identity_keeps_what_was_already_there() {
+        let scratch = ScratchDir::new("identity-keep");
+        let files = identity_files_in(scratch.path().to_path_buf());
+        // config.json from an earlier attempt that never reached the vault,
+        // and a file that forge never writes.
+        std::fs::write(&files.config, b"earlier attempt").unwrap();
+        let groups = scratch.path().join("groups.json");
+        std::fs::write(&groups, b"[]").unwrap();
+
+        let result = create_identity_files(
+            &files,
+            b"config",
+            b"friends",
+            b"vault",
+            failing_on(&files.vault),
+        );
+
+        assert!(result.is_err());
+        assert!(files.config.exists(), "config.json existed before");
+        assert!(
+            !files.friends.exists(),
+            "friends.json was created by this call"
+        );
+        assert!(!files.vault.exists());
+        assert_eq!(std::fs::read(&groups).unwrap(), b"[]");
+        assert!(files.home.exists(), "the data dir existed before");
+    }
+
+    #[test]
+    fn a_wipe_also_removes_copies_left_by_an_interrupted_save() {
+        let scratch = ScratchDir::new("wipe-leftovers");
+        let friends = scratch.path().join("friends.json");
+        // What `fsutil::atomic_write` leaves if the app dies mid-save.
+        let leftover = scratch.path().join(".friends.json.tmp-1-2-3");
+        let unrelated = scratch.path().join("notes.txt");
+        for path in [&friends, &leftover, &unrelated] {
+            std::fs::write(path, b"[]").unwrap();
+        }
+        let mut failures = Vec::new();
+
+        remove_data_files(std::slice::from_ref(&friends), &mut failures);
+
+        assert!(failures.is_empty(), "{failures:?}");
+        assert!(!friends.exists());
+        assert!(!leftover.exists(), "the temporary copy survived the wipe");
+        assert!(unrelated.exists());
+    }
+
+    /// Every data file is replaced through `fsutil::atomic_write`: a plain
+    /// `std::fs::write` truncates the file first, so a crash halfway would
+    /// leave it empty or half written.
+    #[test]
+    fn data_files_are_only_written_atomically() {
+        let source: String = include_str!("commands.rs").split_whitespace().collect();
+        let plain_writes: Vec<&str> = [
+            "vault_path",
+            "config_path",
+            "friends_path",
+            "groups_path",
+            "group_invites_path",
+            "history_path",
+            "ratchets_path",
+        ]
+        .into_iter()
+        .filter(|path_fn| {
+            source.contains(&format!("fs::write({path_fn}()"))
+                || source.contains(&format!("fs::write(&{path_fn}()"))
+        })
+        .collect();
+        assert!(
+            plain_writes.is_empty(),
+            "written with fs::write: {plain_writes:?}"
+        );
     }
 }
