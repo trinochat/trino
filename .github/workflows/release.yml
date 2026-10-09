@@ -1,0 +1,104 @@
+name: Release
+
+# Beta bundles for Windows and Linux.
+#
+# Triggered by pushing a tag:   git tag v0.1.0-beta.1 && git push origin v0.1.0-beta.1
+# The GitHub release is created as a DRAFT prerelease, so nothing reaches users
+# until you review the artifacts and publish it yourself.
+#
+# macOS is deliberately not built here — see the matrix below.
+#
+# SIGNING: Windows bundles are unsigned until a code signing certificate exists,
+# so SmartScreen will warn testers. See docs/release.md.
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  bundle:
+    name: ${{ matrix.label }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # macOS is off for now. The code builds there fine — the release
+          # profile finished in under three minutes — but bundling needs a
+          # Developer ID certificate, and tauri decides to codesign by checking
+          # whether APPLE_CERTIFICATE is PRESENT rather than whether it holds
+          # anything. A workflow-level `env:` key always defines the variable,
+          # empty when the secret does not exist, which drove every macOS build
+          # into the signing path and died on an empty .p12:
+          #   SecKeychainItemImport: One or more parameters passed to a function
+          #   were not valid.
+          # To re-enable: add the Developer ID secrets, then restore the two
+          # macos-latest entries AND export the signing variables from a step
+          # that skips them when no certificate is configured. Setting them
+          # directly under `env:` here is what broke it.
+          - label: Windows
+            os: windows-latest
+            target: ""
+            args: ""
+          - label: Linux
+            os: ubuntu-22.04
+            target: ""
+            args: ""
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Linux system dependencies
+        if: matrix.os == 'ubuntu-22.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libjavascriptcoregtk-4.1-dev \
+            libappindicator3-dev \
+            librsvg2-dev \
+            libxdo-dev \
+            libssl-dev \
+            patchelf \
+            file
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: . -> target
+          key: release-${{ matrix.label }}
+
+      - run: npm ci
+
+      - uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+          # Tauri updater signing. Generate once with `npm run tauri signer generate`
+          # and store the PRIVATE key as a secret — never in the repo.
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+
+        with:
+          tagName: ${{ github.ref_name }}
+          releaseName: Trino Chat ${{ github.ref_name }}
+          releaseBody: |
+            Beta build. The cryptographic core has **not** been externally audited —
+            see `docs/security-roadmap.md` for what is protected today and what is not.
+
+            Android and iOS are not included: the mobile client is not implemented yet.
+          releaseDraft: true
+          prerelease: true
+          args: ${{ matrix.args }}

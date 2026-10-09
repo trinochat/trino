@@ -1,0 +1,66 @@
+# Maintainer: davidalmeidac
+#
+# Tauri does not emit pacman packages — its Linux targets are deb, rpm and
+# AppImage — and it cannot be cross-compiled from Windows or macOS, because it
+# links against the host's WebKitGTK and GTK stack. So Arch builds from source,
+# on Arch.
+#
+#   cd packaging/arch && makepkg -si
+
+pkgname=trino-chat
+pkgver=0.1.0
+pkgrel=1
+pkgdesc="End-to-end encrypted messenger with no account, no phone number and no server of its own"
+arch=('x86_64')
+url="https://github.com/trinochat/trino"
+license=('AGPL-3.0-only')
+
+# WebKitGTK 4.1 is the webview Tauri 2 targets on Linux; the appindicator
+# library backs the tray icon, and xdotool provides libxdo, which tauri links
+# against unconditionally on X11.
+depends=(
+  'webkit2gtk-4.1'
+  'gtk3'
+  'libayatana-appindicator'
+  'librsvg'
+  'openssl'
+  'xdotool'
+)
+makedepends=('rust' 'cargo' 'nodejs' 'npm' 'git' 'pkgconf')
+options=('!lto')
+
+# Built from a local checkout rather than a tarball: the repository is private
+# for now, and the protocol core is pulled in as a pinned git dependency, so
+# the build needs network access on first run to fetch it.
+source=()
+sha256sums=()
+
+_srcdir="${startdir}/../.."
+
+prepare() {
+  cd "${_srcdir}"
+  npm ci
+}
+
+build() {
+  cd "${_srcdir}"
+  npm run tauri build -- --bundles deb
+}
+
+package() {
+  cd "${_srcdir}/src-tauri/target/release"
+
+  # The binary keeps the crate name; the bundle carries the product name.
+  install -Dm755 "trino-gui" "${pkgdir}/usr/bin/${pkgname}"
+
+  # Reuse the desktop entry and icons Tauri already generated for the .deb
+  # instead of maintaining a second copy that can drift.
+  local _deb_root
+  _deb_root="$(find bundle/deb -maxdepth 1 -type d -name '*_amd64' | head -n1)"
+  if [ -n "${_deb_root}" ] && [ -d "${_deb_root}/data/usr/share" ]; then
+    cp -a "${_deb_root}/data/usr/share/." "${pkgdir}/usr/share/"
+  fi
+
+  install -Dm644 "${_srcdir}/LICENSE" \
+    "${pkgdir}/usr/share/licenses/${pkgname}/LICENSE"
+}

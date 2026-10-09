@@ -1,0 +1,15 @@
+# Workspace root.
+#
+#   src-tauri  — the desktop client (Tauri 2)
+#
+# The protocol and cryptography live in their own repository so they can be
+# reviewed without this application around them:
+#
+#   https://github.com/trinochat/trino-core
+#
+# The Flutter mobile client in apps/mobile will bind to that same crate over FFI
+# rather than reimplementing the protocol. See docs/mobile-client.md.
+
+[workspace]
+resolver = "2"
+members = ["src-tauri"]

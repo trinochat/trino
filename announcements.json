@@ -1,0 +1,11 @@
+{
+  "announcements": [
+    {
+      "id": "2026-07-17-mobile-themes",
+      "title": "Trino móvil estrena una interfaz más familiar",
+      "body": "La lista de chats, el compositor y las llamadas usan patrones móviles conocidos. También se añadieron estilos Trino, Corporativo y Simple con color de acento configurable.",
+      "publishedAt": "2026-07-17T09:30:00-05:00",
+      "version": "0.1.0"
+    }
+  ]
+}

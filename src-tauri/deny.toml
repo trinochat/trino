@@ -1,0 +1,67 @@
+# cargo-deny — licence policy.
+#
+# Trino is AGPL-3.0 with a commercial licence available from the copyright
+# holder (see ../COPYRIGHT.md). That dual-licensing only works while every
+# dependency is permissively licensed: pulling in a single GPL/AGPL crate would
+# make it impossible to grant a non-AGPL licence for the resulting binary.
+#
+# This is why libsignal (AGPL-3.0, no exceptions) cannot be adopted.
+#
+# Run with:  cargo deny check licenses
+# Install:   cargo install cargo-deny
+
+[licenses]
+# Permissive licences only — anything copyleft must be an explicit decision,
+# not something that slips in during a `cargo update`.
+allow = [
+    "MIT",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Unicode-3.0",
+    "Zlib",
+    "CC0-1.0",
+    "MPL-2.0",       # file-level copyleft only; does not infect the binary
+    "BSL-1.0",
+    "Unlicense",
+    "OpenSSL",
+    # webpki-roots ships Mozilla's CA root store. CDLA-Permissive-2.0 is a
+    # permissive licence for DATA, with no copyleft reach into the binary.
+    "CDLA-Permissive-2.0",
+]
+confidence-threshold = 0.8
+
+# The allow-list above governs DEPENDENCIES. These two crates are the project's
+# own, and are AGPL by design; cargo-deny evaluates the whole graph including
+# the roots, so without this the policy rejects the very code it protects.
+exceptions = [
+    { name = "trino-gui", allow = ["AGPL-3.0-only"] },
+    { name = "trino-core", allow = ["AGPL-3.0-only"] },
+]
+
+[bans]
+# Crates that would poison the dual-licence model if they ever appeared.
+deny = [
+    { name = "libsignal-protocol" },
+]
+
+[advisories]
+# Fail the build on known vulnerabilities.
+yanked = "deny"
+
+# Vulnerabilities always fail. Unmaintained crates only fail when THIS workspace
+# depends on them directly. Tauri's Linux stack drags in the gtk-rs GTK3
+# bindings (RUSTSEC-2024-0411..0420), proc-macro-error and the unic-* family,
+# all flagged unmaintained and none of them replaceable from here. Pinning
+# sixteen ignore entries would rot into noise; scoping the rule keeps the signal
+# that matters — one of OUR direct dependencies going unmaintained still fails.
+unmaintained = "workspace"
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+# The protocol core, consumed from its own repository. Cargo.lock pins the exact
+# commit, so this allows the source, not "whatever is on main".
+allow-git = ["https://github.com/trinochat/trino-core"]

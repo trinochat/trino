@@ -1,0 +1,4 @@
+<resources>
+    <string name="app_name">trino-gui</string>
+    <string name="main_activity_title">trino-gui</string>
+</resources>
