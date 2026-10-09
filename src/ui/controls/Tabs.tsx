@@ -1,7 +1,7 @@
 import { useId, type ReactNode } from 'react';
 import { cx } from '../cx';
+import { FOCUS_RING } from '../focus';
 import { useRovingChoice } from './roving';
-import { FOCUS_RING } from './styles';
 
 export interface TabItem<T extends string> {
   value: T;

@@ -1,6 +1,7 @@
 /** @type {import('tailwindcss').Config} */
 export default {
-  content: ['./index.html', './src/**/*.{ts,tsx}'],
+  // Tests are left out: their fixtures (the colour scanner's `bg-white`...) are not app classes.
+  content: ['./index.html', './src/**/*.{ts,tsx}', '!./src/**/*.test.{ts,tsx}'],
   theme: {
     extend: {
       colors: {
@@ -54,6 +55,7 @@ export default {
           surface: 'var(--t-surface)',
           raised: 'var(--t-raised)',
           line: 'var(--t-line)',
+          'control-line': 'var(--t-control-line)',
           ink: 'var(--t-ink)',
           muted: 'var(--t-muted)',
           accent: 'var(--t-accent)',

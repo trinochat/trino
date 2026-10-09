@@ -3,10 +3,11 @@
  * shape and depth of both styles (Calma and Terminal), each in light and dark,
  * plus the alternative accents.
  *
- * The four theme sets are the approved prototype's values, unchanged
- * (`appearance.test.ts` compares them with the prototype). `contrast.test.ts`
- * checks the text pairs against WCAG 2.x AA for every style, mode and accent.
- * The engine in `appearance.ts` turns them into `--t-*` CSS variables.
+ * The four theme sets are the approved prototype's values, unchanged, plus
+ * `controlLine`, added after it (`appearance.test.ts` compares them with the
+ * prototype). `contrast.test.ts` checks the text pairs against WCAG 2.x AA and
+ * the control boundaries against 3:1 for every style, mode and accent. The
+ * engine in `appearance.ts` turns them into `--t-*` CSS variables.
  */
 
 export const STYLES = ['calma', 'terminal'] as const;
@@ -34,6 +35,12 @@ export interface ThemeTokens {
   raised: string;
   /** Borders and dividers. Decorative, so not a contrast pair. */
   line: string;
+  /**
+   * Boundary of the text fields, which shows where to type (WCAG 1.4.11): 3:1
+   * on bg, side, surface and raised, kept just above that so it stays quiet.
+   * Between `line` and `muted`. Not in the prototype; no accent changes it.
+   */
+  controlLine: string;
   ink: string;
   muted: string;
   /** Fill of primary buttons, toggles and selected segments. */
@@ -92,6 +99,7 @@ const JETBRAINS_MONO = "'JetBrains Mono', ui-monospace, monospace";
 export const THEMES: Readonly<Record<ThemeId, Readonly<ThemeTokens>>> = {
   'calma-light': {
     bg: '#F5F7F6', side: '#FFFFFF', surface: '#FFFFFF', raised: '#EEF2F0', line: '#DDE3E0',
+    controlLine: '#818B86',
     ink: '#111815', muted: '#56635C',
     accent: '#0F7B4A', accentInk: '#FFFFFF', accentText: '#0F7B4A', accentSoft: '#E3F2EA',
     ok: '#0F7B4A', warn: '#8A5A00', warnBg: '#FFF4DB', danger: '#B3261E', dangerBg: '#FDECEA',
@@ -108,6 +116,7 @@ export const THEMES: Readonly<Record<ThemeId, Readonly<ThemeTokens>>> = {
   },
   'calma-dark': {
     bg: '#0F1311', side: '#131815', surface: '#161B18', raised: '#1E2521', line: '#28302B',
+    controlLine: '#66726B',
     ink: '#E6ECE8', muted: '#9AA8A0',
     accent: '#3FD68A', accentInk: '#04170C', accentText: '#3FD68A', accentSoft: '#183526',
     ok: '#3FD68A', warn: '#F2B45A', warnBg: '#2C2416', danger: '#FF8A8A', dangerBg: '#3A1E1E',
@@ -124,6 +133,7 @@ export const THEMES: Readonly<Record<ThemeId, Readonly<ThemeTokens>>> = {
   },
   'terminal-dark': {
     bg: '#0A0E0C', side: '#0E1411', surface: '#101613', raised: '#18221C', line: '#24302A',
+    controlLine: '#607067',
     ink: '#D7E3DC', muted: '#93A69B',
     accent: '#22FF66', accentInk: '#03140A', accentText: '#22FF66', accentSoft: '#0F2A1A',
     ok: '#22FF66', warn: '#FFB547', warnBg: '#2A2110', danger: '#FF6B78', dangerBg: '#2C1216',
@@ -140,6 +150,7 @@ export const THEMES: Readonly<Record<ThemeId, Readonly<ThemeTokens>>> = {
   },
   'terminal-light': {
     bg: '#F2F4EF', side: '#E9ECE5', surface: '#FFFFFF', raised: '#E9EDE5', line: '#D3D9CF',
+    controlLine: '#7D877F',
     ink: '#121A15', muted: '#4E5B53',
     accent: '#08743A', accentInk: '#FFFFFF', accentText: '#08743A', accentSoft: '#E1F0E6',
     ok: '#08743A', warn: '#8A5A00', warnBg: '#FFF4DB', danger: '#B3261E', dangerBg: '#FBE9E8',

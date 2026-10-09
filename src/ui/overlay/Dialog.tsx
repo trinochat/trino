@@ -7,7 +7,7 @@ import { useEffect, useId, useLayoutEffect, useRef, type ReactNode, type RefObje
 import { createPortal } from 'react-dom';
 import { X } from 'lucide-react';
 import { cx } from '../cx';
-import { FOCUS_RING, focusableWithin } from './focus';
+import { FOCUS_RING, focusableWithin } from '../focus';
 
 export interface DialogProps {
   open: boolean;

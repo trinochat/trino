@@ -1,7 +1,8 @@
 import { LoaderCircle } from 'lucide-react';
 import { forwardRef, type ButtonHTMLAttributes, type ReactNode } from 'react';
 import { cx } from '../cx';
-import { DISABLED, FOCUS_RING } from './styles';
+import { FOCUS_RING } from '../focus';
+import { DISABLED } from './styles';
 
 export type ButtonVariant = 'primary' | 'secondary' | 'ghost' | 'danger' | 'dangerSolid';
 export type ButtonSize = 'md' | 'lg';

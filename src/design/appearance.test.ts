@@ -31,6 +31,17 @@ const PROTOTYPE = {
   'terminal-light': { bg: '#F2F4EF', side: '#E9ECE5', surface: '#FFFFFF', raised: '#E9EDE5', line: '#D3D9CF', ink: '#121A15', muted: '#4E5B53', accent: '#08743A', accentInk: '#FFFFFF', accentText: '#08743A', accentSoft: '#E1F0E6', ok: '#08743A', warn: '#8A5A00', warnBg: '#FFF4DB', danger: '#B3261E', dangerBg: '#FBE9E8', badge: '#08743A', badgeInk: '#FFFFFF', avatarBg: '#DDE5DA', avatarFg: '#08743A', bubbleIn: '#EEF1EA', bubbleInInk: '#121A15', bubbleInLine: '#D3D9CF', bubbleMe: '#08743A', bubbleMeInk: '#FFFFFF', bubbleMeMuted: '#D2F2DF', bubbleMeLine: '#08743A', outer: '#DDE2DA', font: "'IBM Plex Sans', system-ui, sans-serif", display: "'JetBrains Mono', ui-monospace, monospace", mono: "'JetBrains Mono', ui-monospace, monospace", radius: '4px', radiusLg: '6px', bubbleRadius: '4px', avatarRadius: '4px', scan: 'none', labelFont: "'JetBrains Mono', ui-monospace, monospace", labelTransform: 'uppercase', labelSpacing: '0.08em', wordmark: 'trino', shadow: 'none' },
 };
 
+// Tokens added after the prototype was approved, each for a need the canvas did
+// not cover. Pinned here too, and never a replacement for a prototype value.
+const ADDED_AFTER_PROTOTYPE: Record<keyof typeof PROTOTYPE, Partial<ThemeTokens>> = {
+  // controlLine: the boundary of the text fields, 3:1 on every background
+  // (WCAG 1.4.11), where the prototype's `line` gave about 1.2:1.
+  'calma-light': { controlLine: '#818B86' },
+  'calma-dark': { controlLine: '#66726B' },
+  'terminal-dark': { controlLine: '#607067' },
+  'terminal-light': { controlLine: '#7D877F' },
+};
+
 const ALTERNATIVES = ACCENTS.filter((accent): accent is AlternativeAccent => accent !== 'verde');
 const PALETTE_KEYS = Object.keys(ACCENT_PALETTES.light.azul) as (keyof AccentPalette)[];
 
@@ -226,8 +237,11 @@ describe('resolveMode', () => {
 describe('resolveTokens', () => {
   for (const style of STYLES) {
     for (const mode of RESOLVED_MODES) {
-      it(`${style} ${mode} with verde is the prototype's theme, unchanged`, () => {
-        expect(resolveTokens(style, mode, 'verde')).toEqual(PROTOTYPE[`${style}-${mode}`]);
+      it(`${style} ${mode} with verde is the prototype's theme, unchanged, plus the tokens added since`, () => {
+        const id = `${style}-${mode}` as const;
+        const added = Object.keys(ADDED_AFTER_PROTOTYPE[id]);
+        expect(added.filter(token => token in PROTOTYPE[id])).toEqual([]);
+        expect(resolveTokens(style, mode, 'verde')).toEqual({ ...PROTOTYPE[id], ...ADDED_AFTER_PROTOTYPE[id] });
       });
 
       // The friend's report: the chosen accent never reached the message bubbles.
@@ -290,6 +304,7 @@ describe('cssVariables', () => {
     expect(vars['--t-accent']).toBe('#0F7B4A');
     expect(vars['--t-accent-ink']).toBe('#FFFFFF');
     expect(vars['--t-bubble-me-muted']).toBe('#3F5A4B');
+    expect(vars['--t-control-line']).toBe('#818B86');
     expect(vars['--t-radius-lg']).toBe('14px');
     expect(vars['--t-label-font']).toBe("'Atkinson Hyperlegible Next', system-ui, sans-serif");
   });

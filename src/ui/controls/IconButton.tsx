@@ -1,6 +1,7 @@
 import { forwardRef, type ButtonHTMLAttributes, type ReactNode } from 'react';
 import { cx } from '../cx';
-import { DISABLED, FOCUS_RING } from './styles';
+import { FOCUS_RING } from '../focus';
+import { DISABLED } from './styles';
 
 /**
  * `ghost` for header actions, `muted` for secondary tools such as the

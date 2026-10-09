@@ -1,8 +1,9 @@
 import { useId, type ReactNode } from 'react';
 import { cx } from '../cx';
+import { FOCUS_RING } from '../focus';
 import { hasContent } from './aria';
 import { useRovingChoice } from './roving';
-import { DISABLED, FOCUS_RING } from './styles';
+import { DISABLED } from './styles';
 
 export interface RadioCardOption<T extends string> {
   value: T;

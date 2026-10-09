@@ -8,9 +8,10 @@ import {
   type TextareaHTMLAttributes,
 } from 'react';
 import { cx } from '../cx';
+import { FOCUS_RING } from '../focus';
 import { autosizeRows, contentRows } from './autosize';
 import { useFieldControl } from './field-context';
-import { DISABLED, FIELD_BOX, FOCUS_RING, fieldBorder } from './styles';
+import { COLOR_SCHEME, DISABLED, FIELD_BOX, fieldBorder } from './styles';
 
 export interface TextareaProps extends Omit<TextareaHTMLAttributes<HTMLTextAreaElement>, 'rows'> {
   /** Rows while empty: 2 by default. */
@@ -91,6 +92,7 @@ export const Textarea = forwardRef<HTMLTextAreaElement, TextareaProps>(function 
         FIELD_BOX,
         mono ? 'font-ui-mono' : 'font-ui',
         fieldBorder(invalid),
+        COLOR_SCHEME,
         FOCUS_RING,
         DISABLED,
         className,

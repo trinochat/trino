@@ -42,7 +42,7 @@ describe('Field', () => {
     expect(input.getAttribute('aria-invalid')).toBe('true');
     expect(descriptionsOf(input)).toEqual(['Al menos 8 caracteres.', 'Las contraseñas no coinciden.']);
     expect(input.classList).toContain('border-ui-danger');
-    expect(input.classList).not.toContain('border-ui-line');
+    expect(input.classList).not.toContain('border-ui-control-line');
   });
 
   it('shows the error in the danger colour with an icon, not by colour alone', () => {
@@ -111,7 +111,7 @@ describe('Input', () => {
     expect(ref.current).toBe(input);
     expect(input.getAttribute('type')).toBe('text');
     expect(input.classList).toContain('min-h-12');
-    expect(input.classList).toContain('border-ui-line');
+    expect(input.classList).toContain('border-ui-control-line');
     expect(input.classList).toContain('font-ui');
     expect(input.hasAttribute('aria-invalid')).toBe(false);
   });

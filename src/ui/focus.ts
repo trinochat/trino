@@ -1,12 +1,14 @@
 /**
- * Keyboard focus helpers shared by the overlays and the chat components.
+ * Keyboard focus for the whole component library: the one focus ring, in two
+ * placements, and the list of what Tab reaches. Controls, overlays and chat
+ * pieces all import it from here; `focus.test.tsx` fails on a second definition.
  */
 
 /**
  * Visible keyboard focus (WCAG 2.4.7): a 2 px outline in the accent text
- * colour, which reaches 4.5:1 on every surface, the same look as the controls'
- * ring. `shadow-none` drops the glow the legacy stylesheet adds to every
- * focused element.
+ * colour, 2 px away from the element, which reaches 4.5:1 on every surface.
+ * `shadow-none` drops the glow the legacy stylesheet adds to every focused
+ * element.
  */
 export const FOCUS_RING =
   'focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ui-accent-text focus-visible:shadow-none';

@@ -19,7 +19,7 @@ import {
 import { createPortal } from 'react-dom';
 import { CircleAlert, CircleCheck, Info, X } from 'lucide-react';
 import { cx } from '../cx';
-import { FOCUS_RING } from './focus';
+import { FOCUS_RING } from '../focus';
 
 export type ToastTone = 'info' | 'success' | 'error';
 

@@ -1,7 +1,8 @@
 import { forwardRef, useId, type ButtonHTMLAttributes, type MouseEvent, type ReactNode } from 'react';
 import { cx } from '../cx';
+import { FOCUS_RING } from '../focus';
 import { hasContent, joinIds } from './aria';
-import { DISABLED, FOCUS_RING } from './styles';
+import { DISABLED } from './styles';
 
 /** A switch needs an accessible name: a visible label, an aria-label or an aria-labelledby. */
 type SwitchName =

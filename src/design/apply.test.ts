@@ -67,6 +67,11 @@ describe('applyAppearance', () => {
     expect(variable('--t-danger')).toBe(THEMES['calma-dark'].danger);
   });
 
+  it('sets the boundary of the text fields, which no accent changes', () => {
+    applyAppearance(document, { style: 'terminal', mode: 'light', accent: 'azul' }, false);
+    expect(variable('--t-control-line')).toBe(THEMES['terminal-light'].controlLine);
+  });
+
   it('replaces every variable of the previous appearance', () => {
     applyAppearance(document, { style: 'terminal', mode: 'dark', accent: 'azul' }, false);
     applyAppearance(document, { style: 'calma', mode: 'light', accent: 'verde' }, false);
@@ -82,6 +87,24 @@ describe('applyAppearance', () => {
     applyAppearance(document, { style: 'calma', mode: 'light', accent: 'verde' }, false);
     expect(root().dataset.theme).toBe('trino');
     expect(variable('--color-accent')).toBe('34 255 102');
+  });
+
+  it.each([
+    ['light', false, 'light'],
+    ['dark', false, 'dark'],
+    ['system', true, 'dark'],
+    ['system', false, 'light'],
+  ] as const)(
+    'gives native controls the %s mode (system dark: %s) through --t-color-scheme: %s',
+    (mode, prefersDark, scheme) => {
+      applyAppearance(document, { style: 'terminal', mode, accent: 'verde' }, prefersDark);
+      expect(variable('--t-color-scheme')).toBe(scheme);
+    },
+  );
+
+  it('leaves color-scheme on <html> unset, so the legacy screens keep their native controls', () => {
+    applyAppearance(document, { style: 'calma', mode: 'dark', accent: 'verde' }, false);
+    expect(root().style.getPropertyValue('color-scheme')).toBe('');
   });
 });
 
@@ -111,6 +134,7 @@ describe('initAppearance', () => {
     setSystemDark(true);
     expect(root().dataset.mode).toBe('dark');
     expect(variable('--t-bg')).toBe(THEMES['calma-dark'].bg);
+    expect(variable('--t-color-scheme')).toBe('dark');
   });
 
   it('ignores the system colour scheme while the mode is explicit', () => {

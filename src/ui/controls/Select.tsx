@@ -1,8 +1,9 @@
 import { ChevronDown } from 'lucide-react';
 import { forwardRef, type SelectHTMLAttributes } from 'react';
 import { cx } from '../cx';
+import { FOCUS_RING } from '../focus';
 import { useFieldControl } from './field-context';
-import { DISABLED, FIELD_BOX, FOCUS_RING, fieldBorder } from './styles';
+import { COLOR_SCHEME, DISABLED, FIELD_BOX, fieldBorder } from './styles';
 
 export type SelectProps = SelectHTMLAttributes<HTMLSelectElement>;
 
@@ -26,6 +27,7 @@ export const Select = forwardRef<HTMLSelectElement, SelectProps>(function Select
           'min-h-11 cursor-pointer appearance-none pl-3 pr-10 font-ui [&>option]:bg-ui-surface [&>option]:text-ui-ink',
           FIELD_BOX,
           fieldBorder(invalid),
+          COLOR_SCHEME,
           FOCUS_RING,
           DISABLED,
         )}

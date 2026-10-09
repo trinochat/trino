@@ -15,7 +15,7 @@ import {
 } from 'react';
 import { Ellipsis } from 'lucide-react';
 import { cx } from '../cx';
-import { FOCUS_RING, FOCUS_RING_INSET } from './focus';
+import { FOCUS_RING, FOCUS_RING_INSET } from '../focus';
 
 export interface MenuItem {
   /** Stable key of the item. */

@@ -1,7 +1,8 @@
 import { forwardRef, type InputHTMLAttributes } from 'react';
 import { cx } from '../cx';
+import { FOCUS_RING } from '../focus';
 import { useFieldControl } from './field-context';
-import { DISABLED, FIELD_BOX, FOCUS_RING, fieldBorder } from './styles';
+import { COLOR_SCHEME, DISABLED, FIELD_BOX, fieldBorder } from './styles';
 
 export interface InputProps extends InputHTMLAttributes<HTMLInputElement> {
   /** The monospace font, for keys and codes only. */
@@ -25,6 +26,7 @@ export const Input = forwardRef<HTMLInputElement, InputProps>(function Input(
         FIELD_BOX,
         mono ? 'font-ui-mono' : 'font-ui',
         fieldBorder(invalid),
+        COLOR_SCHEME,
         FOCUS_RING,
         DISABLED,
         className,

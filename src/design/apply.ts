@@ -3,6 +3,10 @@
  * and `data-mode` attributes of <html>. It coexists with the legacy theme
  * (`src/lib/theme.ts`), which owns `data-theme` and the `--color-*` variables
  * of the current screens.
+ *
+ * `--t-color-scheme` holds the resolved mode for the native parts of the new
+ * controls (`COLOR_SCHEME` in src/ui/controls/styles.ts). `color-scheme`
+ * itself stays off <html>, where it would also restyle the legacy screens.
  */
 import {
   cssVariables,
@@ -30,6 +34,7 @@ export function applyAppearance(doc: Document, appearance: Appearance, prefersDa
   for (const [name, value] of Object.entries(variables)) {
     root.style.setProperty(name, value);
   }
+  root.style.setProperty('--t-color-scheme', mode);
   root.dataset.style = appearance.style;
   root.dataset.mode = mode;
 }

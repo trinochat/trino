@@ -1,7 +1,8 @@
 import type { ReactNode } from 'react';
 import { cx } from '../cx';
+import { FOCUS_RING } from '../focus';
 import { useRovingChoice } from './roving';
-import { DISABLED, FOCUS_RING } from './styles';
+import { DISABLED } from './styles';
 
 export interface SegmentedOption<T extends string> {
   value: T;

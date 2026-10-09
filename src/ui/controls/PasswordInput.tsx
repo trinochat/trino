@@ -1,9 +1,10 @@
 import { Eye, EyeOff } from 'lucide-react';
 import { forwardRef, useState, type InputHTMLAttributes } from 'react';
 import { cx } from '../cx';
+import { FOCUS_RING } from '../focus';
 import { useFieldControl } from './field-context';
 import { IconButton } from './IconButton';
-import { DISABLED, FIELD_BOX, FOCUS_RING, fieldBorder } from './styles';
+import { COLOR_SCHEME, DISABLED, FIELD_BOX, fieldBorder } from './styles';
 
 export interface PasswordInputProps extends Omit<InputHTMLAttributes<HTMLInputElement>, 'type'> {
   /** Accessible name of the show/hide toggle, such as "Mostrar contraseña". It stays the same; aria-pressed tells the state. */
@@ -32,7 +33,14 @@ export const PasswordInput = forwardRef<HTMLInputElement, PasswordInputProps>(fu
         disabled={disabled}
         {...rest}
         {...controlProps}
-        className={cx('min-h-12 pl-3.5 pr-14 font-ui', FIELD_BOX, fieldBorder(invalid), FOCUS_RING, DISABLED)}
+        className={cx(
+          'min-h-12 pl-3.5 pr-14 font-ui',
+          FIELD_BOX,
+          fieldBorder(invalid),
+          COLOR_SCHEME,
+          FOCUS_RING,
+          DISABLED,
+        )}
       />
       <IconButton
         aria-label={toggleLabel}

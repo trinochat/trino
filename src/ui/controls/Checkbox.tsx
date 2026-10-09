@@ -1,7 +1,8 @@
 import { forwardRef, useId, type InputHTMLAttributes, type ReactNode } from 'react';
 import { cx } from '../cx';
+import { FOCUS_RING } from '../focus';
 import { hasContent, joinIds } from './aria';
-import { FOCUS_RING } from './styles';
+import { COLOR_SCHEME } from './styles';
 
 export interface CheckboxProps extends Omit<InputHTMLAttributes<HTMLInputElement>, 'type'> {
   label: ReactNode;
@@ -38,7 +39,11 @@ export const Checkbox = forwardRef<HTMLInputElement, CheckboxProps>(function Che
         disabled={disabled}
         aria-labelledby={labelId}
         aria-describedby={joinIds(hasDescription && descriptionId, ownDescribedBy)}
-        className={cx('mt-0.5 h-5 w-5 shrink-0 cursor-[inherit] [accent-color:var(--t-accent)]', FOCUS_RING)}
+        className={cx(
+          'mt-0.5 h-5 w-5 shrink-0 cursor-[inherit] [accent-color:var(--t-accent)]',
+          COLOR_SCHEME,
+          FOCUS_RING,
+        )}
         {...rest}
       />
       <span className="flex min-w-0 flex-col gap-0.5">

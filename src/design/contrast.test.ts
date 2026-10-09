@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { resolveTokens } from './appearance';
 import { contrastRatio, relativeLuminance } from './color';
-import { ACCENTS, RESOLVED_MODES, STYLES, type ThemeTokens } from './tokens';
+import { ACCENTS, RESOLVED_MODES, STYLES, THEMES, type ThemeId, type ThemeTokens } from './tokens';
 
 type Pair = readonly [foreground: keyof ThemeTokens, background: keyof ThemeTokens];
 
@@ -38,16 +38,29 @@ const PROTOTYPE_TEXT_PAIRS: readonly Pair[] = [
   ['accentText', 'accentSoft'], // initials of your own avatar
 ];
 
-/** Status indicators and control states (WCAG 1.4.11): 3:1. Lines are decorative. */
+/** Status indicators and control states (WCAG 1.4.11): 3:1. `line` is decorative. */
 const NON_TEXT_PAIRS: readonly Pair[] = [
   ['ok', 'surface'], // status dot
   ['accent', 'surface'], // toggle on, selected segment
   ['accent', 'bg'],
 ];
 
+/** Where a control can sit: panels, the app background, the sidebar and selected rows. */
+const BACKGROUNDS = ['surface', 'bg', 'side', 'raised'] as const;
+
+/**
+ * The boundary that shows where a text field is (WCAG 1.4.11): `controlLine`,
+ * or `danger` while the field is invalid, at 3:1 on every background.
+ */
+const BOUNDARY_PAIRS: readonly Pair[] = (['controlLine', 'danger'] as const).flatMap(boundary =>
+  BACKGROUNDS.map((background): Pair => [boundary, background]),
+);
+
 const COMBINATIONS = STYLES.flatMap(style =>
   RESOLVED_MODES.flatMap(mode => ACCENTS.map(accent => ({ style, mode, accent }))),
 );
+
+const THEME_IDS = Object.keys(THEMES) as ThemeId[];
 
 /** Every pair below `minimum`, named with both colours and the ratio. */
 function failures(tokens: ThemeTokens, pairs: readonly Pair[], minimum: number): string[] {
@@ -94,5 +107,20 @@ describe.each(COMBINATIONS)('contrast of $style $mode with $accent', ({ style, m
   it('status indicators and control states reach 3:1', () => {
     const tokens = resolveTokens(style, mode, accent);
     expect(failures(tokens, NON_TEXT_PAIRS, 3)).toEqual([]);
+  });
+
+  it('text field boundaries, normal and invalid, reach 3:1 on every background', () => {
+    const tokens = resolveTokens(style, mode, accent);
+    expect(failures(tokens, BOUNDARY_PAIRS, 3)).toEqual([]);
+  });
+});
+
+describe.each(THEME_IDS)('the control boundary of %s', id => {
+  // As quiet as WCAG allows: a boundary, not a second muted text colour.
+  it('stays between 3:1 and 3.6:1 on the background closest to it', () => {
+    const theme = THEMES[id];
+    const closest = Math.min(...BACKGROUNDS.map(background => contrastRatio(theme.controlLine, theme[background])));
+    expect(closest).toBeGreaterThanOrEqual(3);
+    expect(closest).toBeLessThanOrEqual(3.6);
   });
 });

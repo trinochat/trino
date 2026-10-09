@@ -4,7 +4,7 @@
  * aria-current, the accent tint and an accent bar on its leading edge.
  */
 import { cx } from '../cx';
-import { FOCUS_RING_INSET } from '../overlay/focus';
+import { FOCUS_RING_INSET } from '../focus';
 import { Avatar, type AvatarProps } from './Avatar';
 import { TrustBadge, type TrustKind } from './TrustBadge';
 import { UnreadBadge } from './UnreadBadge';
