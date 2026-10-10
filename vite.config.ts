@@ -1,3 +1,4 @@
+/// <reference types="vitest/config" />
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 
@@ -28,5 +29,12 @@ export default defineConfig(async () => ({
       // 3. tell Vite to ignore watching `src-tauri`
       ignored: ["**/src-tauri/**"],
     },
+  },
+
+  // Vitest. Several units build and test at once, and on a loaded machine the
+  // jsdom tests went past the default 5 s; src/test-timeout.test.ts checks it.
+  test: {
+    testTimeout: 20_000,
+    hookTimeout: 20_000,
   },
 }));

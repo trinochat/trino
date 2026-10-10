@@ -3,8 +3,9 @@ import { describe, expect, it } from 'vitest';
 /**
  * Principle 2 of the redesign: no hand-written colours. Colours live in the
  * tokens (`src/design/tokens.ts`) and reach the screens through the `ui-*`
- * Tailwind classes and the `--t-*` CSS variables, so the component library
- * and the design engine hold no colour literals: no hex, no rgb() or hsl(),
+ * Tailwind classes and the `--t-*` CSS variables, so the component library,
+ * the design engine, the redesigned screens (`src/screens`) and the app
+ * around them (`src/app`) hold no colour literals: no hex, no rgb() or hsl(),
  * and no colour class outside the tokens (`bg-white`, `text-gray-500`). Only
  * the tokens, the colour maths (`color.ts`) and the tests may write one.
  */
@@ -16,6 +17,10 @@ const SOURCES: Record<string, string> = {
   }),
   ...import.meta.glob<string>(
     ['../design/**/*.{ts,tsx}', '!../design/**/*.test.{ts,tsx}', '!../design/tokens.ts', '!../design/color.ts'],
+    { query: '?raw', import: 'default', eager: true },
+  ),
+  ...import.meta.glob<string>(
+    ['../screens/**/*.{ts,tsx}', '!../screens/**/*.test.{ts,tsx}', '../app/**/*.{ts,tsx}', '!../app/**/*.test.{ts,tsx}'],
     { query: '?raw', import: 'default', eager: true },
   ),
 };
@@ -226,17 +231,33 @@ describe('colourLiterals', () => {
   });
 });
 
-describe('the component library and the design engine', () => {
+describe('the component library, the design engine and the screens', () => {
   it('are all scanned, except the tokens, the colour maths and the tests', () => {
     const scanned = Object.keys(SOURCES);
     expect(scanned).toEqual(
-      expect.arrayContaining(['./cx.ts', './controls/Button.tsx', '../design/appearance.ts', '../design/apply.ts']),
+      expect.arrayContaining([
+        './cx.ts',
+        './controls/Button.tsx',
+        '../design/appearance.ts',
+        '../design/apply.ts',
+        '../screens/types.ts',
+      ]),
     );
     expect(scanned.filter(key => /\.test\.tsx?$|\/(tokens|color)\.ts$/.test(key))).toEqual([]);
   });
 
   it('hold no colour literals', () => {
     expect(findings(SOURCES)).toEqual([]);
+  });
+
+  // The redesigned screens (src/screens) and the app around them (src/app)
+  // follow the rule from the first commit of each unit.
+  it('report a colour in a screen or in the app with its path', () => {
+    const planted = {
+      '../screens/chat/ChatPane.tsx': "const row = 'flex bg-white';",
+      '../app/MainScreen.tsx': 'const ink = "#fff";',
+    };
+    expect(findings(planted)).toEqual(['src/screens/chat/ChatPane.tsx:1: bg-white', 'src/app/MainScreen.tsx:1: #fff']);
   });
 
   // Mutation check: the same scan, on copies of real components with a colour planted.

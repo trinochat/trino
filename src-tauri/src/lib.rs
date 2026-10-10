@@ -227,7 +227,9 @@ pub fn run() {
             commands::resend_outbox,
             commands::resync_session,
             commands::set_autostart,
+            // -- W7 --
             commands::get_autostart,
+            // -- W8 --
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
