@@ -114,10 +114,12 @@ export interface CommandError {
   message: string;
   // The minimum length, with `passphrase_too_short` only.
   min?: number;
-  // Why each file server failed, with `upload_failed` only.
+  // Why each file server failed, with `upload_failed` only (W7, K2).
   servers?: { server: string; reason: string }[];
-  // The name the contact already has, with `already_contact` only.
+  // The name the contact already has, with `already_contact` only (W8, K8).
   handle?: string;
+  // W7 and W8 add `servers` and `handle` to the Rust `CommandError` under
+  // these names; both edit that struct, so the merge keeps both fields.
 }
 
 // Whether a rejected command carries a `CommandError`. The other commands
@@ -147,14 +149,12 @@ export interface NodeInfo {
   added_at: number;
   avatar?: string | null;
   blocked?: boolean;
-  // The fields below arrive with W8 (K7, K8, K9); optional until then.
+  // The fields below arrive with W8 (K7, K8); optional until then.
   // SHA-256 of the identity keys in full hex; `fingerprint` is its prefix.
   identity_digest?: string | null;
   // The contact's keys changed: the old fingerprint, and when (epoch seconds).
   previous_fingerprint?: string | null;
   key_changed_at?: number | null;
-  // The group the contact was added through, when it came with a group.
-  via_group?: string | null;
 }
 
 export interface ProfileResponse {
@@ -261,7 +261,10 @@ export interface GroupSendReceipt {
   failed: string[];
 }
 
-// What `send_file` returns: the file, plus its receipt once K4 lands.
+// What `send_file` and `send_group_file` return: the file, plus its receipt
+// once K4 lands. W7 keeps the `FileRef` fields and flattens the receipt in
+// (`ts` and `accepted_by` for a contact; `ts`, `accepted` and `failed` for a
+// group): the chat shows and forwards the file it gets back.
 export type SentFile = FileRef & Partial<SendReceipt>;
 export type SentGroupFile = FileRef & Partial<GroupSendReceipt>;
 
@@ -287,6 +290,8 @@ export interface ContactPreview {
 }
 
 // A member of a group as its roster names it (K9), matched to a contact by key.
+// `via_group` is the group the contact came with (`FriendRecord.via_group`);
+// only the members carry it, not `NodeInfo`.
 export interface GroupMember {
   ik_sign_pub: string;
   roster_handle: string;
@@ -435,7 +440,9 @@ export const api = {
   // K8: the user saw that the contact's keys changed.
   acknowledgeKeyChange: (handle: string): Promise<void> =>
     invoke('acknowledge_key_change', { handle }),
-  // K9 and K10: the members of a group and what its admin can do.
+  // K9 and K10: the members of a group and what its admin can do. Removing a
+  // member and renaming answer with the group as it is after the change;
+  // leaving and deleting answer with nothing.
   groupMembers: (gid: string): Promise<GroupMember[]> => invoke('group_members', { gid }),
   removeGroupMember: (gid: string, ikSignPub: string): Promise<GroupInfo> =>
     invoke('remove_group_member', { gid, ikSignPub }),

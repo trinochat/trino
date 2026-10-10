@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, expectTypeOf, it, vi } from 'vitest';
 import {
   COMMAND_ERROR_CODES,
   api,
@@ -6,6 +6,15 @@ import {
   onConnectionChanged,
   onContactKeyMismatch,
   onGroupRemoved,
+  type CommandError,
+  type FileRef,
+  type GroupInfo,
+  type GroupMember,
+  type GroupSendReceipt,
+  type NodeInfo,
+  type SendReceipt,
+  type SentFile,
+  type SentGroupFile,
 } from './api';
 
 // The wrappers are the contract with src-tauri: the command and event names
@@ -154,6 +163,40 @@ describe('the existing commands that gain an optional argument', () => {
     await expect(api.sendMessage('Ana', 'hola')).resolves.toBeNull();
     invoke.mockResolvedValueOnce({ ...FILE, ts: 1760000000, accepted_by: [] });
     await expect(api.sendFile('Ana', 'a.png', 'image/png', 'AAAA', null)).resolves.toMatchObject({ ...FILE, ts: 1760000000 });
+  });
+});
+
+// What the backend units must answer with. Plan §5 leaves these shapes open;
+// the screens are written against them, so W7 and W8 match them (tsc checks
+// this side, `cargo test` the other).
+describe('the answers W7 and W8 must match', () => {
+  it('keep the file of a sent file, with the receipt flattened in (K4)', () => {
+    expectTypeOf<SentFile>().toEqualTypeOf<FileRef & Partial<SendReceipt>>();
+    expectTypeOf<SentGroupFile>().toEqualTypeOf<FileRef & Partial<GroupSendReceipt>>();
+    expectTypeOf<GroupSendReceipt>().toEqualTypeOf<{ ts: number; accepted: string[]; failed: string[] }>();
+  });
+
+  it('pass a sent group file through with its file and its receipt', async () => {
+    const answer = { ...FILE, ts: 1760000000, accepted: ['Ana'], failed: ['Luis'] };
+    invoke.mockResolvedValueOnce(answer);
+    await expect(api.sendGroupFile('g1', 'a.png', 'image/png', 'AAAA', null)).resolves.toEqual(answer);
+  });
+
+  it('answer removing a member and renaming with the group as it is now (K10)', () => {
+    expectTypeOf(api.removeGroupMember).returns.toEqualTypeOf<Promise<GroupInfo>>();
+    expectTypeOf(api.renameGroup).returns.toEqualTypeOf<Promise<GroupInfo>>();
+    expectTypeOf(api.leaveGroup).returns.toEqualTypeOf<Promise<void>>();
+    expectTypeOf(api.deleteGroup).returns.toEqualTypeOf<Promise<void>>();
+  });
+
+  it('name the extra fields of a command error (K2, K8)', () => {
+    expectTypeOf<CommandError['servers']>().toEqualTypeOf<{ server: string; reason: string }[] | undefined>();
+    expectTypeOf<CommandError['handle']>().toEqualTypeOf<string | undefined>();
+  });
+
+  it('carry via_group on the members of a group only, as K9 names it', () => {
+    expectTypeOf<GroupMember>().toHaveProperty('via_group');
+    expectTypeOf<NodeInfo>().not.toHaveProperty('via_group');
   });
 });
 
