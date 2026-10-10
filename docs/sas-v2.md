@@ -226,7 +226,9 @@ mismatch that is not there.
   for each `call` and `contact` vector, and a refusal for every `invalid`
   input. The vectors include swapped A/B pairs, equal values, values that
   differ in one digit, all-zero and all-`f` values, and the shortest and
-  longest call ids.
+  longest call ids. The invalid ones include call ids of a valid length with
+  a single character outside the set (`.`, `~` and the standard base64 `+`,
+  `/`, `=`), so a port cannot accept a looser alphabet than `call.ts`.
 - **Same licence notice.** Ship `LICENSE-lucide.txt` (or its text) wherever
   the drawings go, including the website.
 - **Same presentation rules:** 7 symbols in order, each icon with its word in

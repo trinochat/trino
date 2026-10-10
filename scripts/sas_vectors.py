@@ -129,6 +129,13 @@ INVALID_CALL = [
     ("callId with a NUL", "q3Xv9_Lr-2bTnW8k\x00Pz4yHc", ID_ALICE, ID_BOB, DTLS_ALICE, DTLS_BOB),
     ("callId with a space", "q3Xv9_Lr 2bTnW8kPz4yHc", ID_ALICE, ID_BOB, DTLS_ALICE, DTLS_BOB),
     ("callId not ASCII", "q3Xv9_Lr-2bTnW8kPz4yHñ", ID_ALICE, ID_BOB, DTLS_ALICE, DTLS_BOB),
+    # Right length, one character outside the set: standard base64 ('+', '/',
+    # '=' padding), '.' and '~', so no port can accept a looser alphabet.
+    ("callId with a '.'", "q3Xv9_Lr.2bTnW8kPz4yHc", ID_ALICE, ID_BOB, DTLS_ALICE, DTLS_BOB),
+    ("callId with a '+' (standard base64)", "q3Xv9_Lr+2bTnW8kPz4yHc", ID_ALICE, ID_BOB, DTLS_ALICE, DTLS_BOB),
+    ("callId with a '/' (standard base64)", "q3Xv9_Lr/2bTnW8kPz4yHc", ID_ALICE, ID_BOB, DTLS_ALICE, DTLS_BOB),
+    ("callId with '=' padding (standard base64)", "q3Xv9_Lr-2bTnW8kPz4yH=", ID_ALICE, ID_BOB, DTLS_ALICE, DTLS_BOB),
+    ("callId with a '~'", "q3Xv9_Lr~2bTnW8kPz4yHc", ID_ALICE, ID_BOB, DTLS_ALICE, DTLS_BOB),
 ]
 INVALID_CONTACT = [
     ("uppercase identity", ID_ALICE, UPPER),

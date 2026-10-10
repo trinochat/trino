@@ -274,6 +274,46 @@
         "idB": "8b6e97b633b3bcafc5e4680d8a9858d6821de74153b4f456bac749d3662c0955",
         "dtlsA": "041dc47c394066a6ddb63889833fc03f5727a1c733d990d9b0d56485a761c6ef",
         "dtlsB": "d27812209b4cd416fe0c2b7de2a78bdde411f57a9a45ea910f793298465b3a5b"
+      },
+      {
+        "name": "callId with a '.'",
+        "callId": "q3Xv9_Lr.2bTnW8kPz4yHc",
+        "idA": "866719888da792842a0f7dcfa116eb580ff134a7e7f2cc9a7a4fef8716a0f4bf",
+        "idB": "8b6e97b633b3bcafc5e4680d8a9858d6821de74153b4f456bac749d3662c0955",
+        "dtlsA": "041dc47c394066a6ddb63889833fc03f5727a1c733d990d9b0d56485a761c6ef",
+        "dtlsB": "d27812209b4cd416fe0c2b7de2a78bdde411f57a9a45ea910f793298465b3a5b"
+      },
+      {
+        "name": "callId with a '+' (standard base64)",
+        "callId": "q3Xv9_Lr+2bTnW8kPz4yHc",
+        "idA": "866719888da792842a0f7dcfa116eb580ff134a7e7f2cc9a7a4fef8716a0f4bf",
+        "idB": "8b6e97b633b3bcafc5e4680d8a9858d6821de74153b4f456bac749d3662c0955",
+        "dtlsA": "041dc47c394066a6ddb63889833fc03f5727a1c733d990d9b0d56485a761c6ef",
+        "dtlsB": "d27812209b4cd416fe0c2b7de2a78bdde411f57a9a45ea910f793298465b3a5b"
+      },
+      {
+        "name": "callId with a '/' (standard base64)",
+        "callId": "q3Xv9_Lr/2bTnW8kPz4yHc",
+        "idA": "866719888da792842a0f7dcfa116eb580ff134a7e7f2cc9a7a4fef8716a0f4bf",
+        "idB": "8b6e97b633b3bcafc5e4680d8a9858d6821de74153b4f456bac749d3662c0955",
+        "dtlsA": "041dc47c394066a6ddb63889833fc03f5727a1c733d990d9b0d56485a761c6ef",
+        "dtlsB": "d27812209b4cd416fe0c2b7de2a78bdde411f57a9a45ea910f793298465b3a5b"
+      },
+      {
+        "name": "callId with '=' padding (standard base64)",
+        "callId": "q3Xv9_Lr-2bTnW8kPz4yH=",
+        "idA": "866719888da792842a0f7dcfa116eb580ff134a7e7f2cc9a7a4fef8716a0f4bf",
+        "idB": "8b6e97b633b3bcafc5e4680d8a9858d6821de74153b4f456bac749d3662c0955",
+        "dtlsA": "041dc47c394066a6ddb63889833fc03f5727a1c733d990d9b0d56485a761c6ef",
+        "dtlsB": "d27812209b4cd416fe0c2b7de2a78bdde411f57a9a45ea910f793298465b3a5b"
+      },
+      {
+        "name": "callId with a '~'",
+        "callId": "q3Xv9_Lr~2bTnW8kPz4yHc",
+        "idA": "866719888da792842a0f7dcfa116eb580ff134a7e7f2cc9a7a4fef8716a0f4bf",
+        "idB": "8b6e97b633b3bcafc5e4680d8a9858d6821de74153b4f456bac749d3662c0955",
+        "dtlsA": "041dc47c394066a6ddb63889833fc03f5727a1c733d990d9b0d56485a761c6ef",
+        "dtlsB": "d27812209b4cd416fe0c2b7de2a78bdde411f57a9a45ea910f793298465b3a5b"
       }
     ],
     "contact": [

@@ -51,6 +51,18 @@ describe('golden vectors (scripts/sas_vectors.py)', () => {
     expect(vectors.contact.length).toBeGreaterThanOrEqual(5);
   });
 
+  it('pins the callId character set: a right-length id with any other character is invalid', () => {
+    // Standard base64 ('+', '/', '='), '.' and '~' are the likely slips of a
+    // looser port; each must appear alone in an id that is otherwise valid.
+    for (const char of ['.', '+', '/', '=', '~']) {
+      const found = vectors.invalid.call.some(v => {
+        const rest = v.callId.split(char);
+        return rest.length === 2 && v.callId.length >= 16 && v.callId.length <= 64 && /^[A-Za-z0-9_-]*$/.test(rest.join(''));
+      });
+      expect(found, `an invalid call vector whose only bad character is '${char}'`).toBe(true);
+    }
+  });
+
   it.each(vectors.call.map(v => [v.name, v] as const))('call: %s', async (_name, v) => {
     expect(hex(await callSasDigest(callInput(v)))).toBe(v.digest);
     expect(await callSas(callInput(v))).toEqual(v.indices);
