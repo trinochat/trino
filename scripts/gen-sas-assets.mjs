@@ -101,7 +101,8 @@ const GEOMETRY = new Set(['d', 'cx', 'cy', 'r', 'rx', 'ry', 'x', 'y', 'width', '
 const allowed = (attr, value) => GEOMETRY.has(attr) || (attr === 'fill' && value === 'currentColor');
 const TAGS = new Set(['path', 'circle', 'ellipse', 'rect', 'line', 'polyline', 'polygon']);
 
-function installedLucideVersion() {
+/** The lucide-react version installed in node_modules. */
+export function installedLucideVersion() {
   const pkg = JSON.parse(readFileSync(require.resolve('lucide-react/package.json'), 'utf8'));
   return pkg.version;
 }

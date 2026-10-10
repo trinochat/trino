@@ -281,6 +281,12 @@ than 0.468.0, and the drift test rebuilds the table in memory and fails if the
 committed file differs. Upgrading lucide-react therefore cannot change the
 symbols by accident; if new drawings are ever wanted, that is SAS v3.
 
+The app draws from the committed JSON, not from lucide-react, so the rest of
+the app may upgrade lucide-react for its own icons. Then only the drift check
+is skipped, and the test run says so (`drift check skipped: lucide-react X is
+installed`); the committed JSON and the hand-kept copy of the table in
+`sas-symbols.test.ts` remain the guard. Regenerating needs 0.468.0 again.
+
 The tests cover: the golden vectors and the invalid inputs; that the order of
 A and B does not matter; that a call and a contact give different symbols;
 that the result is 7 indices below 64 taken as `d[i] >> 2`; that changing any

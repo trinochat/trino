@@ -5,7 +5,7 @@ import committedVectors from '../../assets/sas/vectors.json?raw';
 import spec from '../../docs/sas-v2.md?raw';
 import generatorSource from '../../scripts/gen-sas-assets.mjs?raw';
 import vectorsScriptSource from '../../scripts/sas_vectors.py?raw';
-import { buildSasAssets } from '../../scripts/gen-sas-assets.mjs';
+import { LUCIDE_VERSION, buildSasAssets, installedLucideVersion } from '../../scripts/gen-sas-assets.mjs';
 import type { Lang } from './i18n';
 import { SAS_SYMBOLS, SAS_TABLE, sasSymbol, sasWord, sasWords } from './sas-symbols';
 
@@ -113,6 +113,15 @@ const LANGS: Lang[] = ['es', 'en', 'pt'];
 const fold = (word: string) => word.normalize('NFD').replace(/\p{M}/gu, '').toLowerCase();
 
 /**
+ * The generator only runs against the lucide-react the table was drawn from.
+ * The app draws from the committed JSON, so a later lucide-react upgrade (for
+ * the UI icons) cannot change the symbols: then only the drift check is
+ * skipped, and the committed JSON and the FROZEN copy above stay the guard.
+ */
+const INSTALLED_LUCIDE = installedLucideVersion();
+const CAN_REGENERATE = INSTALLED_LUCIDE === LUCIDE_VERSION;
+
+/**
  * The SVG attributes a node may carry: geometry, never a colour or a stroke of
  * its own. The one exception is `fill="currentColor"`, a solid dot in the text
  * colour (the sound hole of Guitar).
@@ -186,11 +195,21 @@ describe('the SAS v2 table (assets/sas/sas-v2.json)', () => {
     }
   });
 
-  it('matches what the generator makes from lucide-react today (no drift)', () => {
-    const fresh = buildSasAssets();
-    expect(committedJson).toBe(fresh.json);
-    expect(committedLicense).toBe(fresh.license);
+  it('is drawn from the lucide-react version the generator pins', () => {
+    expect(SAS_TABLE.source).toBe(`lucide-react@${LUCIDE_VERSION}`);
+    expect(INSTALLED_LUCIDE).toMatch(/^\d+\.\d+\.\d+/);
   });
+
+  it.skipIf(!CAN_REGENERATE)(
+    CAN_REGENERATE
+      ? 'matches what the generator makes from lucide-react today (no drift)'
+      : `drift check skipped: lucide-react ${INSTALLED_LUCIDE} is installed, the table is drawn from ${LUCIDE_VERSION}`,
+    () => {
+      const fresh = buildSasAssets();
+      expect(committedJson).toBe(fresh.json);
+      expect(committedLicense).toBe(fresh.license);
+    },
+  );
 
   it('is listed row for row in docs/sas-v2.md', () => {
     for (const s of SAS_SYMBOLS) {
