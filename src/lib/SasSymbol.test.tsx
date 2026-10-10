@@ -55,12 +55,20 @@ describe('SasIcon', () => {
     expect(svg.getAttribute('focusable')).toBe('false');
   });
 
-  it('takes its size in px, 20 by default', () => {
-    const { container, rerender } = render(<SasIcon index={1} />);
-    expect(container.querySelector('svg')!.getAttribute('width')).toBe('20');
-    rerender(<SasIcon index={1} size={28} />);
+  it('grows with the text by default: 1.25em, 20 px at 16 px text', () => {
+    const { container } = render(<SasIcon index={1} />);
+    const svg = container.querySelector('svg')!;
+    expect(svg.getAttribute('width')).toBe('1.25em');
+    expect(svg.getAttribute('height')).toBe('1.25em');
+  });
+
+  it('takes a size in px or as any CSS length', () => {
+    const { container, rerender } = render(<SasIcon index={1} size={28} />);
     expect(container.querySelector('svg')!.getAttribute('width')).toBe('28');
     expect(container.querySelector('svg')!.getAttribute('height')).toBe('28');
+    rerender(<SasIcon index={1} size="1.75rem" />);
+    expect(container.querySelector('svg')!.getAttribute('width')).toBe('1.75rem');
+    expect(container.querySelector('svg')!.getAttribute('height')).toBe('1.75rem');
   });
 });
 
@@ -79,6 +87,19 @@ describe('SasSymbol', () => {
   it('can be given a language of its own', () => {
     render(inLang('en', <SasSymbol index={8} lang="es" />));
     expect(screen.getByText('Banano')).toBeTruthy();
+  });
+
+  it('tags the word with its language, so a screen reader uses the right voice', () => {
+    render(inLang('en', <SasSymbol index={8} lang="es" />));
+    expect(screen.getByText('Banano').getAttribute('lang')).toBe('es');
+    cleanup();
+    render(inLang('pt', <SasSymbol index={1} />));
+    expect(screen.getByText('Cachorro').getAttribute('lang')).toBe('pt');
+  });
+
+  it('sizes its icon with the text by default', () => {
+    const { container } = render(inLang('es', <SasSymbol index={3} />));
+    expect(container.querySelector('svg')!.getAttribute('width')).toBe('1.25em');
   });
 
   it('draws the icon beside the word', () => {

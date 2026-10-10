@@ -113,7 +113,27 @@ defaults (Flutter's are butt caps, miter joins and a black fill):
   the chips of Cookie, the eyes of Bird, Rabbit and Squirrel), which only
   show with round caps;
 - always show the word next to or under the icon, in the app's language.
-  Screen readers read the words; the icons are hidden from them.
+  Screen readers read the words; the icons are hidden from them. The word
+  carries its language (`lang` on the web), so a screen reader uses the
+  right voice even when it differs from the app's language;
+- **size the icon with the text**, never in fixed pixels: `em` or `rem` on
+  the web (`SasIcon` defaults to `1.25em`, 20 px at 16 px text), the text
+  scaler on mobile. A larger text setting must make the icons grow with
+  their words;
+- **at 100 % text size, never below 20 px** wherever two people compare
+  symbols, the small key at the top of a call included, and **28 px** in
+  the comparison panel and the contact verification dialog. At 16 px
+  several icons look alike: Gato/Perro, Pluma/Hoja, Limón/Pizza,
+  Galleta/Brújula, Pino/Carpa/Montaña and the rounded boxes
+  Tren/Mochila/Reloj/Leche; the dots of Dado and Galleta are about one
+  pixel.
+
+Some Spanish words are close when read aloud: Fuego/Huevo most of all, then
+Uvas/Huevo, Martillo/Castillo, Limón/Sillón, Camión/Avión and Luna/Pluma.
+A confused pair lets two SAS that differ only in those symbols pass as a
+match, a small loss against an attacker who aims for such a pair. Showing
+each icon with its word keeps the confusion unlikely; changing the words
+would be a new table (SAS v3).
 
 The table is part of the human protocol, so it lives outside i18n and is
 **frozen**: changing an icon, a word or the order is a new SAS version, not an
@@ -244,7 +264,8 @@ mismatch that is not there.
   the drawings go, including the website.
 - **Same presentation rules:** 7 symbols in order, each icon with its word in
   the reader's language; one accessible label that reads the 7 words; the
-  "They don't match" text above.
+  "They don't match" text above; the sizes under [Symbols](#symbols), which
+  grow with the text size.
 
 ## Regenerating and checking
 

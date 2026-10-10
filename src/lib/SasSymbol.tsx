@@ -12,13 +12,20 @@ import { SAS_TABLE, sasSymbol } from './sas-symbols';
 export interface SasIconProps {
   /** Index into the table, 0 to 63. */
   index: number;
-  /** Width and height in px. Default 20. */
-  size?: number;
+  /**
+   * Width and height: a number is px, a string any CSS length. The default,
+   * `1.25em`, follows the font size around it (20 px at 16 px text), so the
+   * icon grows with the text scale instead of shrinking beside its word.
+   */
+  size?: number | string;
   className?: string;
 }
 
+/** The default icon size: relative to the text, 20 px at 16 px text. */
+export const SAS_ICON_SIZE = '1.25em';
+
 /** The icon alone, for a row of symbols that is labelled as a whole. */
-export function SasIcon({ index, size = 20, className }: SasIconProps) {
+export function SasIcon({ index, size = SAS_ICON_SIZE, className }: SasIconProps) {
   const symbol = sasSymbol(index);
   return (
     <svg
@@ -46,14 +53,19 @@ export interface SasSymbolProps extends SasIconProps {
   lang?: Lang;
 }
 
-/** The icon above its word in the current language. */
-export function SasSymbol({ index, size = 20, lang, className }: SasSymbolProps) {
+/**
+ * The icon above its word in the current language. The word carries `lang`,
+ * so a screen reader reads it with the right voice even when `lang` differs
+ * from the app's language.
+ */
+export function SasSymbol({ index, size = SAS_ICON_SIZE, lang, className }: SasSymbolProps) {
   const current = useLang().lang;
-  const word = sasSymbol(index).words[lang ?? current];
+  const wordLang = lang ?? current;
+  const word = sasSymbol(index).words[wordLang];
   return (
     <span className={className ? `inline-flex flex-col items-center gap-1 ${className}` : 'inline-flex flex-col items-center gap-1'}>
       <SasIcon index={index} size={size} />
-      <span>{word}</span>
+      <span lang={wordLang}>{word}</span>
     </span>
   );
 }
