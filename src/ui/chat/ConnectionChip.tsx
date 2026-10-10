@@ -27,7 +27,7 @@ export function ConnectionChip({ status, label, className }: ConnectionChipProps
     <span
       role="status"
       data-status={status}
-      className={cx('inline-flex items-center gap-1.5 rounded-full bg-ui-accent-soft px-[10px] py-1 text-ui-muted', LABEL_TEXT, className)}
+      className={cx('inline-flex items-center gap-1.5 rounded-full bg-ui-accent-soft px-2.5 py-1 text-ui-muted', LABEL_TEXT, className)}
     >
       <span aria-hidden="true" className={cx('h-2 w-2 shrink-0 rounded-full', DOTS[status])} />
       {label}

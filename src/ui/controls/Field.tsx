@@ -1,5 +1,6 @@
 import { CircleAlert } from 'lucide-react';
 import { useId, useMemo, type ReactNode } from 'react';
+import { ICON_SIZE } from '../../design/type';
 import { cx } from '../cx';
 import { hasContent, joinIds } from './aria';
 import { FieldContext, type FieldControl } from './field-context';
@@ -33,18 +34,18 @@ export function Field({ label, hint, error, id, className, children }: FieldProp
   );
   return (
     <div className={cx('flex flex-col gap-1.5', className)}>
-      <label htmlFor={controlId} className="font-ui text-[15px] font-semibold text-ui-ink">
+      <label htmlFor={controlId} className="font-ui text-ui-base font-semibold text-ui-ink">
         {label}
       </label>
       <FieldContext.Provider value={control}>{children}</FieldContext.Provider>
       {hintId ? (
-        <p id={hintId} className="m-0 font-ui text-sm text-ui-muted">
+        <p id={hintId} className="m-0 font-ui text-ui-md text-ui-muted">
           {hint}
         </p>
       ) : null}
       {errorId ? (
-        <p id={errorId} className="m-0 flex items-start gap-1.5 font-ui text-sm font-semibold text-ui-danger">
-          <CircleAlert aria-hidden="true" size={16} className="mt-0.5 shrink-0" />
+        <p id={errorId} className="m-0 flex items-start gap-1.5 font-ui text-ui-md font-semibold text-ui-danger">
+          <CircleAlert aria-hidden="true" size={ICON_SIZE.md} className="mt-0.5 shrink-0" />
           <span>{error}</span>
         </p>
       ) : null}

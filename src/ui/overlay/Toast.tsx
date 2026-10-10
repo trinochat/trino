@@ -18,6 +18,7 @@ import {
 } from 'react';
 import { createPortal } from 'react-dom';
 import { CircleAlert, CircleCheck, Info, X } from 'lucide-react';
+import { ICON_SIZE } from '../../design/type';
 import { cx } from '../cx';
 import { FOCUS_RING } from '../focus';
 
@@ -148,15 +149,15 @@ function ToastCard({ toast, durationMs, closeLabel, onDismiss }: ToastCardProps)
       onFocus={() => setFocused(true)}
       onBlur={onBlur}
       className={cx(
-        'pointer-events-auto flex w-full max-w-[480px] items-center gap-3 rounded-ui border border-ui-line px-[14px] py-2 text-[14px] leading-[1.45] text-ui-ink [box-shadow:var(--t-shadow)] motion-safe:animate-slide-up',
+        'pointer-events-auto flex w-full max-w-[30rem] items-center gap-3 rounded-ui border border-ui-line px-3.5 py-2 text-ui-md leading-[1.45] text-ui-ink [box-shadow:var(--t-shadow)] full-motion:animate-slide-up',
         background,
       )}
     >
       <span className={cx('flex shrink-0', iconColour)}>
-        <Icon size={20} aria-hidden="true" />
+        <Icon size={ICON_SIZE.lg} aria-hidden="true" />
       </span>
       {/* The alert is the text alone, so screen readers do not read the buttons out with it. */}
-      <span role={toast.tone === 'error' ? 'alert' : undefined} className="min-w-0 flex-1 py-[10px]">
+      <span role={toast.tone === 'error' ? 'alert' : undefined} className="min-w-0 flex-1 py-2.5">
         {toast.text}
       </span>
       {toast.actionLabel && toast.onAction && (
@@ -167,7 +168,7 @@ function ToastCard({ toast, durationMs, closeLabel, onDismiss }: ToastCardProps)
             onDismiss(toast.id);
           }}
           className={cx(
-            'min-h-[44px] shrink-0 rounded-ui border border-ui-line bg-ui-surface px-3 font-semibold text-ui-ink hover:bg-ui-raised',
+            'min-h-11 shrink-0 rounded-ui border border-ui-line bg-ui-surface px-3 font-semibold text-ui-ink hover:bg-ui-raised',
             FOCUS_RING,
           )}
         >
@@ -181,7 +182,7 @@ function ToastCard({ toast, durationMs, closeLabel, onDismiss }: ToastCardProps)
           onClick={() => onDismiss(toast.id)}
           className={cx('flex h-11 w-11 shrink-0 items-center justify-center rounded-ui text-ui-ink hover:bg-ui-raised', FOCUS_RING)}
         >
-          <X size={18} aria-hidden="true" />
+          <X size={ICON_SIZE.md} aria-hidden="true" />
         </button>
       )}
     </div>

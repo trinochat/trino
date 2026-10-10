@@ -56,8 +56,8 @@ export function Segmented<T extends string>(props: SegmentedProps<T>) {
             onClick={() => select(index)}
             onKeyDown={onItemKeyDown(index)}
             className={cx(
-              'inline-flex min-h-11 items-center justify-center rounded-ui px-4 font-ui text-[15px] font-semibold',
-              'transition-colors motion-reduce:transition-none',
+              'inline-flex min-h-11 items-center justify-center rounded-ui px-4 font-ui text-ui-base font-semibold',
+              'transition-colors reduce-motion:transition-none',
               checked ? 'bg-ui-accent text-ui-accent-ink' : 'bg-transparent text-ui-ink enabled:hover:bg-ui-raised',
               FOCUS_RING,
               DISABLED,

@@ -73,7 +73,7 @@ export const Switch = forwardRef<HTMLButtonElement, SwitchProps>(function Switch
       disabled={disabled}
       onClick={toggle}
       className={cx(
-        'relative inline-flex h-7 w-12 shrink-0 rounded-full transition-colors motion-reduce:transition-none',
+        'relative inline-flex h-7 w-12 shrink-0 rounded-full transition-colors reduce-motion:transition-none',
         // Grows the hit area to 44 px without growing the track.
         'before:absolute before:inset-x-0 before:-inset-y-2',
         TRACK[state],
@@ -87,8 +87,8 @@ export const Switch = forwardRef<HTMLButtonElement, SwitchProps>(function Switch
         aria-hidden="true"
         data-part="knob"
         className={cx(
-          'pointer-events-none absolute left-[3px] top-[3px] h-[22px] w-[22px] rounded-full',
-          'transition-transform motion-reduce:transition-none',
+          'pointer-events-none absolute left-[3px] top-[3px] h-[1.375rem] w-[1.375rem] rounded-full',
+          'transition-transform reduce-motion:transition-none',
           KNOB[state],
         )}
       />
@@ -102,11 +102,11 @@ export const Switch = forwardRef<HTMLButtonElement, SwitchProps>(function Switch
         htmlFor={switchId}
         className={cx('flex min-w-0 flex-col gap-0.5 font-ui', disabled ? 'cursor-not-allowed opacity-50' : 'cursor-pointer')}
       >
-        <span id={labelId} className="text-[15px] font-semibold text-ui-ink">
+        <span id={labelId} className="text-ui-base font-semibold text-ui-ink">
           {label}
         </span>
         {hasDescription ? (
-          <span id={descriptionId} className="text-sm text-ui-muted">
+          <span id={descriptionId} className="text-ui-md text-ui-muted">
             {description}
           </span>
         ) : null}

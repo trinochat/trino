@@ -6,6 +6,7 @@
 import { useEffect, useId, useLayoutEffect, useRef, type ReactNode, type RefObject } from 'react';
 import { createPortal } from 'react-dom';
 import { X } from 'lucide-react';
+import { ICON_SIZE } from '../../design/type';
 import { cx } from '../cx';
 import { FOCUS_RING, focusableWithin } from '../focus';
 
@@ -38,7 +39,8 @@ export interface DialogProps {
   className?: string;
 }
 
-const WIDTHS = { sm: 'max-w-[420px]', md: 'max-w-[480px]', lg: 'max-w-[620px]' } as const;
+/** 420, 480 and 620 px at 100 %, in rem so they grow with the text; never wider than the window. */
+const WIDTHS = { sm: 'max-w-[26.25rem]', md: 'max-w-[30rem]', lg: 'max-w-[38.75rem]' } as const;
 
 /**
  * The scrim dims the app with tokens only. `ink` is dark in light mode but
@@ -108,7 +110,7 @@ function OpenDialog({
   }, []);
 
   return createPortal(
-    <div className="fixed inset-0 z-40 flex items-center justify-center p-4 font-ui text-ui-ink motion-safe:animate-fade-in">
+    <div className="fixed inset-0 z-40 flex items-center justify-center p-4 font-ui text-ui-ink full-motion:animate-fade-in">
       <div aria-hidden="true" data-scrim="" className={SCRIM} onClick={closeOnScrimClick ? () => onClose() : undefined} />
       <div
         ref={panelRef}
@@ -124,12 +126,12 @@ function OpenDialog({
         )}
       >
         {title != null && (
-          <h2 id={titleId} className={cx('font-ui-display text-[22px] font-bold leading-tight', closeLabel && 'pr-10')}>
+          <h2 id={titleId} className={cx('font-ui-display text-ui-title font-bold leading-tight', closeLabel && 'pr-10')}>
             {title}
           </h2>
         )}
         {description != null && (
-          <div id={descriptionId} className="text-[15px] leading-normal text-ui-muted">
+          <div id={descriptionId} className="text-ui-base leading-normal text-ui-muted">
             {description}
           </div>
         )}
@@ -145,7 +147,7 @@ function OpenDialog({
               FOCUS_RING,
             )}
           >
-            <X size={20} aria-hidden="true" />
+            <X size={ICON_SIZE.lg} aria-hidden="true" />
           </button>
         )}
       </div>

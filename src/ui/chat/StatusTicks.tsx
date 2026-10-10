@@ -4,6 +4,7 @@
  * state from the label.
  */
 import { Check, CircleAlert, Clock, type LucideIcon } from 'lucide-react';
+import { ICON_SIZE } from '../../design/type';
 import { cx } from '../cx';
 
 export type MessageStatus = 'sending' | 'sent' | 'failed';
@@ -21,7 +22,7 @@ export function StatusTicks({ state, label, className }: StatusTicksProps) {
   const Icon = ICONS[state];
   return (
     <span className={cx('inline-flex shrink-0', className)}>
-      <Icon size={14} aria-hidden="true" />
+      <Icon size={ICON_SIZE.sm} aria-hidden="true" />
       <span className="sr-only">{label}</span>
     </span>
   );

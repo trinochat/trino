@@ -35,7 +35,7 @@ describe('MessageBubble', () => {
     const [incoming, outgoing] = Array.from(container.children);
     expect(classesOf(incoming)).toContain('items-start');
     expect(classesOf(outgoing)).toContain('items-end');
-    expect(classesOf(bubble('in'))).toContain('max-w-[min(72%,520px)]');
+    expect(classesOf(bubble('in'))).toContain('max-w-[min(72%,32.5rem)]');
   });
 
   it('keeps the line breaks of the text, at 15 px', () => {
@@ -43,14 +43,14 @@ describe('MessageBubble', () => {
     const text = screen.getByText(/Primera línea/);
     expect(text.textContent).toBe('Primera línea\nSegunda línea');
     expect(classesOf(text)).toContain('whitespace-pre-wrap');
-    expect(classesOf(text)).toContain('text-[15px]');
+    expect(classesOf(text)).toContain('text-ui-base');
   });
 
   it('shows the sender of an incoming group message in the accent text colour', () => {
     render(<MessageBubble direction="in" sender="Mamá" text="¿Quién trae el pan?" time="08:50" />);
     const sender = screen.getByText('Mamá');
     expect(classesOf(sender)).toContain('text-ui-accent-text');
-    expect(classesOf(sender)).toContain('text-[13px]');
+    expect(classesOf(sender)).toContain('text-ui-sm');
     expect(classesOf(sender)).toContain('font-bold');
   });
 
@@ -69,7 +69,7 @@ describe('MessageBubble', () => {
     );
     const incomingMeta = classesOf(screen.getByText('10:35').closest('[data-meta]'));
     const outgoingMeta = classesOf(screen.getByText('10:38').closest('[data-meta]'));
-    for (const token of ['font-ui-mono', 'text-[12px]']) {
+    for (const token of ['font-ui-mono', 'text-ui-xs']) {
       expect(incomingMeta).toContain(token);
       expect(outgoingMeta).toContain(token);
     }

@@ -50,7 +50,7 @@ export const IconButton = forwardRef<HTMLButtonElement, IconButtonProps>(functio
       type={type}
       aria-pressed={pressed}
       className={cx(
-        'inline-flex shrink-0 items-center justify-center rounded-ui border transition-colors motion-reduce:transition-none',
+        'inline-flex shrink-0 items-center justify-center rounded-ui border transition-colors reduce-motion:transition-none',
         SIZES[size],
         pressed ? PRESSED : VARIANTS[variant],
         FOCUS_RING,

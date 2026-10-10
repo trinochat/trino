@@ -46,7 +46,7 @@ describe('ChatRow', () => {
   it('is at least 64 px tall and calls onClick', () => {
     const onClick = vi.fn();
     renderRow({ onClick });
-    expect(classesOf(row())).toContain('min-h-[64px]');
+    expect(classesOf(row())).toContain('min-h-16');
     fireEvent.click(row());
     expect(onClick).toHaveBeenCalledTimes(1);
   });
@@ -70,7 +70,7 @@ describe('ChatRow', () => {
   it('shows the time in the mono font at 12 px', () => {
     renderRow();
     const time = screen.getByText('Ayer');
-    for (const token of ['font-ui-mono', 'text-[12px]', 'text-ui-muted']) {
+    for (const token of ['font-ui-mono', 'text-ui-xs', 'text-ui-muted']) {
       expect(classesOf(time)).toContain(token);
     }
   });

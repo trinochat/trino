@@ -45,13 +45,13 @@ export function MessageBubble({ direction, text, sender, time, status, failure, 
     <div className={cx('flex flex-col gap-1', look.align, className)}>
       <div
         data-direction={direction}
-        className={cx('flex max-w-[min(72%,520px)] flex-col gap-1 rounded-ui-bubble border px-3 py-2', look.bubble)}
+        className={cx('flex max-w-[min(72%,32.5rem)] flex-col gap-1 rounded-ui-bubble border px-3 py-2', look.bubble)}
       >
         {/* accent-text is checked on the incoming bubble only (contrast.test.ts). */}
-        {direction === 'in' && sender && <span className="text-[13px] font-bold text-ui-accent-text">{sender}</span>}
+        {direction === 'in' && sender && <span className="text-ui-sm font-bold text-ui-accent-text">{sender}</span>}
         {children}
-        {text && <p className="whitespace-pre-wrap break-words text-[15px] leading-[1.45]">{text}</p>}
-        <div data-meta="" className={cx('flex items-center justify-end gap-[5px] font-ui-mono text-[12px]', look.meta)}>
+        {text && <p className="whitespace-pre-wrap break-words text-ui-base">{text}</p>}
+        <div data-meta="" className={cx('flex items-center justify-end gap-[0.3125rem] font-ui-mono text-ui-xs', look.meta)}>
           {time}
           {status && (
             <>
@@ -62,7 +62,7 @@ export function MessageBubble({ direction, text, sender, time, status, failure, 
         </div>
       </div>
       {status?.state === 'failed' && failure && (
-        <div className="flex flex-wrap items-center gap-2 text-[14px]">
+        <div className="flex flex-wrap items-center gap-2 text-ui-md">
           <span className="font-semibold text-ui-danger">{failure.text}</span>
           {failure.retry}
         </div>

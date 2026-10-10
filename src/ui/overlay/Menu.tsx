@@ -14,6 +14,7 @@ import {
   type ReactNode,
 } from 'react';
 import { Ellipsis } from 'lucide-react';
+import { ICON_SIZE } from '../../design/type';
 import { cx } from '../cx';
 import { FOCUS_RING, FOCUS_RING_INSET } from '../focus';
 
@@ -157,18 +158,18 @@ export function Menu({ label, trigger, items, footnote, align = 'end', triggerCl
         onClick={() => (open ? close(true) : openAt('first'))}
         onKeyDown={onTriggerKeyDown}
         className={cx(
-          'inline-flex min-h-[44px] min-w-[44px] items-center justify-center gap-1 rounded-ui px-2 text-ui-muted hover:bg-ui-raised hover:text-ui-ink',
+          'inline-flex min-h-11 min-w-11 items-center justify-center gap-1 rounded-ui px-2 text-ui-muted hover:bg-ui-raised hover:text-ui-ink',
           FOCUS_RING,
           triggerClassName,
         )}
       >
-        {trigger ?? <Ellipsis size={20} aria-hidden="true" />}
+        {trigger ?? <Ellipsis size={ICON_SIZE.lg} aria-hidden="true" />}
       </button>
       {open && (
         <div
           ref={popupRef}
           className={cx(
-            'absolute z-30 flex w-[280px] max-w-[calc(100vw-32px)] flex-col rounded-ui border border-ui-line bg-ui-surface p-1.5 font-ui [box-shadow:var(--t-shadow)]',
+            'absolute z-30 flex w-[17.5rem] max-w-[calc(100vw-2rem)] flex-col rounded-ui border border-ui-line bg-ui-surface p-1.5 font-ui [box-shadow:var(--t-shadow)]',
             align === 'end' ? 'right-0' : 'left-0',
             above ? 'bottom-full mb-1' : 'top-full mt-1',
           )}
@@ -191,7 +192,7 @@ export function Menu({ label, trigger, items, footnote, align = 'end', triggerCl
                 aria-describedby={hasFootnote && item.describedByFootnote ? footnoteId : undefined}
                 onClick={() => select(item)}
                 className={cx(
-                  'flex min-h-[44px] w-full items-center rounded-ui px-3 text-left text-[15px] hover:bg-ui-raised focus:bg-ui-raised',
+                  'flex min-h-11 w-full items-center rounded-ui px-3 text-left text-ui-base hover:bg-ui-raised focus:bg-ui-raised',
                   FOCUS_RING_INSET,
                   item.tone === 'danger' ? 'font-semibold text-ui-danger' : 'text-ui-ink',
                 )}
@@ -201,7 +202,7 @@ export function Menu({ label, trigger, items, footnote, align = 'end', triggerCl
             ))}
           </div>
           {hasFootnote && (
-            <p id={footnoteId} className="mx-3 mb-2 mt-1 text-[13px] leading-[1.45] text-ui-muted">
+            <p id={footnoteId} className="mx-3 mb-2 mt-1 text-ui-sm leading-[1.45] text-ui-muted">
               {footnote}
             </p>
           )}

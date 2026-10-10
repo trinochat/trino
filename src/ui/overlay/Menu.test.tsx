@@ -139,7 +139,7 @@ describe('Menu', () => {
     expect(classesOf(item('Borrar para todos'))).toContain('text-ui-danger');
     expect(classesOf(item('Copiar'))).not.toContain('text-ui-danger');
     for (const menuItem of screen.getAllByRole('menuitem')) {
-      expect(classesOf(menuItem)).toContain('min-h-[44px]');
+      expect(classesOf(menuItem)).toContain('min-h-11');
     }
   });
 

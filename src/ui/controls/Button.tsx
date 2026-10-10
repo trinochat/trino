@@ -1,5 +1,6 @@
 import { LoaderCircle } from 'lucide-react';
 import { forwardRef, type ButtonHTMLAttributes, type ReactNode } from 'react';
+import { ICON_SIZE } from '../../design/type';
 import { cx } from '../cx';
 import { FOCUS_RING } from '../focus';
 import { DISABLED } from './styles';
@@ -53,7 +54,7 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button
   ref,
 ) {
   const icon = loading ? (
-    <LoaderCircle size={18} className="animate-spin motion-reduce:animate-none" />
+    <LoaderCircle size={ICON_SIZE.md} className="animate-spin reduce-motion:animate-none" />
   ) : (
     leadingIcon
   );
@@ -65,7 +66,7 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button
       aria-busy={loading || undefined}
       className={cx(
         'inline-flex items-center justify-center gap-2 rounded-ui border py-2 text-center font-ui text-base leading-tight',
-        'transition-colors motion-reduce:transition-none',
+        'transition-colors reduce-motion:transition-none',
         SIZES[size],
         VARIANTS[variant],
         fullWidth && 'w-full',

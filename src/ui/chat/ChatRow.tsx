@@ -46,7 +46,7 @@ export function ChatRow({
       aria-current={selected ? 'true' : undefined}
       onClick={onClick}
       className={cx(
-        'relative flex min-h-[64px] w-full items-center gap-3 rounded-ui p-[10px] text-left text-ui-ink',
+        'relative flex min-h-16 w-full items-center gap-3 rounded-ui p-2.5 text-left text-ui-ink',
         // `raised` almost matches the sidebar in Terminal light, so the
         // selection uses the accent tint plus a bar that keeps 3:1.
         selected ? 'bg-ui-accent-soft' : 'hover:bg-ui-raised',
@@ -58,12 +58,12 @@ export function ChatRow({
         <span
           data-selection-bar
           aria-hidden="true"
-          className="absolute inset-y-2 left-0 w-[3px] rounded-full bg-ui-accent-text"
+          className="absolute inset-y-2 left-0 w-[0.1875rem] rounded-full bg-ui-accent-text"
         />
       )}
       <Avatar {...avatar} size={44} />
       <span className="flex min-w-0 flex-1 flex-col gap-0.5">
-        <span className="flex min-w-0 items-center gap-1.5 text-[15px] font-semibold">
+        <span className="flex min-w-0 items-center gap-1.5 text-ui-base font-semibold">
           <span className="truncate">{name}</span>
           {/* The spaces keep words apart in the button's accessible name; flex layout ignores them. */}
           {trust && (
@@ -74,7 +74,7 @@ export function ChatRow({
           )}
         </span>
         {(preview || draftPrefix) && (
-          <span className="truncate text-[14px] text-ui-muted">
+          <span className="truncate text-ui-md text-ui-muted">
             {draftPrefix && (
               <>
                 <span className="font-semibold text-ui-accent-text">{draftPrefix}</span>{' '}
@@ -89,7 +89,7 @@ export function ChatRow({
           {time && (
             <>
               {' '}
-              <span className="font-ui-mono text-[12px] text-ui-muted">{time}</span>
+              <span className="font-ui-mono text-ui-xs text-ui-muted">{time}</span>
             </>
           )}
           {unread && (

@@ -88,7 +88,7 @@ export const Textarea = forwardRef<HTMLTextAreaElement, TextareaProps>(function 
       {...controlProps}
       onChange={handleChange}
       className={cx(
-        'block resize-none px-3.5 py-[9px] leading-6',
+        'block resize-none px-3.5 py-[0.5625rem] leading-6',
         FIELD_BOX,
         mono ? 'font-ui-mono' : 'font-ui',
         fieldBorder(invalid),

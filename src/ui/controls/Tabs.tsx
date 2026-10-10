@@ -65,7 +65,7 @@ export function Tabs<T extends string>(props: TabsProps<T>) {
               onKeyDown={onItemKeyDown(index)}
               className={cx(
                 'relative inline-flex min-h-11 flex-1 items-center justify-center rounded-ui px-2.5 text-center font-ui text-sm font-semibold',
-                'transition-colors motion-reduce:transition-none',
+                'transition-colors reduce-motion:transition-none',
                 selected
                   ? 'bg-ui-surface text-ui-ink [box-shadow:var(--t-shadow)] after:absolute after:inset-x-3 after:bottom-1 after:h-0.5 after:rounded-full after:bg-ui-accent-text'
                   : 'bg-transparent text-ui-muted hover:text-ui-ink',

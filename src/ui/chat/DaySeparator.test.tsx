@@ -15,7 +15,7 @@ describe('DaySeparator', () => {
       'bg-ui-raised',
       'text-ui-muted',
       'font-ui-label',
-      'text-[12px]',
+      'text-ui-xs',
       '[text-transform:var(--t-label-transform)]',
       '[letter-spacing:var(--t-label-spacing)]',
     ]) {

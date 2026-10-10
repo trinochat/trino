@@ -3,6 +3,7 @@ import tailwindcss, { type Config } from 'tailwindcss';
 import { describe, expect, it } from 'vitest';
 import tailwindConfig from '../../tailwind.config.js?raw';
 import { cssVariables, resolveTokens } from './appearance';
+import { TYPE_SCALE } from './type';
 
 // Components reach the tokens through Tailwind classes such as `bg-ui-surface`,
 // so every colour, radius and font family token needs its entry in
@@ -63,5 +64,19 @@ describe('Tailwind variants for the accessibility settings', () => {
     expect(css).toContain(
       String.raw`:root[data-contrast="more"] .more-contrast\:focus-visible\:outline-\[3px\]:focus-visible {`,
     );
+  });
+});
+
+// The type scale (type.ts) reaches the components as `text-ui-xs` …
+// `text-ui-title`: the same size and line height, in rem.
+describe('the type scale in Tailwind', () => {
+  it('gives every step a text-ui-* class with its size and line height', async () => {
+    const names = Object.keys(TYPE_SCALE) as (keyof typeof TYPE_SCALE)[];
+    const css = (await compile(names.map(name => `text-ui-${name}`).join(' '))).replace(/\s+/g, ' ');
+    const missing = names.filter(name => {
+      const { size, lineHeight } = TYPE_SCALE[name];
+      return !css.includes(`.text-ui-${name} { font-size: ${size}; line-height: ${lineHeight} }`);
+    });
+    expect(missing).toEqual([]);
   });
 });

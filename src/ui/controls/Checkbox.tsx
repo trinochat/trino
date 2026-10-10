@@ -51,7 +51,7 @@ export const Checkbox = forwardRef<HTMLInputElement, CheckboxProps>(function Che
           {label}
         </span>
         {hasDescription ? (
-          <span id={descriptionId} className="text-sm text-ui-muted">
+          <span id={descriptionId} className="text-ui-md text-ui-muted">
             {description}
           </span>
         ) : null}

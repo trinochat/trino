@@ -18,7 +18,7 @@ export function UnreadBadge({ count, label, max = 99, className }: UnreadBadgePr
   return (
     <span
       className={cx(
-        'inline-flex h-5 min-w-[20px] shrink-0 items-center justify-center rounded-full bg-ui-badge px-1.5 text-[12px] font-bold leading-none text-ui-badge-ink',
+        'inline-flex h-5 min-w-5 shrink-0 items-center justify-center rounded-full bg-ui-badge px-1.5 text-ui-xs font-bold leading-none text-ui-badge-ink',
         className,
       )}
     >

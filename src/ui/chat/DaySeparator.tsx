@@ -10,7 +10,7 @@ export interface DaySeparatorProps {
 export function DaySeparator({ label, className }: DaySeparatorProps) {
   return (
     <div className={cx('flex justify-center', className)}>
-      <span className={cx('rounded-full bg-ui-raised px-[10px] py-1 text-ui-muted', LABEL_TEXT)}>{label}</span>
+      <span className={cx('rounded-full bg-ui-raised px-2.5 py-1 text-ui-muted', LABEL_TEXT)}>{label}</span>
     </div>
   );
 }

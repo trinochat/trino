@@ -15,7 +15,7 @@ export const DISABLED = 'disabled:cursor-not-allowed disabled:opacity-50';
 export const COLOR_SCHEME = '[color-scheme:var(--t-color-scheme)]';
 
 /** The box of the text fields (Input, PasswordInput, Textarea, Select), minus the border colour. */
-export const FIELD_BOX = 'w-full rounded-ui border bg-ui-bg text-base text-ui-ink placeholder:text-ui-muted';
+export const FIELD_BOX = 'w-full rounded-ui border bg-ui-bg text-ui-base text-ui-ink placeholder:text-ui-muted';
 
 /**
  * The border colour of a text field: `controlLine`, which shows where to type

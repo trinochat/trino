@@ -1,5 +1,6 @@
 import { Eye, EyeOff } from 'lucide-react';
 import { forwardRef, useState, type InputHTMLAttributes } from 'react';
+import { ICON_SIZE } from '../../design/type';
 import { cx } from '../cx';
 import { FOCUS_RING } from '../focus';
 import { useFieldControl } from './field-context';
@@ -47,7 +48,7 @@ export const PasswordInput = forwardRef<HTMLInputElement, PasswordInputProps>(fu
         pressed={visible}
         variant="muted"
         disabled={disabled}
-        icon={visible ? <EyeOff size={20} /> : <Eye size={20} />}
+        icon={visible ? <EyeOff size={ICON_SIZE.lg} /> : <Eye size={ICON_SIZE.lg} />}
         onClick={() => setVisible(shown => !shown)}
         className="absolute right-0.5 top-1/2 -translate-y-1/2"
       />

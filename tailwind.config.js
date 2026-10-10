@@ -93,6 +93,17 @@ export default {
         'ui-mono': 'var(--t-mono)',
         'ui-label': 'var(--t-label-font)',
       },
+      // Redesign: the type scale of src/design/type.ts, in rem so it follows
+      // the text size (tailwind.test.ts keeps both the same): `text-ui-xs`
+      // (12 px at 100 %) to `text-ui-title` (22 px).
+      fontSize: {
+        'ui-xs': ['0.75rem', { lineHeight: '1.35' }],
+        'ui-sm': ['0.8125rem', { lineHeight: '1.35' }],
+        'ui-md': ['0.875rem', { lineHeight: '1.4' }],
+        'ui-base': ['0.9375rem', { lineHeight: '1.45' }],
+        'ui-lg': ['1rem', { lineHeight: '1.4' }],
+        'ui-title': ['1.375rem', { lineHeight: '1.25' }],
+      },
       borderRadius: {
         // Redesign: `rounded-ui`, `rounded-ui-lg`, `rounded-ui-bubble`...
         ui: 'var(--t-radius)',

@@ -15,7 +15,7 @@ export interface AvatarProps {
   initials?: string;
   /** Picture URL; the initials show if it is missing or fails to load. */
   src?: string;
-  /** Width and height in px. Default 44. */
+  /** Width and height in px at 100 % text size: a size key, drawn in rem. Default 44. */
   size?: AvatarSize;
   /** Default `person`. */
   kind?: AvatarKind;
@@ -24,14 +24,19 @@ export interface AvatarProps {
   className?: string;
 }
 
+/**
+ * The box and its initials, both in rem so they grow with the text, the
+ * initials in a fixed proportion to the box. The only text sizes off the type
+ * scale (src/design/type.ts): they belong to the box, not to the text around.
+ */
 const SIZES: Record<AvatarSize, string> = {
-  36: 'h-9 w-9 text-[14px]',
-  40: 'h-10 w-10 text-[14px]',
-  44: 'h-11 w-11 text-[15px]',
-  48: 'h-12 w-12 text-[16px]',
-  64: 'h-16 w-16 text-[24px]',
-  80: 'h-20 w-20 text-[30px]',
-  96: 'h-24 w-24 text-[32px]',
+  36: 'h-9 w-9 text-[0.875rem]',
+  40: 'h-10 w-10 text-[0.875rem]',
+  44: 'h-11 w-11 text-[0.9375rem]',
+  48: 'h-12 w-12 text-[1rem]',
+  64: 'h-16 w-16 text-[1.5rem]',
+  80: 'h-20 w-20 text-[1.875rem]',
+  96: 'h-24 w-24 text-[2rem]',
 };
 
 export function Avatar({ initials = '', src, size = 44, kind = 'person', alt, className }: AvatarProps) {

@@ -1,5 +1,6 @@
 import { ChevronDown } from 'lucide-react';
 import { forwardRef, type SelectHTMLAttributes } from 'react';
+import { ICON_SIZE } from '../../design/type';
 import { cx } from '../cx';
 import { FOCUS_RING } from '../focus';
 import { useFieldControl } from './field-context';
@@ -36,7 +37,7 @@ export const Select = forwardRef<HTMLSelectElement, SelectProps>(function Select
       </select>
       <ChevronDown
         aria-hidden="true"
-        size={18}
+        size={ICON_SIZE.md}
         className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-ui-muted"
       />
     </div>

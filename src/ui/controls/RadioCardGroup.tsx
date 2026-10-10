@@ -73,7 +73,7 @@ export function RadioCardGroup<T extends string>(props: RadioCardGroupProps<T>) 
             onKeyDown={onItemKeyDown(index)}
             className={cx(
               'flex w-full items-center gap-3 rounded-ui border-2 px-3.5 text-left font-ui text-ui-ink',
-              'transition-colors motion-reduce:transition-none',
+              'transition-colors reduce-motion:transition-none',
               descriptionId ? 'min-h-14 py-2.5' : 'min-h-12 py-2',
               checked ? 'border-ui-accent-text bg-ui-accent-soft' : 'border-ui-line bg-transparent enabled:hover:bg-ui-raised',
               FOCUS_RING,
@@ -84,16 +84,16 @@ export function RadioCardGroup<T extends string>(props: RadioCardGroupProps<T>) 
               aria-hidden="true"
               data-part="dot"
               className={cx(
-                'h-[18px] w-[18px] shrink-0 rounded-full border-2',
+                'h-[1.125rem] w-[1.125rem] shrink-0 rounded-full border-2',
                 checked ? 'border-ui-accent-text bg-ui-accent-text' : 'border-ui-muted bg-transparent',
               )}
             />
             <span className="flex min-w-0 flex-col gap-0.5">
-              <span id={labelId} className="text-[15px] font-semibold">
+              <span id={labelId} className="text-ui-base font-semibold">
                 {option.label}
               </span>
               {descriptionId ? (
-                <span id={descriptionId} className="text-sm text-ui-muted">
+                <span id={descriptionId} className="text-ui-md text-ui-muted">
                   {option.description}
                 </span>
               ) : null}
@@ -107,7 +107,7 @@ export function RadioCardGroup<T extends string>(props: RadioCardGroupProps<T>) 
   if (!hasLabel) return group;
   return (
     <div className={cx('flex flex-col gap-2', className)}>
-      <span id={`${baseId}label`} className="font-ui text-base font-bold text-ui-ink">
+      <span id={`${baseId}label`} className="font-ui text-ui-lg font-bold text-ui-ink">
         {label}
       </span>
       {group}

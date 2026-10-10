@@ -6,6 +6,7 @@
  */
 import type { ReactNode } from 'react';
 import { CircleAlert, Info, TriangleAlert, type LucideIcon } from 'lucide-react';
+import { ICON_SIZE } from '../../design/type';
 import { cx } from '../cx';
 
 export type BannerTone = 'info' | 'warn' | 'danger';
@@ -30,12 +31,12 @@ export function Banner({ tone, children, action, className }: BannerProps) {
   return (
     <div
       role={role}
-      className={cx('flex flex-wrap items-center gap-3 rounded-ui px-[14px] py-3 text-[14px] leading-[1.45] text-ui-ink', background, className)}
+      className={cx('flex flex-wrap items-center gap-3 rounded-ui px-3.5 py-3 text-ui-md leading-[1.45] text-ui-ink', background, className)}
     >
       <span className={cx('flex shrink-0', icon)}>
-        <Icon size={20} aria-hidden="true" />
+        <Icon size={ICON_SIZE.lg} aria-hidden="true" />
       </span>
-      <div className="min-w-0 flex-[1_1_260px]">{children}</div>
+      <div className="min-w-0 flex-[1_1_16.25rem]">{children}</div>
       {action}
     </div>
   );
