@@ -1,0 +1,584 @@
+// An in-memory TrinoEngine with demo data, for building and testing the
+// screens before the Rust engine is wired in (task M6). Nothing leaves the
+// phone and nothing is stored: every start is a fresh demo.
+import 'dart:async';
+
+import 'engine.dart';
+
+class FakeTrinoEngine implements TrinoEngine {
+  /// [onboarded] false starts at the first run; the demo contacts and chats
+  /// appear once the identity is created. [locked] starts at the unlock
+  /// screen, as after a restart. [connectAfter] starts connecting and connects
+  /// after that long; [sendDelay] is how long a message shows as sending;
+  /// [callStartsAt] is the time a new call shows.
+  FakeTrinoEngine({
+    DateTime Function()? clock,
+    bool onboarded = true,
+    bool locked = false,
+    Duration? connectAfter,
+    this.sendDelay = Duration.zero,
+    this.callStartsAt = Duration.zero,
+  }) : _clock = clock ?? DateTime.now,
+       _identityState = _Live(
+         onboarded ? (locked ? IdentityState.locked : IdentityState.unlocked) : IdentityState.needsOnboarding,
+       ),
+       _connection = _Live(connectAfter == null ? ConnectionStatus.connected : ConnectionStatus.connecting) {
+    if (onboarded) {
+      _passphrase = demoPassphrase;
+      _profile.value = _demoProfile(demoName);
+      _seedDemo();
+    }
+    if (connectAfter != null) {
+      _timers.add(Timer(connectAfter, () => _connection.value = ConnectionStatus.connected));
+    }
+    _call.onActive = _updateCallTimer;
+  }
+
+  /// The passphrase of the demo identity when it starts onboarded.
+  static const demoPassphrase = 'caballo-correcto-bateria';
+
+  /// The only code the fake authenticator accepts.
+  static const demoTotpCode = '123456';
+  static const demoName = 'Sofía';
+
+  final Duration sendDelay;
+  final Duration callStartsAt;
+  final DateTime Function() _clock;
+
+  final _Live<IdentityState> _identityState;
+  final _Live<ConnectionStatus> _connection;
+  final _profile = _Live<Profile?>(null);
+  final _contacts = _Live<List<Contact>>(const []);
+  final _chats = _Live<List<ChatSummary>>(const []);
+  final _call = _Live<CallSession?>(null);
+  final _settings = _Live(const EngineSettings());
+  final _relays = _Live(const [
+    RelayStatus(url: 'wss://relay.damus.io', connected: true),
+    RelayStatus(url: 'wss://nos.lol', connected: true),
+    RelayStatus(url: 'wss://relay.snort.social', connected: true),
+  ]);
+  final _messages = <String, _Live<List<ChatMessage>>>{};
+  final _rooms = <String, _Room>{};
+  final _timers = <Timer>{};
+  Timer? _callTimer;
+
+  String? _passphrase;
+  bool _totpEnabled = false;
+  bool _totpVerified = false;
+  LockReason _lockReason = LockReason.coldStart;
+  var _nextId = 0;
+
+  // Identity and lock.
+
+  @override
+  Stream<IdentityState> get identityState => _identityState.stream;
+
+  @override
+  Future<UnlockInfo> unlockInfo() async =>
+      UnlockInfo(name: _profile.value?.name ?? '', totpEnabled: _totpEnabled, reason: _lockReason);
+
+  static const _minLength = 10;
+  static const _common = {
+    '1234567890',
+    '0123456789',
+    'qwertyuiop',
+    'asdfghjklñ',
+    'password123',
+    'contraseña123',
+    'contrasena123',
+    'trinotrino',
+    'iloveyou123',
+    'teamo12345',
+  };
+
+  @override
+  Future<PassphraseCheck> checkPassphrase(String passphrase) async {
+    // Counted in Unicode scalars, as the desktop does.
+    final length = passphrase.runes.length;
+    final strength = switch (length) {
+      >= 24 => PassphraseStrength.strong,
+      >= 16 => PassphraseStrength.good,
+      >= 12 => PassphraseStrength.fair,
+      _ => PassphraseStrength.weak,
+    };
+    final PassphraseProblem? problem;
+    if (length < _minLength) {
+      problem = PassphraseProblem.tooShort;
+    } else if (_common.contains(passphrase.toLowerCase()) || passphrase.runes.toSet().length == 1) {
+      problem = PassphraseProblem.tooCommon;
+    } else {
+      problem = null;
+    }
+    return PassphraseCheck(
+      strength: problem == null ? strength : PassphraseStrength.weak,
+      minLength: _minLength,
+      problem: problem,
+    );
+  }
+
+  static const _totpSecret = 'JBSWY3DPEHPK3PXP';
+
+  @override
+  Future<TotpSetup> beginTotp() async {
+    _totpVerified = false;
+    final grouped = [for (var i = 0; i < _totpSecret.length; i += 4) _totpSecret.substring(i, i + 4)].join(' ');
+    return TotpSetup(secret: grouped, uri: 'otpauth://totp/Trino?secret=$_totpSecret&issuer=Trino');
+  }
+
+  @override
+  Future<bool> verifyTotp(String code) async {
+    _totpVerified = code.replaceAll(' ', '') == demoTotpCode;
+    return _totpVerified;
+  }
+
+  @override
+  Future<void> createIdentity({required String name, required String passphrase, required bool withTotp}) async {
+    if (_identityState.value != IdentityState.needsOnboarding) throw StateError('There is an identity already');
+    if (withTotp && !_totpVerified) throw StateError('Verify the authenticator code first');
+    _passphrase = passphrase;
+    _totpEnabled = withTotp;
+    _profile.value = _demoProfile(name.trim());
+    _seedDemo();
+    _identityState.value = IdentityState.unlocked;
+  }
+
+  @override
+  Future<UnlockResult> unlock(String passphrase, {String? code}) async {
+    if (_identityState.value != IdentityState.locked) return UnlockResult.ok;
+    // Asking for the code first tells nothing about the passphrase.
+    if (_totpEnabled && (code == null || code.trim().isEmpty)) return UnlockResult.codeRequired;
+    final codeOk = !_totpEnabled || code!.replaceAll(' ', '') == demoTotpCode;
+    if (passphrase != _passphrase || !codeOk) {
+      return _totpEnabled ? UnlockResult.wrongPassphraseOrCode : UnlockResult.wrongPassphrase;
+    }
+    _identityState.value = IdentityState.unlocked;
+    return UnlockResult.ok;
+  }
+
+  @override
+  Future<void> lock() async {
+    if (_identityState.value != IdentityState.unlocked) return;
+    await hangUp();
+    _lockReason = LockReason.manual;
+    _identityState.value = IdentityState.locked;
+  }
+
+  @override
+  Future<void> wipe() async {
+    await hangUp();
+    _passphrase = null;
+    _totpEnabled = _totpVerified = false;
+    _lockReason = LockReason.coldStart;
+    _profile.value = null;
+    _rooms.clear();
+    for (final live in _messages.values) {
+      live.value = const [];
+    }
+    _contacts.value = const [];
+    _publishChats();
+    _identityState.value = IdentityState.needsOnboarding;
+  }
+
+  // Network, profile and settings.
+
+  @override
+  Stream<ConnectionStatus> get connection => _connection.stream;
+
+  /// For tests and demos: the network comes and goes.
+  void setConnection(ConnectionStatus status) => _connection.value = status;
+
+  @override
+  Stream<List<RelayStatus>> get relays => _relays.stream;
+
+  @override
+  Stream<Profile> get profile => _profile.stream.where((profile) => profile != null).cast<Profile>();
+
+  @override
+  Future<void> setName(String name) async {
+    final profile = _profile.value;
+    if (profile != null && name.trim().isNotEmpty) _profile.value = profile.copyWith(name: name.trim());
+  }
+
+  @override
+  Stream<EngineSettings> get settings => _settings.stream;
+
+  @override
+  Future<void> updateSettings(EngineSettings settings) async => _settings.value = settings;
+
+  // Contacts and chats.
+
+  @override
+  Stream<List<Contact>> get contacts => _contacts.stream;
+
+  static final _contactCode = RegExp(r'^trino2:[A-Za-z0-9_-]{16,}$');
+
+  @override
+  Future<Contact> addContact(String code) async {
+    if (!_contactCode.hasMatch(code.trim())) throw const InvalidContactCode();
+    final contact = Contact(
+      id: 'contact-${_nextId++}',
+      name: 'Valentina Gómez',
+      trust: Trust.unverified,
+      fingerprint: '3C9E 0A71 D46B 28F5',
+    );
+    _contacts.value = [..._contacts.value, contact];
+    return contact;
+  }
+
+  @override
+  Future<String> openChat(String contactId) async {
+    for (final room in _rooms.values) {
+      if (room.contactId == contactId) return room.id;
+    }
+    final contact = _contacts.value.firstWhere((c) => c.id == contactId);
+    final room = _Room(
+      id: 'chat-$contactId',
+      kind: ChatKind.direct,
+      title: contact.name,
+      contactId: contactId,
+      createdAt: _clock(),
+    );
+    _rooms[room.id] = room;
+    _publish(room);
+    return room.id;
+  }
+
+  @override
+  Stream<List<ChatSummary>> get chats => _chats.stream;
+
+  @override
+  Stream<List<ChatMessage>> messages(String chatId) => _messagesOf(chatId).stream;
+
+  @override
+  Future<void> send(String chatId, String text) async {
+    final room = _rooms[chatId];
+    if (room == null || text.trim().isEmpty) return;
+    final message = ChatMessage(
+      id: 'm${_nextId++}',
+      chatId: chatId,
+      outgoing: true,
+      text: text,
+      sentAt: _clock(),
+      status: MessageStatus.sending,
+    );
+    room.messages.add(message);
+    room.draft = null;
+    _publish(room);
+    _later(() => _setStatus(room, message.id, MessageStatus.sent));
+  }
+
+  @override
+  Future<void> retry(String chatId, String messageId) async {
+    final room = _rooms[chatId];
+    if (room == null) return;
+    _setStatus(room, messageId, MessageStatus.sending);
+    _later(() => _setStatus(room, messageId, MessageStatus.sent));
+  }
+
+  @override
+  Future<void> saveDraft(String chatId, String draft) async {
+    final room = _rooms[chatId];
+    if (room == null) return;
+    room.draft = draft.trim().isEmpty ? null : draft;
+    _publish(room);
+  }
+
+  @override
+  Future<void> markRead(String chatId) async {
+    final room = _rooms[chatId];
+    if (room == null || room.unread == 0) return;
+    room.unread = 0;
+    _publish(room);
+  }
+
+  /// For tests and demos: a message arrives.
+  void receive(String chatId, String text, {String? sender}) {
+    final room = _rooms[chatId];
+    if (room == null) return;
+    room.messages.add(
+      ChatMessage(id: 'm${_nextId++}', chatId: chatId, outgoing: false, text: text, sentAt: _clock(), sender: sender),
+    );
+    room.unread++;
+    _publish(room);
+  }
+
+  // Calls.
+
+  static const _sas = [
+    SasSymbol('fox', '🦊'),
+    SasSymbol('guitar', '🎸'),
+    SasSymbol('cactus', '🌵'),
+    SasSymbol('anchor', '⚓'),
+    SasSymbol('mushroom', '🍄'),
+    SasSymbol('bicycle', '🚲'),
+    SasSymbol('bell', '🔔'),
+  ];
+
+  @override
+  Stream<CallSession?> get call => _call.stream;
+
+  @override
+  Future<void> startCall(String contactId) async {
+    if (_call.value != null) return;
+    final contact = _contacts.value.firstWhere((c) => c.id == contactId);
+    _call.value = CallSession(
+      id: 'call-${_nextId++}',
+      contactId: contactId,
+      peerName: contact.name,
+      sas: _sas,
+      elapsed: callStartsAt,
+    );
+    _updateCallTimer();
+  }
+
+  @override
+  Future<void> setMuted(bool muted) async => _updateCall((call) => call.copyWith(muted: muted));
+
+  @override
+  Future<void> setSpeaker(bool on) async => _updateCall((call) => call.copyWith(speaker: on));
+
+  @override
+  Future<void> setCamera(bool on) async => _updateCall((call) => call.copyWith(camera: on));
+
+  @override
+  Future<void> confirmSas({required bool matches}) async =>
+      _updateCall((call) => call.copyWith(verified: matches, mismatch: !matches));
+
+  @override
+  Future<void> hangUp() async {
+    if (_call.value == null) return;
+    _call.value = null;
+    _updateCallTimer();
+  }
+
+  @override
+  Future<void> dispose() async {
+    for (final timer in _timers) {
+      timer.cancel();
+    }
+    _timers.clear();
+    _callTimer?.cancel();
+    for (final live in [_identityState, _connection, _profile, _contacts, _chats, _call, _settings, _relays]) {
+      live.close();
+    }
+    for (final live in _messages.values) {
+      live.close();
+    }
+  }
+
+  // Internals.
+
+  void _updateCall(CallSession Function(CallSession) change) {
+    final call = _call.value;
+    if (call != null) _call.value = change(call);
+  }
+
+  /// The clock of a call runs while the call exists and someone watches it.
+  void _updateCallTimer() {
+    final running = _call.value != null && _call.hasListeners;
+    if (running && _callTimer == null) {
+      _callTimer = Timer.periodic(
+        const Duration(seconds: 1),
+        (_) => _updateCall((call) => call.copyWith(elapsed: call.elapsed + const Duration(seconds: 1))),
+      );
+    } else if (!running) {
+      _callTimer?.cancel();
+      _callTimer = null;
+    }
+  }
+
+  void _later(void Function() action) {
+    if (sendDelay == Duration.zero) {
+      scheduleMicrotask(action);
+      return;
+    }
+    late final Timer timer;
+    timer = Timer(sendDelay, () {
+      _timers.remove(timer);
+      action();
+    });
+    _timers.add(timer);
+  }
+
+  void _setStatus(_Room room, String messageId, MessageStatus status) {
+    final index = room.messages.indexWhere((m) => m.id == messageId);
+    if (index < 0 || !_rooms.containsKey(room.id)) return;
+    room.messages[index] = room.messages[index].copyWith(status: status);
+    _publish(room);
+  }
+
+  _Live<List<ChatMessage>> _messagesOf(String chatId) => _messages.putIfAbsent(chatId, () => _Live(const []));
+
+  void _publish(_Room room) {
+    _messagesOf(room.id).value = List.unmodifiable(room.messages);
+    _publishChats();
+  }
+
+  void _publishChats() {
+    final contacts = {for (final contact in _contacts.value) contact.id: contact};
+    final summaries = [
+      for (final room in _rooms.values)
+        ChatSummary(
+          id: room.id,
+          kind: room.kind,
+          title: room.title,
+          contactId: room.contactId,
+          trust: contacts[room.contactId]?.trust ?? Trust.unverified,
+          memberNames: room.memberNames,
+          lastMessage: room.messages.lastOrNull?.text,
+          lastSender: room.messages.lastOrNull?.sender,
+          lastIsMine: room.messages.lastOrNull?.outgoing ?? false,
+          lastActivity: room.messages.lastOrNull?.sentAt ?? room.createdAt,
+          unread: room.unread,
+          draft: room.draft,
+        ),
+    ]..sort((a, b) => b.lastActivity!.compareTo(a.lastActivity!));
+    _chats.value = List.unmodifiable(summaries);
+  }
+
+  Profile _demoProfile(String name) => Profile(
+    name: name,
+    contactCode: 'trino2:AQdTb2bDrWFotLtRjmyXPBrAv0nRPk5Y81qxN69GnwnX8vHuj',
+    fingerprint: '70A5 83C6 766D AAD7',
+  );
+
+  void _seedDemo() {
+    final now = _clock();
+    DateTime ago(int minutes) => now.subtract(Duration(minutes: minutes));
+    DateTime daysAgo(int days, int hour, int minute) => DateTime(now.year, now.month, now.day - days, hour, minute);
+
+    _contacts.value = const [
+      Contact(id: 'ana', name: 'Ana Torres', trust: Trust.verified, fingerprint: '7F3A 91C2 0B5E D4A8'),
+      Contact(id: 'carlos', name: 'Carlos Méndez', trust: Trust.unverified, fingerprint: '2B91 C0D4 77E1 5A06'),
+      Contact(id: 'lucia', name: 'Lucía', trust: Trust.unverified, fingerprint: 'E4C2 1F08 9B3D 6A75'),
+      Contact(id: 'mama', name: 'Mamá', trust: Trust.verified, fingerprint: 'A1D3 5C7E 92B4 0F68'),
+      Contact(id: 'papa', name: 'Papá', trust: Trust.unverified, fingerprint: '5E0B D2A9 4C17 83F6'),
+    ];
+
+    ChatMessage message(
+      String chatId,
+      bool outgoing,
+      String text,
+      DateTime at, {
+      String? sender,
+      MessageStatus status = MessageStatus.sent,
+    }) => ChatMessage(
+      id: 'm${_nextId++}',
+      chatId: chatId,
+      outgoing: outgoing,
+      text: text,
+      sentAt: at,
+      sender: sender,
+      status: status,
+    );
+
+    final rooms = [
+      _Room(id: 'chat-ana', kind: ChatKind.direct, title: 'Ana Torres', contactId: 'ana', createdAt: ago(60), unread: 1)
+        ..messages.addAll([
+          message('chat-ana', true, '¿Te llegó el documento que te mandé?', ago(29)),
+          message('chat-ana', false, 'Sí, ya lo revisé. Está todo bien.', ago(25)),
+          message('chat-ana', true, '¿El jueves a las 6, entonces?', ago(22)),
+          message('chat-ana', false, 'Perfecto, nos vemos el jueves', ago(18)),
+        ]),
+      _Room(
+          id: 'chat-familia',
+          kind: ChatKind.group,
+          title: 'Familia',
+          memberNames: const ['Mamá', 'Papá'],
+          createdAt: ago(600),
+          unread: 1,
+        )
+        ..messages.addAll([
+          message('chat-familia', false, '¿Quién trae el pan para la cena?', ago(130), sender: 'Mamá'),
+          message('chat-familia', true, 'Yo lo compro de camino', ago(125)),
+          message('chat-familia', false, 'Llego a las 7', ago(105), sender: 'Papá'),
+        ]),
+      _Room(
+          id: 'chat-carlos',
+          kind: ChatKind.direct,
+          title: 'Carlos Méndez',
+          contactId: 'carlos',
+          createdAt: daysAgo(1, 9, 0),
+          draft: 'Mañana te confirmo la hora',
+        )
+        ..messages.addAll([
+          message('chat-carlos', false, 'Te envié el archivo del contrato', daysAgo(1, 18, 20)),
+          message('chat-carlos', true, 'Gracias, lo miro esta noche', daysAgo(1, 18, 24)),
+          message('chat-carlos', true, 'Te paso la dirección luego', daysAgo(1, 18, 30), status: MessageStatus.failed),
+        ]),
+      _Room(id: 'chat-lucia', kind: ChatKind.direct, title: 'Lucía', contactId: 'lucia', createdAt: daysAgo(3, 9, 0))
+        ..messages.addAll([
+          message('chat-lucia', false, '¿Me pasas la receta del ajiaco?', daysAgo(3, 19, 2)),
+          message('chat-lucia', true, 'Claro, te la mando ahorita', daysAgo(3, 19, 10)),
+          message('chat-lucia', false, '¡Gracias!', daysAgo(3, 19, 15)),
+        ]),
+    ];
+    for (final room in rooms) {
+      _rooms[room.id] = room;
+      _messagesOf(room.id).value = List.unmodifiable(room.messages);
+    }
+    _publishChats();
+  }
+}
+
+class _Room {
+  _Room({
+    required this.id,
+    required this.kind,
+    required this.title,
+    required this.createdAt,
+    this.contactId,
+    this.memberNames = const [],
+    this.unread = 0,
+    this.draft,
+  });
+
+  final String id;
+  final ChatKind kind;
+  final String title;
+  final String? contactId;
+  final List<String> memberNames;
+  final DateTime createdAt;
+  final messages = <ChatMessage>[];
+  int unread;
+  String? draft;
+}
+
+/// A value and its changes: each listener gets the current value first, then
+/// every change, like the streams the Rust engine will expose.
+class _Live<T> {
+  _Live(this._value);
+
+  T _value;
+  final _listeners = <MultiStreamController<T>>{};
+
+  /// Called when the first listener comes or the last one leaves.
+  void Function()? onActive;
+
+  T get value => _value;
+  set value(T next) {
+    _value = next;
+    for (final listener in [..._listeners]) {
+      listener.add(next);
+    }
+  }
+
+  bool get hasListeners => _listeners.isNotEmpty;
+
+  Stream<T> get stream => Stream<T>.multi((controller) {
+    controller.add(_value);
+    _listeners.add(controller);
+    if (_listeners.length == 1) onActive?.call();
+    controller.onCancel = () {
+      _listeners.remove(controller);
+      if (_listeners.isEmpty) onActive?.call();
+    };
+  });
+
+  void close() {
+    for (final listener in [..._listeners]) {
+      listener.closeSync();
+    }
+    _listeners.clear();
+  }
+}
