@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { beforeEach, describe, expect, it } from 'vitest';
-import { applyAppearance, initAppearance, type AppearanceHost } from './apply';
+import { applyAppearance, holdAppearance, initAppearance, type AppearanceHost } from './apply';
 import { APPEARANCE_STORAGE_KEY, type Appearance } from './appearance';
 import { ACCENT_PALETTES, THEMES } from './tokens';
 
@@ -11,6 +11,7 @@ function resetRoot() {
   for (const attribute of ['style', 'data-style', 'data-mode', 'data-theme']) {
     root().removeAttribute(attribute);
   }
+  holdAppearance(document, null);
 }
 
 /** A window stand-in whose system colour scheme the test can switch. */
@@ -152,6 +153,36 @@ describe('initAppearance', () => {
     setSystemDark(false);
     expect(root().dataset.mode).toBe('light');
     expect(variable('--t-accent')).toBe(ACCENT_PALETTES.light.azul.accent);
+  });
+
+  // The provider holds an appearance that storage refused (useAppearance.ts):
+  // it applies until the app closes, through scheme changes too.
+  it('follows the appearance held for this session rather than the stored one', () => {
+    const { host, setSystemDark } = fakeHost({ style: 'calma', mode: 'system', accent: 'verde' }, false);
+    initAppearance(host);
+    holdAppearance(document, { style: 'terminal', mode: 'system', accent: 'azul' });
+    setSystemDark(true);
+    expect(root().dataset.style).toBe('terminal');
+    expect(root().dataset.mode).toBe('dark');
+    expect(variable('--t-accent')).toBe(ACCENT_PALETTES.dark.azul.accent);
+
+    // As the provider does: hold it and apply it.
+    const light: Appearance = { style: 'terminal', mode: 'light', accent: 'azul' };
+    holdAppearance(document, light);
+    applyAppearance(document, light, true);
+    setSystemDark(false);
+    setSystemDark(true);
+    expect(root().dataset.mode).toBe('light');
+  });
+
+  it('lets the stored appearance lead again once the hold is released', () => {
+    const { host, setSystemDark } = fakeHost({ style: 'calma', mode: 'system', accent: 'verde' }, false);
+    initAppearance(host);
+    holdAppearance(document, { style: 'terminal', mode: 'light', accent: 'azul' });
+    holdAppearance(document, null);
+    setSystemDark(true);
+    expect(root().dataset.style).toBe('calma');
+    expect(root().dataset.mode).toBe('dark');
   });
 
   it('stops listening once disposed', () => {

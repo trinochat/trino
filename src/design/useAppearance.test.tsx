@@ -2,7 +2,7 @@
 import { act, cleanup, render, renderHook, screen } from '@testing-library/react';
 import type { ReactNode } from 'react';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { initAppearance, type AppearanceHost } from './apply';
+import { holdAppearance, initAppearance, type AppearanceHost } from './apply';
 import { APPEARANCE_STORAGE_KEY, DEFAULT_APPEARANCE, type Appearance } from './appearance';
 import { THEMES } from './tokens';
 import { AppearanceProvider, useAppearance } from './useAppearance';
@@ -13,6 +13,7 @@ const root = () => document.documentElement;
 function fakeHost(stored: Appearance | null, systemDark: boolean, { refuseWrites = false } = {}) {
   const data = new Map<string, string>();
   if (stored) data.set(APPEARANCE_STORAGE_KEY, JSON.stringify(stored));
+  const storage = { refuseWrites };
   const listeners = new Set<() => void>();
   const query = {
     matches: systemDark,
@@ -25,7 +26,7 @@ function fakeHost(stored: Appearance | null, systemDark: boolean, { refuseWrites
     localStorage: {
       getItem: key => data.get(key) ?? null,
       setItem: (key, value) => {
-        if (refuseWrites) throw new Error('QuotaExceededError');
+        if (storage.refuseWrites) throw new Error('QuotaExceededError');
         data.set(key, value);
       },
     },
@@ -35,7 +36,10 @@ function fakeHost(stored: Appearance | null, systemDark: boolean, { refuseWrites
     query.matches = dark;
     listeners.forEach(listener => listener());
   };
-  return { host, data, listeners, setSystemDark };
+  const setRefuseWrites = (refuse: boolean) => {
+    storage.refuseWrites = refuse;
+  };
+  return { host, data, listeners, setSystemDark, setRefuseWrites };
 }
 
 function wrapperFor(host: AppearanceHost) {
@@ -44,6 +48,7 @@ function wrapperFor(host: AppearanceHost) {
 
 beforeEach(() => {
   for (const attribute of ['style', 'data-style', 'data-mode']) root().removeAttribute(attribute);
+  holdAppearance(document, null);
 });
 
 afterEach(cleanup);
@@ -136,6 +141,52 @@ describe('AppearanceProvider and useAppearance', () => {
     expect(saved).toBe(false);
     expect(result.current.appearance.style).toBe('terminal');
     expect(root().dataset.style).toBe('terminal');
+  });
+
+  // The listener of initAppearance would otherwise re-apply what storage
+  // still holds, over the appearance the user just chose.
+  it('keep an appearance storage refused when the system colour scheme changes', () => {
+    const stored: Appearance = { style: 'calma', mode: 'system', accent: 'verde' };
+    const { host, setSystemDark } = fakeHost(stored, false, { refuseWrites: true });
+    const stop = initAppearance(host);
+    const { result } = renderHook(() => useAppearance(), { wrapper: wrapperFor(host) });
+
+    act(() => {
+      result.current.setAppearance({ style: 'terminal', mode: 'system', accent: 'azul' });
+    });
+    setSystemDark(true);
+    expect(root().dataset.style).toBe('terminal');
+    expect(root().dataset.mode).toBe('dark');
+
+    act(() => {
+      result.current.setAppearance({ style: 'terminal', mode: 'light', accent: 'azul' });
+    });
+    setSystemDark(false);
+    setSystemDark(true);
+    expect(root().dataset.mode).toBe('light');
+    stop();
+  });
+
+  it('let storage lead again once it takes a save', () => {
+    const { host, data, setSystemDark, setRefuseWrites } = fakeHost(null, false, { refuseWrites: true });
+    const stop = initAppearance(host);
+    const { result } = renderHook(() => useAppearance(), { wrapper: wrapperFor(host) });
+    act(() => {
+      result.current.setAppearance({ style: 'terminal', mode: 'light', accent: 'azul' });
+    });
+
+    setRefuseWrites(false);
+    let saved = false;
+    act(() => {
+      saved = result.current.setAppearance({ style: 'calma', mode: 'system', accent: 'verde' });
+    });
+    expect(saved).toBe(true);
+    // Saved after start-up by someone else, as apply.test.ts allows.
+    data.set(APPEARANCE_STORAGE_KEY, JSON.stringify({ style: 'terminal', mode: 'system', accent: 'verde' }));
+    setSystemDark(true);
+    expect(root().dataset.style).toBe('terminal');
+    expect(root().dataset.mode).toBe('dark');
+    stop();
   });
 
   it('need the provider above them', () => {

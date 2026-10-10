@@ -6,17 +6,20 @@
  * One owner for the `prefers-color-scheme` listener: `initAppearance`, which
  * main.tsx starts before the first render. It reads the stored appearance on
  * every change of the system scheme, so once this provider saves a `system`
- * mode the page keeps following the system. The provider adds no listener.
+ * mode the page keeps following the system. When storage refuses a save, the
+ * provider holds the appearance for the session (`holdAppearance`) and the
+ * listener follows that instead. The provider adds no listener.
  */
 import { createContext, createElement, useCallback, useContext, useMemo, useState, type ReactNode } from 'react';
-import { applyAppearance, darkSchemeQuery, storageOf, type AppearanceHost } from './apply';
+import { applyAppearance, darkSchemeQuery, holdAppearance, storageOf, type AppearanceHost } from './apply';
 import { loadAppearance, saveAppearance, type Appearance } from './appearance';
 
 export interface AppearanceState {
   appearance: Appearance;
   /**
    * Saves the appearance and applies it at once. Returns false when storage
-   * refused it: it still applies until the app closes.
+   * refused it: it still applies until the app closes, through changes of the
+   * system colour scheme too, and the next start shows what was stored before.
    */
   setAppearance(next: Appearance): boolean;
 }
@@ -35,6 +38,7 @@ export function AppearanceProvider({ children, host = window }: AppearanceProvid
   const setAppearance = useCallback(
     (next: Appearance) => {
       const saved = saveAppearance(storageOf(host), next);
+      holdAppearance(host.document, saved ? null : next);
       applyAppearance(host.document, next, darkSchemeQuery(host)?.matches ?? false);
       setState(next);
       return saved;

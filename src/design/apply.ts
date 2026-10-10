@@ -39,10 +39,24 @@ export function applyAppearance(doc: Document, appearance: Appearance, prefersDa
   root.dataset.mode = mode;
 }
 
+/** The appearance each page holds for this session, over the stored one. */
+const held = new WeakMap<Document, Appearance>();
+
+/**
+ * Holds an appearance that storage refused for the rest of the session, so
+ * the system colour scheme listener of `initAppearance` re-applies it rather
+ * than what storage still has. `null` lets the stored appearance lead again.
+ */
+export function holdAppearance(doc: Document, appearance: Appearance | null): void {
+  if (appearance) held.set(doc, appearance);
+  else held.delete(doc);
+}
+
 /**
  * Applies the stored appearance now (before the first render, so nothing
  * flashes) and again whenever the system colour scheme changes while the
- * stored mode is `system`. Without storage or `matchMedia` it falls back to
+ * mode is `system`: the mode of the appearance held for this session, or
+ * else of the stored one. Without storage or `matchMedia` it falls back to
  * the defaults and light. Returns a function that stops listening.
  */
 export function initAppearance(host: AppearanceHost): () => void {
@@ -53,7 +67,7 @@ export function initAppearance(host: AppearanceHost): () => void {
   if (!query) return () => {};
   return onChange(query, () => {
     // Read it again: the appearance may have been saved since start-up.
-    const appearance = loadAppearance(storage);
+    const appearance = held.get(host.document) ?? loadAppearance(storage);
     if (appearance.mode === 'system') applyAppearance(host.document, appearance, prefersDark());
   });
 }
