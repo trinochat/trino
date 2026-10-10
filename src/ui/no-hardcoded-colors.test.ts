@@ -2,7 +2,8 @@ import { describe, expect, it } from 'vitest';
 
 /**
  * Principle 2 of the redesign: no hand-written colours. Colours live in the
- * tokens (`src/design/tokens.ts`) and reach the screens through the `ui-*`
+ * tokens (`src/design/tokens.ts` and the accessibility layers of
+ * `src/design/a11y-tokens.ts`) and reach the screens through the `ui-*`
  * Tailwind classes and the `--t-*` CSS variables, so the component library,
  * the design engine, the redesigned screens (`src/screens`) and the app
  * around them (`src/app`) hold no colour literals: no hex, no rgb() or hsl(),
@@ -16,7 +17,13 @@ const SOURCES: Record<string, string> = {
     eager: true,
   }),
   ...import.meta.glob<string>(
-    ['../design/**/*.{ts,tsx}', '!../design/**/*.test.{ts,tsx}', '!../design/tokens.ts', '!../design/color.ts'],
+    [
+      '../design/**/*.{ts,tsx}',
+      '!../design/**/*.test.{ts,tsx}',
+      '!../design/tokens.ts',
+      '!../design/a11y-tokens.ts',
+      '!../design/color.ts',
+    ],
     { query: '?raw', import: 'default', eager: true },
   ),
   ...import.meta.glob<string>(
@@ -243,7 +250,7 @@ describe('the component library, the design engine and the screens', () => {
         '../screens/types.ts',
       ]),
     );
-    expect(scanned.filter(key => /\.test\.tsx?$|\/(tokens|color)\.ts$/.test(key))).toEqual([]);
+    expect(scanned.filter(key => /\.test\.tsx?$|\/(tokens|a11y-tokens|color)\.ts$/.test(key))).toEqual([]);
   });
 
   // Every source of src, listed apart from SOURCES and never loaded: a folder
@@ -255,7 +262,7 @@ describe('the component library, the design engine and the screens', () => {
       path =>
         /^src\/(ui|design|screens|app)\//.test(path) &&
         !/\.test\.tsx?$/.test(path) &&
-        !/^src\/design\/(tokens|color)\.ts$/.test(path),
+        !/^src\/design\/(tokens|a11y-tokens|color)\.ts$/.test(path),
     );
     expect(expected).toContain('src/screens/types.ts');
     expect(Object.keys(SOURCES).map(repositoryPath).sort()).toEqual(expected.sort());

@@ -3,6 +3,13 @@
  * how they are stored, and the tokens and CSS variables they produce. Pure:
  * storage is passed in, and the DOM side lives in `apply.ts`.
  */
+import {
+  MORE_CONTRAST,
+  MORE_CONTRAST_ACCENTS,
+  SAFE_STATUS,
+  STANDARD_A11Y,
+  type A11yLayers,
+} from './a11y-tokens';
 import { hueAndChroma, isHexColor } from './color';
 import {
   ACCENTS,
@@ -45,17 +52,42 @@ export function resolveMode(mode: Mode, prefersDark: boolean): ResolvedMode {
   return mode;
 }
 
-/** The tokens of a style and mode with an accent, as a new object. */
-export function resolveTokens(style: Style, mode: ResolvedMode, accent: Accent): ThemeTokens {
-  const theme = THEMES[`${style}-${mode}`];
-  if (accent === 'verde') return { ...theme };
-  const palette = ACCENT_PALETTES[mode][accent];
-  return {
-    ...theme,
-    ...palette,
-    // Calma draws no border around your bubbles; Terminal does.
-    bubbleMeLine: style === 'calma' ? palette.bubbleMe : palette.bubbleMeLine,
-  };
+/**
+ * The tokens of a style and mode with an accent, as a new object, with the
+ * accessibility layers on top (a11y-tokens.ts). The order is fixed: theme,
+ * accent, vision, contrast. Without the fourth argument nothing changes.
+ */
+export function resolveTokens(
+  style: Style,
+  mode: ResolvedMode,
+  accent: Accent,
+  a11y: A11yLayers = STANDARD_A11Y,
+): ThemeTokens {
+  const id = `${style}-${mode}` as const;
+  const more = a11y.contrast === 'more';
+  const theme: ThemeTokens = more ? { ...THEMES[id], ...MORE_CONTRAST[id] } : { ...THEMES[id] };
+  let tokens = theme;
+  if (accent !== 'verde') {
+    const palette = more
+      ? { ...ACCENT_PALETTES[mode][accent], ...MORE_CONTRAST_ACCENTS[mode][accent] }
+      : ACCENT_PALETTES[mode][accent];
+    tokens = {
+      ...theme,
+      ...palette,
+      // Calma draws no border around your bubbles; Terminal does.
+      bubbleMeLine: style === 'calma' ? palette.bubbleMe : palette.bubbleMeLine,
+    };
+  }
+  if (more) {
+    tokens.bubbleInLine = tokens.controlLine;
+    // Every bubble gets a border that shows: yours in the accent text colour,
+    // or, in Terminal light with verde, its own fill, which is that colour.
+    tokens.bubbleMeLine = id === 'terminal-light' && accent === 'verde' ? tokens.bubbleMe : tokens.accentText;
+  }
+  // The scan lines go with more contrast or with their switch off.
+  if (more || a11y.scanLines === false) tokens.scan = 'none';
+  if (a11y.vision === 'safe') Object.assign(tokens, SAFE_STATUS[mode][a11y.contrast]);
+  return tokens;
 }
 
 /** Tokens that are content, not style, so they get no CSS variable. */
