@@ -57,16 +57,66 @@ rule above are bugs in the caller; deriving symbols from them would only show
 two people a mismatch nobody can explain. `vectors.json` lists such inputs
 under `invalid`, and every implementation must reject all of them.
 
-### Why the call SAS covers the identities
+### What a match proves, and how much
 
 In 0.1.0 the call SAS hashed only the two DTLS fingerprints. A relay that
 passes both fingerprints through unchanged makes that SAS match without
 proving anything about who is on the other end, so "they match, mark as
 verified" was not sound. In v2 the call SAS also covers both identity digests
-and the call id. If the symbols match on both sides, each side holds the
-other's real identity key, and the media path has nobody in the middle. That
-is why "They match" in a call may mark the contact as verified
-(`verified:<handle>` with the current fingerprint).
+and the call id, so a match speaks about the keys as well as the media path.
+
+A SAS is short (42 bits) and nothing is committed before it is shown, so a
+match is a bound on the attacker's work, not a proof. The two derivations
+give very different bounds:
+
+- **Call SAS: about 2^42 work, in real time, for each call.** The DTLS
+  certificates are new for every call (`call.ts` builds the
+  `RTCPeerConnection` without `certificates`), so nothing can be prepared in
+  advance. Someone in the middle must give one side her fingerprint before
+  that side answers with its own fresh one; only then can she search for a
+  fingerprint for the other side that gives the same 7 symbols. That is a
+  search over about 2^42 certificates while the call rings
+  (`RING_TIMEOUT_MS`, 45 s), which takes on the order of tens of high-end
+  GPUs (if the DTLS stack only matches the fingerprint and does not check
+  the certificate's self-signature; more if it does). A failed attempt shows
+  two people different symbols. So a match means, within that margin, that
+  each side holds the other's real identity key and the media path has
+  nobody in the middle.
+  - The bound assumes that neither fingerprint changes after the first
+    answer. If a renegotiation could carry new fingerprints on both legs,
+    the attacker would choose both and the search would fall to a birthday
+    search of about 2^21 per leg. The call screen must not let a match
+    outlive a change of the remote fingerprint, and should end the call if
+    it changes.
+- **Contact SAS: about 2^21 work, offline.** Its only inputs are the two
+  identity digests: static, with nothing fresh and nothing committed. Someone
+  who swaps both contact codes during the exchange gives Alice an identity X
+  posing as Bob and Bob an identity Y posing as Alice, and picks X and Y
+  herself. She needs the 42 bits of SAS(idA, X) and SAS(idB, Y) to agree,
+  which a birthday search finds after about 2^21 identities per side: a few
+  million key generations and hashes, minutes on a laptop, all before anyone
+  compares. Alice and Bob then see the same 7 symbols while each holds her
+  key.
+
+**Consequences:**
+
+- "They match" in a **call** may mark the contact as verified
+  (`verified:<handle>` with the current fingerprint).
+- A **contact** SAS match is not enough, on its own, to mark a contact as
+  verified. 0.1.0's 6 emojis (36 bits) had the same weakness.
+- **Open decision, to take before the call and contact screens on desktop,
+  mobile and web build on this:** how a contact gets verified outside a
+  call. The options:
+  1. compare the full identity digest (a QR scan, or a long safety number of
+     at least 128 bits), and keep the 7 symbols for calls only;
+  2. verify contacts only through the call SAS, and drop "They match →
+     verified" from the contact dialog;
+  3. derive the contact SAS from a commit-then-reveal exchange of fresh
+     nonces inside the app, as ZRTP does. This is an app message, not a
+     change to the call signals, but it is a protocol addition and a third
+     derivation.
+
+  Options 1 and 2 change nothing in this spec's derivations or vectors.
 
 The `trino-sas-call-v2` and `trino-sas-contact-v2` prefixes keep the two
 derivations apart: the same two people get different symbols for a call and
@@ -287,13 +337,16 @@ is skipped, and the test run says so (`drift check skipped: lucide-react X is
 installed`); the committed JSON and the hand-kept copy of the table in
 `sas-symbols.test.ts` remain the guard. Regenerating needs 0.468.0 again.
 
-The tests cover: the golden vectors and the invalid inputs; that the order of
+The tests cover: the golden vectors and the invalid inputs, including one
+right-length call id for each character outside the set; that the order of
 A and B does not matter; that a call and a contact give different symbols;
 that the result is 7 indices below 64 taken as `d[i] >> 2`; that changing any
 single input changes the result; that the table is exactly the frozen one,
 with 64 different icons and 64 different words per language, each with a
-capital first letter; that none of the forbidden icons is in it; and that the
-committed JSON and licence notice match the generator.
+capital first letter; that none of the forbidden icons is in it; that it
+carries the drawing rules; that the committed JSON and licence notice match
+the generator; that the shared files arrive with LF only; and that the icon
+sizes with the text and the word carries its language.
 
 ## Licence
 

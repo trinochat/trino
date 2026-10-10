@@ -16,6 +16,11 @@
  * The indices pick symbols from the frozen table in sas-symbols.ts. The
  * mobile app implements the same function and must pass the same golden
  * vectors (assets/sas/vectors.json).
+ *
+ * What a match proves (docs/sas-v2.md): nothing is committed, so the call
+ * SAS resists about 2^42 work done in real time, as its DTLS fingerprints are
+ * fresh for every call; the contact SAS, made only of static identities,
+ * falls to an offline birthday search of about 2^21 per side.
  */
 
 export const SAS_LENGTH = 7;
@@ -107,7 +112,12 @@ export async function callSas(input: CallSasInput): Promise<number[]> {
   return sasIndices(await callSasDigest(input));
 }
 
-/** The 7 symbol indices two contacts compare to verify each other. Rejects with SasInputError. */
+/**
+ * The 7 symbol indices two contacts compare. Rejects with SasInputError.
+ * About 2^21 offline work beats it (docs/sas-v2.md), so on its own a match
+ * must not mark a contact as verified; how contacts get verified is an open
+ * decision recorded there.
+ */
 export async function contactSas(input: ContactSasInput): Promise<number[]> {
   return sasIndices(await contactSasDigest(input));
 }
