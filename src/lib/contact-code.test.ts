@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { b64urlDecode, b64urlEncode, fromCompactCode, toCompactCode } from './contact-code';
+import { b64urlDecode, b64urlEncode, fromCompactCode, toCompactCode, toShareCode } from './contact-code';
 
 // Characterization of the `trino1:` contact code as App.tsx produced it at
 // e5794e2. The expected values come from running that code on this sample, so
@@ -85,5 +85,14 @@ describe('base64url', () => {
 
   it.each(VECTORS)('decodes %j back from %j', (text, encoded) => {
     expect(b64urlDecode(encoded)).toBe(text);
+  });
+});
+
+describe('toShareCode', () => {
+  // The code the new screens share. It is trino1: for now; W4 switches it to
+  // trino2:, and the screens that show it (W1, W4) do not change.
+  it('is the trino1: code until trino2: exists', () => {
+    expect(toShareCode(SAMPLE_BUNDLE)).toBe(SAMPLE_CODE);
+    expect(toShareCode('not json')).toBe('');
   });
 });

@@ -57,7 +57,18 @@ import {
 import { QRCodeSVG } from 'qrcode.react';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { processFile, type ProcessedFile } from './lib/media';
-import { b64urlDecode, b64urlEncode, fromCompactCode, toCompactCode } from './lib/contact-code';
+import { fromCompactCode, toCompactCode } from './lib/contact-code';
+import { decodeBody, encodeMeta } from './lib/message-body';
+import {
+  INLINE_MEDIA_MAX_CHARS,
+  INLINE_STICKER_MAX_CHARS,
+  SAFE_RASTER_MIMES,
+  SAFE_VIDEO_MIMES,
+  safeInlineRasterSrc,
+  safeInlineVideoSrc,
+} from './lib/safe-media';
+import { identityInitials } from './lib/initials';
+import { prefs } from './lib/prefs';
 import {
   ACCENT_OPTIONS,
   applyThemePreference,
@@ -124,28 +135,6 @@ import { TrinoLogo } from './ui/brand/TrinoLogo';
 import './App.css';
 
 const isMobile = /android|iphone|ipad|ipod/i.test(navigator.userAgent);
-const SAFE_RASTER_MIMES = new Set(['image/jpeg', 'image/png', 'image/gif', 'image/webp']);
-const SAFE_VIDEO_MIMES = new Set(['video/mp4', 'video/webm', 'video/ogg']);
-const INLINE_THUMB_MAX_CHARS = 180_000;
-const INLINE_STICKER_MAX_CHARS = 7_100_000;
-const INLINE_MEDIA_MAX_CHARS = 35_000_000;
-
-function safeInlineRasterSrc(
-  src?: string | null,
-  maxChars = INLINE_THUMB_MAX_CHARS,
-): string | undefined {
-  if (!src || src.length > maxChars) return undefined;
-  const match = src.match(
-    /^data:image\/(jpeg|png|gif|webp);base64,([A-Za-z0-9+/]+={0,2})$/,
-  );
-  return match ? src : undefined;
-}
-
-function safeInlineVideoSrc(src?: string | null): string | undefined {
-  if (!src || src.length > INLINE_MEDIA_MAX_CHARS) return undefined;
-  const match = src.match(/^data:video\/(mp4|webm|ogg);base64,([A-Za-z0-9+/]+={0,2})$/);
-  return match ? src : undefined;
-}
 
 type Phase = 'boot' | 'forge' | 'unseal' | 'main';
 
@@ -160,14 +149,6 @@ interface ChatMessage {
   expiresAt?: number; // absolute epoch seconds when it disappears
 }
 
-// New ASCII-safe metadata envelope for TTL (+optional reply):
-// "trm1:" + base64url(JSON{t:text, d:ttlSec, r:{author,preview}}).
-const META_PREFIX = 'trm1:';
-// Per-conversation self-destruct TTL (seconds), stored locally. 0 = off.
-function ttlFor(convoKey: string): number {
-  const v = Number(localStorage.getItem('ttl:' + convoKey) || '0');
-  return Number.isFinite(v) && v > 0 ? v : 0;
-}
 const TTL_OPTIONS: { key: string; v: number }[] = [
   { key: 'ttl.off', v: 0 },
   { key: 'ttl.seconds30', v: 30 },
@@ -176,62 +157,6 @@ const TTL_OPTIONS: { key: string; v: number }[] = [
   { key: 'ttl.day1', v: 86400 },
   { key: 'ttl.week1', v: 604800 },
 ];
-function encodeMeta(
-  text: string,
-  opts: { reply?: { author: string; preview: string }; ttl?: number },
-): string {
-  if (opts.ttl) {
-    const obj: { t: string; d: number; r?: { author: string; preview: string } } = {
-      t: text,
-      d: opts.ttl,
-    };
-    if (opts.reply) obj.r = { author: opts.reply.author, preview: opts.reply.preview.slice(0, 90) };
-    return META_PREFIX + b64urlEncode(JSON.stringify(obj));
-  }
-  if (opts.reply) return encodeReply(opts.reply.author, opts.reply.preview, text);
-  return text;
-}
-
-// Reply is encoded inside the message body (frontend-only, no wire change):
-// \x01R\x01<b64 author>\x01<b64 preview>\x01<actual text>
-const REPLY_MARK = 'R';
-function encodeReply(author: string, preview: string, text: string): string {
-  const a = btoa(unescape(encodeURIComponent(author)));
-  const p = btoa(unescape(encodeURIComponent(preview.slice(0, 90))));
-  return REPLY_MARK + a + '' + p + '' + text;
-}
-function decodeBody(body: string): {
-  reply?: { author: string; preview: string };
-  text: string;
-  ttl?: number;
-} {
-  if (body.startsWith(META_PREFIX)) {
-    try {
-      const obj = JSON.parse(b64urlDecode(body.slice(META_PREFIX.length)));
-      return {
-        text: String(obj.t ?? ''),
-        reply: obj.r ? { author: String(obj.r.author), preview: String(obj.r.preview) } : undefined,
-        ttl: typeof obj.d === 'number' ? obj.d : undefined,
-      };
-    } catch {
-      return { text: body };
-    }
-  }
-  if (!body.startsWith(REPLY_MARK)) return { text: body };
-  const parts = body.slice(REPLY_MARK.length).split('');
-  if (parts.length < 3) return { text: body };
-  try {
-    return {
-      reply: {
-        author: decodeURIComponent(escape(atob(parts[0]!))),
-        preview: decodeURIComponent(escape(atob(parts[1]!))),
-      },
-      text: parts.slice(2).join(''),
-    };
-  } catch {
-    return { text: body };
-  }
-}
 
 function App() {
   const [phase, setPhase] = useState<Phase>('boot');
@@ -1665,7 +1590,7 @@ function MainShell({ onLock }: { onLock: () => void }) {
                 await api.connectNode(handle);
                 await refreshNodes();
               }
-              const ttl = ttlFor(handle);
+              const ttl = prefs.getTtl(handle);
               const body = encodeMeta(text, { reply, ttl });
               await api.sendMessage(handle, body);
               const now = Math.floor(Date.now() / 1000);
@@ -1765,7 +1690,7 @@ function MainShell({ onLock }: { onLock: () => void }) {
           onSend={async (text, reply) => {
             const gid = activeGroup.gid;
             try {
-              const ttl = ttlFor('grp:' + gid);
+              const ttl = prefs.getTtl('grp:' + gid);
               const body = encodeMeta(text, { reply, ttl });
               await api.sendGroupMessage(gid, body);
               const now = Math.floor(Date.now() / 1000);
@@ -4221,16 +4146,6 @@ function identityHash(name: string): number {
   return hash;
 }
 
-function identityInitials(name: string): string {
-  const clean = name.trim().replace(/^[@#]+/, '');
-  if (!clean) return '?';
-  const parts = clean.split(/[\s._-]+/).filter(Boolean);
-  if (parts.length > 1) {
-    return `${parts[0][0]}${parts[parts.length - 1][0]}`.toUpperCase();
-  }
-  return clean.slice(0, 2).toUpperCase();
-}
-
 function Avatar({
   src,
   name,
@@ -4707,7 +4622,7 @@ function ChatInfoPanel({
   const [tab, setTab] = useState<'profile' | 'privacy' | 'security'>('profile');
   const [sas, setSas] = useState('');
   const [note, setNote] = useState(() => localStorage.getItem('note:' + handle) || '');
-  const [ttl, setTtl] = useState(() => ttlFor(handle));
+  const [ttl, setTtl] = useState(() => prefs.getTtl(handle));
   const [verified, setVerified] = useState(
     () => !!fingerprint && localStorage.getItem('verified:' + handle) === fingerprint,
   );

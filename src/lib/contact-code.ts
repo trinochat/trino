@@ -41,3 +41,9 @@ export function fromCompactCode(input: string): string | null {
     return null;
   }
 }
+
+/**
+ * The code the new screens share and show. `trino1:` for now: W4 moves it to
+ * `trino2:`, and the screens that import it (W1, W4) stay the same.
+ */
+export const toShareCode: (bundleJson: string) => string = toCompactCode;
