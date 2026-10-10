@@ -1,0 +1,137 @@
+name: iOS TestFlight
+
+# Builds the mobile demo (apps/mobile) for iOS and uploads it to App Store
+# Connect, where it appears in TestFlight. Manual only: Actions > iOS TestFlight
+# > Run workflow, choosing the branch to build. The secrets and the steps around
+# it are in apps/mobile/README.md.
+#
+# Signing happens only at export, in Apple's cloud:
+# - The archive is built unsigned. Signing it would take an Apple Development
+#   certificate and a development profile, which need a registered device, and
+#   every fresh runner would mint a new certificate until the account's limit.
+# - `xcodebuild -exportArchive` then signs with the team's cloud-managed Apple
+#   Distribution certificate and an App Store profile, which it creates or
+#   updates with the App Store Connect API key (-allowProvisioningUpdates), and
+#   uploads the build (destination "upload" in apps/mobile/ios/ExportOptions.plist).
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ios-testflight
+  # Never cancel an upload half way; a second run waits for the first.
+  cancel-in-progress: false
+
+jobs:
+  testflight:
+    name: Build and upload to TestFlight
+    # macOS 26 on Apple silicon; its default Xcode is 26.6.
+    runs-on: macos-26
+    timeout-minutes: 60
+    defaults:
+      run:
+        # bash -eo pipefail: any failing command stops the step.
+        shell: bash
+    steps:
+      - name: Check out
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Check the App Store Connect secrets
+        env:
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          ASC_KEY_P8: ${{ secrets.ASC_KEY_P8 }}
+        run: |
+          missing=""
+          for name in ASC_KEY_ID ASC_ISSUER_ID ASC_KEY_P8; do
+            if [ -z "${!name}" ]; then missing="$missing $name"; fi
+          done
+          if [ -n "$missing" ]; then
+            echo "::error::Missing repository secrets:$missing (see apps/mobile/README.md)."
+            exit 1
+          fi
+          case "$ASC_KEY_P8" in
+            *"-----BEGIN PRIVATE KEY-----"*) ;;
+            *)
+              echo "::error::ASC_KEY_P8 must hold the whole AuthKey_<key id>.p8 file, BEGIN and END lines included."
+              exit 1
+              ;;
+          esac
+
+      - name: Select Xcode 26.6
+        run: |
+          sudo xcode-select --switch /Applications/Xcode_26.6.app
+          xcodebuild -version
+
+      - name: Set up Flutter 3.47.5
+        uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2.23.0
+        with:
+          channel: stable
+          flutter-version: 3.47.5
+
+      - name: Resolve dependencies
+        working-directory: apps/mobile
+        run: flutter pub get
+
+      - name: Tests
+        working-directory: apps/mobile
+        run: flutter test
+
+      - name: Write the App Store Connect API key
+        env:
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_KEY_P8: ${{ secrets.ASC_KEY_P8 }}
+        run: |
+          umask 077
+          key_path="$RUNNER_TEMP/AuthKey_${ASC_KEY_ID}.p8"
+          printf '%s\n' "$ASC_KEY_P8" > "$key_path"
+          echo "ASC_KEY_PATH=$key_path" >> "$GITHUB_ENV"
+
+      # Writes ios/Flutter/Generated.xcconfig (release mode, version 0.1.0 from
+      # pubspec.yaml, this run's number as the build number) without building;
+      # the archive below compiles the Dart code itself.
+      - name: Configure the iOS build
+        working-directory: apps/mobile
+        run: flutter build ios --release --config-only --no-codesign --build-number ${{ github.run_number }}
+
+      - name: Archive, unsigned
+        working-directory: apps/mobile/ios
+        run: |
+          xcodebuild archive \
+            -workspace Runner.xcworkspace \
+            -scheme Runner \
+            -configuration Release \
+            -sdk iphoneos \
+            -destination 'generic/platform=iOS' \
+            -archivePath "$RUNNER_TEMP/Runner.xcarchive" \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY=""
+
+      - name: Sign in the cloud and upload to App Store Connect
+        working-directory: apps/mobile/ios
+        env:
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+        run: |
+          xcodebuild -exportArchive \
+            -archivePath "$RUNNER_TEMP/Runner.xcarchive" \
+            -exportOptionsPlist ExportOptions.plist \
+            -exportPath "$RUNNER_TEMP/export" \
+            -allowProvisioningUpdates \
+            -authenticationKeyPath "$ASC_KEY_PATH" \
+            -authenticationKeyID "$ASC_KEY_ID" \
+            -authenticationKeyIssuerID "$ASC_ISSUER_ID"
+          {
+            echo "### Uploaded build ${{ github.run_number }}"
+            echo "App Store Connect processes it for a few minutes; then it shows in TestFlight."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Delete the API key
+        if: always()
+        run: rm -f "$RUNNER_TEMP"/AuthKey_*.p8
