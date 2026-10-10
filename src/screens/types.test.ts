@@ -4,6 +4,7 @@ import type { ForgeResponse, GroupInfo, NodeInfo, UnsealResponse } from '../lib/
 import type { ConvoRef as LibConvoRef } from '../lib/convo';
 import type {
   CallSlot,
+  ChannelViewProps,
   ChatPaneProps,
   ConvoRef,
   InboxFilter,
@@ -53,6 +54,19 @@ describe('the screen contracts', () => {
 
   it('keep the chat on contacts and groups, never the channel', () => {
     expectTypeOf<ChatPaneProps['convo']>().toEqualTypeOf<Exclude<ConvoRef, { kind: 'channel' }>>();
+  });
+
+  // The links in a message open through the shell, as the channel's do, so
+  // the chat never imports the opener plugin and its tests need no mock.
+  it('hand the links of a message to the shell', () => {
+    expectTypeOf<ChatPaneProps['onOpenLink']>().toEqualTypeOf<(url: string) => void>();
+    expectTypeOf<ChatPaneProps['onOpenLink']>().toEqualTypeOf<ChannelViewProps['onOpenLink']>();
+  });
+
+  // Delete for me needs the backend (K11). Until it lands the shell leaves
+  // the handler out and the chat hides the menu item: nothing is faked.
+  it('make delete for me optional, so the chat can hide it', () => {
+    expectTypeOf<ChatPaneProps['onDeleteForMe']>().toEqualTypeOf<((msgKey: string) => Promise<void>) | undefined>();
   });
 
   it('name the seven sections of Settings', () => {

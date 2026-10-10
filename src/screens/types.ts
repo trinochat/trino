@@ -36,7 +36,9 @@ export interface Msg {
   file?: FileRef;
   from?: string;
   reply?: ReplyRef;
+  /** Seconds. */
   ttl?: number;
+  /** Epoch seconds when it disappears. */
   expiresAt?: number;
   /** Only for what was sent in this session. */
   state?: SendState;
@@ -53,6 +55,7 @@ export interface InboxItem {
   avatar: { initials: string; src?: string; kind: 'person' | 'group' };
   preview?: string;
   draft?: string;
+  /** Epoch seconds, like `Msg.ts`. */
   lastTs?: number;
   unread: number;
   trust?: Trust;
@@ -103,6 +106,7 @@ export interface ChatPaneProps {
   convo: Exclude<ConvoRef, { kind: 'channel' }>;
   header: ChatHeaderInfo;
   messages: readonly Msg[];
+  /** Epoch seconds, like `Msg.ts`. */
   now: number;
   maxTextLength: number;
   draft: string;
@@ -112,8 +116,11 @@ export interface ChatPaneProps {
   onRetry(msgKey: string): void;
   onSendFiles(files: readonly ProcessedFile[]): Promise<{ failed: readonly ProcessedFile[] }>;
   onSendSticker(s: StickerInfo): Promise<void>;
-  onDeleteForMe(msgKey: string): Promise<void>;
+  /** Needs the backend (K11); without it the message menu has no "Borrar para mí". */
+  onDeleteForMe?(msgKey: string): Promise<void>;
   onForward(msgKey: string): void;
+  /** A link in a message: the shell opens it in the system browser. */
+  onOpenLink(url: string): void;
   /** Contacts only; without it there are no call buttons. */
   onCall?(video: boolean): void;
   onOpenDetails(): void;
@@ -131,6 +138,7 @@ export interface ChannelViewProps {
   onToggleMuted(): void;
   onOpenLink(url: string): void;
   onBack?(): void;
+  /** Epoch seconds, like `Msg.ts`. */
   now: number;
 }
 
