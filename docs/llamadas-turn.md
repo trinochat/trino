@@ -14,8 +14,9 @@ TURN por Tor (hito M5).
    - firma un evento NIP-98 (kind 27235) con la llave Nostr de la identidad
      desbloqueada, con las etiquetas `u`, `method`, `payload` (sha256 del
      cuerpo) y `nonce`;
-   - mina una prueba de trabajo NIP-13 de 16 bits (unos 0,1 s, fuera de los
-     hilos async, con un tope de unos 4 millones de intentos);
+   - mina una prueba de trabajo NIP-13 de 20 bits, fuera de los hilos async
+     (`spawn_blocking`) y con un tope de unos 67 millones de intentos (agotarlo
+     es un caso de 1 en e^64). Tarda alrededor de 1 s; ver "Tiempo de minado";
    - hace `POST https://trinochat.org/api/v1/turn/credentials` con el cuerpo
      exacto `{"v":1}`: reqwest con rustls, 10 s de límite, sin seguir
      redirecciones y con la respuesta limitada a 16 KiB.
@@ -32,6 +33,9 @@ TURN por Tor (hito M5).
      petición que esté en curso: esa petición devuelve `no_vault` y no guarda
      nada, aunque la respuesta llegue después. Desbloquear y crear identidad
      también la vacían.
+   - Si el bloqueo llega mientras se mina, el minado también se detiene: el
+     hilo mira cada 4.096 intentos si la petición sigue viva y, si no, suelta
+     (y borra) su copia de la llave en milisegundos, sin esperar a terminar.
    - La sesión se toma junto con la llave, bajo el mismo candado que usan
      `lock_vault` y `wipe`, así que ningún bloqueo se cuela entre las dos.
    - La credencial (y el cuerpo de la respuesta) se borran de la memoria al
@@ -45,6 +49,29 @@ TURN por Tor (hito M5).
 
 El frontend pide credenciales en **cada** llamada. Quien guarda la caché y sabe
 cuándo vencen es el backend; el frontend no guarda copia.
+
+### Tiempo de minado
+
+Se necesitan en promedio 2^20 (un millón) de hashes, pero el número es al azar:
+cerca de 1 de cada 20 peticiones tarda más del triple del promedio. Solo se mina
+cuando no hay credenciales en caché: en la primera llamada después de
+desbloquear y, como mucho, una vez cada 2 h.
+
+Medido el 10 oct 2026 en release, en un i5-10300H (sin extensiones SHA), con
+20 peticiones por serie y el equipo ocupado con otras tareas:
+
+| Serie | Promedio | Mediana | Mín. | Máx. | Hashes/s |
+| --- | --- | --- | --- | --- | --- |
+| 1 | 1,27 s | 1,06 s | 0,11 s | 3,57 s | 0,93 M |
+| 2 | 0,79 s | 0,59 s | 0,01 s | 2,78 s | 1,29 M |
+
+Con esas velocidades, lo esperado son 0,8 a 1,1 s por petición. Para medir de
+nuevo: `cargo test --release --lib turn::tests::mining_time -- --ignored --nocapture`.
+
+En una compilación de desarrollo, sin optimizar, eran unos 20 s (0,05 M
+hashes/s), y el evento podía llegar al Worker con más de 60 s y ser rechazado.
+Por eso el `Cargo.toml` raíz compila `sha2` optimizado también en dev y en las
+pruebas: así son unos 5 s (0,2 M hashes/s).
 
 ### Reloj del equipo desfasado
 
@@ -110,9 +137,12 @@ persona dio permiso.
 - `Authorization: Nostr <base64 del evento NIP-98>`. El evento lleva:
   - kind 27235 y `created_at` a ±60 s;
   - las etiquetas `["u", <esa URL>]`, `["method","POST"]`,
-    `["payload", <sha256 hex del cuerpo>]` y `["nonce","<contador>","16"]`;
-  - un id con al menos `POW_BITS` bits a cero (16 por defecto) y la firma
-    BIP-340.
+    `["payload", <sha256 hex del cuerpo>]` y `["nonce","<contador>","20"]`;
+  - un id con al menos `POW_BITS` bits a cero y la firma BIP-340.
+- `POW_BITS` es 20 en la app (`turn.rs`) y en el Worker (`wrangler.toml`), y
+  deben coincidir: si el Worker pide más de lo que la app mina, todas las
+  peticiones reciben 403 `low_pow` y las llamadas preguntan antes de ir
+  directas. Subirlo exige primero una versión de la app que mine más.
 - Cuerpo: exactamente `{"v":1}`, con `Content-Type: application/json`.
 - 200: `{"iceServers":[{"urls":[…solo turn:/turns:…],"username","credential"}],"ttl":14400,"expiresAt":<unix s>}`.
 - Errores `{"error":"<código>"}`:
@@ -121,7 +151,8 @@ persona dio permiso.
   - 429 `rate_limited`, con `Retry-After`;
   - 502 `upstream` y 503 `disabled`.
 - Límites del Worker:
-  - 30 credenciales por clave al día y un tope global diario (3.000);
+  - 30 credenciales por clave al día y un tope global diario (20.000, decidido
+    el 10 oct 2026; el gasto lo limitan los GB, no el número de credenciales);
   - no guarda IPs ni el user agent, solo `sha256(pepper || pubkey)`.
 
 En el backend, los errores llegan a la UI como `CommandError`:
@@ -140,9 +171,12 @@ trabajo y los límites diarios existen por eso.
 
 ## Pruebas
 
-- Backend: `cargo test turn::` (35 pruebas) y
+- Backend: `cargo test turn::` (38 pruebas, más la medición `mining_time`,
+  que se ejecuta aparte) y
   `commands::tests::locking_or_wiping_forgets_the_turn_credentials`. Cubren:
-  - la firma y la prueba de trabajo, y la validación de la respuesta;
+  - la firma y la prueba de trabajo de 20 bits (un id con 19 no basta), el
+    tope de intentos y que el minado se detiene al soltar la petición;
+  - la validación de la respuesta;
   - un servidor HTTP local de prueba: cuerpo, cabeceras, errores, redirección,
     tamaño, límite de tiempo y reloj desfasado;
   - la caché: renovación a mitad de vida, bloqueo con una petición en curso;
@@ -166,5 +200,3 @@ trabajo y los límites diarios existen por eso.
   de un relay ya asignado. Si no lo hace, el relay se cae al vencer, la
   conexión pasa a `disconnected` y, tras 12 s, el reinicio de ICE (que ya
   renueva las credenciales) lo recupera una vez. Más reinicios son de L3.
-- Subir `POW_BITS` en el Worker exige actualizar la app, que siempre mina 16
-  bits.

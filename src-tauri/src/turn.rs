@@ -12,6 +12,8 @@ use base64::Engine;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::future::Future;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use std::time::Duration;
 use tauri::State;
 use thiserror::Error;
@@ -23,10 +25,12 @@ pub const TURN_ENDPOINT: &str = "https://trinochat.org/api/v1/turn/credentials";
 /// The body the Worker expects, byte for byte: its sha256 is signed.
 const REQUEST_BODY: &str = r#"{"v":1}"#;
 const NIP98_KIND: u32 = 27235;
-/// NIP-13 difficulty; the Worker's default `POW_BITS`.
-const POW_BITS: u32 = 16;
-/// About 4 million hashes: at 16 bits, running out is a 1 in e^64 event.
-const MAX_POW_ATTEMPTS: u64 = 1 << 22;
+/// NIP-13 difficulty; equal to the Worker's `POW_BITS` (trino-infra/turn).
+const POW_BITS: u32 = 20;
+/// About 67 million hashes: at 20 bits, running out is a 1 in e^64 event.
+const MAX_POW_ATTEMPTS: u64 = 1 << 26;
+/// How many hashes the miner tries between looks at its stop flag.
+const STOP_CHECK_INTERVAL: u64 = 1 << 12;
 const HTTP_TIMEOUT: Duration = Duration::from_secs(10);
 const MAX_RESPONSE_BYTES: usize = 16 * 1024;
 /// The Worker accepts `created_at` within 60 s; past this, a 401 is our clock.
@@ -126,18 +130,25 @@ fn leading_zero_bits(id: &[u8; 32]) -> u32 {
     bits
 }
 
+/// Whether an event id has the `bits` of NIP-13 difficulty it commits to.
+fn meets_difficulty(id: &[u8; 32], bits: u32) -> bool {
+    leading_zero_bits(id) >= bits
+}
+
 fn nonce_tag(counter: &str, bits: u32) -> Vec<String> {
     vec!["nonce".to_string(), counter.to_string(), bits.to_string()]
 }
 
 /// Find a NIP-13 counter that gives the event id `bits` leading zero bits.
 /// Only the NIP-01 serialization is hashed; nothing is signed until it is found.
+/// Once `stop` is set, gives up within `STOP_CHECK_INTERVAL` hashes.
 fn mine_nonce(
     pubkey: &str,
     created_at: i64,
     base_tags: &[Vec<String>],
     bits: u32,
     max_attempts: u64,
+    stop: &AtomicBool,
 ) -> Result<u64, TurnError> {
     let mut tags = base_tags.to_vec();
     tags.push(nonce_tag(NONCE_PLACEHOLDER, bits));
@@ -149,11 +160,15 @@ fn mine_nonce(
     let mut midstate = Sha256::new();
     midstate.update(prefix.as_bytes());
     for counter in 0..max_attempts {
+        if counter % STOP_CHECK_INTERVAL == 0 && stop.load(Ordering::Relaxed) {
+            // Only a dropped request sets it, and nobody reads this result.
+            return Err(TurnError::Locked);
+        }
         let mut hasher = midstate.clone();
         hasher.update(counter.to_string().as_bytes());
         hasher.update(suffix.as_bytes());
         let id: [u8; 32] = hasher.finalize().into();
-        if leading_zero_bits(&id) >= bits {
+        if meets_difficulty(&id, bits) {
             return Ok(counter);
         }
     }
@@ -167,6 +182,7 @@ fn authorization(
     created_at: i64,
     bits: u32,
     max_attempts: u64,
+    stop: &AtomicBool,
 ) -> Result<String, TurnError> {
     let pubkey = hex::encode(keys.pub_bytes);
     let mut tags = vec![
@@ -177,7 +193,7 @@ fn authorization(
             hex::encode(sha256(REQUEST_BODY.as_bytes())),
         ],
     ];
-    let counter = mine_nonce(&pubkey, created_at, &tags, bits, max_attempts)?;
+    let counter = mine_nonce(&pubkey, created_at, &tags, bits, max_attempts, stop)?;
     tags.push(nonce_tag(&counter.to_string(), bits));
     let event = build_and_sign_event(
         &keys.priv_bytes,
@@ -192,7 +208,7 @@ fn authorization(
         .ok()
         .and_then(|id| id.try_into().ok())
         .ok_or_else(|| TurnError::Signing("malformed event id".to_string()))?;
-    if leading_zero_bits(&id) < bits {
+    if !meets_difficulty(&id, bits) {
         return Err(TurnError::Signing("proof of work mismatch".to_string()));
     }
     let json = serde_json::to_string(&event).map_err(|e| TurnError::Signing(e.to_string()))?;
@@ -550,22 +566,44 @@ fn unix_now() -> i64 {
     chrono::Utc::now().timestamp()
 }
 
+/// Sets its flag when dropped: the future that owns it is gone.
+struct StopOnDrop(Arc<AtomicBool>);
+
+impl Drop for StopOnDrop {
+    fn drop(&mut self) {
+        self.0.store(true, Ordering::Relaxed);
+    }
+}
+
+/// `authorization`, mined on tokio's blocking pool. Dropping the future (a
+/// lock does) stops the miner, which then drops and wipes its copy of the key.
+async fn mined_authorization(
+    keys: &SigningKeys,
+    created_at: i64,
+    bits: u32,
+    max_attempts: u64,
+) -> Result<String, TurnError> {
+    let signing = SigningKeys {
+        priv_bytes: keys.priv_bytes.clone(),
+        pub_bytes: keys.pub_bytes,
+    };
+    let stop = Arc::new(AtomicBool::new(false));
+    let _stop_on_drop = StopOnDrop(Arc::clone(&stop));
+    // Mining takes about 1 s of CPU in release: keep it off the async workers.
+    tokio::task::spawn_blocking(move || {
+        authorization(&signing, created_at, bits, max_attempts, &stop)
+    })
+    .await
+    .map_err(|e| TurnError::Signing(e.to_string()))?
+}
+
 /// Sign (with proof of work) and send one request, dated `created_at`.
 async fn signed_request(
     client: &TurnClient,
     keys: &SigningKeys,
     created_at: i64,
 ) -> Result<TurnServers, TurnError> {
-    let signing = SigningKeys {
-        priv_bytes: keys.priv_bytes.clone(),
-        pub_bytes: keys.pub_bytes,
-    };
-    // Mining takes about 0.1 s of CPU: keep it off the async workers.
-    let header = tokio::task::spawn_blocking(move || {
-        authorization(&signing, created_at, POW_BITS, MAX_POW_ATTEMPTS)
-    })
-    .await
-    .map_err(|e| TurnError::Signing(e.to_string()))??;
+    let header = mined_authorization(keys, created_at, POW_BITS, MAX_POW_ATTEMPTS).await?;
     client.request(&header, unix_now()).await
 }
 
@@ -710,7 +748,9 @@ mod tests {
     #[test]
     fn the_request_is_a_signed_nip98_event_with_proof_of_work() {
         let created_at = now();
-        let header = authorization(&test_keys(), created_at, POW_BITS, MAX_POW_ATTEMPTS).unwrap();
+        let never = AtomicBool::new(false);
+        let header =
+            authorization(&test_keys(), created_at, POW_BITS, MAX_POW_ATTEMPTS, &never).unwrap();
         let event = decode_auth(&header);
         assert!(
             verify_event(&event),
@@ -727,15 +767,100 @@ mod tests {
         let nonce = tag(&event, "nonce");
         assert_eq!(nonce.len(), 2);
         assert!(nonce[0].parse::<u64>().is_ok(), "the counter is decimal");
-        assert_eq!(nonce[1], "16");
+        // The Worker's POW_BITS (trino-infra/turn) must be 20 as well.
+        assert_eq!(nonce[1], "20", "it commits to 20 bits");
         let id: [u8; 32] = hex::decode(&event.id).unwrap().try_into().unwrap();
-        assert!(leading_zero_bits(&id) >= 16);
+        assert!(
+            leading_zero_bits(&id) >= 20,
+            "the id has {} leading zero bits",
+            leading_zero_bits(&id)
+        );
+    }
+
+    #[test]
+    fn an_id_with_19_zero_bits_is_not_enough() {
+        let mut id = [0xffu8; 32];
+        id[0] = 0x00;
+        id[1] = 0x00;
+        id[2] = 0x10;
+        assert_eq!(leading_zero_bits(&id), 19);
+        assert!(!meets_difficulty(&id, POW_BITS));
+        id[2] = 0x08;
+        assert_eq!(leading_zero_bits(&id), 20);
+        assert!(meets_difficulty(&id, POW_BITS));
+    }
+
+    #[test]
+    fn the_attempt_cap_almost_never_runs_out() {
+        // Each attempt succeeds with probability 2^-bits.
+        let expected_attempts = f64::from(POW_BITS).exp2();
+        let chance_of_running_out = (-(MAX_POW_ATTEMPTS as f64) / expected_attempts).exp();
+        assert!(
+            chance_of_running_out < 1e-24,
+            "{chance_of_running_out:e} of mining in vain"
+        );
+    }
+
+    #[test]
+    fn dropping_a_request_stops_its_mining_thread() {
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+        runtime.block_on(async {
+            // 256 bits are never found: it mines until something stops it.
+            let keys = test_keys();
+            let mining = mined_authorization(&keys, now(), 256, u64::MAX);
+            let dropped = tokio::time::timeout(Duration::from_millis(100), mining).await;
+            assert!(dropped.is_err(), "still mining when dropped");
+        });
+        // Waits for the blocking pool, so for the miner, up to 5 s.
+        let started = Instant::now();
+        runtime.shutdown_timeout(Duration::from_secs(5));
+        assert!(
+            started.elapsed() < Duration::from_secs(2),
+            "the miner kept running (and kept a copy of the key) after the drop"
+        );
+    }
+
+    /// What a user waits for before a protected call: mining and signing at
+    /// `POW_BITS`, 20 times. Only release numbers mean anything:
+    /// `cargo test --release --lib turn::tests::mining_time -- --ignored --nocapture`
+    #[test]
+    #[ignore = "a measurement, not a check"]
+    fn mining_time() {
+        const RUNS: i64 = 20;
+        let keys = test_keys();
+        let never = AtomicBool::new(false);
+        let first = now();
+        let mut times = Vec::new();
+        let mut hashes = 0u64;
+        for run in 0..RUNS {
+            // A different event each run, so a different search.
+            let started = Instant::now();
+            let header =
+                authorization(&keys, first + run, POW_BITS, MAX_POW_ATTEMPTS, &never).unwrap();
+            times.push(started.elapsed().as_secs_f64());
+            let counter: u64 = tag(&decode_auth(&header), "nonce")[0].parse().unwrap();
+            hashes += counter + 1;
+        }
+        let total: f64 = times.iter().sum();
+        let rate = hashes as f64 / total;
+        times.sort_by(f64::total_cmp);
+        let mid = times.len() / 2; // RUNS is even
+        println!(
+            "{RUNS} runs at {POW_BITS} bits: mean {:.3} s, median {:.3} s, min {:.3} s, max {:.3} s; \
+             {:.2} M hashes/s, so {:.3} s expected for 2^{POW_BITS} hashes",
+            total / RUNS as f64,
+            (times[mid - 1] + times[mid]) / 2.0,
+            times[0],
+            times[times.len() - 1],
+            rate / 1e6,
+            f64::from(POW_BITS).exp2() / rate,
+        );
     }
 
     #[test]
     fn mining_gives_up_after_its_attempt_cap() {
         assert_eq!(
-            authorization(&test_keys(), now(), 256, 1_000),
+            authorization(&test_keys(), now(), 256, 1_000, &AtomicBool::new(false)),
             Err(TurnError::ProofOfWork)
         );
     }

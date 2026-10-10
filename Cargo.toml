@@ -13,3 +13,11 @@
 [workspace]
 resolver = "2"
 members = ["src-tauri"]
+
+# The TURN proof of work (src-tauri/src/turn.rs) hashes about a million times
+# per request. Unoptimized that takes ~20 s instead of ~1 s, and the Worker
+# only accepts events up to 60 s old, so dev and test builds optimize sha2's
+# compression function (about 4x faster there; the generic wrappers around it
+# are compiled with this crate and stay unoptimized).
+[profile.dev.package.sha2]
+opt-level = 3
