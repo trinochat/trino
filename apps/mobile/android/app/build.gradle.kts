@@ -20,8 +20,9 @@ android {
     }
 
     defaultConfig {
-        // TODO: Specify your own unique Application ID (https://developer.android.com/studio/build/application-id.html).
-        applicationId = "app.trino.trino_mobile"
+        // The id the stores know the app by, the same as the iOS bundle id. The
+        // namespace above only names the Kotlin package and the R class.
+        applicationId = "org.trinochat.app"
         // You can update the following values to match your application needs.
         // For more information, see: https://flutter.dev/to/review-gradle-config.
         minSdk = flutter.minSdkVersion

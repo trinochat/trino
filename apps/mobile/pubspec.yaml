@@ -3,7 +3,7 @@ description: "Trino for Android: end-to-end encrypted messages and calls."
 # A private app: never published to pub.dev.
 publish_to: 'none'
 
-version: 1.0.0+1
+version: 0.1.0+1
 
 environment:
   sdk: ^3.13.0

@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Android 8 and later: the launcher masks the middle 72 dp of these 108 dp
+     layers to its own shape. That middle is the Calma tile, so the white mark
+     keeps its proportions and stays inside the 66 dp safe zone. The same
+     layer serves as the monochrome one for themed icons. -->
+<adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
+    <background android:drawable="@color/ic_launcher_background" />
+    <foreground android:drawable="@mipmap/ic_launcher_foreground" />
+    <monochrome android:drawable="@mipmap/ic_launcher_foreground" />
+</adaptive-icon>
