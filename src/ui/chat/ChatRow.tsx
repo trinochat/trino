@@ -1,7 +1,8 @@
 /**
  * A chat in the inbox, as one button: avatar, name, trust, a one-line preview
  * (with the draft prefix), time and unread count. The selected chat carries
- * aria-current, the accent tint and an accent bar on its leading edge.
+ * aria-current, the accent tint and an accent bar on its leading edge, drawn
+ * as a border so forced colours keep it.
  */
 import { cx } from '../cx';
 import { FOCUS_RING_INSET } from '../focus';
@@ -19,8 +20,11 @@ export interface ChatRowProps {
   draftPrefix?: string;
   /** Time or day of the last message, as the screen formats it. */
   time?: string;
-  /** Unread count and its screen-reader suffix ("sin leer"); nothing shows at 0. */
-  unread?: { count: number; label: string };
+  /**
+   * Unread count and its screen-reader suffix ("sin leer"); nothing shows at
+   * 0. A muted chat's count is an outline, not a fill.
+   */
+  unread?: { count: number; label: string; muted?: boolean };
   /** Compact trust badge after the name, such as verified. */
   trust?: { kind: TrustKind; label: string };
   selected?: boolean;
@@ -58,7 +62,7 @@ export function ChatRow({
         <span
           data-selection-bar
           aria-hidden="true"
-          className="absolute inset-y-2 left-0 w-[0.1875rem] rounded-full bg-ui-accent-text"
+          className="absolute inset-y-2 left-0 rounded-full border-s-[3px] border-ui-accent-text"
         />
       )}
       <Avatar {...avatar} size={44} />
@@ -95,7 +99,7 @@ export function ChatRow({
           {unread && (
             <>
               {' '}
-              <UnreadBadge count={unread.count} label={unread.label} />
+              <UnreadBadge count={unread.count} label={unread.label} variant={unread.muted ? 'muted' : 'default'} />
             </>
           )}
         </span>

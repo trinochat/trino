@@ -8,19 +8,37 @@ afterEach(cleanup);
 const classesOf = (element: Element | null) => (element?.getAttribute('class') ?? '').split(/\s+/);
 
 describe('ConnectionChip', () => {
+  // Colour alone tells nothing to someone who cannot see it, and forced
+  // colours drop a dot drawn as a background: each state has its own icon,
+  // drawn in the state's colour, and the label says the state in words.
   it.each([
-    ['connected', 'bg-ui-ok', 'Conectado por Tor · 3 de 3 relays'],
-    ['connecting', 'bg-ui-warn', 'Conectando…'],
-    ['offline', 'bg-ui-danger', 'Sin conexión'],
-  ] as const)('shows %s with a %s dot that follows the real state', (status, dotColour, label) => {
+    ['connected', 'circle', 'text-ui-ok', 'Conectado por Tor · 3 de 3 relays'],
+    ['connecting', 'circle-dashed', 'text-ui-warn', 'Conectando…'],
+    ['offline', 'circle-slash', 'text-ui-danger', 'Sin conexión'],
+  ] as const)('shows %s with an icon of its own, %s, in %s', (status, icon, colour, label) => {
     render(<ConnectionChip status={status} label={label} />);
     const chip = screen.getByRole('status');
     expect(chip.textContent).toBe(label);
-    const dot = chip.querySelector('[aria-hidden="true"]');
-    expect(classesOf(dot)).toContain(dotColour);
-    for (const other of ['bg-ui-ok', 'bg-ui-warn', 'bg-ui-danger'].filter(colour => colour !== dotColour)) {
-      expect(classesOf(dot)).not.toContain(other);
-    }
+    const mark = chip.querySelector('[aria-hidden="true"]');
+    expect(mark?.tagName.toLowerCase()).toBe('svg');
+    expect(mark?.getAttribute('data-icon')).toBe(icon);
+    expect(classesOf(mark)).toContain(colour);
+    expect(classesOf(mark).filter(name => name.startsWith('bg-'))).toEqual([]);
+  });
+
+  it('fills only the circle of a working connection, and sizes the icons in rem', () => {
+    const fills = (['connected', 'connecting', 'offline'] as const).map(status => {
+      const { container, unmount } = render(<ConnectionChip status={status} label={status} />);
+      const icon = container.querySelector('svg');
+      const result = [icon?.getAttribute('fill'), icon?.getAttribute('width')];
+      unmount();
+      return result;
+    });
+    expect(fills).toEqual([
+      ['currentColor', '0.625rem'],
+      ['none', '0.625rem'],
+      ['none', '0.625rem'],
+    ]);
   });
 
   it('uses the label style on the accent-soft background', () => {

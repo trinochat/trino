@@ -90,6 +90,55 @@ describe('Switch', () => {
   });
 });
 
+/** A length in rem from a class: `h-[1.375rem]` → 1.375, or a Tailwind step, `h-7` → 1.75. */
+function remOf(element: Element, prefix: string): number {
+  for (const name of Array.from(element.classList)) {
+    const arbitrary = new RegExp(`^${prefix}-\\[(\\d*\\.?\\d+)rem\\]$`).exec(name);
+    if (arbitrary) return Number(arbitrary[1]);
+    const step = new RegExp(`^${prefix}-(\\d+(?:\\.5)?)$`).exec(name);
+    if (step) return Number(step[1]) / 4;
+  }
+  throw new Error(`No ${prefix}- length in rem in "${element.getAttribute('class')}"`);
+}
+
+describe('Switch geometry and forced colours', () => {
+  function parts(checked: boolean) {
+    render(<Switch aria-label="Tor" checked={checked} onCheckedChange={() => {}} />);
+    const track = screen.getByRole('switch');
+    const knob = track.querySelector('[data-part="knob"]');
+    if (!knob) throw new Error('The switch has no knob');
+    return { track, knob };
+  }
+
+  // At 14 px of root the knob stuck out of the track; in rem the parts add
+  // up at any text size: the knob and its margins fill the height, and the
+  // knob switched on ends one margin before the end.
+  it('adds up in rem: knob + 2 margins = height, margin + travel + knob + margin = width', () => {
+    const { track, knob } = parts(true);
+    const height = remOf(track, 'h');
+    const width = remOf(track, 'w');
+    const size = remOf(knob, 'h');
+    const margin = remOf(knob, 'top');
+    expect(remOf(knob, 'w')).toBe(size);
+    expect(remOf(knob, 'left')).toBe(margin);
+    expect(size + 2 * margin).toBe(height);
+    expect(margin + remOf(knob, 'translate-x') + size + margin).toBe(width);
+    expect([width, height, size]).toEqual([3, 1.75, 1.375]);
+  });
+
+  // Forced colours drop backgrounds: the track keeps an outline and the knob
+  // is drawn in the text colour, so its place still says on or off.
+  it('keeps the outline of the track and the knob under forced colours', () => {
+    const { track, knob } = parts(false);
+    for (const name of ['after:border', 'after:border-transparent', 'forced-colors:after:border-[color:CanvasText]']) {
+      expect(track.classList).toContain(name);
+    }
+    for (const name of ['forced-colors:bg-[color:CanvasText]', 'forced-colors:[forced-color-adjust:none]']) {
+      expect(knob.classList).toContain(name);
+    }
+  });
+});
+
 describe('Switch contrast (WCAG 1.4.11)', () => {
   /** The colour tokens of the track and the knob, read from the rendered classes. */
   function partsOf(checked: boolean) {

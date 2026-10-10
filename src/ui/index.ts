@@ -3,6 +3,8 @@
 export { cx } from './cx';
 // The one focus ring, and what Tab reaches, for pieces the screens build themselves.
 export { FOCUS_RING, FOCUS_RING_INSET, focusableWithin } from './focus';
+// The frame of a QR code, black on white in every theme and under forced colours.
+export { QR_FRAME } from './qr';
 // Form controls and buttons.
 export * from './controls';
 // Overlays.
@@ -25,6 +27,6 @@ export { DaySeparator, type DaySeparatorProps } from './chat/DaySeparator';
 export { MessageBubble, type MessageBubbleProps } from './chat/MessageBubble';
 export { StatusTicks, type MessageStatus, type StatusTicksProps } from './chat/StatusTicks';
 export { TrustBadge, type TrustBadgeProps, type TrustKind } from './chat/TrustBadge';
-export { UnreadBadge, type UnreadBadgeProps } from './chat/UnreadBadge';
+export { UnreadBadge, type UnreadBadgeProps, type UnreadBadgeVariant } from './chat/UnreadBadge';
 // Brand.
 export { TrinoLogo, type TrinoLogoProps } from './brand/TrinoLogo';

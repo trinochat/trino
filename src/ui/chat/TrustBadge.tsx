@@ -1,8 +1,10 @@
 /**
  * Trust state of a contact: verified, unverified, key changed or message
  * request. Only "verified" uses the accent; a key change and a request warn.
- * Compact mode, for chat rows, shows the icon alone and keeps the label for
- * screen readers.
+ * Each has a shield of its own, so the colour is never the only cue. With the
+ * colours for colour blindness, "verified" turns to `ok`: the orange accent
+ * and `warn` are too close for some people. Compact mode, for chat rows,
+ * shows the icon alone and keeps the label for screen readers.
  */
 import type { ReactNode } from 'react';
 import { Shield, ShieldAlert, ShieldCheck, ShieldQuestion, type LucideIcon } from 'lucide-react';
@@ -23,7 +25,7 @@ export interface TrustBadgeProps {
 }
 
 const KINDS: Record<TrustKind, { Icon: LucideIcon; tone: string; iconWithLabel: boolean }> = {
-  verified: { Icon: ShieldCheck, tone: 'font-semibold text-ui-accent-text', iconWithLabel: true },
+  verified: { Icon: ShieldCheck, tone: 'font-semibold text-ui-accent-text safe-colors:text-ui-ok', iconWithLabel: true },
   unverified: { Icon: Shield, tone: 'text-ui-muted', iconWithLabel: false },
   keyChanged: { Icon: ShieldAlert, tone: 'font-semibold text-ui-warn', iconWithLabel: true },
   request: { Icon: ShieldQuestion, tone: 'font-semibold text-ui-warn', iconWithLabel: false },

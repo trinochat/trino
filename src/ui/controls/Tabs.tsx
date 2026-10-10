@@ -26,8 +26,10 @@ export type TabsProps<T extends string> = TabsName & {
  * on the selected tab, Left and Right move and activate (wrapping around),
  * Home and End go to the ends, and the panel can take the focus. Each tab
  * controls its panel and names it. The selected tab is the raised pill of the
- * prototype plus an accent bar, since the pill alone stays under 3:1 against
- * the track.
+ * prototype plus an accent border at its foot, since the pill alone stays
+ * under 3:1 against the track. A border, not a background: forced colours
+ * keep it. They would also draw the clear border of the other tabs, so those
+ * drop it there.
  */
 export function Tabs<T extends string>(props: TabsProps<T>) {
   const { items, value, onValueChange, className, panelClassName } = props;
@@ -66,9 +68,10 @@ export function Tabs<T extends string>(props: TabsProps<T>) {
               className={cx(
                 'relative inline-flex min-h-11 flex-1 items-center justify-center rounded-ui px-2.5 text-center font-ui text-sm font-semibold',
                 'transition-colors reduce-motion:transition-none',
+                'border-b-2',
                 selected
-                  ? 'bg-ui-surface text-ui-ink [box-shadow:var(--t-shadow)] after:absolute after:inset-x-3 after:bottom-1 after:h-0.5 after:rounded-full after:bg-ui-accent-text'
-                  : 'bg-transparent text-ui-muted hover:text-ui-ink',
+                  ? 'border-ui-accent-text bg-ui-surface text-ui-ink [box-shadow:var(--t-shadow)]'
+                  : 'border-transparent bg-transparent text-ui-muted hover:text-ui-ink forced-colors:border-b-0',
                 FOCUS_RING,
               )}
             >

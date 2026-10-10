@@ -98,9 +98,14 @@ describe('Tabs', () => {
   it('marks the selected tab with an accent indicator', () => {
     render(<ContactTabs />);
     const [selected, other] = tabs();
-    expect(selected.classList).toContain('after:bg-ui-accent-text');
+    // A border, not a background: forced colours keep it.
+    expect(selected.classList).toContain('border-b-2');
+    expect(selected.classList).toContain('border-ui-accent-text');
+    expect(Array.from(selected.classList).filter(name => name.startsWith('after:bg-'))).toEqual([]);
     expect(selected.classList).toContain('text-ui-ink');
-    expect(other.classList).not.toContain('after:bg-ui-accent-text');
+    expect(other.classList).not.toContain('border-ui-accent-text');
     expect(other.classList).toContain('text-ui-muted');
+    // Forced colours paint a transparent border too: the others drop theirs.
+    expect(other.classList).toContain('forced-colors:border-b-0');
   });
 });

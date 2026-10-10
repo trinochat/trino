@@ -1,5 +1,5 @@
 import { LoaderCircle } from 'lucide-react';
-import { forwardRef, type ButtonHTMLAttributes, type ReactNode } from 'react';
+import { forwardRef, type ButtonHTMLAttributes, type ReactElement, type ReactNode } from 'react';
 import { ICON_SIZE } from '../../design/type';
 import { cx } from '../cx';
 import { FOCUS_RING } from '../focus';
@@ -8,17 +8,33 @@ import { DISABLED } from './styles';
 export type ButtonVariant = 'primary' | 'secondary' | 'ghost' | 'danger' | 'dangerSolid';
 export type ButtonSize = 'md' | 'lg';
 
-export interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
-  /** `secondary` by default, so a view has to choose its one primary action. */
-  variant?: ButtonVariant;
+interface ButtonBaseProps extends ButtonHTMLAttributes<HTMLButtonElement> {
   /** `md` is 44 px tall, `lg` 48 px. */
   size?: ButtonSize;
   fullWidth?: boolean;
-  /** A decorative icon before the label, such as a lucide icon. */
-  leadingIcon?: ReactNode;
   /** Shows a spinner in place of the icon, sets aria-busy and disables the button without dimming it. */
   loading?: boolean;
 }
+
+export type ButtonProps = ButtonBaseProps &
+  (
+    | {
+        /** `secondary` by default, so a view has to choose its one primary action. */
+        variant?: Exclude<ButtonVariant, 'dangerSolid'>;
+        /** A decorative icon before the label, such as a lucide icon. */
+        leadingIcon?: ReactNode;
+      }
+    | {
+        /**
+         * A solid red button sits beside the green primary ones, and red and
+         * green merge for many people: it always carries an icon, and its
+         * label says what it does with a verb ("Eliminar contacto"). The
+         * outlined `danger` differs by shape already.
+         */
+        variant: 'dangerSolid';
+        leadingIcon: ReactElement;
+      }
+  );
 
 /**
  * Text on its fill: accentInk on accent and surface on danger reach 4.5:1 in

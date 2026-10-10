@@ -6,16 +6,17 @@
 
 /**
  * Visible keyboard focus (WCAG 2.4.7): a 2 px outline in the accent text
- * colour, 2 px away from the element, which reaches 4.5:1 on every surface.
- * `shadow-none` drops the glow the legacy stylesheet adds to every focused
- * element.
+ * colour, 2 px away from the element, which reaches 4.5:1 on every surface,
+ * and 3 px with more contrast. `shadow-none` drops the glow the legacy
+ * stylesheet adds to every focused element. An outline, so forced colours
+ * keep it.
  */
 export const FOCUS_RING =
-  'focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ui-accent-text focus-visible:shadow-none';
+  'focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ui-accent-text focus-visible:shadow-none more-contrast:focus-visible:outline-[3px]';
 
 /** The same ring drawn just inside the element, for full-width rows and menu items that would clip it. */
 export const FOCUS_RING_INSET =
-  'focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-ui-accent-text focus-visible:shadow-none';
+  'focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-ui-accent-text focus-visible:shadow-none more-contrast:focus-visible:outline-[3px] more-contrast:focus-visible:outline-offset-[-3px]';
 
 const CANDIDATES = 'a[href], button, input, select, textarea, [tabindex], [contenteditable="true"]';
 

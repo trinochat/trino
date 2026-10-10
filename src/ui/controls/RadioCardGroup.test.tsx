@@ -133,7 +133,13 @@ describe('RadioCardGroup', () => {
     expect(checked.classList).toContain('border-2');
     expect(checked.classList).toContain('border-ui-accent-text');
     expect(checked.classList).toContain('bg-ui-accent-soft');
-    expect(checked.querySelector('[data-part="dot"]')?.classList).toContain('bg-ui-accent-text');
+    const dot = checked.querySelector('[data-part="dot"]');
+    // A thick border, not a fill: forced colours keep borders and drop backgrounds.
+    expect(dot?.classList).toContain('border-[0.3125rem]');
+    expect(dot?.classList).toContain('border-ui-accent-text');
+    expect(Array.from(dot?.classList ?? []).filter(name => /^bg-(?!transparent$)/.test(name))).toEqual([]);
+    expect(checked.classList).toContain('forced-colors:border-[color:Highlight]');
+    expect(unchecked.classList).not.toContain('forced-colors:border-[color:Highlight]');
     expect(unchecked.classList).toContain('border-ui-line');
     expect(unchecked.querySelector('[data-part="dot"]')?.classList).toContain('border-ui-muted');
   });

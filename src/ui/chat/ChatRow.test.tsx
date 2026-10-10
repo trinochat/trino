@@ -33,7 +33,10 @@ describe('ChatRow', () => {
     const bar = row().querySelector('[data-selection-bar]');
     expect(bar).not.toBeNull();
     expect(bar?.getAttribute('aria-hidden')).toBe('true');
-    expect(classesOf(bar)).toContain('bg-ui-accent-text');
+    // A border, which forced colours keep, not a background.
+    expect(classesOf(bar)).toContain('border-s-[3px]');
+    expect(classesOf(bar)).toContain('border-ui-accent-text');
+    expect(classesOf(bar).filter(name => name.startsWith('bg-'))).toEqual([]);
   });
 
   it('has no aria-current, tint or accent bar when not selected', () => {
@@ -82,6 +85,14 @@ describe('ChatRow', () => {
       <ChatRow name="Carlos Méndez" avatar={{ initials: 'CM' }} unread={{ count: 0, label: 'sin leer' }} onClick={() => {}} />,
     );
     expect(screen.queryByText('sin leer')).toBeNull();
+  });
+
+  // A muted chat is told by the shape of its badge too, not only by grey (W2).
+  it('passes a muted chat on to its unread badge', () => {
+    renderRow({ unread: { count: 2, label: 'sin leer', muted: true } });
+    const badge = screen.getByText('sin leer').parentElement;
+    expect(classesOf(badge)).toContain('border-ui-muted');
+    expect(classesOf(badge)).not.toContain('bg-ui-badge');
   });
 
   it('adds a compact trust badge whose label joins the row’s accessible name', () => {

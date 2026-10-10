@@ -29,6 +29,17 @@ describe('UnreadBadge', () => {
     expect(classes).toContain('text-ui-badge-ink');
   });
 
+  // Muted is not told by a grey alone: an outline in muted (4.5:1, never
+  // the 1.2:1 of line) around a muted number, with no fill.
+  it('shows a muted chat as an outline around the number, not a grey fill', () => {
+    const { container } = render(<UnreadBadge count={4} label="sin leer" variant="muted" />);
+    const classes = classesOf(container.firstElementChild);
+    for (const name of ['border', 'border-ui-muted', 'text-ui-muted', 'bg-transparent']) expect(classes).toContain(name);
+    expect(classes.filter(name => name.startsWith('bg-') && name !== 'bg-transparent')).toEqual([]);
+    expect(classes).not.toContain('border-ui-line');
+    expect(container.firstElementChild?.textContent).toBe('4 sin leer');
+  });
+
   it('caps large counts', () => {
     const { container, rerender } = render(<UnreadBadge count={150} label="sin leer" />);
     expect(container.firstElementChild?.textContent).toBe('99+ sin leer');

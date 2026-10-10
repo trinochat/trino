@@ -89,6 +89,14 @@ describe('focus ring (WCAG 2.4.7)', () => {
     expect(FOCUS_RING.split(' ')).toEqual(expect.arrayContaining([...RING, 'focus-visible:outline-offset-2']));
   });
 
+  // WCAG 1.4.11 and the more contrast setting: a 3 px ring, inset ones still inside.
+  it('grows to 3 px with more contrast', () => {
+    expect(FOCUS_RING.split(' ')).toContain('more-contrast:focus-visible:outline-[3px]');
+    expect(FOCUS_RING_INSET.split(' ')).toEqual(
+      expect.arrayContaining(['more-contrast:focus-visible:outline-[3px]', 'more-contrast:focus-visible:outline-offset-[-3px]']),
+    );
+  });
+
   it('draws the inset ring just inside the element, for rows and menu items that would clip it', () => {
     expect(FOCUS_RING_INSET.split(' ')).toEqual(
       expect.arrayContaining([...RING, 'focus-visible:outline-offset-[-2px]']),

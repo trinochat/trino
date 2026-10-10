@@ -28,9 +28,27 @@ describe('Button', () => {
     ['danger', ['border-ui-danger', 'bg-transparent', 'text-ui-danger']],
     ['dangerSolid', ['bg-ui-danger', 'text-ui-surface']],
   ] as const)('draws the %s variant with the theme tokens', (variant, classes) => {
-    render(<Button variant={variant}>Acción</Button>);
+    render(
+      <Button variant={variant} leadingIcon={<svg />}>
+        Acción
+      </Button>,
+    );
     const { classList } = screen.getByRole('button');
     for (const name of classes) expect(classList).toContain(name);
+  });
+
+  // The solid danger button sits beside green primary buttons, and red and
+  // green merge for many people: it needs an icon (and a verb) as well.
+  it('needs an icon on the solid danger button, in its type', () => {
+    // @ts-expect-error dangerSolid needs a leadingIcon.
+    const withoutIcon = <Button variant="dangerSolid">Eliminar</Button>;
+    expect(withoutIcon.props.variant).toBe('dangerSolid');
+    render(
+      <Button variant="dangerSolid" leadingIcon={<svg data-testid="trash" />}>
+        Eliminar
+      </Button>,
+    );
+    expect(screen.getByRole('button', { name: 'Eliminar' }).contains(screen.getByTestId('trash'))).toBe(true);
   });
 
   it('is secondary and 44 px tall by default, and 48 px when large', () => {
@@ -124,7 +142,11 @@ describe('Button', () => {
 
   it('keeps its text at 4.5:1 on its own fills, or on every surface when transparent', () => {
     const pairs = VARIANTS.flatMap(variant => {
-      const { unmount } = render(<Button variant={variant}>Acción</Button>);
+      const { unmount } = render(
+        <Button variant={variant} leadingIcon={<svg />}>
+          Acción
+        </Button>,
+      );
       const button = screen.getByRole('button');
       const fills = colourTokens(button, 'bg');
       const backgrounds = button.classList.contains('bg-transparent') ? [...SURFACES, ...fills] : fills;

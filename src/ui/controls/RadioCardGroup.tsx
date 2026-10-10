@@ -33,7 +33,9 @@ export type RadioCardGroupProps<T extends string> = GroupName & {
  * description (Settings: what notifications show, who can write to you, the
  * language). A WAI-ARIA radio group: one Tab stop, the arrows move and select
  * (wrapping around), Home and End go to the ends, Space selects. The checked
- * card has a 2 px accent border, the soft fill and a filled dot.
+ * card has a 2 px accent border, the soft fill and a dot drawn as a thick
+ * border: forced colours keep borders and drop backgrounds, and there the
+ * checked card's border takes the system's selection colour.
  */
 export function RadioCardGroup<T extends string>(props: RadioCardGroupProps<T>) {
   const { options, value, onValueChange, className, label } = props;
@@ -75,7 +77,9 @@ export function RadioCardGroup<T extends string>(props: RadioCardGroupProps<T>) 
               'flex w-full items-center gap-3 rounded-ui border-2 px-3.5 text-left font-ui text-ui-ink',
               'transition-colors reduce-motion:transition-none',
               descriptionId ? 'min-h-14 py-2.5' : 'min-h-12 py-2',
-              checked ? 'border-ui-accent-text bg-ui-accent-soft' : 'border-ui-line bg-transparent enabled:hover:bg-ui-raised',
+              checked
+                ? 'border-ui-accent-text bg-ui-accent-soft forced-colors:border-[color:Highlight]'
+                : 'border-ui-line bg-transparent enabled:hover:bg-ui-raised',
               FOCUS_RING,
               DISABLED,
             )}
@@ -84,8 +88,8 @@ export function RadioCardGroup<T extends string>(props: RadioCardGroupProps<T>) 
               aria-hidden="true"
               data-part="dot"
               className={cx(
-                'h-[1.125rem] w-[1.125rem] shrink-0 rounded-full border-2',
-                checked ? 'border-ui-accent-text bg-ui-accent-text' : 'border-ui-muted bg-transparent',
+                'h-[1.125rem] w-[1.125rem] shrink-0 rounded-full',
+                checked ? 'border-[0.3125rem] border-ui-accent-text' : 'border-2 border-ui-muted bg-transparent',
               )}
             />
             <span className="flex min-w-0 flex-col gap-0.5">
