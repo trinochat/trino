@@ -246,6 +246,21 @@ describe('the component library, the design engine and the screens', () => {
     expect(scanned.filter(key => /\.test\.tsx?$|\/(tokens|color)\.ts$/.test(key))).toEqual([]);
   });
 
+  // Every source of src, listed apart from SOURCES and never loaded: a folder
+  // dropped from SOURCES, or a file it misses, fails here. src/app does not
+  // exist yet; its files are checked as soon as the integration adds them.
+  it('cover every source file of src/ui, src/design, src/screens and src/app', () => {
+    const everySource = Object.keys(import.meta.glob('../**/*.{ts,tsx}')).map(repositoryPath);
+    const expected = everySource.filter(
+      path =>
+        /^src\/(ui|design|screens|app)\//.test(path) &&
+        !/\.test\.tsx?$/.test(path) &&
+        !/^src\/design\/(tokens|color)\.ts$/.test(path),
+    );
+    expect(expected).toContain('src/screens/types.ts');
+    expect(Object.keys(SOURCES).map(repositoryPath).sort()).toEqual(expected.sort());
+  });
+
   it('hold no colour literals', () => {
     expect(findings(SOURCES)).toEqual([]);
   });
