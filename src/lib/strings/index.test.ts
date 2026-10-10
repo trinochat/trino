@@ -104,12 +104,68 @@ describe.each(LANG_CODES)('the new copy in %s', lang => {
 
   it('does not say that contacts will see the photo, which stays on this device', () => {
     const seesPhoto = newEntries(lang)
-      .filter(([, , text]) =>
-        text
-          .split(/[.?!]/)
-          .some(sentence => /\b(verán|vean|see|ver|veem)\b/i.test(sentence) && /foto|photo/i.test(sentence)),
-      )
+      .filter(([, , text]) => promisesPhotoToOthers(text))
       .map(([name, key]) => `${name}: ${key}`);
     expect(seesPhoto).toEqual([]);
+  });
+});
+
+/** One of the alternatives as a whole word, accents included (`\b` stops at "á"). */
+const anyWord = (alternatives: string) => new RegExp(`(?<!\\p{L})(?:${alternatives})(?!\\p{L})`, 'iu');
+
+const PHOTO = /foto|photo/i;
+const SEES = anyWord('ver|ven|vea|vean|verá|verán|see|sees|seen|vê|veem|veja|vejam|verão|visible|visível');
+/** Who would see it: the contacts, the others, everyone. */
+const PEOPLE = anyWord(
+  'contactos?|contacts?|contatos?|otros|otras|others?|demás|outros|outras|everyone|everybody|anyone|todo el mundo|cualquiera|people|gente|personas|pessoas|miembros|members|membros',
+);
+/** Forms that already say other people see it. */
+const OTHERS_SEE = anyWord('verán|vean|verão|vejam|veem|will see|can see|podrán ver|pueden ver|podem ver|poderão ver');
+const NEGATION = anyWord('no|not|não|nunca|never|nadie|nobody|ninguém|cannot|(?:do|does|did|wo|ca|is|are)n[’\']t');
+
+/**
+ * Whether a sentence of the text says that other people see the photo: it
+ * names the photo, a seeing verb and who sees it (or a form that implies
+ * them, such as "verán"), and does not deny it. "Ver foto" and "Tus
+ * contactos no ven tu foto" pass.
+ */
+function promisesPhotoToOthers(text: string): boolean {
+  return text
+    .split(/[.?!]/)
+    .some(
+      sentence =>
+        PHOTO.test(sentence) &&
+        SEES.test(sentence) &&
+        (PEOPLE.test(sentence) || OTHERS_SEE.test(sentence)) &&
+        !NEGATION.test(sentence),
+    );
+}
+
+// The rule above guards the honest copy of R3.4 and R7 without blocking the
+// plain labels the chat needs. A unit cannot change this file (plan §3).
+describe('promisesPhotoToOthers', () => {
+  it.each([
+    'Tus contactos verán tu foto.',
+    'Tu foto la verán en tus chats',
+    'Your contacts will see your photo.',
+    'Others can see your photo',
+    'Everyone sees your photo',
+    'Seus contatos verão sua foto.',
+    'Seus contatos veem sua foto',
+  ])('flags "%s"', text => {
+    expect(promisesPhotoToOthers(text)).toBe(true);
+  });
+
+  it.each([
+    'Ver foto',
+    'See photo',
+    'Ver todas las fotos',
+    'Abrir la foto en grande',
+    'Tu foto se queda en este equipo.',
+    'Tus contactos todavía no ven tu foto.',
+    "Your contacts don't see your photo yet.",
+    'Seus contatos ainda não veem sua foto.',
+  ])('lets "%s" through', text => {
+    expect(promisesPhotoToOthers(text)).toBe(false);
   });
 });
