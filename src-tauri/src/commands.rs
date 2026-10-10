@@ -23,6 +23,7 @@ use crate::state::{
 };
 use crate::totp::{generate_totp_secret, otpauth_uri};
 use crate::totp_enrollment::{TotpBeginResponse, TOTP_ISSUER};
+use crate::turn::TurnCache;
 use crate::vault::{decode_vault, encode_vault, seal_vault, unseal_vault, vault_requires_totp};
 use crate::x3dh::{initiate, respond, InitialMessage, X3dhError};
 use base64::Engine;
@@ -297,6 +298,16 @@ fn zeroize_file_ref(file: &mut FileRef) {
     if let Some(thumb) = file.thumb.as_mut() {
         thumb.zeroize();
     }
+}
+
+/// What `lock_vault` and `wipe` drop from memory: the relay connections,
+/// the secrets and the TURN credentials, with any fetch of them in flight.
+fn forget_session(inner: &mut InnerState, turn: &TurnCache) {
+    for relay in inner.relays.drain(..) {
+        relay.close();
+    }
+    clear_sensitive_state(inner);
+    turn.clear();
 }
 
 fn clear_sensitive_state(inner: &mut InnerState) {
@@ -905,6 +916,8 @@ async fn forge_identity(
     // new QR code.
     state.inner.lock().await.totp_enrollment.clear();
     let bundle_json = own_bundle_json(&identity, &handle, None).map_err(CommandError::internal)?;
+    // A new session never inherits TURN credentials (lock and wipe clear them too).
+    state.turn.clear();
     let starter = relay_starter(app, state);
     let session = open_session(&state.inner, &files, identity, totp_secret, starter).await?;
     Ok(ForgeResponse {
@@ -1026,6 +1039,10 @@ pub async fn unseal(
     .await
     .map_err(|_| CommandError::internal("vault unlock worker failed"))??;
 
+    if !session_open {
+        // A new session never inherits TURN credentials (lock and wipe clear them too).
+        state.turn.clear();
+    }
     let starter = relay_starter(app, &state);
     open_session(&state.inner, &files, identity, totp_secret, starter).await
 }
@@ -1310,10 +1327,7 @@ pub async fn wipe(state: State<'_, AppState>) -> Result<(), String> {
     // this deleted it.
     let _gate = state.session_gate.lock().await;
     let mut inner = state.inner.lock().await;
-    for r in inner.relays.drain(..) {
-        r.close();
-    }
-    clear_sensitive_state(&mut inner);
+    forget_session(&mut inner, &state.turn);
     drop(inner);
 
     let mut failures = Vec::new();
@@ -1402,10 +1416,7 @@ pub async fn lock_vault(state: State<'_, AppState>) -> Result<(), String> {
     // Persist current session/history state before wiping it from memory.
     save_ratchets(&inner);
     save_history(&inner);
-    for r in inner.relays.drain(..) {
-        r.close();
-    }
-    clear_sensitive_state(&mut inner);
+    forget_session(&mut inner, &state.turn);
     dbg_log("vault LOCKED (auto-lock)");
     Ok(())
 }
@@ -2062,9 +2073,11 @@ pub async fn delete_sticker(id: String) -> Result<(), String> {
     Ok(())
 }
 
-/// The single source of the default STUN servers for calls. The frontend has
-/// no copy: it gets them from `get_call_config`. Deployments can replace them
-/// with `TRINO_ICE_SERVERS_JSON`; `[]` there means no STUN at all.
+/// The single source of the default STUN servers for direct calls. Calls are
+/// protected (TURN relay only, see turn.rs) by default; STUN is used only in
+/// direct mode, after the user explicitly agrees to reveal their IP. The
+/// frontend has no copy: it gets them from `get_call_config`. Deployments can
+/// replace them with `TRINO_ICE_SERVERS_JSON`; `[]` there means no STUN at all.
 fn default_call_ice_servers() -> Vec<CallIceServer> {
     vec![
         CallIceServer {
@@ -2139,9 +2152,13 @@ fn ice_servers_from_override(raw: Option<String>) -> Result<Vec<CallIceServer>, 
     Ok(parsed)
 }
 
-/// Load deployment-specific STUN/TURN servers without embedding shared
-/// production credentials in the frontend bundle. TURN credentials supplied
-/// here should be short-lived.
+/// ICE servers for the direct (unprotected) path only. The frontend asks for
+/// them only after `get_turn_servers` failed and the user explicitly agreed to
+/// call directly, knowing the contact will see their IP; a protected call
+/// never contacts these STUN servers. Deployment-specific STUN/TURN servers
+/// can still come from `TRINO_ICE_SERVERS_JSON`, without shared production
+/// credentials in the frontend bundle; TURN credentials there should be
+/// short-lived. See docs/llamadas-turn.md.
 #[tauri::command]
 pub fn get_call_config() -> Result<CallConfigResponse, String> {
     let ice_servers = ice_servers_from_override(std::env::var("TRINO_ICE_SERVERS_JSON").ok())?;
@@ -4471,5 +4488,31 @@ mod tests {
         assert_eq!(legacy["otpauth_uri"], "otpauth://totp/trino:ana");
         assert_eq!(legacy["bundle_json"], "{}");
         assert_eq!(legacy["handle"], "ana");
+    }
+
+    #[tokio::test]
+    async fn locking_or_wiping_forgets_the_turn_credentials() {
+        use crate::turn::{TurnError, TurnServers};
+        let owner = [9u8; 32];
+        let servers = || async {
+            Ok(TurnServers {
+                ice_servers: Vec::new(),
+                expires_at: NOW + 14_400,
+            })
+        };
+        let turn = TurnCache::default();
+        let session = turn.session();
+        turn.get_or_fetch(owner, session, NOW, servers)
+            .await
+            .unwrap();
+
+        forget_session(&mut InnerState::default(), &turn);
+
+        // Neither the cache nor a request begun before it may serve them now.
+        assert_eq!(
+            turn.get_or_fetch(owner, session, NOW, servers).await,
+            Err(TurnError::Locked)
+        );
+        assert_ne!(turn.session(), session);
     }
 }

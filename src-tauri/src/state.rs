@@ -3,6 +3,7 @@ use crate::identity::{Identity, PublicBundle};
 use crate::nostr::NostrClient;
 use crate::ratchet::RatchetState;
 use crate::totp_enrollment::TotpEnrollment;
+use crate::turn::TurnCache;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::PathBuf;
@@ -30,6 +31,8 @@ pub struct AppState {
     /// Kept apart from `inner` because they hold it across the slow key
     /// derivation, which must not stall everything else.
     pub session_gate: Mutex<()>,
+    /// TURN credentials for protected calls, in memory only (see turn.rs).
+    pub turn: TurnCache,
 }
 
 #[derive(Default)]

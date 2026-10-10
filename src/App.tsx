@@ -1,6 +1,7 @@
 import {
   useState,
   useEffect,
+  useId,
   useRef,
   Component,
   type CSSProperties,
@@ -96,8 +97,11 @@ import {
   callHoldsMedia,
   toggleMute,
   toggleCamera,
+  answerDirectConsent,
   type CallErrorCode,
   type CallState,
+  type ConnectionMode,
+  type DirectConsentRequest,
   type MediaState,
 } from './lib/call';
 import {
@@ -892,6 +896,8 @@ function MainShell({ onLock }: { onLock: () => void }) {
   const [remoteStream, setRemoteStream] = useState<MediaStream | null>(null);
   const [callSas, setCallSas] = useState('');
   const [callError, setCallError] = useState('');
+  const [callMode, setCallMode] = useState<ConnectionMode | null>(null);
+  const [directConsent, setDirectConsent] = useState<DirectConsentRequest | null>(null);
   const [callMedia, setCallMedia] = useState<MediaState>({
     muted: false,
     cameraOn: false,
@@ -1182,6 +1188,8 @@ function MainShell({ onLock }: { onLock: () => void }) {
       onRemoteStream: setRemoteStream,
       onSas: setCallSas,
       onMedia: setCallMedia,
+      onConnectionMode: setCallMode,
+      onDirectConsent: setDirectConsent,
       onError: (code: CallErrorCode) => {
         console.error('call failed', code);
         setCallError(`call.error.${code}`);
@@ -1838,7 +1846,18 @@ function MainShell({ onLock }: { onLock: () => void }) {
           remoteStream={remoteStream}
           media={callMedia}
           error={callError}
+          mode={callMode}
           avatar={callPeer ? avatarOf(callPeer) : undefined}
+        />
+      )}
+      {directConsent && (
+        // TURN failed. Cancel is the default (focused, Escape); see call.ts.
+        <CallConfirmDialog
+          title={t('call.unprotected.title')}
+          message={t('call.unprotected.body')}
+          confirmLabel={t('call.callDirect')}
+          onConfirm={() => answerDirectConsent(true)}
+          onCancel={() => answerDirectConsent(false)}
         />
       )}
       {callState === 'rejected' && (
@@ -2631,6 +2650,7 @@ function CallOverlay({
   remoteStream,
   media,
   error,
+  mode,
   avatar,
 }: {
   state: CallState;
@@ -2641,6 +2661,7 @@ function CallOverlay({
   remoteStream: MediaStream | null;
   media: MediaState;
   error: string;
+  mode: ConnectionMode | null;
   avatar?: string | null;
 }) {
   const t = useT();
@@ -2741,7 +2762,13 @@ function CallOverlay({
           <Avatar src={avatar} name={peer ?? '?'} size={38} />
           <div className="min-w-0 leading-tight">
             <div className="text-white font-medium truncate">{peer}</div>
-            <div className="text-white/50 text-xs truncate">{status}</div>
+            {/* Plain text on purpose; the redesign restyles it (L2b). */}
+            <div
+              className="text-white/50 text-xs truncate"
+              title={mode === 'direct' ? t('call.mode.directHelp') : undefined}
+            >
+              {mode ? `${status} · ${t(`call.mode.${mode}`)}` : status}
+            </div>
           </div>
         </div>
         <CircleBtn
@@ -2819,19 +2846,25 @@ function IncomingCall({
 }
 
 // Asked before an action that would end the call in progress (closing the
-// window, locking the vault). Sits above the call overlay.
-function CallConfirmDialog({
+// window, locking the vault), or before an unprotected call. Sits above the
+// call overlay; Cancel is focused and Escape cancels.
+export function CallConfirmDialog({
+  title,
   message,
   confirmLabel,
   onConfirm,
   onCancel,
 }: {
+  title?: string;
   message: string;
   confirmLabel: string;
   onConfirm: () => void;
   onCancel: () => void;
 }) {
   const t = useT();
+  const heading = title ?? t('call.inProgress');
+  const headingId = useId();
+  const messageId = useId(); // read out with the title: the consent hinges on it
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       if (event.key === 'Escape') onCancel();
@@ -2844,11 +2877,16 @@ function CallConfirmDialog({
       <div
         role="alertdialog"
         aria-modal="true"
-        aria-label={t('call.inProgress')}
+        aria-labelledby={headingId}
+        aria-describedby={messageId}
         className="term-card flex w-full max-w-sm flex-col gap-4 p-6 animate-pop-in"
       >
-        <div className="text-sm font-semibold text-ink">{t('call.inProgress')}</div>
-        <div className="text-xs leading-relaxed text-ink-muted">{message}</div>
+        <div id={headingId} className="text-sm font-semibold text-ink">
+          {heading}
+        </div>
+        <div id={messageId} className="text-xs leading-relaxed text-ink-muted">
+          {message}
+        </div>
         <div className="flex gap-2">
           <button
             type="button"

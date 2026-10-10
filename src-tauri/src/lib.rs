@@ -13,6 +13,7 @@ mod fsutil;
 mod passphrase;
 mod state;
 mod totp_enrollment;
+mod turn;
 
 use state::AppState;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -220,6 +221,7 @@ pub fn run() {
             commands::list_stickers,
             commands::delete_sticker,
             commands::get_call_config,
+            turn::get_turn_servers,
             commands::send_call_signal,
             commands::set_call_active,
             commands::dev_log,

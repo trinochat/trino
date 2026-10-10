@@ -68,8 +68,15 @@ clave pública, destinatario, hora y volumen aproximado.
 
 ### TURN de producción
 
-Trino ya no debe incluir credenciales TURN públicas compartidas. La variable
-`TRINO_ICE_SERVERS_JSON` permite configurar servidores por despliegue:
+Desde L2a, las llamadas van protegidas por defecto: pasan por el TURN de
+Cloudflare en modo solo relay, con credenciales cortas que emite un Worker con
+NIP-98 y prueba de trabajo. Lo directo (STUN) solo se usa si la persona lo
+acepta de forma explícita. Detalles: [llamadas-turn.md](llamadas-turn.md).
+
+Lo que sigue describe el camino directo, que se usa solo con ese
+consentimiento. Trino no debe incluir credenciales TURN públicas compartidas.
+La variable `TRINO_ICE_SERVERS_JSON` permite configurar servidores por
+despliegue:
 
 ```json
 [
@@ -95,9 +102,9 @@ debe estar dentro de la aplicación. Un servicio mínimo de credenciales entrega
 un usuario con caducidad de pocos minutos después de autenticar una sesión
 local válida.
 
-Una futura opción "ocultar mi IP en llamadas" debe establecer
-`iceTransportPolicy: "relay"`. Debe explicar que aumenta latencia y ancho de
-banda del operador TURN.
+El modo protegido ya usa `iceTransportPolicy: "relay"`. Esto suma algo de
+latencia y gasta ancho de banda del TURN de Cloudflare: 1.000 GB al mes son
+gratis y luego cada GB cuesta US$0,05.
 
 ### Matriz mínima
 

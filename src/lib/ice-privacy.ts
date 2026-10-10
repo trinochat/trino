@@ -16,6 +16,18 @@
 // Developer switch: set `localStorage['trino.dev.allowLanCandidates'] = '1'`
 // in the devtools console to keep LAN candidates, so two machines on the same
 // network can test a call without hairpin NAT. Off by default; never ship it on.
+//
+// Protected calls (the default) go through TURN only: `relay` transport and
+// the `relay-only` policy, so the contact never learns our address. Direct
+// calls happen only after the user agrees. See docs/llamadas-turn.md.
+
+import type { IceServerConfig } from './call-rules';
+
+/**
+ * - `protected`: TURN relay only; the contact never sees our IP.
+ * - `direct`: STUN and peer-to-peer; the contact sees our public IP.
+ */
+export type ConnectionMode = 'protected' | 'direct';
 
 /**
  * - `withhold`: reveal nothing (the caller's offer, before the callee answers).
@@ -45,6 +57,56 @@ export const DEV_ALLOW_LAN_KEY = 'trino.dev.allowLanCandidates';
 /** Policy for a call, from the developer switch's stored value. */
 export function candidatePolicy(devSwitch: string | null): CandidatePolicy {
   return devSwitch === '1' || devSwitch === 'true' ? 'allow-lan' : 'public';
+}
+
+/** A protected call reveals relay candidates only; the developer switch does not apply. */
+export function callPolicy(mode: ConnectionMode, devSwitch: string | null): CandidatePolicy {
+  return mode === 'protected' ? 'relay-only' : candidatePolicy(devSwitch);
+}
+
+function nonEmptyString(value: unknown): value is string {
+  return typeof value === 'string' && value.length > 0;
+}
+
+/**
+ * The servers a protected call may use: TURN entries with a username and a
+ * credential. An entry with any other URL (STUN included) is dropped, so
+ * nothing but the relay ever learns our address.
+ */
+export function relayServers(servers: unknown): IceServerConfig[] {
+  if (!Array.isArray(servers)) return [];
+  const kept: IceServerConfig[] = [];
+  for (const server of servers) {
+    if (typeof server !== 'object' || server === null) continue;
+    const { urls, username, credential } = server as Record<string, unknown>;
+    const list = Array.isArray(urls) ? urls : [urls];
+    if (
+      list.length > 0 &&
+      list.every(url => typeof url === 'string' && /^turns?:/.test(url)) &&
+      nonEmptyString(username) &&
+      nonEmptyString(credential)
+    ) {
+      kept.push({ urls: urls as string | string[], username, credential });
+    }
+  }
+  return kept;
+}
+
+/**
+ * The `RTCPeerConnection` configuration. No candidate pool, so nothing is
+ * gathered before there is a description; one bundled transport, so one set
+ * of candidates to filter.
+ */
+export function rtcConfiguration(
+  mode: ConnectionMode,
+  servers: IceServerConfig[],
+): RTCConfiguration {
+  return {
+    iceServers: servers,
+    iceTransportPolicy: mode === 'protected' ? 'relay' : 'all',
+    bundlePolicy: 'max-bundle',
+    iceCandidatePoolSize: 0,
+  };
 }
 
 function parseIpv4(address: string): number[] | null {

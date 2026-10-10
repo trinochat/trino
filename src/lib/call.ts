@@ -1,9 +1,15 @@
 // call.ts — 1:1 voice/video calls over WebRTC (professional rewrite).
 //
-// Media (audio/video) is encrypted by WebRTC's DTLS-SRTP. It is sent directly
-// when ICE can establish a peer route, or through a configured TURN server when
-// NAT/firewall rules require a relay. Signaling rides trino's E2E channel via
-// send_call_signal.
+// Media (audio/video) is encrypted by WebRTC's DTLS-SRTP. Signaling rides
+// trino's E2E channel via send_call_signal.
+//
+// Connection mode (docs/llamadas-turn.md): a call is `protected` by default,
+// relayed through Cloudflare TURN only (`get_turn_servers`, relay transport,
+// relay candidates only), so the contact never sees our IP. When TURN cannot
+// be had, the user is asked before a `direct` call (STUN from
+// `get_call_config`); there is never a silent fallback, and a "no" cancels.
+// A protected call renews its TURN credentials before they expire, and before
+// an ICE restart; a failed renewal never turns it into a direct call.
 //
 // Design notes:
 // - Explicit offer/answer for call setup (predictable ringing UX), plus
@@ -37,12 +43,22 @@ import {
 import {
   DEV_ALLOW_LAN_KEY,
   OutgoingCandidates,
-  candidatePolicy,
+  callPolicy,
+  relayServers,
+  rtcConfiguration,
   scrubSdp,
   type CandidatePolicy,
+  type ConnectionMode,
 } from './ice-privacy';
 
 export type { CallState } from './call-rules';
+export type { ConnectionMode } from './ice-privacy';
+
+/** TURN failed: may this call go direct, revealing our IP to `peer`? */
+export interface DirectConsentRequest {
+  peer: string;
+  outgoing: boolean; // we are placing the call (false: answering it)
+}
 
 export interface MediaState {
   muted: boolean;
@@ -68,6 +84,11 @@ export interface CallCallbacks {
   onError: (code: CallErrorCode) => void;
   // Current mute / camera state so the UI can reflect the real track status.
   onMedia: (m: MediaState) => void;
+  // How the current call travels; null when there is none.
+  onConnectionMode: (mode: ConnectionMode | null) => void;
+  // TURN failed: ask whether to go direct (null closes the question). Answer
+  // with answerDirectConsent(); anything but an explicit yes cancels.
+  onDirectConsent: (request: DirectConsentRequest | null) => void;
 }
 
 interface Signal {
@@ -194,6 +215,11 @@ const ENDED_CALLS_REMEMBERED = 64;
 // not left looking at a frozen picture of us.
 const CAMERA_OFF_BLACK_FRAMES_MS = 200;
 const HANGUP_BYE_TIMEOUT_MS = 1_200;
+// Cloudflare drops a relay shortly after its credentials expire: a protected
+// call fetches new ones this long before (docs/llamadas-turn.md).
+const RELAY_REFRESH_MARGIN_S = 10 * 60;
+const RELAY_RETRY_MS = 60_000; // also the shortest wait before a refresh
+const RELAY_REFRESH_ATTEMPTS = 3; // failures in a row before giving up
 
 const AUDIO_CONSTRAINTS: MediaTrackConstraints = {
   echoCancellation: true,
@@ -207,8 +233,9 @@ const VIDEO_CONSTRAINTS: MediaTrackConstraints = {
   frameRate: { ideal: 24, max: 30 },
 };
 
-// STUN/TURN servers come only from the backend (`get_call_config`); there is
-// no fallback list here. An empty list is valid and means "no STUN".
+// Direct-mode STUN servers come only from the backend (`get_call_config`) and
+// are loaded only after the user agreed to a direct call; there is no fallback
+// list here. An empty list is valid and means "no STUN".
 let iceServers: IceServerConfig[] | null = null;
 let iceServersLoading: Promise<IceServerConfig[]> | null = null;
 
@@ -216,7 +243,7 @@ export function configureIceServers(servers: unknown): void {
   iceServers = sanitizeIceServers(servers);
 }
 
-function loadIceServers(): Promise<IceServerConfig[]> {
+function loadDirectIceServers(): Promise<IceServerConfig[]> {
   if (iceServers) return Promise.resolve(iceServers);
   iceServersLoading ??= api
     .getCallConfig()
@@ -270,6 +297,9 @@ let video = false; // whether this call negotiated a video track
 let polite = false; // callee is polite; used for glare-free renegotiation
 let outgoing = false; // we placed the current call
 let answered = false; // the callee's answer to our offer has been applied
+// Our offer or answer may have reached the peer: only then does hanging up
+// owe them a bye. Before that, a bye would only tell them we are online.
+let signalled = false;
 let makingOffer = false;
 let pendingOffer: { from: string; sig: Signal } | null = null;
 let pendingIce: RTCIceCandidateInit[] = [];
@@ -280,6 +310,8 @@ let cbs: CallCallbacks | null = null;
 let renegotiationReady = false;
 let ringTimer: ReturnType<typeof setTimeout> | null = null;
 let disconnectTimer: ReturnType<typeof setTimeout> | null = null;
+let relayTimer: ReturnType<typeof setTimeout> | null = null;
+let relayFailures = 0;
 let iceRestartAttempted = false;
 let iceRestarting = false;
 // Bumped by end(). An async step (getUserMedia, createOffer…) that resumes
@@ -287,6 +319,9 @@ let iceRestarting = false;
 // whatever it acquired instead of reviving it.
 let generation = 0;
 let policy: CandidatePolicy = 'public';
+let mode: ConnectionMode | null = null;
+// Resolves the open "call directly?" question, if any.
+let consentResolve: ((allow: boolean) => void) | null = null;
 const candidates = new OutgoingCandidates('public');
 const endedCalls = new RecentIds(ENDED_CALLS_REMEMBERED);
 // Mirror of holdsMedia(state) in the backend (set_call_active).
@@ -297,7 +332,6 @@ let cameraBusy = false; // a camera on/off switch is in progress
 
 export function initCall(callbacks: CallCallbacks): void {
   cbs = callbacks;
-  void loadIceServers();
 }
 
 /** A call is ringing or in progress. */
@@ -323,12 +357,130 @@ function sleep(ms: number): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
 
-function currentPolicy(): CandidatePolicy {
+function devSwitch(): string | null {
   try {
-    return candidatePolicy(localStorage.getItem(DEV_ALLOW_LAN_KEY));
+    return localStorage.getItem(DEV_ALLOW_LAN_KEY);
   } catch {
-    return 'public';
+    return null;
   }
+}
+
+function setMode(next: ConnectionMode | null): void {
+  if (mode === next) return;
+  mode = next;
+  cbs?.onConnectionMode(next);
+}
+
+function settleConsent(allow: boolean): void {
+  const resolve = consentResolve;
+  if (!resolve) return;
+  consentResolve = null;
+  cbs?.onDirectConsent(null);
+  resolve(allow);
+}
+
+function askDirectConsent(): Promise<boolean> {
+  settleConsent(false);
+  const ask = cbs?.onDirectConsent;
+  if (!ask || !peer) return Promise.resolve(false);
+  const request: DirectConsentRequest = { peer, outgoing };
+  return new Promise(resolve => {
+    consentResolve = resolve;
+    ask(request);
+  });
+}
+
+/** The user's answer to "call directly?". Anything but an explicit yes cancels. */
+export function answerDirectConsent(allow: boolean): void {
+  settleConsent(allow === true);
+}
+
+interface Route {
+  mode: ConnectionMode;
+  servers: IceServerConfig[];
+  expiresAt?: number; // protected: when the TURN credentials expire (unix s)
+}
+
+/**
+ * TURN first, asked afresh for every call: the backend caches the credentials
+ * and knows when they expire. Without TURN, ask before going direct. Null:
+ * do not place or answer this call (declined, or the call ended meanwhile).
+ */
+async function resolveRoute(my: number): Promise<Route | null> {
+  let relays: IceServerConfig[] = [];
+  let expiresAt: number | undefined;
+  try {
+    const turn = await api.getTurnServers();
+    relays = relayServers(turn.ice_servers);
+    expiresAt = turn.expires_at;
+  } catch (error) {
+    console.error('TURN credentials unavailable', error);
+  }
+  if (my !== generation) return null;
+  if (relays.length > 0) return { mode: 'protected', servers: relays, expiresAt };
+  if (!(await askDirectConsent()) || my !== generation) return null;
+  const servers = await loadDirectIceServers();
+  return my === generation ? { mode: 'direct', servers } : null;
+}
+
+/** Adopt the call's route: its candidate policy (gate in `hold`) and its mode. */
+function adoptRoute(route: Route): void {
+  policy = callPolicy(route.mode, devSwitch());
+  candidates.reset(policy);
+  setMode(route.mode);
+}
+
+/** Renew the TURN credentials of `p` before they expire (protected calls only). */
+function scheduleRelayRefresh(p: RTCPeerConnection, expiresAt: number | undefined): void {
+  clearRelayTimer();
+  if (typeof expiresAt !== 'number' || !Number.isFinite(expiresAt)) return;
+  const due = (expiresAt - RELAY_REFRESH_MARGIN_S) * 1000 - Date.now();
+  relayTimer = setTimeout(() => {
+    relayTimer = null;
+    void refreshRelays(p);
+  }, Math.max(RELAY_RETRY_MS, due));
+}
+
+function clearRelayTimer(): void {
+  if (relayTimer) clearTimeout(relayTimer);
+  relayTimer = null;
+}
+
+/**
+ * Fresh TURN credentials for the protected call on `p`, applied with
+ * setConfiguration (same policies, so it is allowed mid-call). A failure is
+ * retried a few times and never makes the call go direct: if the relay drops,
+ * the call ends like any broken one.
+ */
+async function refreshRelays(p: RTCPeerConnection): Promise<void> {
+  const my = generation;
+  let relays: IceServerConfig[] = [];
+  let expiresAt: number | undefined;
+  try {
+    const turn = await api.getTurnServers();
+    relays = relayServers(turn.ice_servers);
+    expiresAt = turn.expires_at;
+  } catch (error) {
+    console.error('TURN refresh failed', error);
+  }
+  if (my !== generation || pc !== p) return;
+  if (relays.length > 0) {
+    try {
+      p.setConfiguration(rtcConfiguration('protected', relays));
+      relayFailures = 0;
+      scheduleRelayRefresh(p, expiresAt);
+      return;
+    } catch (error) {
+      console.error('TURN refresh not applied', error);
+    }
+  }
+  relayFailures++;
+  if (relayFailures >= RELAY_REFRESH_ATTEMPTS) return;
+  clearRelayTimer();
+  relayTimer = setTimeout(() => {
+    relayTimer = null;
+    void refreshRelays(p);
+  }, RELAY_RETRY_MS);
 }
 
 function syncMediaFlag(): void {
@@ -369,6 +521,7 @@ function clearTimers(): void {
   if (disconnectTimer) clearTimeout(disconnectTimer);
   ringTimer = null;
   disconnectTimer = null;
+  clearRelayTimer();
 }
 
 function stopStream(stream: MediaStream | null): void {
@@ -415,15 +568,8 @@ function mediaErrorCode(error: unknown, device: 'microphone' | 'camera'): CallEr
   return device;
 }
 
-function makePc(remote: string, id: string, servers: IceServerConfig[]): RTCPeerConnection {
-  // No candidate pool: nothing is gathered (and no STUN server contacted)
-  // before there is a description to gather for. One bundled transport means
-  // one set of candidates to filter and send.
-  const p = new RTCPeerConnection({
-    iceServers: servers,
-    iceCandidatePoolSize: 0,
-    bundlePolicy: 'max-bundle',
-  });
+function makePc(remote: string, id: string, config: RTCConfiguration): RTCPeerConnection {
+  const p = new RTCPeerConnection(config);
 
   p.onicecandidate = e => {
     if (pc !== p || !e.candidate) return;
@@ -520,6 +666,9 @@ async function recoverConnection(
   setState('connecting');
   try {
     makingOffer = true;
+    // The restart allocates new relays: with credentials that will last.
+    if (mode === 'protected') await refreshRelays(connection);
+    if (pc !== connection) return;
     candidates.embed(); // the restart offer below carries the new candidates
     connection.restartIce();
     const offer = await connection.createOffer({ iceRestart: true });
@@ -610,12 +759,16 @@ export async function startCall(remote: string, withVideo: boolean): Promise<voi
   polite = false; // caller is impolite (wins glare)
   outgoing = true;
   answered = false;
-  policy = currentPolicy();
-  candidates.reset(policy); // hold: nothing leaves until the callee answers
+  signalled = false;
   setState('starting');
 
-  const servers = await loadIceServers();
-  if (my !== generation) return;
+  // Before the microphone opens: a "no" to a direct call must leave nothing on.
+  const route = await resolveRoute(my);
+  if (!route) {
+    if (my === generation) end();
+    return;
+  }
+  adoptRoute(route); // hold: nothing leaves until the callee answers
   let media: { stream: MediaStream; video: boolean };
   try {
     media = await getMedia(withVideo);
@@ -635,8 +788,9 @@ export async function startCall(remote: string, withVideo: boolean): Promise<voi
   cbs?.onLocalStream(localStream);
   reportMedia();
   try {
-    const p = makePc(remote, id, servers);
+    const p = makePc(remote, id, rtcConfiguration(route.mode, route.servers));
     pc = p;
+    if (route.mode === 'protected') scheduleRelayRefresh(p, route.expiresAt);
     localStream.getTracks().forEach(t => p.addTrack(t, localStream!));
     const offer = await p.createOffer();
     if (pc !== p) return;
@@ -644,6 +798,7 @@ export async function startCall(remote: string, withVideo: boolean): Promise<voi
     if (pc !== p) return;
     // Sent at once, without waiting for ICE gathering and without a single
     // candidate: our addresses are released only when the callee answers.
+    signalled = true;
     const sent = await send(remote, {
       t: 'offer',
       callId: id,
@@ -692,13 +847,20 @@ async function answerOffer(from: string, sig: Signal): Promise<void> {
   polite = true; // callee is polite
   outgoing = false;
   answered = false;
-  policy = currentPolicy();
-  candidates.reset(policy);
-  candidates.embed(); // the answer carries our candidates; later ones trickle
+  signalled = false;
   setState('connecting');
 
-  const servers = await loadIceServers();
-  if (my !== generation) return;
+  const route = await resolveRoute(my);
+  if (!route) {
+    if (my === generation) {
+      // No protection and no consent to answer without it: decline.
+      void send(from, { t: 'reject', callId: id });
+      end();
+    }
+    return;
+  }
+  adoptRoute(route);
+  candidates.embed(); // the answer carries our candidates; later ones trickle
   let media: { stream: MediaStream; video: boolean };
   try {
     media = await getMedia(video);
@@ -718,8 +880,9 @@ async function answerOffer(from: string, sig: Signal): Promise<void> {
   cbs?.onLocalStream(localStream);
   reportMedia();
   try {
-    const p = makePc(from, id, servers);
+    const p = makePc(from, id, rtcConfiguration(route.mode, route.servers));
     pc = p;
+    if (route.mode === 'protected') scheduleRelayRefresh(p, route.expiresAt);
     await p.setRemoteDescription({ type: 'offer', sdp: sig.sdp });
     if (pc !== p) return;
     localStream.getTracks().forEach(t => p.addTrack(t, localStream!));
@@ -730,6 +893,7 @@ async function answerOffer(from: string, sig: Signal): Promise<void> {
     await waitIceComplete(p); // answer SDP carries our (filtered) candidates
     if (pc !== p) return;
     const sdp = scrubSdp(p.localDescription?.sdp ?? answer.sdp ?? '', policy);
+    signalled = true;
     sendCandidates(from, id, candidates.release());
     const sent = await send(from, { t: 'answer', callId: id, sdp });
     if (pc !== p) return;
@@ -757,9 +921,11 @@ export function rejectIncoming(): void {
 }
 
 export function hangup(): void {
-  // An incoming call that was never accepted ends silently: replying would
-  // confirm to the caller that this device is online.
-  if (peer && callId && state !== 'ringing-in') void send(peer, { t: 'bye', callId });
+  // A call whose offer or answer never went out ends silently: there is
+  // nothing to end on the other side, and a bye would only tell them that
+  // this device is online (an incoming call not yet accepted, or one still
+  // fetching TURN credentials).
+  if (peer && callId && signalled) void send(peer, { t: 'bye', callId });
   end();
 }
 
@@ -771,7 +937,7 @@ export function hangup(): void {
 export async function hangupAndWait(timeoutMs = HANGUP_BYE_TIMEOUT_MS): Promise<void> {
   const to = peer;
   const id = callId;
-  const sendBye = !!to && !!id && holdsMedia(state);
+  const sendBye = !!to && !!id && signalled; // see hangup()
   mediaFlagHeld = sendBye;
   teardownCall();
   try {
@@ -878,6 +1044,7 @@ function ring(from: string, s: Signal): void {
   video = !!s.video;
   outgoing = false;
   answered = false;
+  signalled = false;
   api.devLog(`-> ringing-in video=${video}`);
   setState('ringing-in');
   clearRing();
@@ -1028,6 +1195,7 @@ async function switchCamera(p: RTCPeerConnection, stream: MediaStream): Promise<
 
 function end(finalState: CallState = 'ended'): void {
   generation++;
+  settleConsent(false); // close an open "call directly?" question
   clearTimers();
   if (peer && callId) endedCalls.add(callKey(peer, callId));
   stopStream(localStream);
@@ -1046,10 +1214,13 @@ function end(finalState: CallState = 'ended'): void {
   iceRestarting = false;
   outgoing = false;
   answered = false;
+  signalled = false;
+  relayFailures = 0;
   candidates.reset();
   cbs?.onLocalStream(null);
   cbs?.onRemoteStream(null);
   cbs?.onSas('');
+  setMode(null);
   // The final state carries {peer, video} so the UI can offer "retry".
   setState(finalState);
   peer = null;

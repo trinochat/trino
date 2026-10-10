@@ -1,10 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import {
   OutgoingCandidates,
+  callPolicy,
   candidatePolicy,
   filterCandidateInit,
   isPublicAddress,
   keepCandidate,
+  relayServers,
+  rtcConfiguration,
   scrubCandidate,
   scrubSdp,
 } from './ice-privacy';
@@ -324,5 +327,80 @@ describe('candidatePolicy', () => {
     expect(candidatePolicy('yes please')).toBe('public');
     expect(candidatePolicy('1')).toBe('allow-lan');
     expect(candidatePolicy('true')).toBe('allow-lan');
+  });
+});
+
+const TURN = {
+  urls: [
+    'turn:turn.cloudflare.com:3478?transport=udp',
+    'turns:turn.cloudflare.com:443?transport=tcp',
+  ],
+  username: 'u1',
+  credential: 'c1',
+};
+const STUN = { urls: ['stun:stun.l.google.com:19302'] };
+
+describe('relayServers', () => {
+  it('keeps TURN servers that carry credentials', () => {
+    expect(relayServers([TURN])).toEqual([TURN]);
+    expect(relayServers([{ ...TURN, urls: TURN.urls[1] }])).toEqual([
+      { ...TURN, urls: TURN.urls[1] },
+    ]);
+  });
+
+  it('drops STUN and anything that is not TURN, so only the relay learns our address', () => {
+    expect(relayServers([STUN, TURN])).toEqual([TURN]);
+    expect(relayServers([{ ...TURN, urls: [...TURN.urls, 'stun:stun.cloudflare.com:3478'] }])).toEqual(
+      [],
+    );
+    expect(relayServers([{ ...TURN, urls: ['https://turn.cloudflare.com'] }])).toEqual([]);
+  });
+
+  it('drops TURN entries without a username or credential', () => {
+    expect(relayServers([{ urls: TURN.urls }])).toEqual([]);
+    expect(relayServers([{ ...TURN, username: '' }])).toEqual([]);
+    expect(relayServers([{ ...TURN, credential: 7 }])).toEqual([]);
+  });
+
+  it('copies only the fields RTCPeerConnection needs', () => {
+    expect(relayServers([{ ...TURN, credentialType: 'oauth', extra: 1 }])).toEqual([TURN]);
+  });
+
+  it('returns nothing for malformed input', () => {
+    for (const bad of [undefined, null, 'turn:x', {}, [null], [{ urls: [] }], [{ urls: [3] }]]) {
+      expect(relayServers(bad)).toEqual([]);
+    }
+  });
+});
+
+describe('callPolicy', () => {
+  it('reveals relay candidates only in a protected call, whatever the developer switch says', () => {
+    expect(callPolicy('protected', null)).toBe('relay-only');
+    expect(callPolicy('protected', '1')).toBe('relay-only');
+  });
+
+  it('keeps the public filter (and the developer switch) in a direct call', () => {
+    expect(callPolicy('direct', null)).toBe('public');
+    expect(callPolicy('direct', '1')).toBe('allow-lan');
+  });
+});
+
+describe('rtcConfiguration', () => {
+  it('forces relay-only transport for a protected call', () => {
+    expect(rtcConfiguration('protected', [TURN])).toEqual({
+      iceServers: [TURN],
+      iceTransportPolicy: 'relay',
+      bundlePolicy: 'max-bundle',
+      iceCandidatePoolSize: 0,
+    });
+  });
+
+  it('allows every transport for a direct call', () => {
+    expect(rtcConfiguration('direct', [STUN])).toEqual({
+      iceServers: [STUN],
+      iceTransportPolicy: 'all',
+      bundlePolicy: 'max-bundle',
+      iceCandidatePoolSize: 0,
+    });
   });
 });

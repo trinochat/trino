@@ -142,6 +142,14 @@ export interface CallConfigResponse {
   ice_servers: CallIceServer[];
 }
 
+// Short-lived Cloudflare TURN servers for a protected (relay-only) call.
+// `expires_at` is in unix seconds; the backend caches them until shortly
+// before, so ask again for every call.
+export interface TurnServersResponse {
+  ice_servers: CallIceServer[];
+  expires_at: number;
+}
+
 export interface NodeInfo {
   handle: string;
   fingerprint: string;
@@ -400,7 +408,10 @@ export const api = {
     invoke('import_sticker', { dataB64, mime }),
   listStickers: (): Promise<StickerInfo[]> => invoke('list_stickers'),
   deleteSticker: (id: string): Promise<void> => invoke('delete_sticker', { id }),
+  // STUN for a direct call, only after the user agreed to reveal their IP.
   getCallConfig: (): Promise<CallConfigResponse> => invoke('get_call_config'),
+  // Rejects with a `CommandError` when protection is unavailable.
+  getTurnServers: (): Promise<TurnServersResponse> => invoke('get_turn_servers'),
   sendCallSignal: (handle: string, payload: string): Promise<void> =>
     invoke('send_call_signal', { handle, payload }),
   // Tells the backend a call holds the microphone/camera, so closing the
