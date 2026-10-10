@@ -16,9 +16,8 @@ dependencies:
     sdk: flutter
   flutter_localizations:
     sdk: flutter
-  # The old demo shell's, until the new screens replace it.
-  cupertino_icons: ^1.0.8
-  shared_preferences: ^2.5.5
+  # The ARB messages with plurals and placeholders need it.
+  intl: 0.20.3
 
 dev_dependencies:
   flutter_test:
@@ -27,6 +26,8 @@ dev_dependencies:
 
 flutter:
   uses-material-design: true
+  # Generates the localizations from lib/l10n/*.arb (see l10n.yaml).
+  generate: true
 
   # Bundled, unmodified, under the SIL Open Font License (OFL.txt beside each).
   # The variable fonts take their weight from FontWeight (the wght axis).

@@ -1,48 +1,19 @@
-import 'package:flutter/material.dart';
+import 'package:flutter/widgets.dart';
 
-import 'screens/mobile_shell.dart';
-import 'theme/trino_theme.dart';
-import 'theme/trino_theme_controller.dart';
+import 'app/app.dart';
+import 'engine/fake_engine.dart';
 
+/// Trino on the in-memory demo engine until the Rust engine is wired in
+/// (task M6): it starts at the first run, connects after a moment, and shows
+/// messages as sending for a short while, as the real network would.
 void main() {
-  runApp(const TrinoMobileApp());
-}
-
-class TrinoMobileApp extends StatefulWidget {
-  const TrinoMobileApp({super.key});
-
-  @override
-  State<TrinoMobileApp> createState() => _TrinoMobileAppState();
-}
-
-class _TrinoMobileAppState extends State<TrinoMobileApp> {
-  final _themeController = TrinoThemeController();
-
-  @override
-  void initState() {
-    super.initState();
-    _themeController.load();
-  }
-
-  @override
-  void dispose() {
-    _themeController.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return AnimatedBuilder(
-      animation: _themeController,
-      builder: (context, _) => MaterialApp(
-        title: 'Trino',
-        debugShowCheckedModeBanner: false,
-        theme: buildTrinoTheme(_themeController.preference),
-        home: TrinoThemeScope(
-          controller: _themeController,
-          child: const MobileShell(),
-        ),
+  runApp(
+    TrinoApp(
+      engine: FakeTrinoEngine(
+        onboarded: false,
+        connectAfter: const Duration(seconds: 2),
+        sendDelay: const Duration(milliseconds: 600),
       ),
-    );
-  }
+    ),
+  );
 }
