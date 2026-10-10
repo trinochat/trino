@@ -4,8 +4,8 @@
  * plus the alternative accents.
  *
  * The four theme sets are the approved prototype's values, unchanged, plus
- * `controlLine`, added after it (`appearance.test.ts` compares them with the
- * prototype). `contrast.test.ts` checks the text pairs against WCAG 2.x AA and
+ * `controlLine`, `qrInk` and `qrPaper`, added after it (`appearance.test.ts`
+ * compares them with the prototype). `contrast.test.ts` checks the text pairs against WCAG 2.x AA and
  * the control boundaries against 3:1 for every style, mode and accent. The
  * engine in `appearance.ts` turns them into `--t-*` CSS variables.
  */
@@ -89,6 +89,12 @@ export interface ThemeTokens {
   /** Text of the wordmark. Content, not style: it is not a CSS variable. */
   wordmark: string;
   shadow: string;
+  /**
+   * Modules and background of a QR code: black on white in every theme, so it
+   * scans in dark mode too. Not in the prototype; no accent changes them.
+   */
+  qrInk: string;
+  qrPaper: string;
 }
 
 const ATKINSON = "'Atkinson Hyperlegible Next', system-ui, sans-serif";
@@ -113,6 +119,7 @@ export const THEMES: Readonly<Record<ThemeId, Readonly<ThemeTokens>>> = {
     labelFont: ATKINSON, labelTransform: 'none', labelSpacing: '0',
     wordmark: 'Trino',
     shadow: '0 1px 2px rgba(17,24,21,0.06), 0 8px 24px rgba(17,24,21,0.06)',
+    qrInk: '#000000', qrPaper: '#FFFFFF',
   },
   'calma-dark': {
     bg: '#0F1311', side: '#131815', surface: '#161B18', raised: '#1E2521', line: '#28302B',
@@ -130,6 +137,7 @@ export const THEMES: Readonly<Record<ThemeId, Readonly<ThemeTokens>>> = {
     labelFont: ATKINSON, labelTransform: 'none', labelSpacing: '0',
     wordmark: 'Trino',
     shadow: '0 8px 24px rgba(0,0,0,0.35)',
+    qrInk: '#000000', qrPaper: '#FFFFFF',
   },
   'terminal-dark': {
     bg: '#0A0E0C', side: '#0E1411', surface: '#101613', raised: '#18221C', line: '#24302A',
@@ -147,6 +155,7 @@ export const THEMES: Readonly<Record<ThemeId, Readonly<ThemeTokens>>> = {
     labelFont: JETBRAINS_MONO, labelTransform: 'uppercase', labelSpacing: '0.08em',
     wordmark: 'trino',
     shadow: 'none',
+    qrInk: '#000000', qrPaper: '#FFFFFF',
   },
   'terminal-light': {
     bg: '#F2F4EF', side: '#E9ECE5', surface: '#FFFFFF', raised: '#E9EDE5', line: '#D3D9CF',
@@ -164,6 +173,7 @@ export const THEMES: Readonly<Record<ThemeId, Readonly<ThemeTokens>>> = {
     labelFont: JETBRAINS_MONO, labelTransform: 'uppercase', labelSpacing: '0.08em',
     wordmark: 'trino',
     shadow: 'none',
+    qrInk: '#000000', qrPaper: '#FFFFFF',
   },
 };
 

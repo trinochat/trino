@@ -56,6 +56,9 @@ export default {
           raised: 'var(--t-raised)',
           line: 'var(--t-line)',
           'control-line': 'var(--t-control-line)',
+          // Black on white in every theme: `text-ui-qr-ink bg-ui-qr-paper` around a QR code.
+          'qr-ink': 'var(--t-qr-ink)',
+          'qr-paper': 'var(--t-qr-paper)',
           ink: 'var(--t-ink)',
           muted: 'var(--t-muted)',
           accent: 'var(--t-accent)',

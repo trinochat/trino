@@ -36,10 +36,12 @@ const PROTOTYPE = {
 const ADDED_AFTER_PROTOTYPE: Record<keyof typeof PROTOTYPE, Partial<ThemeTokens>> = {
   // controlLine: the boundary of the text fields, 3:1 on every background
   // (WCAG 1.4.11), where the prototype's `line` gave about 1.2:1.
-  'calma-light': { controlLine: '#818B86' },
-  'calma-dark': { controlLine: '#66726B' },
-  'terminal-dark': { controlLine: '#607067' },
-  'terminal-light': { controlLine: '#7D877F' },
+  // qrInk and qrPaper: a QR code stays black on white in every theme, so a
+  // scanner reads it in dark mode too; the canvas only drew it on light.
+  'calma-light': { controlLine: '#818B86', qrInk: '#000000', qrPaper: '#FFFFFF' },
+  'calma-dark': { controlLine: '#66726B', qrInk: '#000000', qrPaper: '#FFFFFF' },
+  'terminal-dark': { controlLine: '#607067', qrInk: '#000000', qrPaper: '#FFFFFF' },
+  'terminal-light': { controlLine: '#7D877F', qrInk: '#000000', qrPaper: '#FFFFFF' },
 };
 
 const ALTERNATIVES = ACCENTS.filter((accent): accent is AlternativeAccent => accent !== 'verde');

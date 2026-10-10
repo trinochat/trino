@@ -58,7 +58,8 @@ export function initAppearance(host: AppearanceHost): () => void {
   });
 }
 
-function storageOf(host: AppearanceHost): AppearanceStorage {
+/** The host's storage, or one that keeps nothing when it cannot be reached. */
+export function storageOf(host: AppearanceHost): AppearanceStorage {
   try {
     return host.localStorage ?? NO_STORAGE;
   } catch {
@@ -66,7 +67,8 @@ function storageOf(host: AppearanceHost): AppearanceStorage {
   }
 }
 
-function darkSchemeQuery(host: AppearanceHost): MediaQueryList | null {
+/** The `prefers-color-scheme: dark` query, or null without `matchMedia`. */
+export function darkSchemeQuery(host: AppearanceHost): MediaQueryList | null {
   try {
     return host.matchMedia?.(DARK_SCHEME) ?? null;
   } catch {

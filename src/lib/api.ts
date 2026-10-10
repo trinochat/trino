@@ -73,9 +73,11 @@ export interface TotpBeginResponse {
   secret_base32: string;
 }
 
-// What `forge`, `unseal`, `totp_begin` and `totp_verify` reject with: a code
-// for the UI to turn into its own text, and an English message for the log.
-// The names match `ErrorCode` in src-tauri/src/command_error.rs.
+// What `forge`, `unseal`, `totp_begin` and `totp_verify` reject with, and the
+// commands of the redesign after them: a code for the UI to turn into its own
+// text, and an English message for the log. The names match `ErrorCode` in
+// src-tauri/src/command_error.rs; the codes after `internal` arrive with the
+// backend units W7 and W8.
 export const COMMAND_ERROR_CODES = [
   'passphrase_too_short',
   'passphrase_too_common',
@@ -88,6 +90,21 @@ export const COMMAND_ERROR_CODES = [
   'unsupported_vault',
   'io',
   'internal',
+  // Sending (K2, K4): no relay reachable, no relay accepted it, the event is
+  // too big for the relays, no session with the contact, every file server failed.
+  'offline',
+  'not_accepted',
+  'message_too_long',
+  'no_session',
+  'upload_failed',
+  // Contacts (K8): a code that does not verify, a name another key already
+  // has, the same keys under another name.
+  'invalid_code',
+  'name_taken',
+  'already_contact',
+  // Groups and history (K10, K11).
+  'not_admin',
+  'not_found',
 ] as const;
 
 export type CommandErrorCode = (typeof COMMAND_ERROR_CODES)[number];
@@ -97,6 +114,10 @@ export interface CommandError {
   message: string;
   // The minimum length, with `passphrase_too_short` only.
   min?: number;
+  // Why each file server failed, with `upload_failed` only.
+  servers?: { server: string; reason: string }[];
+  // The name the contact already has, with `already_contact` only.
+  handle?: string;
 }
 
 // Whether a rejected command carries a `CommandError`. The other commands
@@ -126,6 +147,14 @@ export interface NodeInfo {
   added_at: number;
   avatar?: string | null;
   blocked?: boolean;
+  // The fields below arrive with W8 (K7, K8, K9); optional until then.
+  // SHA-256 of the identity keys in full hex; `fingerprint` is its prefix.
+  identity_digest?: string | null;
+  // The contact's keys changed: the old fingerprint, and when (epoch seconds).
+  previous_fingerprint?: string | null;
+  key_changed_at?: number | null;
+  // The group the contact was added through, when it came with a group.
+  via_group?: string | null;
 }
 
 export interface ProfileResponse {
@@ -133,6 +162,8 @@ export interface ProfileResponse {
   avatar: string | null;
   fingerprint: string;
   nostr_pub: string;
+  // Arrives with W8 (K7); optional until then.
+  identity_digest?: string | null;
 }
 
 export interface IncomingMessageEvent {
@@ -152,6 +183,8 @@ export interface GroupInfo {
   is_admin: boolean;
   member_count: number;
   members: string[];
+  // The admin removed us or deleted the group (W8, K10); optional until then.
+  ended?: boolean;
 }
 
 export interface IncomingGroupMessageEvent {
@@ -210,6 +243,68 @@ export interface StickerInfo {
   data_url: string;
 }
 
+// ── Contracts of the redesign's backend (plan §5, K1–K11) ────────────────────
+// The wrappers below exist before their commands do: until W7 and W8 land,
+// calling one rejects, and the screens hide what it backs (capabilities).
+
+// A message one relay at least acknowledged (K4): when it was stored and by
+// which relays.
+export interface SendReceipt {
+  ts: number;
+  accepted_by: string[];
+}
+
+// A group message (K4): sent to every member, with who it reached and who not.
+export interface GroupSendReceipt {
+  ts: number;
+  accepted: string[];
+  failed: string[];
+}
+
+// What `send_file` returns: the file, plus its receipt once K4 lands.
+export type SentFile = FileRef & Partial<SendReceipt>;
+export type SentGroupFile = FileRef & Partial<GroupSendReceipt>;
+
+export interface RelayStatus {
+  url: string;
+  connected: boolean;
+}
+
+// The real connection (K3): `connection_status` and the `connection-changed` event.
+export interface ConnectionStatus {
+  up: number;
+  total: number;
+  relays: RelayStatus[];
+}
+
+// A pasted code, checked and not saved (K8). `existing` is the contact that
+// already has that name, or those keys.
+export interface ContactPreview {
+  handle: string;
+  fingerprint: string;
+  identity_digest: string;
+  existing: { handle: string; same_keys: boolean } | null;
+}
+
+// A member of a group as its roster names it (K9), matched to a contact by key.
+export interface GroupMember {
+  ik_sign_pub: string;
+  roster_handle: string;
+  local_handle?: string | null;
+  fingerprint: string;
+  is_admin: boolean;
+  is_self: boolean;
+  via_group?: string | null;
+}
+
+export interface ContactKeyMismatchEvent {
+  handle: string;
+}
+
+export interface GroupRemovedEvent {
+  gid: string;
+}
+
 export const api = {
   status: (): Promise<StatusResponse> => invoke('status'),
   // Starts setting up TOTP with a new secret, replacing any earlier one.
@@ -239,11 +334,17 @@ export const api = {
   unseal: (passphrase: string, totpCode?: string | null): Promise<UnsealResponse> =>
     invoke('unseal', { passphrase, totpCode: totpCode ?? null }),
   shareBundle: (): Promise<string> => invoke('share_bundle'),
-  probeNode: (bundleJson: string, handle: string): Promise<NodeInfo> =>
-    invoke('probe_node', { bundleJson, handle }),
+  // `replaceExisting` (K8) replaces a contact that has the name, after the
+  // user confirmed it; left out, the payload is the one older backends take.
+  probeNode: (bundleJson: string, handle: string, replaceExisting?: boolean): Promise<NodeInfo> =>
+    invoke(
+      'probe_node',
+      replaceExisting === undefined ? { bundleJson, handle } : { bundleJson, handle, replaceExisting },
+    ),
   listNodes: (): Promise<NodeInfo[]> => invoke('list_nodes'),
   connectNode: (handle: string): Promise<void> => invoke('connect_node', { handle }),
-  sendMessage: (handle: string, text: string): Promise<void> =>
+  // The receipt arrives with K4; until then the backend returns nothing (null).
+  sendMessage: (handle: string, text: string): Promise<SendReceipt | null> =>
     invoke('send_message', { handle, text }),
   createGroup: (name: string): Promise<GroupInfo> => invoke('create_group', { name }),
   listGroups: (): Promise<GroupInfo[]> => invoke('list_groups'),
@@ -253,22 +354,29 @@ export const api = {
   acceptGroupInvite: (gid: string): Promise<GroupInfo> =>
     invoke('accept_group_invite', { gid }),
   declineGroupInvite: (gid: string): Promise<void> => invoke('decline_group_invite', { gid }),
-  sendGroupMessage: (gid: string, text: string): Promise<void> =>
-    invoke('send_group_message', { gid, text }),
+  // `only` (K4) resends to the members it names, after a partial failure.
+  // The receipt arrives with K4; until then the backend returns nothing (null).
+  sendGroupMessage: (gid: string, text: string, only?: string[]): Promise<GroupSendReceipt | null> =>
+    invoke('send_group_message', only === undefined ? { gid, text } : { gid, text, only }),
   sendFile: (
     handle: string,
     name: string,
     mime: string,
     dataB64: string,
     thumb: string | null,
-  ): Promise<FileRef> => invoke('send_file', { handle, name, mime, dataB64, thumb }),
+  ): Promise<SentFile> => invoke('send_file', { handle, name, mime, dataB64, thumb }),
   sendGroupFile: (
     gid: string,
     name: string,
     mime: string,
     dataB64: string,
     thumb: string | null,
-  ): Promise<FileRef> => invoke('send_group_file', { gid, name, mime, dataB64, thumb }),
+    only?: string[],
+  ): Promise<SentGroupFile> =>
+    invoke(
+      'send_group_file',
+      only === undefined ? { gid, name, mime, dataB64, thumb } : { gid, name, mime, dataB64, thumb, only },
+    ),
   fetchFile: (url: string, key: string, sha256: string, mime: string): Promise<string> =>
     invoke('fetch_file', { url, key, sha256, mime }),
   getHistory: (): Promise<Record<string, HistItem[]>> => invoke('get_history'),
@@ -306,6 +414,44 @@ export const api = {
   relayInspectStart: (): Promise<string[]> => invoke('relay_inspect_start'),
   relayInspectStop: (): Promise<void> =>
     invoke<void>('relay_inspect_stop').catch(() => {}),
+
+  // ── Commands of the redesign's backend (plan §5). Names match src-tauri. ──
+  // K1: the passphrase policy, checked before the identity exists. Rejects
+  // with `passphrase_too_short` or `passphrase_too_common`; writes nothing.
+  checkPassphrase: (passphrase: string): Promise<void> => invoke('check_passphrase', { passphrase }),
+  // K3: how many relays are connected right now.
+  connectionStatus: (): Promise<ConnectionStatus> => invoke('connection_status'),
+  // K5: turns TOTP on with the secret confirmed through `totpBegin` and
+  // `totpVerify`, or off with a valid code.
+  totpEnable: (passphrase: string): Promise<void> => invoke('totp_enable', { passphrase }),
+  totpDisable: (passphrase: string, code: string): Promise<void> =>
+    invoke('totp_disable', { passphrase, code }),
+  // K6: re-seals the vault with a new passphrase and keeps the TOTP secret.
+  changePassphrase: (current: string, next: string, totpCode?: string | null): Promise<void> =>
+    invoke('change_passphrase', { current, next, totpCode: totpCode ?? null }),
+  // K8: checks a pasted code and reports a clash, without saving anything.
+  previewContact: (bundleJson: string): Promise<ContactPreview> =>
+    invoke('preview_contact', { bundleJson }),
+  // K8: the user saw that the contact's keys changed.
+  acknowledgeKeyChange: (handle: string): Promise<void> =>
+    invoke('acknowledge_key_change', { handle }),
+  // K9 and K10: the members of a group and what its admin can do.
+  groupMembers: (gid: string): Promise<GroupMember[]> => invoke('group_members', { gid }),
+  removeGroupMember: (gid: string, ikSignPub: string): Promise<GroupInfo> =>
+    invoke('remove_group_member', { gid, ikSignPub }),
+  renameGroup: (gid: string, name: string): Promise<GroupInfo> => invoke('rename_group', { gid, name }),
+  leaveGroup: (gid: string): Promise<void> => invoke('leave_group', { gid }),
+  deleteGroup: (gid: string): Promise<void> => invoke('delete_group', { gid }),
+  // K11: deletes one message here for good. `convo` is the history key (the
+  // handle, or `grp:<gid>`); a text matches on `text`, a file on `sha256`.
+  deleteHistoryItem: (
+    convo: string,
+    ts: number,
+    side: 'me' | 'them',
+    text?: string | null,
+    sha256?: string | null,
+  ): Promise<void> =>
+    invoke('delete_history_item', { convo, ts, side, text: text ?? null, sha256: sha256 ?? null }),
 };
 
 // Metadata a transport relay can see about one event — never its content.
@@ -387,4 +533,24 @@ export async function onCallCloseRequested(cb: () => void): Promise<UnlistenFn> 
 // once the call flag clears, or after a short grace period.
 export async function onCallQuitRequested(cb: () => void): Promise<UnlistenFn> {
   return await listen('call-quit-requested', () => cb());
+}
+
+// The relays connected changed (K3), debounced by the backend.
+export async function onConnectionChanged(
+  cb: (status: ConnectionStatus) => void,
+): Promise<UnlistenFn> {
+  return await listen<ConnectionStatus>('connection-changed', e => cb(e.payload));
+}
+
+// A handshake came with other keys than the ones saved for this contact (K8).
+// It is still rejected; at most one event every 10 minutes per contact.
+export async function onContactKeyMismatch(
+  cb: (event: ContactKeyMismatchEvent) => void,
+): Promise<UnlistenFn> {
+  return await listen<ContactKeyMismatchEvent>('contact-key-mismatch', e => cb(e.payload));
+}
+
+// The admin removed us from a group, or deleted it (K10): it is marked ended.
+export async function onGroupRemoved(cb: (event: GroupRemovedEvent) => void): Promise<UnlistenFn> {
+  return await listen<GroupRemovedEvent>('group-removed', e => cb(e.payload));
 }

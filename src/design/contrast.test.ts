@@ -115,6 +115,16 @@ describe.each(COMBINATIONS)('contrast of $style $mode with $accent', ({ style, m
   });
 });
 
+describe.each(COMBINATIONS)('the QR code in $style $mode with $accent', ({ style, mode, accent }) => {
+  // Black on white whatever the theme: scanners expect dark modules on a light
+  // quiet zone, and an inverted or low-contrast code fails on many phones.
+  it('is black on white, 21:1', () => {
+    const tokens = resolveTokens(style, mode, accent);
+    expect([tokens.qrInk, tokens.qrPaper]).toEqual(['#000000', '#FFFFFF']);
+    expect(contrastRatio(tokens.qrInk, tokens.qrPaper)).toBeCloseTo(21, 10);
+  });
+});
+
 describe.each(THEME_IDS)('the control boundary of %s', id => {
   // As quiet as WCAG allows: a boundary, not a second muted text colour.
   it('stays between 3:1 and 3.6:1 on the background closest to it', () => {
