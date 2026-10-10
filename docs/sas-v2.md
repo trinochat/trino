@@ -82,6 +82,9 @@ for their contact check.
   "source": "lucide-react@0.468.0",
   "viewBox": "0 0 24 24",
   "strokeWidth": 2,
+  "fill": "none",
+  "strokeLinecap": "round",
+  "strokeLinejoin": "round",
   "symbols": [
     { "index": 0, "lucide": "Cat",
       "nodes": [["path", {"d": "M12 5c.67 ..."}], ["path", {"d": "M8 14v.5"}]],
@@ -96,14 +99,19 @@ for their contact check.
   `line`, `polyline` and `polygon`. The attributes are geometry only, plus
   `fill="currentColor"` on a few solid dots (the sound hole of Guitar).
 
-**How to draw a symbol** (any platform):
+**How to draw a symbol** (any platform). The top-level `strokeWidth`,
+`fill`, `strokeLinecap` and `strokeLinejoin` of the JSON are lucide's own
+drawing rules; read them from the file instead of relying on a platform's
+defaults (Flutter's are butt caps, miter joins and a black fill):
 
-- no fill (`fill="none"`), except the nodes that say `fill="currentColor"`;
-- stroke in the **text colour** (`currentColor` on the web), width 2 in
-  viewBox units, scaled with the icon;
-- **round line caps and round line joins.** This is not cosmetic: several
-  icons draw dots as zero-length segments (`M8 14v.5`, `M16 8h.01`), which
-  only show with round caps;
+- no fill (`fill: "none"`), except the nodes that say `fill="currentColor"`;
+- stroke in the **text colour** (`currentColor` on the web), width
+  `strokeWidth` (2) in viewBox units, scaled with the icon;
+- **round line caps and round line joins** (`strokeLinecap` and
+  `strokeLinejoin`: `"round"`). This is not cosmetic: several icons draw
+  dots as zero-length segments (`M8 14v.5`, `M16 8h.01`; the pips of Dice5,
+  the chips of Cookie, the eyes of Bird, Rabbit and Squirrel), which only
+  show with round caps;
 - always show the word next to or under the icon, in the app's language.
   Screen readers read the words; the icons are hidden from them.
 
@@ -218,9 +226,12 @@ mismatch that is not there.
   keeps a **byte-identical copy** (LF line endings) and a test that compares
   the copy with this one. `.gitattributes` pins the SAS files to LF on every
   checkout, whatever `core.autocrlf` says, and `sas-symbols.test.ts` fails if
-  one of them arrives with CR line endings or a BOM. The drawings follow the rules under
-  [Symbols](#symbols); a platform draws the nodes itself (Flutter: parse the
-  path data and stroke it) rather than substituting a look-alike icon font.
+  one of them arrives with CR line endings or a BOM.
+- **Same drawing.** The drawings follow the rules under
+  [Symbols](#symbols). A platform draws the nodes itself (Flutter: parse the
+  path data and stroke it) rather than substituting a look-alike icon font,
+  and takes `fill`, `strokeWidth`, `strokeLinecap` and `strokeLinejoin` from
+  the JSON. Its tests check that its painter uses those values.
 - **Same derivation.** Every implementation of the derivation must pass every
   vector in `assets/sas/vectors.json`: the same digest and the same 7 indices
   for each `call` and `contact` vector, and a refusal for every `invalid`

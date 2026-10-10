@@ -26,6 +26,15 @@ describe('SasIcon', () => {
     expect(svg.getAttribute('data-sas')).toBe('Cat');
   });
 
+  it('takes its drawing rules from the table, like every other platform', () => {
+    const { container } = render(<SasIcon index={56} />);
+    const svg = container.querySelector('svg')!;
+    expect(svg.getAttribute('fill')).toBe(SAS_TABLE.fill);
+    expect(svg.getAttribute('stroke-width')).toBe(String(SAS_TABLE.strokeWidth));
+    expect(svg.getAttribute('stroke-linecap')).toBe(SAS_TABLE.strokeLinecap);
+    expect(svg.getAttribute('stroke-linejoin')).toBe(SAS_TABLE.strokeLinejoin);
+  });
+
   it('draws every node of every symbol, with its attributes', () => {
     for (const symbol of SAS_SYMBOLS) {
       const { container, unmount } = render(<SasIcon index={symbol.index} />);

@@ -128,6 +128,17 @@ describe('the SAS v2 table (assets/sas/sas-v2.json)', () => {
     expect(SAS_TABLE.strokeWidth).toBe(2);
   });
 
+  it('carries the drawing rules, so no platform falls back to its own defaults', () => {
+    // Several icons draw dots as zero-length segments that only show with
+    // round caps; Flutter defaults to butt caps, miter joins and black fills.
+    expect(SAS_TABLE.fill).toBe('none');
+    expect(SAS_TABLE.strokeLinecap).toBe('round');
+    expect(SAS_TABLE.strokeLinejoin).toBe('round');
+    expect(Object.keys(JSON.parse(committedJson))).toEqual([
+      'version', 'source', 'viewBox', 'strokeWidth', 'fill', 'strokeLinecap', 'strokeLinejoin', 'symbols',
+    ]);
+  });
+
   it('is exactly the frozen table of plan §6, in order', () => {
     expect(FROZEN).toHaveLength(64);
     expect(SAS_SYMBOLS).toHaveLength(64);

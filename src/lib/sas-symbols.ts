@@ -26,6 +26,10 @@ export interface SasTable {
   source: string;
   viewBox: string;
   strokeWidth: number;
+  /** How every symbol is drawn: no fill (except nodes that say `fill`), round caps and joins. */
+  fill: 'none';
+  strokeLinecap: 'round';
+  strokeLinejoin: 'round';
   symbols: readonly SasSymbolData[];
 }
 

@@ -3,6 +3,9 @@
   "source": "lucide-react@0.468.0",
   "viewBox": "0 0 24 24",
   "strokeWidth": 2,
+  "fill": "none",
+  "strokeLinecap": "round",
+  "strokeLinejoin": "round",
   "symbols": [
     {
       "index": 0,

@@ -130,6 +130,21 @@ function iconNodes(name) {
   });
 }
 
+/**
+ * How lucide draws every icon: the attributes of the `<svg>` its shared `Icon`
+ * renders. The table carries them so that no platform falls back to its own
+ * defaults (Flutter strokes with butt caps and miter joins, and fills paths
+ * black), which would erase the dots drawn as zero-length segments.
+ */
+function drawingRules() {
+  const element = lucide.Cat.render({}, null);
+  const svg = element?.type?.render?.(element.props, null)?.props;
+  if (!svg) throw new Error('could not read the svg attributes of lucide-react');
+  if (svg.stroke !== 'currentColor') throw new Error(`lucide-react strokes with ${svg.stroke}, not currentColor`);
+  const { viewBox, strokeWidth, fill, strokeLinecap, strokeLinejoin } = svg;
+  return { viewBox, strokeWidth, fill, strokeLinecap, strokeLinejoin };
+}
+
 /** Stable, reviewable JSON: one line per node and per word set. */
 function formatTable(doc) {
   const out = [
@@ -138,6 +153,9 @@ function formatTable(doc) {
     `  "source": ${JSON.stringify(doc.source)},`,
     `  "viewBox": ${JSON.stringify(doc.viewBox)},`,
     `  "strokeWidth": ${JSON.stringify(doc.strokeWidth)},`,
+    `  "fill": ${JSON.stringify(doc.fill)},`,
+    `  "strokeLinecap": ${JSON.stringify(doc.strokeLinecap)},`,
+    `  "strokeLinejoin": ${JSON.stringify(doc.strokeLinejoin)},`,
     '  "symbols": [',
   ];
   doc.symbols.forEach((symbol, i) => {
@@ -162,11 +180,15 @@ export function buildSasAssets() {
   if (version !== LUCIDE_VERSION) {
     throw new Error(`lucide-react ${version} is installed; the SAS v2 table is drawn from ${LUCIDE_VERSION}`);
   }
+  const rules = drawingRules();
   const doc = {
     version: 2,
     source: `lucide-react@${LUCIDE_VERSION}`,
-    viewBox: '0 0 24 24',
-    strokeWidth: 2,
+    viewBox: rules.viewBox,
+    strokeWidth: rules.strokeWidth,
+    fill: rules.fill,
+    strokeLinecap: rules.strokeLinecap,
+    strokeLinejoin: rules.strokeLinejoin,
     symbols: FROZEN_TABLE.map(([name, es, en, pt], index) => ({
       index,
       lucide: name,
