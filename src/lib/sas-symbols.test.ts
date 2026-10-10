@@ -1,7 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import committedJson from '../../assets/sas/sas-v2.json?raw';
 import committedLicense from '../../assets/sas/LICENSE-lucide.txt?raw';
+import committedVectors from '../../assets/sas/vectors.json?raw';
 import spec from '../../docs/sas-v2.md?raw';
+import generatorSource from '../../scripts/gen-sas-assets.mjs?raw';
+import vectorsScriptSource from '../../scripts/sas_vectors.py?raw';
 import { buildSasAssets } from '../../scripts/gen-sas-assets.mjs';
 import type { Lang } from './i18n';
 import { SAS_SYMBOLS, SAS_TABLE, sasSymbol, sasWord, sasWords } from './sas-symbols';
@@ -108,7 +111,6 @@ const FORBIDDEN_PATTERN = /Map|Phone|Mic|Lock|Key|Shield|Bell|Skull|Bomb|Bug|Pil
 const LANGS: Lang[] = ['es', 'en', 'pt'];
 /** Lower case without accents, to catch words that differ only in an accent. */
 const fold = (word: string) => word.normalize('NFD').replace(/\p{M}/gu, '').toLowerCase();
-const lf = (text: string) => text.replace(/\r\n/g, '\n');
 
 /**
  * The SVG attributes a node may carry: geometry, never a colour or a stroke of
@@ -175,8 +177,8 @@ describe('the SAS v2 table (assets/sas/sas-v2.json)', () => {
 
   it('matches what the generator makes from lucide-react today (no drift)', () => {
     const fresh = buildSasAssets();
-    expect(lf(committedJson)).toBe(fresh.json);
-    expect(lf(committedLicense)).toBe(fresh.license);
+    expect(committedJson).toBe(fresh.json);
+    expect(committedLicense).toBe(fresh.license);
   });
 
   it('is listed row for row in docs/sas-v2.md', () => {
@@ -189,6 +191,28 @@ describe('the SAS v2 table (assets/sas/sas-v2.json)', () => {
     expect(committedLicense).toContain('ISC License');
     expect(committedLicense).toContain('Lucide Contributors');
     expect(committedLicense).toContain('sas-v2.json');
+  });
+});
+
+/**
+ * The mobile app keeps byte-identical copies of the JSON files, and the
+ * scripts must rebuild them byte for byte. So every checkout must give the
+ * committed bytes, whatever `core.autocrlf` says: .gitattributes pins these
+ * files to LF.
+ */
+const SHARED_FILES: Record<string, string> = {
+  'assets/sas/sas-v2.json': committedJson,
+  'assets/sas/vectors.json': committedVectors,
+  'assets/sas/LICENSE-lucide.txt': committedLicense,
+  'docs/sas-v2.md': spec,
+  'scripts/gen-sas-assets.mjs': generatorSource,
+  'scripts/sas_vectors.py': vectorsScriptSource,
+};
+
+describe('the shared SAS files', () => {
+  it.each(Object.entries(SHARED_FILES))('%s is checked out exactly as committed: LF only, no BOM', (file, text) => {
+    expect(text.includes('\r'), `${file} has CR line endings (see .gitattributes)`).toBe(false);
+    expect(text.startsWith('﻿'), `${file} starts with a BOM`).toBe(false);
   });
 });
 

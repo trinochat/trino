@@ -1,4 +1,3 @@
-#!/usr/bin/env node
 /**
  * Generates the SAS v2 symbol table (docs/sas-v2.md) from lucide-react:
  *

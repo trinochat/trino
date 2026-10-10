@@ -216,7 +216,9 @@ mismatch that is not there.
   from its own icon set or its own copy of the words. Where a platform cannot
   read the file in place (Flutter only bundles assets inside its package), it
   keeps a **byte-identical copy** (LF line endings) and a test that compares
-  the copy with this one. The drawings follow the rules under
+  the copy with this one. `.gitattributes` pins the SAS files to LF on every
+  checkout, whatever `core.autocrlf` says, and `sas-symbols.test.ts` fails if
+  one of them arrives with CR line endings or a BOM. The drawings follow the rules under
   [Symbols](#symbols); a platform draws the nodes itself (Flutter: parse the
   path data and stroke it) rather than substituting a look-alike icon font.
 - **Same derivation.** Every implementation of the derivation must pass every
