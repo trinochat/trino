@@ -147,5 +147,18 @@ export default {
       },
     },
   },
-  plugins: [],
+  plugins: [
+    // Variants for the accessibility settings, which src/design/apply.ts marks
+    // on <html>: `safe-colors:`, `more-contrast:`, `reduce-motion:`,
+    // `full-motion:` and `wide-spacing:`. The marks already include what the
+    // system says, so the redesign uses these, never `motion-reduce:`,
+    // `motion-safe:` or `contrast-more:`, which only hear the system.
+    function accessibilityVariants({ addVariant }) {
+      addVariant('safe-colors', ':root[data-vision="safe"] &');
+      addVariant('more-contrast', ':root[data-contrast="more"] &');
+      addVariant('reduce-motion', ':root[data-motion="reduce"] &');
+      addVariant('full-motion', ':root[data-motion="full"] &');
+      addVariant('wide-spacing', ':root[data-spacing="wide"] &');
+    },
+  ],
 };

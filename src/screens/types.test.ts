@@ -69,9 +69,10 @@ describe('the screen contracts', () => {
     expectTypeOf<ChatPaneProps['onDeleteForMe']>().toEqualTypeOf<((msgKey: string) => Promise<void>) | undefined>();
   });
 
-  it('name the seven sections of Settings', () => {
+  // Accessibility sits between Appearance and Language (accesibilidad.md §2.1).
+  it('name the eight sections of Settings', () => {
     expectTypeOf<SettingsSectionId>().toEqualTypeOf<
-      'profile' | 'privacy' | 'notifications' | 'security' | 'appearance' | 'language' | 'advanced'
+      'profile' | 'privacy' | 'notifications' | 'security' | 'appearance' | 'accessibility' | 'language' | 'advanced'
     >();
   });
 });

@@ -55,7 +55,6 @@
     background: rgb(var(--color-bg));
     color: rgb(var(--color-ink));
     font-family: var(--font-ui);
-    font-size: 14px;
     overflow: hidden;
   }
 

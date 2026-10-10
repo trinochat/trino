@@ -177,6 +177,7 @@ export type SettingsSectionId =
   | 'notifications'
   | 'security'
   | 'appearance'
+  | 'accessibility'
   | 'language'
   | 'advanced';
 export interface SettingsSlotProps {

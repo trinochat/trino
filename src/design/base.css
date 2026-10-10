@@ -1,0 +1,38 @@
+/*
+ * Base rules of the redesign that follow the accessibility settings
+ * (accesibilidad.md §4.5). src/design/apply.ts marks <html> with them.
+ *
+ * - The root is 16 px, so 1rem means what the code says; applyAccessibility
+ *   sets 16 px × the text scale inline, over this rule.
+ * - Reduced motion: no animations, transitions or smooth scrolling.
+ * - Wide spacing: the minimums of WCAG 1.4.12 (line height 1.5, paragraphs
+ *   2 em apart, letters 0.12 em and words 0.16 em). `body *` and not `#root *`:
+ *   dialogs and toasts are portals in <body>, outside #root. Only paragraphs
+ *   followed by another get the 2 em: a message bubble is one <p>, and 1.4.12
+ *   asks for the space between paragraphs, not after the last one.
+ *
+ * The integration (I7) adds the base rules of App.css here, before the motion
+ * and spacing rules, without a font size.
+ */
+html {
+  font-size: 16px;
+}
+
+:root[data-motion='reduce'] *,
+:root[data-motion='reduce'] *::before,
+:root[data-motion='reduce'] *::after {
+  animation-duration: 0.01ms !important;
+  animation-iteration-count: 1 !important;
+  transition-duration: 0.01ms !important;
+  scroll-behavior: auto !important;
+}
+
+:root[data-spacing='wide'] :where(body *) {
+  line-height: 1.5 !important;
+  letter-spacing: 0.12em !important;
+  word-spacing: 0.16em !important;
+}
+
+:root[data-spacing='wide'] :where(body p:not(:last-child)) {
+  margin-block-end: 2em !important;
+}

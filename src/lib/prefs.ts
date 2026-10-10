@@ -23,9 +23,6 @@ export type CallIpWarn = (typeof CALL_IP_WARNINGS)[number];
 export const RINGTONES = ['soft', 'silent'] as const;
 export type Ringtone = (typeof RINGTONES)[number];
 
-export const TEXT_SIZES = ['normal', 'large'] as const;
-export type TextSize = (typeof TEXT_SIZES)[number];
-
 /** The defaults of the approved Settings screen (Settings.dc.html). */
 export const PREF_DEFAULTS = Object.freeze({
   notifPreview: 'name' as NotifPreview,
@@ -36,7 +33,8 @@ export const PREF_DEFAULTS = Object.freeze({
   /** From 0 to 100, like the slider. */
   ringVolume: 60,
   muteGroupsByDefault: false,
-  textSize: 'normal' as TextSize,
+  /** Terminal dark's scan lines; Settings > Appearance switches them off. */
+  scanLines: true,
 });
 
 /** Minutes without activity before Trino locks; 0 never locks. */
@@ -103,8 +101,12 @@ export interface Prefs {
   setMuteGroupsByDefault(on: boolean): boolean;
   getGroupMuted(gid: string): boolean;
   setGroupMuted(gid: string, muted: boolean): boolean;
-  getTextSize(): TextSize;
-  setTextSize(value: TextSize): boolean;
+  /**
+   * Terminal dark's scan lines. The text size is not here: it is part of the
+   * accessibility settings (`src/design/accessibility.ts`).
+   */
+  getScanLines(): boolean;
+  setScanLines(on: boolean): boolean;
 }
 
 /**
@@ -217,8 +219,8 @@ export function createPrefs(storage?: PrefsStorage): Prefs {
     setMuteGroupsByDefault: on => writeFlag(PREF + 'muteGroupsByDefault', on),
     getGroupMuted: gid => readFlag(PREF + 'groupMuted:' + gid, false),
     setGroupMuted: (gid, muted) => writeFlag(PREF + 'groupMuted:' + gid, muted),
-    getTextSize: () => readChoice(PREF + 'textSize', TEXT_SIZES, PREF_DEFAULTS.textSize),
-    setTextSize: value => write(PREF + 'textSize', value),
+    getScanLines: () => readFlag(PREF + 'scanLines', PREF_DEFAULTS.scanLines),
+    setScanLines: on => writeFlag(PREF + 'scanLines', on),
   };
 }
 

@@ -165,7 +165,7 @@ describe('preferences of the redesign', () => {
     expect(prefs.getRingVolume()).toBe(60);
     expect(prefs.getMuteGroupsByDefault()).toBe(false);
     expect(prefs.getGroupMuted('9f3a')).toBe(false);
-    expect(prefs.getTextSize()).toBe('normal');
+    expect(prefs.getScanLines()).toBe(true);
     expect(PREF_DEFAULTS).toEqual({
       notifPreview: 'name',
       messageSound: true,
@@ -174,7 +174,7 @@ describe('preferences of the redesign', () => {
       ringtone: 'soft',
       ringVolume: 60,
       muteGroupsByDefault: false,
-      textSize: 'normal',
+      scanLines: true,
     });
   });
 
@@ -190,7 +190,7 @@ describe('preferences of the redesign', () => {
     prefs.setRingVolume(35);
     prefs.setMuteGroupsByDefault(true);
     prefs.setGroupMuted('9f3a', true);
-    prefs.setTextSize('large');
+    prefs.setScanLines(false);
     expect(Object.fromEntries(data)).toEqual({
       'trino.pref.notifPreview': 'full',
       'trino.pref.messageSound': '0',
@@ -201,7 +201,7 @@ describe('preferences of the redesign', () => {
       'trino.pref.ringVolume': '35',
       'trino.pref.muteGroupsByDefault': '1',
       'trino.pref.groupMuted:9f3a': '1',
-      'trino.pref.textSize': 'large',
+      'trino.pref.scanLines': '0',
     });
     expect(prefs.getNotifPreview()).toBe('full');
     expect(prefs.getMessageSound()).toBe(false);
@@ -212,7 +212,7 @@ describe('preferences of the redesign', () => {
     expect(prefs.getRingVolume()).toBe(35);
     expect(prefs.getMuteGroupsByDefault()).toBe(true);
     expect(prefs.getGroupMuted('9f3a')).toBe(true);
-    expect(prefs.getTextSize()).toBe('large');
+    expect(prefs.getScanLines()).toBe(false);
   });
 
   it('fall back to the default for a value they do not know', () => {
@@ -222,7 +222,7 @@ describe('preferences of the redesign', () => {
         'trino.pref.callIpWarn': 'sometimes',
         'trino.pref.ringtone': 'bell',
         'trino.pref.ringVolume': 'loud',
-        'trino.pref.textSize': 'huge',
+        'trino.pref.scanLines': 'off',
         'trino.pref.messageSound': 'yes',
       }).storage,
     );
@@ -230,7 +230,7 @@ describe('preferences of the redesign', () => {
     expect(prefs.getCallIpWarn()).toBe('once');
     expect(prefs.getRingtone()).toBe('soft');
     expect(prefs.getRingVolume()).toBe(60);
-    expect(prefs.getTextSize()).toBe('normal');
+    expect(prefs.getScanLines()).toBe(true);
     expect(prefs.getMessageSound()).toBe(true);
   });
 
@@ -263,8 +263,8 @@ describe('storage that fails', () => {
   it('reports a write it could not make', () => {
     const prefs = createPrefs(brokenStorage);
     expect(prefs.setNote('Ana', 'x')).toBe(false);
-    expect(prefs.setTextSize('large')).toBe(false);
-    expect(createPrefs(memoryStorage().storage).setTextSize('large')).toBe(true);
+    expect(prefs.setScanLines(false)).toBe(false);
+    expect(createPrefs(memoryStorage().storage).setScanLines(false)).toBe(true);
   });
 
   it('gives the defaults when there is no storage at all', () => {
@@ -277,8 +277,8 @@ describe('storage that fails', () => {
     });
     try {
       const prefs = createPrefs();
-      expect(prefs.getTextSize()).toBe('normal');
-      expect(prefs.setTextSize('large')).toBe(false);
+      expect(prefs.getScanLines()).toBe(true);
+      expect(prefs.setScanLines(false)).toBe(false);
     } finally {
       if (original) Object.defineProperty(globalThis, 'localStorage', original);
       else delete (globalThis as { localStorage?: unknown }).localStorage;
