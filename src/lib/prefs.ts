@@ -60,6 +60,13 @@ export interface Prefs {
   /** Seconds until a new message in that conversation disappears; 0 is off. */
   getTtl(convoKey: string): number;
   setTtl(convoKey: string, seconds: number): boolean;
+  /**
+   * Minutes of inactivity before the app locks; 0 is off. A stored value
+   * that is not a number, or is negative, reads as the default 5. App.tsx
+   * still reads `autolock` itself: there a value that is not a number never
+   * locks and a negative one locks at once. The auto-lock of the
+   * integration (I2) moves to this reading on purpose.
+   */
   getAutolockMinutes(): number;
   setAutolockMinutes(minutes: number): boolean;
   getUpdatesMuted(): boolean;
