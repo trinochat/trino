@@ -1,0 +1,302 @@
+{
+  "version": 2,
+  "spec": "docs/sas-v2.md",
+  "generator": "scripts/sas_vectors.py (Python hashlib, independent of src/lib/sas.ts)",
+  "call": [
+    {
+      "name": "basic",
+      "callId": "q3Xv9_Lr-2bTnW8kPz4yHc",
+      "idA": "866719888da792842a0f7dcfa116eb580ff134a7e7f2cc9a7a4fef8716a0f4bf",
+      "idB": "8b6e97b633b3bcafc5e4680d8a9858d6821de74153b4f456bac749d3662c0955",
+      "dtlsA": "041dc47c394066a6ddb63889833fc03f5727a1c733d990d9b0d56485a761c6ef",
+      "dtlsB": "d27812209b4cd416fe0c2b7de2a78bdde411f57a9a45ea910f793298465b3a5b",
+      "digest": "85a965855f5236de83da64d9d082e325ca5397b583e3a64269972b152247159a",
+      "indices": [33, 42, 25, 33, 23, 20, 13]
+    },
+    {
+      "name": "basic, identities swapped",
+      "callId": "q3Xv9_Lr-2bTnW8kPz4yHc",
+      "idA": "8b6e97b633b3bcafc5e4680d8a9858d6821de74153b4f456bac749d3662c0955",
+      "idB": "866719888da792842a0f7dcfa116eb580ff134a7e7f2cc9a7a4fef8716a0f4bf",
+      "dtlsA": "041dc47c394066a6ddb63889833fc03f5727a1c733d990d9b0d56485a761c6ef",
+      "dtlsB": "d27812209b4cd416fe0c2b7de2a78bdde411f57a9a45ea910f793298465b3a5b",
+      "digest": "85a965855f5236de83da64d9d082e325ca5397b583e3a64269972b152247159a",
+      "indices": [33, 42, 25, 33, 23, 20, 13]
+    },
+    {
+      "name": "basic, DTLS fingerprints swapped",
+      "callId": "q3Xv9_Lr-2bTnW8kPz4yHc",
+      "idA": "866719888da792842a0f7dcfa116eb580ff134a7e7f2cc9a7a4fef8716a0f4bf",
+      "idB": "8b6e97b633b3bcafc5e4680d8a9858d6821de74153b4f456bac749d3662c0955",
+      "dtlsA": "d27812209b4cd416fe0c2b7de2a78bdde411f57a9a45ea910f793298465b3a5b",
+      "dtlsB": "041dc47c394066a6ddb63889833fc03f5727a1c733d990d9b0d56485a761c6ef",
+      "digest": "85a965855f5236de83da64d9d082e325ca5397b583e3a64269972b152247159a",
+      "indices": [33, 42, 25, 33, 23, 20, 13]
+    },
+    {
+      "name": "basic, both pairs swapped (the other side's view)",
+      "callId": "q3Xv9_Lr-2bTnW8kPz4yHc",
+      "idA": "8b6e97b633b3bcafc5e4680d8a9858d6821de74153b4f456bac749d3662c0955",
+      "idB": "866719888da792842a0f7dcfa116eb580ff134a7e7f2cc9a7a4fef8716a0f4bf",
+      "dtlsA": "d27812209b4cd416fe0c2b7de2a78bdde411f57a9a45ea910f793298465b3a5b",
+      "dtlsB": "041dc47c394066a6ddb63889833fc03f5727a1c733d990d9b0d56485a761c6ef",
+      "digest": "85a965855f5236de83da64d9d082e325ca5397b583e3a64269972b152247159a",
+      "indices": [33, 42, 25, 33, 23, 20, 13]
+    },
+    {
+      "name": "another callId, same keys",
+      "callId": "Zr7Kd2_mP-4sWq9LxB1cVe",
+      "idA": "866719888da792842a0f7dcfa116eb580ff134a7e7f2cc9a7a4fef8716a0f4bf",
+      "idB": "8b6e97b633b3bcafc5e4680d8a9858d6821de74153b4f456bac749d3662c0955",
+      "dtlsA": "041dc47c394066a6ddb63889833fc03f5727a1c733d990d9b0d56485a761c6ef",
+      "dtlsB": "d27812209b4cd416fe0c2b7de2a78bdde411f57a9a45ea910f793298465b3a5b",
+      "digest": "a06e9d29c69f306c4c2fd2e215d8291f713d3ead459fd0ad8c8969306ec01219",
+      "indices": [40, 27, 39, 10, 49, 39, 12]
+    },
+    {
+      "name": "shortest callId (16)",
+      "callId": "a-_0123456789XYZ",
+      "idA": "866719888da792842a0f7dcfa116eb580ff134a7e7f2cc9a7a4fef8716a0f4bf",
+      "idB": "8b6e97b633b3bcafc5e4680d8a9858d6821de74153b4f456bac749d3662c0955",
+      "dtlsA": "041dc47c394066a6ddb63889833fc03f5727a1c733d990d9b0d56485a761c6ef",
+      "dtlsB": "d27812209b4cd416fe0c2b7de2a78bdde411f57a9a45ea910f793298465b3a5b",
+      "digest": "3691cd2b87b53f176140107fed2948653c76cc899f9d22a2cc29f089f37b8b1a",
+      "indices": [13, 36, 51, 10, 33, 45, 15]
+    },
+    {
+      "name": "longest callId (64)",
+      "callId": "Ab3_-Ab3_-Ab3_-Ab3_-Ab3_-Ab3_-Ab3_-Ab3_-Ab3_-Ab3_-Ab3_-Ab3_-Ab3_",
+      "idA": "866719888da792842a0f7dcfa116eb580ff134a7e7f2cc9a7a4fef8716a0f4bf",
+      "idB": "8b6e97b633b3bcafc5e4680d8a9858d6821de74153b4f456bac749d3662c0955",
+      "dtlsA": "041dc47c394066a6ddb63889833fc03f5727a1c733d990d9b0d56485a761c6ef",
+      "dtlsB": "d27812209b4cd416fe0c2b7de2a78bdde411f57a9a45ea910f793298465b3a5b",
+      "digest": "13dcab6fcb089e950dd64f5f83b927cc5f9bfaaf9d1e51d66c96336694983de4",
+      "indices": [4, 55, 42, 27, 50, 2, 39]
+    },
+    {
+      "name": "equal identities",
+      "callId": "q3Xv9_Lr-2bTnW8kPz4yHc",
+      "idA": "866719888da792842a0f7dcfa116eb580ff134a7e7f2cc9a7a4fef8716a0f4bf",
+      "idB": "866719888da792842a0f7dcfa116eb580ff134a7e7f2cc9a7a4fef8716a0f4bf",
+      "dtlsA": "041dc47c394066a6ddb63889833fc03f5727a1c733d990d9b0d56485a761c6ef",
+      "dtlsB": "d27812209b4cd416fe0c2b7de2a78bdde411f57a9a45ea910f793298465b3a5b",
+      "digest": "dabb536997d20f82c0f2a4649b6c76088aff6939f069fbaa839ec26b7f1f3303",
+      "indices": [54, 46, 20, 26, 37, 52, 3]
+    },
+    {
+      "name": "equal DTLS fingerprints",
+      "callId": "q3Xv9_Lr-2bTnW8kPz4yHc",
+      "idA": "866719888da792842a0f7dcfa116eb580ff134a7e7f2cc9a7a4fef8716a0f4bf",
+      "idB": "8b6e97b633b3bcafc5e4680d8a9858d6821de74153b4f456bac749d3662c0955",
+      "dtlsA": "041dc47c394066a6ddb63889833fc03f5727a1c733d990d9b0d56485a761c6ef",
+      "dtlsB": "041dc47c394066a6ddb63889833fc03f5727a1c733d990d9b0d56485a761c6ef",
+      "digest": "e9c99b837880f170647a4f231d2342fd05eacb0c6c35ea0ae8d78426209b4a1b",
+      "indices": [58, 50, 38, 32, 30, 32, 60]
+    },
+    {
+      "name": "identities differ in the last digit",
+      "callId": "q3Xv9_Lr-2bTnW8kPz4yHc",
+      "idA": "866719888da792842a0f7dcfa116eb580ff134a7e7f2cc9a7a4fef8716a0f4b1",
+      "idB": "866719888da792842a0f7dcfa116eb580ff134a7e7f2cc9a7a4fef8716a0f4b0",
+      "dtlsA": "041dc47c394066a6ddb63889833fc03f5727a1c733d990d9b0d56485a761c6ef",
+      "dtlsB": "d27812209b4cd416fe0c2b7de2a78bdde411f57a9a45ea910f793298465b3a5b",
+      "digest": "803f2c890e29e9ad68f95a914ab35560922851e288adf51cc80140403974d8ac",
+      "indices": [32, 15, 11, 34, 3, 10, 58]
+    },
+    {
+      "name": "identities differ in the last digit, swapped",
+      "callId": "q3Xv9_Lr-2bTnW8kPz4yHc",
+      "idA": "866719888da792842a0f7dcfa116eb580ff134a7e7f2cc9a7a4fef8716a0f4b0",
+      "idB": "866719888da792842a0f7dcfa116eb580ff134a7e7f2cc9a7a4fef8716a0f4b1",
+      "dtlsA": "041dc47c394066a6ddb63889833fc03f5727a1c733d990d9b0d56485a761c6ef",
+      "dtlsB": "d27812209b4cd416fe0c2b7de2a78bdde411f57a9a45ea910f793298465b3a5b",
+      "digest": "803f2c890e29e9ad68f95a914ab35560922851e288adf51cc80140403974d8ac",
+      "indices": [32, 15, 11, 34, 3, 10, 58]
+    },
+    {
+      "name": "all zeros and all f",
+      "callId": "q3Xv9_Lr-2bTnW8kPz4yHc",
+      "idA": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+      "idB": "0000000000000000000000000000000000000000000000000000000000000000",
+      "dtlsA": "0000000000000000000000000000000000000000000000000000000000000000",
+      "dtlsB": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+      "digest": "c5538bb841c030427d3121be4e079a8f7a4d9727b52f58a7487a71387c742d82",
+      "indices": [49, 20, 34, 46, 16, 48, 12]
+    },
+    {
+      "name": "all zeros and all f, swapped",
+      "callId": "q3Xv9_Lr-2bTnW8kPz4yHc",
+      "idA": "0000000000000000000000000000000000000000000000000000000000000000",
+      "idB": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+      "dtlsA": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+      "dtlsB": "0000000000000000000000000000000000000000000000000000000000000000",
+      "digest": "c5538bb841c030427d3121be4e079a8f7a4d9727b52f58a7487a71387c742d82",
+      "indices": [49, 20, 34, 46, 16, 48, 12]
+    }
+  ],
+  "contact": [
+    {
+      "name": "basic",
+      "idA": "866719888da792842a0f7dcfa116eb580ff134a7e7f2cc9a7a4fef8716a0f4bf",
+      "idB": "8b6e97b633b3bcafc5e4680d8a9858d6821de74153b4f456bac749d3662c0955",
+      "digest": "4051ed8c20442fd33cbe3eaa77f111ef82219234866d20d535a09c572ea682a1",
+      "indices": [16, 20, 59, 35, 8, 17, 11]
+    },
+    {
+      "name": "basic, swapped (the other side's view)",
+      "idA": "8b6e97b633b3bcafc5e4680d8a9858d6821de74153b4f456bac749d3662c0955",
+      "idB": "866719888da792842a0f7dcfa116eb580ff134a7e7f2cc9a7a4fef8716a0f4bf",
+      "digest": "4051ed8c20442fd33cbe3eaa77f111ef82219234866d20d535a09c572ea682a1",
+      "indices": [16, 20, 59, 35, 8, 17, 11]
+    },
+    {
+      "name": "equal identities",
+      "idA": "866719888da792842a0f7dcfa116eb580ff134a7e7f2cc9a7a4fef8716a0f4bf",
+      "idB": "866719888da792842a0f7dcfa116eb580ff134a7e7f2cc9a7a4fef8716a0f4bf",
+      "digest": "0ec9d86322ee89baac2d414e794fb7162449836e28262d294e9b88eef5496afe",
+      "indices": [3, 50, 54, 24, 8, 59, 34]
+    },
+    {
+      "name": "identities differ in the last digit",
+      "idA": "866719888da792842a0f7dcfa116eb580ff134a7e7f2cc9a7a4fef8716a0f4b1",
+      "idB": "866719888da792842a0f7dcfa116eb580ff134a7e7f2cc9a7a4fef8716a0f4b0",
+      "digest": "8b330e9892c32982c21e88764bf431bec7c4fa21e50865ce1b10f951d0d85d62",
+      "indices": [34, 12, 3, 38, 36, 48, 10]
+    },
+    {
+      "name": "identities differ in the last digit, swapped",
+      "idA": "866719888da792842a0f7dcfa116eb580ff134a7e7f2cc9a7a4fef8716a0f4b0",
+      "idB": "866719888da792842a0f7dcfa116eb580ff134a7e7f2cc9a7a4fef8716a0f4b1",
+      "digest": "8b330e9892c32982c21e88764bf431bec7c4fa21e50865ce1b10f951d0d85d62",
+      "indices": [34, 12, 3, 38, 36, 48, 10]
+    },
+    {
+      "name": "all zeros and all f",
+      "idA": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+      "idB": "0000000000000000000000000000000000000000000000000000000000000000",
+      "digest": "dfb1228346cbeb6c775592d7ed68ae6ae57571ae00a222e3b1aa75c5c5b566af",
+      "indices": [55, 44, 8, 32, 17, 50, 58]
+    },
+    {
+      "name": "all zeros and all f, swapped",
+      "idA": "0000000000000000000000000000000000000000000000000000000000000000",
+      "idB": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+      "digest": "dfb1228346cbeb6c775592d7ed68ae6ae57571ae00a222e3b1aa75c5c5b566af",
+      "indices": [55, 44, 8, 32, 17, 50, 58]
+    }
+  ],
+  "invalid": {
+    "call": [
+      {
+        "name": "uppercase identity",
+        "callId": "q3Xv9_Lr-2bTnW8kPz4yHc",
+        "idA": "866719888da792842a0f7dcfa116eb580ff134a7e7f2cc9a7a4fef8716a0f4bf",
+        "idB": "8B6E97B633B3BCAFC5E4680D8A9858D6821DE74153B4F456BAC749D3662C0955",
+        "dtlsA": "041dc47c394066a6ddb63889833fc03f5727a1c733d990d9b0d56485a761c6ef",
+        "dtlsB": "d27812209b4cd416fe0c2b7de2a78bdde411f57a9a45ea910f793298465b3a5b"
+      },
+      {
+        "name": "short identity",
+        "callId": "q3Xv9_Lr-2bTnW8kPz4yHc",
+        "idA": "866719888da792842a0f7dcfa116eb580ff134a7e7f2cc9a7a4fef8716a0f4",
+        "idB": "8b6e97b633b3bcafc5e4680d8a9858d6821de74153b4f456bac749d3662c0955",
+        "dtlsA": "041dc47c394066a6ddb63889833fc03f5727a1c733d990d9b0d56485a761c6ef",
+        "dtlsB": "d27812209b4cd416fe0c2b7de2a78bdde411f57a9a45ea910f793298465b3a5b"
+      },
+      {
+        "name": "long identity",
+        "callId": "q3Xv9_Lr-2bTnW8kPz4yHc",
+        "idA": "866719888da792842a0f7dcfa116eb580ff134a7e7f2cc9a7a4fef8716a0f4bf00",
+        "idB": "8b6e97b633b3bcafc5e4680d8a9858d6821de74153b4f456bac749d3662c0955",
+        "dtlsA": "041dc47c394066a6ddb63889833fc03f5727a1c733d990d9b0d56485a761c6ef",
+        "dtlsB": "d27812209b4cd416fe0c2b7de2a78bdde411f57a9a45ea910f793298465b3a5b"
+      },
+      {
+        "name": "empty identity",
+        "callId": "q3Xv9_Lr-2bTnW8kPz4yHc",
+        "idA": "",
+        "idB": "8b6e97b633b3bcafc5e4680d8a9858d6821de74153b4f456bac749d3662c0955",
+        "dtlsA": "041dc47c394066a6ddb63889833fc03f5727a1c733d990d9b0d56485a761c6ef",
+        "dtlsB": "d27812209b4cd416fe0c2b7de2a78bdde411f57a9a45ea910f793298465b3a5b"
+      },
+      {
+        "name": "DTLS fingerprint with colons",
+        "callId": "q3Xv9_Lr-2bTnW8kPz4yHc",
+        "idA": "866719888da792842a0f7dcfa116eb580ff134a7e7f2cc9a7a4fef8716a0f4bf",
+        "idB": "8b6e97b633b3bcafc5e4680d8a9858d6821de74153b4f456bac749d3662c0955",
+        "dtlsA": "041dc47c394066a6ddb63889833fc03f5727a1c733d990d9b0d56485a761c6ef",
+        "dtlsB": "d2:78:12:20:9b:4c:d4:16:fe:0c:2b:7d:e2:a7:8b:dd:e4:11:f5:7a:9a:45:ea:91:0f:79:32:98:46:5b:3a:5b"
+      },
+      {
+        "name": "DTLS fingerprint not hex",
+        "callId": "q3Xv9_Lr-2bTnW8kPz4yHc",
+        "idA": "866719888da792842a0f7dcfa116eb580ff134a7e7f2cc9a7a4fef8716a0f4bf",
+        "idB": "8b6e97b633b3bcafc5e4680d8a9858d6821de74153b4f456bac749d3662c0955",
+        "dtlsA": "gggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggg",
+        "dtlsB": "d27812209b4cd416fe0c2b7de2a78bdde411f57a9a45ea910f793298465b3a5b"
+      },
+      {
+        "name": "callId too short (15)",
+        "callId": "a-_0123456789XY",
+        "idA": "866719888da792842a0f7dcfa116eb580ff134a7e7f2cc9a7a4fef8716a0f4bf",
+        "idB": "8b6e97b633b3bcafc5e4680d8a9858d6821de74153b4f456bac749d3662c0955",
+        "dtlsA": "041dc47c394066a6ddb63889833fc03f5727a1c733d990d9b0d56485a761c6ef",
+        "dtlsB": "d27812209b4cd416fe0c2b7de2a78bdde411f57a9a45ea910f793298465b3a5b"
+      },
+      {
+        "name": "callId too long (65)",
+        "callId": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "idA": "866719888da792842a0f7dcfa116eb580ff134a7e7f2cc9a7a4fef8716a0f4bf",
+        "idB": "8b6e97b633b3bcafc5e4680d8a9858d6821de74153b4f456bac749d3662c0955",
+        "dtlsA": "041dc47c394066a6ddb63889833fc03f5727a1c733d990d9b0d56485a761c6ef",
+        "dtlsB": "d27812209b4cd416fe0c2b7de2a78bdde411f57a9a45ea910f793298465b3a5b"
+      },
+      {
+        "name": "callId with a NUL",
+        "callId": "q3Xv9_Lr-2bTnW8k\u0000Pz4yHc",
+        "idA": "866719888da792842a0f7dcfa116eb580ff134a7e7f2cc9a7a4fef8716a0f4bf",
+        "idB": "8b6e97b633b3bcafc5e4680d8a9858d6821de74153b4f456bac749d3662c0955",
+        "dtlsA": "041dc47c394066a6ddb63889833fc03f5727a1c733d990d9b0d56485a761c6ef",
+        "dtlsB": "d27812209b4cd416fe0c2b7de2a78bdde411f57a9a45ea910f793298465b3a5b"
+      },
+      {
+        "name": "callId with a space",
+        "callId": "q3Xv9_Lr 2bTnW8kPz4yHc",
+        "idA": "866719888da792842a0f7dcfa116eb580ff134a7e7f2cc9a7a4fef8716a0f4bf",
+        "idB": "8b6e97b633b3bcafc5e4680d8a9858d6821de74153b4f456bac749d3662c0955",
+        "dtlsA": "041dc47c394066a6ddb63889833fc03f5727a1c733d990d9b0d56485a761c6ef",
+        "dtlsB": "d27812209b4cd416fe0c2b7de2a78bdde411f57a9a45ea910f793298465b3a5b"
+      },
+      {
+        "name": "callId not ASCII",
+        "callId": "q3Xv9_Lr-2bTnW8kPz4yH\u00f1",
+        "idA": "866719888da792842a0f7dcfa116eb580ff134a7e7f2cc9a7a4fef8716a0f4bf",
+        "idB": "8b6e97b633b3bcafc5e4680d8a9858d6821de74153b4f456bac749d3662c0955",
+        "dtlsA": "041dc47c394066a6ddb63889833fc03f5727a1c733d990d9b0d56485a761c6ef",
+        "dtlsB": "d27812209b4cd416fe0c2b7de2a78bdde411f57a9a45ea910f793298465b3a5b"
+      }
+    ],
+    "contact": [
+      {
+        "name": "uppercase identity",
+        "idA": "866719888da792842a0f7dcfa116eb580ff134a7e7f2cc9a7a4fef8716a0f4bf",
+        "idB": "8B6E97B633B3BCAFC5E4680D8A9858D6821DE74153B4F456BAC749D3662C0955"
+      },
+      {
+        "name": "short identity",
+        "idA": "866719888da792842a0f7dcfa116eb580ff134a7e7f2cc9a7a4fef8716a0f4bf",
+        "idB": "8b6e97b633b3bcafc5e4680d8a9858d6821de74153b4f456bac749d3662c095"
+      },
+      {
+        "name": "empty identity",
+        "idA": "",
+        "idB": "8b6e97b633b3bcafc5e4680d8a9858d6821de74153b4f456bac749d3662c0955"
+      },
+      {
+        "name": "identity with colons",
+        "idA": "866719888da792842a0f7dcfa116eb580ff134a7e7f2cc9a7a4fef8716a0f4bf",
+        "idB": "d2:78:12:20:9b:4c:d4:16:fe:0c:2b:7d:e2:a7:8b:dd:e4:11:f5:7a:9a:45:ea:91:0f:79:32:98:46:5b:3a:5b"
+      }
+    ]
+  }
+}
