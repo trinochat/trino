@@ -120,6 +120,7 @@ import {
   type StatusResponse,
   type StickerInfo,
 } from './lib/api';
+import { TrinoLogo } from './ui/brand/TrinoLogo';
 import './App.css';
 
 const isMobile = /android|iphone|ipad|ipod/i.test(navigator.userAgent);
@@ -430,24 +431,6 @@ function Titlebar() {
   );
 }
 
-function TrinoMark({ className = 'w-10 h-10', glow = true }: { className?: string; glow?: boolean }) {
-  return (
-    <svg
-      className={className}
-      viewBox="0 0 256 256"
-      fill="none"
-      style={glow ? { filter: 'drop-shadow(0 0 4px #22ff66)' } : undefined}
-    >
-      <rect x="10" y="10" width="236" height="236" rx="40" fill="#070a07" stroke="#22ff66" strokeWidth="4" strokeOpacity="0.7" />
-      <circle cx="44" cy="46" r="5" fill="#ff5566" />
-      <circle cx="64" cy="46" r="5" fill="#ffcc00" />
-      <circle cx="84" cy="46" r="5" fill="#22ff66" />
-      <polyline points="74,108 120,148 74,188" stroke="#22ff66" strokeWidth="15" strokeLinecap="round" strokeLinejoin="round" fill="none" />
-      <rect x="140" y="172" width="54" height="16" rx="4" fill="#22ff66" />
-    </svg>
-  );
-}
-
 function AuthLayout({
   eyebrow,
   stage,
@@ -479,7 +462,7 @@ function AuthLayout({
       {!compact && (
         <section className="auth-intro">
           <div className="auth-brand">
-            <TrinoMark className="h-12 w-12" glow={false} />
+            <TrinoLogo size={48} decorative className="text-phosphor-dim" />
             <div>
               <div className="font-mono text-sm font-bold tracking-[0.16em] text-ink">
                 TRINO://ID
@@ -512,7 +495,7 @@ function AuthLayout({
         <div className="auth-workspace__inner animate-pop-in">
           {compact && (
             <div className="auth-brand mb-7">
-              <TrinoMark className="h-9 w-9" glow={false} />
+              <TrinoLogo size={36} decorative className="text-phosphor-dim" />
               <div className="font-mono text-sm font-bold tracking-[0.16em] text-ink">
                 TRINO://ID
               </div>
@@ -1396,7 +1379,7 @@ function MainShell({ onLock }: { onLock: () => void }) {
         }`}
       >
         <header className="sidebar-brand">
-          <TrinoMark className="w-9 h-9 shrink-0" glow={false} />
+          <TrinoLogo size={36} decorative className="text-phosphor-dim" />
           <div className="min-w-0 flex-1">
             <div className="font-mono text-[13px] font-bold tracking-[0.16em] text-ink truncate">
               TRINO://MESH
@@ -3193,7 +3176,7 @@ function EmptyChat() {
   const t = useT();
   return (
     <section className="flex h-full min-h-0 flex-col items-center justify-center px-6 text-center">
-      <TrinoMark className="h-12 w-12 opacity-55" glow={false} />
+      <TrinoLogo size={48} decorative className="text-phosphor-dim opacity-55" />
       <div className="mt-4 max-w-[18rem] text-sm font-semibold leading-snug text-ink">
         {t('empty.title')}
       </div>

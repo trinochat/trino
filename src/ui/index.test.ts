@@ -2,9 +2,9 @@ import { describe, expect, it } from 'vitest';
 import * as controls from './controls';
 import * as ui from './index';
 
-/** The overlays and the chat pieces, each module a component with its types. */
+/** The overlays, the chat pieces and the brand, each module a component with its types. */
 const COMPONENT_MODULES = import.meta.glob<Record<string, unknown>>(
-  ['./overlay/*.tsx', './chat/*.tsx', '!./**/*.test.tsx'],
+  ['./overlay/*.tsx', './chat/*.tsx', './brand/*.tsx', '!./**/*.test.tsx'],
   { eager: true },
 );
 
@@ -20,6 +20,7 @@ const KEY_EXPORTS = [
   'ChatRow',
   'MessageBubble',
   'ConnectionChip',
+  'TrinoLogo',
   'FOCUS_RING',
   'cx',
 ];
@@ -42,8 +43,8 @@ describe('the library barrel, src/ui/index.ts', () => {
     expect(notReexported('./controls/index.ts', controls)).toEqual([]);
   });
 
-  it('re-exports every overlay and chat component', () => {
-    expect(Object.keys(COMPONENT_MODULES).length).toBeGreaterThanOrEqual(12);
+  it('re-exports every overlay, chat and brand component', () => {
+    expect(Object.keys(COMPONENT_MODULES).length).toBeGreaterThanOrEqual(13);
     const missing = Object.entries(COMPONENT_MODULES).flatMap(([path, module]) => notReexported(path, module));
     expect(missing).toEqual([]);
   });

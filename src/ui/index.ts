@@ -26,3 +26,5 @@ export { MessageBubble, type MessageBubbleProps } from './chat/MessageBubble';
 export { StatusTicks, type MessageStatus, type StatusTicksProps } from './chat/StatusTicks';
 export { TrustBadge, type TrustBadgeProps, type TrustKind } from './chat/TrustBadge';
 export { UnreadBadge, type UnreadBadgeProps } from './chat/UnreadBadge';
+// Brand.
+export { TrinoLogo, type TrinoLogoProps } from './brand/TrinoLogo';
