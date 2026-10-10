@@ -215,3 +215,13 @@ describe('the new events', () => {
     expect(callback).toHaveBeenCalledWith(payload);
   });
 });
+
+// Windows' text size (Settings > Accessibility > Text size), which WebView2
+// does not apply by itself: the app reads it and follows it (a11y.rs).
+describe("the system's text size", () => {
+  it('is read with system_text_scale, as a factor such as 1.25', async () => {
+    invoke.mockResolvedValueOnce(1.25);
+    await expect(api.systemTextScale()).resolves.toBe(1.25);
+    expect(invoke.mock.calls).toEqual([['system_text_scale']]);
+  });
+});

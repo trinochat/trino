@@ -70,6 +70,12 @@ export interface EffectiveAccessibility {
 }
 
 export const ACCESSIBILITY_STORAGE_KEY = 'trino.accessibility';
+/**
+ * The last text size read from the system. Reading it takes a moment (a Tauri
+ * command, `system_text_scale`), so the first paint uses this one and the
+ * page is corrected if it changed.
+ */
+export const SYSTEM_TEXT_SCALE_STORAGE_KEY = 'trino.accessibility.systemTextScale';
 /** Where E0 kept the text size (`'normal' | 'large'`); read to migrate. */
 export const LEGACY_TEXT_SIZE_STORAGE_KEY = 'trino.pref.textSize';
 
@@ -115,6 +121,17 @@ export function saveAccessibility(storage: AppearanceStorage, value: Accessibili
   } catch {
     return false;
   }
+}
+
+/**
+ * The text size one step up or down from a factor, within 100 and 200 %, or
+ * 100 % on reset: Ctrl + `+`, Ctrl + `-` and Ctrl + 0. From a factor between
+ * steps, such as Windows' 135 %, it goes to the next step in that direction.
+ */
+export function stepTextScale(current: number, step: 'up' | 'down' | 'reset'): TextScale {
+  if (step === 'reset') return MIN_TEXT_SCALE;
+  if (step === 'up') return TEXT_SCALES.find(scale => scale > current) ?? MAX_TEXT_SCALE;
+  return [...TEXT_SCALES].reverse().find(scale => scale < current) ?? MIN_TEXT_SCALE;
 }
 
 /** The step nearest to a factor; the lower one when it falls halfway. */

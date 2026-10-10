@@ -6,6 +6,7 @@ pub mod nostr;
 // here so `crate::identity::…`, `crate::ratchet::…` etc. keep resolving.
 pub use trino_core::{call_signal, crypto, envelope, group, identity, ratchet, totp, vault, x3dh};
 
+mod a11y;
 mod command_error;
 mod commands;
 mod fsutil;
@@ -227,6 +228,7 @@ pub fn run() {
             commands::resend_outbox,
             commands::resync_session,
             commands::set_autostart,
+            a11y::system_text_scale,
             // -- W7 --
             commands::get_autostart,
             // -- W8 --

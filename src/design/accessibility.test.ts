@@ -9,6 +9,7 @@ import {
   loadAccessibility,
   resolveAccessibility,
   saveAccessibility,
+  stepTextScale,
   type Accessibility,
   type SystemSignals,
 } from './accessibility';
@@ -201,5 +202,30 @@ describe('resolveAccessibility', () => {
     expect(at(2.25)).toBe(2);
     expect(at(0.8)).toBe(1);
     expect(at(Number.NaN)).toBe(1);
+  });
+});
+
+describe('stepTextScale', () => {
+  it('moves one step up or down, and stays within 100 and 200 %', () => {
+    expect(stepTextScale(1, 'up')).toBe(1.1);
+    expect(stepTextScale(1.1, 'up')).toBe(1.25);
+    expect(stepTextScale(1.75, 'up')).toBe(2);
+    expect(stepTextScale(2, 'up')).toBe(2);
+    expect(stepTextScale(1.5, 'down')).toBe(1.25);
+    expect(stepTextScale(1.1, 'down')).toBe(1);
+    expect(stepTextScale(1, 'down')).toBe(1);
+  });
+
+  // Windows can say 135 %: the next step is the one past it in that direction.
+  it('goes from a factor between steps to the next step in that direction', () => {
+    expect(stepTextScale(1.35, 'up')).toBe(1.5);
+    expect(stepTextScale(1.35, 'down')).toBe(1.25);
+    expect(stepTextScale(2.25, 'down')).toBe(2);
+    expect(stepTextScale(0.9, 'up')).toBe(1);
+  });
+
+  it('goes back to 100 % on reset, whatever the factor', () => {
+    expect(stepTextScale(1.75, 'reset')).toBe(1);
+    expect(stepTextScale(1.35, 'reset')).toBe(1);
   });
 });

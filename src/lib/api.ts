@@ -414,6 +414,10 @@ export const api = {
   resyncSession: (handle: string): Promise<void> => invoke('resync_session', { handle }),
   setAutostart: (enable: boolean): Promise<void> => invoke('set_autostart', { enable }),
   getAutostart: (): Promise<boolean> => invoke('get_autostart'),
+  // The system's text size as a factor, such as 1.25 for Windows at 125 %;
+  // 1 where the app cannot read it (a11y.rs). WebView2 does not apply it by
+  // itself, so the frontend follows it (src/design/apply.ts).
+  systemTextScale: (): Promise<number> => invoke('system_text_scale'),
   // Returns the relays actually being observed, which are the ones this device
   // is connected to — not a hardcoded list.
   relayInspectStart: (): Promise<string[]> => invoke('relay_inspect_start'),

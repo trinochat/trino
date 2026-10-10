@@ -7,6 +7,7 @@ import {
   ACCESSIBILITY_STORAGE_KEY,
   DEFAULT_ACCESSIBILITY,
   LEGACY_TEXT_SIZE_STORAGE_KEY,
+  SYSTEM_TEXT_SCALE_STORAGE_KEY,
   type Accessibility,
   type EffectiveAccessibility,
 } from './accessibility';
@@ -574,5 +575,237 @@ describe('base.css', () => {
     expect(BASE_RULES).toContain(
       ":root[data-spacing='wide'] :where(body p:not(:last-child)) { margin-block-end: 2em !important; }",
     );
+  });
+});
+
+/* The text size: Windows' own setting and the shortcuts (accesibilidad.md §2.2). */
+
+type Listener = (event: Event) => void;
+
+/** `fakeSystem` plus the window events the text size listens to, which the test fires. */
+function fakeWindow(entries: Record<string, string> = {}) {
+  const system = fakeSystem(entries);
+  const events = new Map<string, Map<Listener, AddEventListenerOptions | boolean | undefined>>();
+  const host: AppearanceHost = {
+    ...system.host,
+    addEventListener: (type: string, listener: Listener, options?: AddEventListenerOptions | boolean) => {
+      const listeners = events.get(type) ?? new Map();
+      listeners.set(listener, options);
+      events.set(type, listeners);
+    },
+    removeEventListener: (type: string, listener: Listener) => {
+      events.get(type)?.delete(listener);
+    },
+  };
+  /** Fires an event at the window; returns whether a listener prevented its default. */
+  const fire = (event: Event) => {
+    events.get(event.type)?.forEach((_options, listener) => listener(event));
+    return event.defaultPrevented;
+  };
+  const key = (init: KeyboardEventInit) => fire(new KeyboardEvent('keydown', { cancelable: true, ...init }));
+  const wheel = (init: WheelEventInit) => fire(new WheelEvent('wheel', { cancelable: true, ...init }));
+  const listening = (type: string) => events.get(type)?.size ?? 0;
+  const optionsOf = (type: string) => [...(events.get(type)?.values() ?? [])][0];
+  return { ...system, host, fire, key, wheel, listening, optionsOf };
+}
+
+const storedTextScale = (data: Map<string, string>) =>
+  JSON.parse(data.get(ACCESSIBILITY_STORAGE_KEY) ?? '{}').textScale as unknown;
+
+describe('the text size shortcuts', () => {
+  beforeEach(resetAccessibility);
+
+  it.each([
+    ['+', 1.1, '17.6px'],
+    ['=', 1.1, '17.6px'],
+    ['-', 1, '16px'],
+  ])('Ctrl + %s steps the text size and stores it', (key, textScale, size) => {
+    const { host, data, key: press } = fakeWindow();
+    initAppearance(host);
+    expect(press({ key, ctrlKey: true })).toBe(true);
+    expect(storedTextScale(data)).toBe(textScale);
+    expect(root().style.fontSize).toBe(size);
+  });
+
+  // Latin American keyboards have a + key of their own and = needs Shift;
+  // the numeric keypad gives + and - too.
+  it('takes the + of the keypad and of Latin American keyboards', () => {
+    const { host, data, key } = fakeWindow();
+    initAppearance(host);
+    key({ key: '+', code: 'NumpadAdd', ctrlKey: true });
+    key({ key: '+', code: 'BracketRight', ctrlKey: true });
+    expect(storedTextScale(data)).toBe(1.25);
+    key({ key: '-', code: 'NumpadSubtract', ctrlKey: true });
+    expect(storedTextScale(data)).toBe(1.1);
+  });
+
+  it('Ctrl + 0 goes back to 100 %, from the top row or the keypad', () => {
+    const { host, data, key } = fakeWindow(a11yEntry({ textScale: 1.75 }));
+    initAppearance(host);
+    expect(root().style.fontSize).toBe('28px');
+    key({ key: '0', code: 'Digit0', ctrlKey: true });
+    expect(storedTextScale(data)).toBe(1);
+    key({ key: '+', ctrlKey: true });
+    key({ key: '0', code: 'Numpad0', ctrlKey: true });
+    expect(storedTextScale(data)).toBe(1);
+    expect(root().style.fontSize).toBe('16px');
+  });
+
+  it("stops following the system's size, from the step after it", () => {
+    const { host, data, key } = fakeWindow({ [SYSTEM_TEXT_SCALE_STORAGE_KEY]: '1.35' });
+    initAppearance(host);
+    expect(root().style.fontSize).toBe('21.6px');
+    key({ key: '+', ctrlKey: true });
+    expect(storedTextScale(data)).toBe(1.5);
+    expect(root().style.fontSize).toBe('24px');
+  });
+
+  it('keeps the other settings', () => {
+    const { host, data, key } = fakeWindow(a11yEntry({ vision: 'safe', spacing: 'wide' }));
+    initAppearance(host);
+    key({ key: '+', ctrlKey: true });
+    expect(JSON.parse(data.get(ACCESSIBILITY_STORAGE_KEY)!)).toEqual({
+      ...DEFAULT_ACCESSIBILITY,
+      vision: 'safe',
+      spacing: 'wide',
+      textScale: 1.1,
+    });
+  });
+
+  // Ctrl + Alt is AltGr on Windows, which types characters on many layouts.
+  it('leaves keys alone without Ctrl, with Alt or AltGr, and other Ctrl keys', () => {
+    const { host, data, key } = fakeWindow();
+    initAppearance(host);
+    expect(key({ key: '+' })).toBe(false);
+    expect(key({ key: '+', ctrlKey: true, altKey: true })).toBe(false);
+    expect(key({ key: 'k', ctrlKey: true })).toBe(false);
+    expect(data.has(ACCESSIBILITY_STORAGE_KEY)).toBe(false);
+  });
+
+  it('applies for the session a size that storage refuses', () => {
+    const { host, key } = fakeWindow();
+    const refusing: AppearanceHost = {
+      ...host,
+      localStorage: {
+        getItem: key => host.localStorage.getItem(key),
+        setItem: () => {
+          throw new Error('QuotaExceededError');
+        },
+      },
+    };
+    initAppearance(refusing);
+    key({ key: '+', ctrlKey: true });
+    key({ key: '+', ctrlKey: true });
+    expect(root().style.fontSize).toBe('20px');
+  });
+
+  it('Ctrl + wheel takes one step for every 100 of deltaY, up for a negative one', () => {
+    const { host, data, wheel } = fakeWindow();
+    initAppearance(host);
+    expect(wheel({ deltaY: -100, ctrlKey: true })).toBe(true);
+    expect(storedTextScale(data)).toBe(1.1);
+    // A touchpad pinch arrives in small pieces: they add up.
+    wheel({ deltaY: -40, ctrlKey: true });
+    wheel({ deltaY: -40, ctrlKey: true });
+    expect(storedTextScale(data)).toBe(1.1);
+    wheel({ deltaY: -40, ctrlKey: true });
+    expect(storedTextScale(data)).toBe(1.25);
+    wheel({ deltaY: 250, ctrlKey: true });
+    expect(storedTextScale(data)).toBe(1);
+  });
+
+  it('leaves the wheel alone without Ctrl, and listens to it with passive: false to cancel it', () => {
+    const { host, data, wheel, optionsOf } = fakeWindow();
+    initAppearance(host);
+    expect(wheel({ deltaY: -300 })).toBe(false);
+    expect(data.has(ACCESSIBILITY_STORAGE_KEY)).toBe(false);
+    expect(optionsOf('wheel')).toMatchObject({ passive: false });
+  });
+
+  it('stops listening to the keys, the wheel and the focus once disposed', () => {
+    const { host, listening } = fakeWindow();
+    const dispose = initAppearance(host, { readSystemTextScale: async () => 1 });
+    expect([listening('keydown'), listening('wheel'), listening('focus')]).toEqual([1, 1, 1]);
+    dispose();
+    expect([listening('keydown'), listening('wheel'), listening('focus')]).toEqual([0, 0, 0]);
+  });
+});
+
+describe("the system's text size", () => {
+  beforeEach(resetAccessibility);
+
+  const settle = () => new Promise(resolve => setTimeout(resolve, 0));
+
+  it('paints first with the last size read, kept on the device', () => {
+    const { host } = fakeWindow({ [SYSTEM_TEXT_SCALE_STORAGE_KEY]: '1.25' });
+    initAppearance(host);
+    expect(root().style.fontSize).toBe('20px');
+    expect(systemSignals(host).textScale).toBe(1.25);
+  });
+
+  it('reads the size again, keeps it and corrects the page when it changed', async () => {
+    const { host, data } = fakeWindow({ [SYSTEM_TEXT_SCALE_STORAGE_KEY]: '1.25' });
+    initAppearance(host, { readSystemTextScale: async () => 1.5 });
+    await settle();
+    expect(data.get(SYSTEM_TEXT_SCALE_STORAGE_KEY)).toBe('1.5');
+    expect(root().style.fontSize).toBe('24px');
+  });
+
+  // Windows goes up to 225 %; Trino stops at 200 %.
+  it('caps 225 % at 200 %', async () => {
+    const { host } = fakeWindow();
+    initAppearance(host, { readSystemTextScale: async () => 2.25 });
+    await settle();
+    expect(root().style.fontSize).toBe('32px');
+  });
+
+  it('reads it again when the window gets the focus back, since Windows does not tell the page', async () => {
+    let factor = 1;
+    const { host, fire } = fakeWindow();
+    initAppearance(host, { readSystemTextScale: async () => factor });
+    await settle();
+    expect(root().style.fontSize).toBe('16px');
+    factor = 1.25;
+    fire(new Event('focus'));
+    await settle();
+    expect(root().style.fontSize).toBe('20px');
+  });
+
+  it('keeps the last size when the read fails, or answers nonsense', async () => {
+    const failing = fakeWindow({ [SYSTEM_TEXT_SCALE_STORAGE_KEY]: '1.25' });
+    initAppearance(failing.host, { readSystemTextScale: () => Promise.reject(new Error('not in Tauri')) });
+    await settle();
+    expect(root().style.fontSize).toBe('20px');
+
+    resetAccessibility();
+    const nonsense = fakeWindow({ [SYSTEM_TEXT_SCALE_STORAGE_KEY]: '1.25' });
+    initAppearance(nonsense.host, { readSystemTextScale: async () => Number.NaN });
+    await settle();
+    expect(nonsense.data.get(SYSTEM_TEXT_SCALE_STORAGE_KEY)).toBe('1.25');
+    expect(root().style.fontSize).toBe('20px');
+  });
+
+  it('starts anyway when the reader throws at once', async () => {
+    const { host } = fakeWindow({ [SYSTEM_TEXT_SCALE_STORAGE_KEY]: '1.25' });
+    const throwing = () => {
+      throw new Error('__TAURI_INTERNALS__ is not defined');
+    };
+    expect(() => initAppearance(host, { readSystemTextScale: throwing })).not.toThrow();
+    await settle();
+    expect(root().style.fontSize).toBe('20px');
+  });
+
+  it('ignores a stored size that is not a number', () => {
+    const { host } = fakeWindow({ [SYSTEM_TEXT_SCALE_STORAGE_KEY]: 'big' });
+    initAppearance(host);
+    expect(root().style.fontSize).toBe('16px');
+  });
+
+  it("does not change a size the person chose, but still knows the system's", async () => {
+    const { host } = fakeWindow(a11yEntry({ textScale: 1.1 }));
+    initAppearance(host, { readSystemTextScale: async () => 1.5 });
+    await settle();
+    expect(root().style.fontSize).toBe('17.6px');
+    expect(systemSignals(host).textScale).toBe(1.5);
   });
 });

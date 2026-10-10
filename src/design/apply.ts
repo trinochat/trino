@@ -14,8 +14,11 @@
 import { createPrefs, type Prefs } from '../lib/prefs';
 import { STANDARD_A11Y, type A11yLayers } from './a11y-tokens';
 import {
+  SYSTEM_TEXT_SCALE_STORAGE_KEY,
   loadAccessibility,
   resolveAccessibility,
+  saveAccessibility,
+  stepTextScale,
   type Accessibility,
   type EffectiveAccessibility,
   type SystemSignals,
@@ -25,6 +28,7 @@ import {
   loadAppearance,
   resolveMode,
   resolveTokens,
+  saveAppearance,
   type Appearance,
   type AppearanceStorage,
 } from './appearance';
@@ -34,6 +38,17 @@ export interface AppearanceHost {
   readonly document: Document;
   readonly localStorage: AppearanceStorage;
   readonly matchMedia?: (query: string) => MediaQueryList;
+  /** For the text size shortcuts, and to read the system's text size again on focus. */
+  addEventListener?(type: string, listener: (event: Event) => void, options?: AddEventListenerOptions): void;
+  removeEventListener?(type: string, listener: (event: Event) => void): void;
+}
+
+export interface InitAppearanceOptions {
+  /**
+   * Reads the system's text size as a factor, such as 1.25 for Windows at
+   * 125 % (`api.systemTextScale`). Without it, the last size read stays.
+   */
+  readSystemTextScale?: () => Promise<number>;
 }
 
 const DARK_SCHEME = '(prefers-color-scheme: dark)';
@@ -45,6 +60,9 @@ const SYSTEM_QUERIES = [DARK_SCHEME, MORE_CONTRAST, REDUCED_MOTION, FORCED_COLOR
 
 /** The root font size at 100 %, so 1rem is 16 px as the code says. */
 export const ROOT_PX = 16;
+
+/** Ctrl + wheel takes one step of text size for this much `deltaY` (a mouse notch). */
+const WHEEL_STEP = 100;
 
 const NO_STORAGE: AppearanceStorage = { getItem: () => null, setItem: () => {} };
 
@@ -190,14 +208,73 @@ export function watchAppearance(doc: Document, watcher: Watcher): () => void {
 }
 
 /**
+ * Saves the appearance and applies it at once. When storage refuses it, it
+ * is held for the session instead; returns whether it was saved.
+ */
+export function changeAppearance(host: AppearanceHost, next: Appearance): boolean {
+  const saved = saveAppearance(storageOf(host), next);
+  holdAppearance(host.document, saved ? null : next);
+  refreshAppearance(host);
+  return saved;
+}
+
+/** The same for the accessibility settings. */
+export function changeAccessibility(host: AppearanceHost, next: Accessibility): boolean {
+  const saved = saveAccessibility(storageOf(host), next);
+  holdAccessibility(host.document, saved ? null : next);
+  refreshAppearance(host);
+  return saved;
+}
+
+/** The same for the scan lines of Terminal dark. */
+export function changeScanLines(host: AppearanceHost, on: boolean): boolean {
+  const saved = prefsOf(storageOf(host)).setScanLines(on);
+  holdScanLines(host.document, saved ? null : on);
+  refreshAppearance(host);
+  return saved;
+}
+
+type TextSizeStep = Parameters<typeof stepTextScale>[1];
+
+/**
+ * One step of text size from the size in effect, stored as the person's own
+ * choice: from then on it no longer follows the system.
+ */
+function stepTextSize(host: AppearanceHost, step: TextSizeStep): void {
+  const { accessibility, effective } = displayState(host);
+  changeAccessibility(host, { ...accessibility, textScale: stepTextScale(effective.textScale, step) });
+}
+
+/**
+ * The step of a text size shortcut, by `event.key`: Ctrl + `+` or `=` up (`+`
+ * has its own key on Latin American keyboards, where `=` needs Shift; the
+ * keypad gives `+` too), Ctrl + `-` down, Ctrl + 0 back to 100 %. Ctrl + Alt
+ * is AltGr on Windows, which types characters, so it is left alone.
+ */
+function shortcutStep(event: KeyboardEvent): TextSizeStep | null {
+  if (!event.ctrlKey || event.altKey || event.defaultPrevented) return null;
+  if (event.key === '+' || event.key === '=') return 'up';
+  if (event.key === '-') return 'down';
+  if (event.key === '0') return 'reset';
+  return null;
+}
+
+/** The system's text size read last in this session, per window. */
+const systemTextScales = new WeakMap<AppearanceHost, number>();
+
+/**
  * Applies the stored appearance and accessibility settings now (before the
  * first render, so nothing flashes or jumps) and again whenever the system
  * changes its colour scheme, contrast, motion or forced colours: the settings
  * held for this session, or else the stored ones. Without storage or
- * `matchMedia` it falls back to the defaults, light and 16 px. Returns a
+ * `matchMedia` it falls back to the defaults, light and 16 px.
+ *
+ * It also owns the text size shortcuts (Ctrl + `+`, Ctrl + `-`, Ctrl + 0 and
+ * Ctrl + wheel), and reads the system's text size at start and whenever the
+ * window gets the focus back, since Windows does not tell the page. Returns a
  * function that stops listening.
  */
-export function initAppearance(host: AppearanceHost): () => void {
+export function initAppearance(host: AppearanceHost, options: InitAppearanceOptions = {}): () => void {
   refreshAppearance(host);
   const refresh = () => {
     refreshAppearance(host);
@@ -206,17 +283,89 @@ export function initAppearance(host: AppearanceHost): () => void {
     const query = mediaQuery(host, media);
     return query ? [onChange(query, refresh)] : [];
   });
-  return () => stops.forEach(stop => stop());
+
+  const onKeyDown = (event: Event) => {
+    const step = shortcutStep(event as KeyboardEvent);
+    if (!step) return;
+    event.preventDefault();
+    stepTextSize(host, step);
+  };
+  // A touchpad pinch arrives as Ctrl + wheel in small pieces: they add up, so
+  // one gesture does not jump from 100 to 200 %.
+  let wheel = 0;
+  const onWheel = (event: Event) => {
+    const { ctrlKey, deltaY } = event as WheelEvent;
+    if (!ctrlKey) return;
+    event.preventDefault();
+    wheel += deltaY;
+    while (Math.abs(wheel) >= WHEEL_STEP) {
+      stepTextSize(host, wheel < 0 ? 'up' : 'down');
+      wheel -= Math.sign(wheel) * WHEEL_STEP;
+    }
+  };
+  let stopped = false;
+  const readSystemTextScale = () => {
+    const read = options.readSystemTextScale;
+    if (!read) return;
+    // Outside Tauri (vite dev) the read fails, at once or later: the last size stays.
+    Promise.resolve()
+      .then(read)
+      .then(
+        factor => {
+          if (stopped || !Number.isFinite(factor) || factor <= 0) return;
+          if (factor === systemSignals(host).textScale) return;
+          systemTextScales.set(host, factor);
+          write(storageOf(host), SYSTEM_TEXT_SCALE_STORAGE_KEY, String(factor));
+          refreshAppearance(host);
+        },
+        () => {},
+      );
+  };
+  host.addEventListener?.('keydown', onKeyDown);
+  // Not passive, so it can cancel the event: no scrolling or zooming of the webview.
+  host.addEventListener?.('wheel', onWheel, { passive: false });
+  host.addEventListener?.('focus', readSystemTextScale);
+  readSystemTextScale();
+
+  return () => {
+    stopped = true;
+    stops.forEach(stop => stop());
+    host.removeEventListener?.('keydown', onKeyDown);
+    host.removeEventListener?.('wheel', onWheel);
+    host.removeEventListener?.('focus', readSystemTextScale);
+  };
 }
 
-/** What the system says now, read without listening. */
+/**
+ * What the system says now, read without listening. The text size is the
+ * one read last: in this session, or else at an earlier start.
+ */
 export function systemSignals(host: AppearanceHost): SystemSignals {
   return {
-    textScale: 1,
+    textScale: systemTextScales.get(host) ?? storedSystemTextScale(storageOf(host)),
     moreContrast: matches(host, MORE_CONTRAST),
     reducedMotion: matches(host, REDUCED_MOTION),
     forcedColors: matches(host, FORCED_COLORS),
   };
+}
+
+function storedSystemTextScale(storage: AppearanceStorage): number {
+  let stored: string | null = null;
+  try {
+    stored = storage.getItem(SYSTEM_TEXT_SCALE_STORAGE_KEY);
+  } catch {
+    // Unreadable storage: 100 %.
+  }
+  const factor = Number(stored);
+  return stored !== null && Number.isFinite(factor) && factor > 0 ? factor : 1;
+}
+
+function write(storage: AppearanceStorage, key: string, value: string): void {
+  try {
+    storage.setItem(key, value);
+  } catch {
+    // The value still applies for this session.
+  }
 }
 
 /** The host's storage, or one that keeps nothing when it cannot be reached. */

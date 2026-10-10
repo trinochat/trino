@@ -23,26 +23,17 @@ import {
   useState,
   type ReactNode,
 } from 'react';
+import { DEFAULT_ACCESSIBILITY, type Accessibility, type EffectiveAccessibility, type SystemSignals } from './accessibility';
 import {
-  DEFAULT_ACCESSIBILITY,
-  saveAccessibility,
-  type Accessibility,
-  type EffectiveAccessibility,
-  type SystemSignals,
-} from './accessibility';
-import {
+  changeAccessibility,
+  changeAppearance,
+  changeScanLines,
   displayState,
-  holdAccessibility,
-  holdAppearance,
-  holdScanLines,
-  prefsOf,
-  refreshAppearance,
-  storageOf,
   watchAppearance,
   type AppearanceHost,
   type DisplayState,
 } from './apply';
-import { saveAppearance, type Appearance } from './appearance';
+import type { Appearance } from './appearance';
 
 export interface AppearanceState {
   appearance: Appearance;
@@ -94,49 +85,23 @@ function sameDisplay(a: DisplayState, b: DisplayState): boolean {
 export function AppearanceProvider({ children, host = window }: AppearanceProviderProps) {
   const [state, setState] = useState<DisplayState>(() => displayState(host));
 
-  const show = useCallback((next: DisplayState) => {
-    setState(current => (sameDisplay(current, next) ? current : next));
-  }, []);
+  // Every refresh of the page reaches the screens through here: a change made
+  // here, a system change heard by initAppearance, a text size shortcut.
+  useEffect(() => {
+    const show = (next: DisplayState) => setState(current => (sameDisplay(current, next) ? current : next));
+    const stop = watchAppearance(host.document, show);
+    show(displayState(host));
+    return stop;
+  }, [host]);
 
-  // What initAppearance's listeners change reaches the screens through here.
-  useEffect(() => watchAppearance(host.document, show), [host, show]);
-
-  const setAppearance = useCallback(
-    (next: Appearance) => {
-      const saved = saveAppearance(storageOf(host), next);
-      holdAppearance(host.document, saved ? null : next);
-      show(refreshAppearance(host));
-      return saved;
-    },
-    [host, show],
-  );
-
-  const setAccessibility = useCallback(
-    (next: Accessibility) => {
-      const saved = saveAccessibility(storageOf(host), next);
-      holdAccessibility(host.document, saved ? null : next);
-      show(refreshAppearance(host));
-      return saved;
-    },
-    [host, show],
-  );
-
+  const setAppearance = useCallback((next: Appearance) => changeAppearance(host, next), [host]);
   // Read afresh, not from the last render: two changes in one event both count.
   const set = useCallback(
-    (change: Partial<Accessibility>) => setAccessibility({ ...displayState(host).accessibility, ...change }),
-    [host, setAccessibility],
+    (change: Partial<Accessibility>) => changeAccessibility(host, { ...displayState(host).accessibility, ...change }),
+    [host],
   );
-  const reset = useCallback(() => setAccessibility({ ...DEFAULT_ACCESSIBILITY }), [setAccessibility]);
-
-  const setScanLines = useCallback(
-    (on: boolean) => {
-      const saved = prefsOf(storageOf(host)).setScanLines(on);
-      holdScanLines(host.document, saved ? null : on);
-      show(refreshAppearance(host));
-      return saved;
-    },
-    [host, show],
-  );
+  const reset = useCallback(() => changeAccessibility(host, { ...DEFAULT_ACCESSIBILITY }), [host]);
+  const setScanLines = useCallback((on: boolean) => changeScanLines(host, on), [host]);
 
   const value = useMemo<ProviderValue>(
     () => ({

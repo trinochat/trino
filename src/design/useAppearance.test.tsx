@@ -372,3 +372,30 @@ describe('useAccessibility', () => {
     stop();
   });
 });
+
+describe('useAccessibility and the text size shortcuts', () => {
+  beforeEach(() => {
+    root().removeAttribute('style');
+    holdAccessibility(document, null);
+  });
+
+  // W2 takes the root size from here, so a shortcut has to reach it.
+  it('hears a size changed with Ctrl + +, which initAppearance handles', () => {
+    const { host } = fakeSystem();
+    const target = new EventTarget();
+    const windowLike: AppearanceHost = {
+      ...host,
+      addEventListener: target.addEventListener.bind(target),
+      removeEventListener: target.removeEventListener.bind(target),
+    };
+    const stop = initAppearance(windowLike);
+    const { result } = renderHook(() => useAccessibility(), { wrapper: wrapperFor(windowLike) });
+    act(() => {
+      target.dispatchEvent(new KeyboardEvent('keydown', { key: '+', ctrlKey: true, cancelable: true }));
+    });
+    expect(result.current.accessibility.textScale).toBe(1.1);
+    expect(result.current.effective.textScale).toBe(1.1);
+    expect(root().style.fontSize).toBe('17.6px');
+    stop();
+  });
+});
