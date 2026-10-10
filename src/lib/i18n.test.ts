@@ -114,24 +114,39 @@ describe('interpolate', () => {
 });
 
 describe('makeT', () => {
+  /** A stand-in for DICTS, so these tests do not depend on texts that screens own. */
+  const DICTS_FIXTURE: Record<Lang, Record<string, string>> = {
+    es: { 'x.invite': '{handle} te invitó al grupo {name}', 'x.cancel': 'cancelar' },
+    en: { 'x.invite': '{handle} invited you to the group {name}', 'x.cancel': 'cancel', 'x.onlyEn': 'only in English' },
+    pt: { 'x.invite': '{handle} convidou você para o grupo {name}', 'x.cancel': 'cancelar' },
+  };
+
   it('fills the placeholders of the chosen language', () => {
-    expect(makeT('es')('group.inviteText', { handle: 'Ana', name: 'Familia' })).toBe(
+    expect(makeT('es', DICTS_FIXTURE)('x.invite', { handle: 'Ana', name: 'Familia' })).toBe(
       'Ana te invitó al grupo Familia',
     );
-    expect(makeT('pt')('group.inviteText', { handle: 'Ana', name: 'Família' })).toBe(
+    expect(makeT('pt', DICTS_FIXTURE)('x.invite', { handle: 'Ana', name: 'Família' })).toBe(
       'Ana convidou você para o grupo Família',
     );
   });
 
   it('returns the raw text without values, as the existing calls expect', () => {
-    expect(makeT('en')('group.inviteText')).toBe('{handle} invited you to the group {name}');
-    expect(makeT('es')('common.cancel')).toBe('cancelar');
+    expect(makeT('en', DICTS_FIXTURE)('x.invite')).toBe('{handle} invited you to the group {name}');
+    expect(makeT('es', DICTS_FIXTURE)('x.cancel')).toBe('cancelar');
   });
 
   it('keeps the fallback order: the language, then English, then the key', () => {
-    expect(makeT('xx' as Lang)('common.cancel')).toBe('cancel');
-    expect(makeT('es')('no.such.key')).toBe('no.such.key');
-    expect(makeT('es')('no.such.key', { n: 1 })).toBe('no.such.key');
+    expect(makeT('xx' as Lang, DICTS_FIXTURE)('x.cancel')).toBe('cancel');
+    expect(makeT('es', DICTS_FIXTURE)('x.onlyEn')).toBe('only in English');
+    expect(makeT('es', DICTS_FIXTURE)('no.such.key')).toBe('no.such.key');
+    expect(makeT('es', DICTS_FIXTURE)('no.such.key', { n: 1 })).toBe('no.such.key');
+  });
+
+  it('looks texts up in DICTS when no dictionary is given', () => {
+    for (const lang of LANGS.map(l => l.code)) {
+      const [key, text] = Object.entries(DICTS[lang]).find(([, value]) => !value.includes('{'))!;
+      expect(makeT(lang)(key)).toBe(text);
+    }
   });
 });
 
@@ -141,76 +156,9 @@ const LANG_CODES = LANGS.map(l => l.code);
 const placeholdersOf = (text: string) =>
   [...new Set(Array.from(text.matchAll(/\{(\w+)\}/g), m => m[1]!))].sort();
 
-/** Entries of the redesigned first run (onb.*) and unlock (unlock2.*) screens. */
-const redesigned = (lang: Lang) =>
-  Object.entries(DICTS[lang]).filter(([key]) => /^(onb|unlock2)\./.test(key));
-
-describe('first run and unlock copy', () => {
-  // The contract with the onboarding (R3.5) and unlock (R3.6) screens.
-  const KEYS = [
-    'onb.stepOf', 'onb.welcomeTitle', 'onb.welcomeBody', 'onb.langLabel', 'onb.start',
-    'onb.nameTitle', 'onb.nameBody', 'onb.nameLabel', 'onb.addPhoto', 'onb.errNameRequired',
-    'onb.passTitle', 'onb.passBody', 'onb.passLabel', 'onb.pass2Label', 'onb.showPassword',
-    'onb.hidePassword', 'onb.strength.weak', 'onb.strength.fair', 'onb.strength.good',
-    'onb.strength.strong', 'onb.errMismatch', 'onb.errTooShort', 'onb.errTooCommon',
-    'onb.noRecoveryTitle', 'onb.noRecoveryBody', 'onb.styleTitle', 'onb.styleBody',
-    'onb.calmaDesc', 'onb.terminalDesc', 'onb.previewIn', 'onb.previewOut', 'onb.twofaTitle',
-    'onb.twofaBody', 'onb.twofaOn', 'onb.twofaLater', 'onb.twofaScan', 'onb.twofaQr',
-    'onb.twofaManual', 'onb.twofaCode', 'onb.verify', 'onb.errCode', 'onb.twofaBack',
-    'onb.creating', 'onb.errCreate', 'onb.doneTitle', 'onb.doneBody', 'onb.yourCode',
-    'onb.copy', 'onb.copied', 'onb.showQr', 'onb.codeQr', 'onb.addFirst', 'onb.goChats',
-    'onb.back', 'onb.next',
-    'unlock2.title', 'unlock2.lockedIdle', 'unlock2.lockedIdleOne', 'unlock2.lockedManual',
-    'unlock2.coldStart', 'unlock2.passLabel', 'unlock2.showPassword', 'unlock2.hidePassword',
-    'unlock2.codeLabel', 'unlock2.codeHint', 'unlock2.codeRequired', 'unlock2.submit',
-    'unlock2.unlocking', 'unlock2.errPass', 'unlock2.errPassOrCode', 'unlock2.errUnlock',
-    'unlock2.forgot', 'unlock2.forgotBody', 'unlock2.forgotLoss', 'unlock2.wipe',
-    'unlock2.wipeTitle', 'unlock2.wipeBody', 'unlock2.wipeConfirm', 'unlock2.wipeCancel',
-    'unlock2.wiping', 'unlock2.errWipe',
-  ];
-  const PLACEHOLDERS: Record<string, string[]> = {
-    'onb.stepOf': ['n', 'total'],
-    'onb.errTooShort': ['min'],
-    'unlock2.title': ['name'],
-    'unlock2.lockedIdle': ['n'],
-  };
-
-  for (const lang of LANG_CODES) {
-    it(`${lang} has exactly the keys of the new screens, with their placeholders`, () => {
-      const present = Object.fromEntries(redesigned(lang).map(([key, text]) => [key, placeholdersOf(text)]));
-      const expected = Object.fromEntries(KEYS.map(key => [key, PLACEHOLDERS[key] ?? []]));
-      expect(present).toEqual(expected);
-    });
-
-    it(`${lang} starts every new text with a capital letter`, () => {
-      const lower = redesigned(lang)
-        .filter(([, text]) => {
-          const first = text.replace(/^[¿¡]/, '').charAt(0);
-          return first !== first.toUpperCase();
-        })
-        .map(([key]) => key);
-      expect(lower).toEqual([]);
-    });
-
-    it(`${lang} promises neither message requests nor trino2 codes, which do not exist yet`, () => {
-      const promises = redesigned(lang)
-        .filter(([, text]) => /solicitud|solicitaç|request|trino2/i.test(text))
-        .map(([key]) => key);
-      expect(promises).toEqual([]);
-    });
-
-    it(`${lang} does not say that contacts will see the photo, which stays on this device`, () => {
-      const seesPhoto = redesigned(lang)
-        .filter(([, text]) =>
-          text
-            .split(/[.?!]/)
-            .some(sentence => /\b(verán|vean|see|ver|veem)\b/i.test(sentence) && /foto|photo/i.test(sentence)),
-        )
-        .map(([key]) => key);
-      expect(seesPhoto).toEqual([]);
-    });
-  }
-
+// The contract of each screen area, and the rules for the new copy, live in
+// src/lib/strings: <area>.test.ts and index.test.ts. These cover every text.
+describe('Spanish copy', () => {
   it('uses no vosotros forms in Spanish', () => {
     const vosotros = Object.entries(DICTS.es)
       .filter(([, text]) => /(áis|éis)(?!\p{L})|\bvosotr|\bvuestr/iu.test(text))
