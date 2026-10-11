@@ -97,6 +97,57 @@ describe('AdvancedSection', () => {
     expect(unlisten).toHaveBeenCalledTimes(1);
   });
 
+  // The backend's start adds each relay as it connects, and its stop closes
+  // only what is there: a stop sent while the start still connects would
+  // leave the later relays open, streaming to nobody.
+  it('stops watching only once the watch has started, when it closes while connecting', async () => {
+    let started: (relays: string[]) => void = () => {};
+    const relayInspectStart = vi.fn(
+      () =>
+        new Promise<string[]>(resolve => {
+          started = resolve;
+        }),
+    );
+    const { api, unlisten } = setup({ relayStatus: true }, { relayInspectStart });
+    fireEvent.click(screen.getByRole('button', { name: 'Ver actividad de red' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Actividad de red' });
+    await waitFor(() => expect(relayInspectStart).toHaveBeenCalledTimes(1));
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Cerrar' }));
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(unlisten).toHaveBeenCalledTimes(1);
+    await act(async () => {});
+    expect(api.relayInspectStop).not.toHaveBeenCalled();
+
+    await act(async () => started(['wss://relay.damus.io']));
+    await waitFor(() => expect(api.relayInspectStop).toHaveBeenCalledTimes(1));
+  });
+
+  it('never cuts the watch of a dialog opened again while the last one still connected', async () => {
+    const starts: Array<(relays: string[]) => void> = [];
+    const relayInspectStart = vi.fn(
+      () =>
+        new Promise<string[]>(resolve => {
+          starts.push(resolve);
+        }),
+    );
+    const { api } = setup({ relayStatus: true }, { relayInspectStart });
+    const open = () => fireEvent.click(screen.getByRole('button', { name: 'Ver actividad de red' }));
+    open();
+    await waitFor(() => expect(relayInspectStart).toHaveBeenCalledTimes(1));
+    fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Cerrar' }));
+    open();
+    const dialog = await screen.findByRole('dialog', { name: 'Actividad de red' });
+    await waitFor(() => expect(relayInspectStart).toHaveBeenCalledTimes(2));
+
+    await act(async () => starts[0]!(['wss://relay.damus.io']));
+    await act(async () => starts[1]!(['wss://nos.lol']));
+    expect(await within(dialog).findByText('Observando: wss://nos.lol')).toBeTruthy();
+    expect(api.relayInspectStop).not.toHaveBeenCalled();
+
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Cerrar' }));
+    await waitFor(() => expect(api.relayInspectStop).toHaveBeenCalledTimes(1));
+  });
+
   it('says so when the relays cannot be watched', async () => {
     setup({ relayStatus: true }, { relayInspectStart: vi.fn(async () => Promise.reject(new Error('offline'))) });
     fireEvent.click(screen.getByRole('button', { name: 'Ver actividad de red' }));
