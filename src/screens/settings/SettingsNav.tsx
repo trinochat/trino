@@ -30,6 +30,9 @@ import { cx, FOCUS_RING_INSET, iconSize, IconButton } from '../../ui';
 import { ProfileCard } from './ProfileCard';
 import type { SettingsSectionId } from './types';
 
+/** What takes the focus when the list opens: a section's row, or the QR button of your card. */
+export type SettingsNavFocus = SettingsSectionId | 'qr';
+
 export interface SettingsNavProps {
   /** The section on screen; null when none is, as in the list on one pane. */
   current: SettingsSectionId | null;
@@ -41,8 +44,12 @@ export interface SettingsNavProps {
   onSelect(id: SettingsSectionId): void;
   onOpenQr(): void;
   onClose(): void;
-  /** Gives this section's row the focus when the list opens, as after "Volver a ajustes". */
-  focusId?: SettingsSectionId;
+  /**
+   * Gives the focus to the row of the section left when the list opens, as
+   * after "Volver a ajustes": the button of your card for the profile, and
+   * its QR button for your QR code.
+   */
+  focusId?: SettingsNavFocus;
   className?: string;
 }
 
@@ -88,10 +95,14 @@ export function SettingsNav({
   className,
 }: SettingsNavProps) {
   const t = useT();
-  const rows = useRef(new Map<SettingsSectionId, HTMLButtonElement>());
+  const targets = useRef(new Map<SettingsNavFocus, HTMLButtonElement>());
+  const target = (id: SettingsNavFocus) => (element: HTMLButtonElement | null) => {
+    if (element) targets.current.set(id, element);
+    else targets.current.delete(id);
+  };
 
   useEffect(() => {
-    if (focusId) rows.current.get(focusId)?.focus();
+    if (focusId) targets.current.get(focusId)?.focus();
     // Once, when the list opens.
   }, []);
 
@@ -110,6 +121,8 @@ export function SettingsNav({
         qrCurrent={current === 'profile' && qrOpen}
         onOpenProfile={() => onSelect('profile')}
         onOpenQr={onOpenQr}
+        profileRef={target('profile')}
+        qrRef={target('qr')}
       />
 
       {GROUPS.map(group => (
@@ -125,10 +138,7 @@ export function SettingsNav({
             return (
               <li key={id} className={cx(index > 0 && 'border-t border-ui-line')}>
                 <button
-                  ref={element => {
-                    if (element) rows.current.set(id, element);
-                    else rows.current.delete(id);
-                  }}
+                  ref={target(id)}
                   type="button"
                   aria-current={on ? 'page' : undefined}
                   onClick={() => onSelect(id)}

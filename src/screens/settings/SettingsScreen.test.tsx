@@ -1,9 +1,9 @@
 // @vitest-environment jsdom
-import { cleanup, fireEvent, screen, waitFor, within } from '@testing-library/react';
+import { act, cleanup, fireEvent, screen, waitFor, within } from '@testing-library/react';
 import { useState } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { SYSTEM_TEXT_SCALE_STORAGE_KEY } from '../../design/accessibility';
-import { holdAccessibility, holdAppearance, holdScanLines } from '../../design/apply';
+import { DEFAULT_ACCESSIBILITY, SYSTEM_TEXT_SCALE_STORAGE_KEY, type TextScale } from '../../design/accessibility';
+import { changeAccessibility, holdAccessibility, holdAppearance, holdScanLines } from '../../design/apply';
 import { AppearanceProvider } from '../../design/useAppearance';
 import type { SettingsSectionId } from '../types';
 import { SettingsScreen } from './SettingsScreen';
@@ -49,8 +49,11 @@ function setup({
     onAutolockChanged: vi.fn(),
     onContactsChanged: vi.fn(),
   };
+  let resizeTo: (next: number) => void = () => {};
   function Harness() {
     const [section, setSection] = useState<SettingsSectionId>(initial);
+    const [shown, setShown] = useState(width);
+    resizeTo = setShown;
     return (
       <SettingsScreen
         section={section}
@@ -70,7 +73,7 @@ function setup({
         capabilities={ALL}
         prefs={prefs}
         makeAvatar={async () => 'data:image/jpeg;base64,AAAA'}
-        width={width}
+        width={shown}
       />
     );
   }
@@ -79,11 +82,20 @@ function setup({
       <Harness />
     </AppearanceProvider>,
   );
-  return { api, spies };
+  /** The screen gets narrower or wider while it is open, as a window snapped to half the screen. */
+  const resize = (next: number) => act(() => resizeTo(next));
+  /** The text size changes while the screen is open, as with Ctrl + +. */
+  const textScale = (factor: TextScale) =>
+    act(() => {
+      changeAccessibility(host, { ...DEFAULT_ACCESSIBILITY, textScale: factor });
+    });
+  return { api, spies, resize, textScale };
 }
 
 const nav = () => screen.queryByRole('navigation', { name: 'Secciones de ajustes' });
 const sectionHeading = (name: string) => screen.findByRole('heading', { level: 2, name });
+/** The button of your card: your name, then "Tu perfil" (jsdom joins the two lines without a space). */
+const card = (name: string) => new RegExp(`^${name}\\s*Tu perfil$`);
 
 // Settings (W5): PropAjustes:41-119 for the navigation, plan-cambios-11oct
 // §4 W5 and accesibilidad.md §4.7 rule 10 for one pane.
@@ -167,6 +179,63 @@ describe('SettingsScreen', () => {
     expect(screen.queryByRole('heading', { level: 2 })).toBeNull();
   });
 
+  // A section shown in two panes is open: when the window narrows or the
+  // text grows, it stays on its own pane, with what was being typed and the
+  // focus, until "Volver a ajustes" or Escape.
+  it('keeps the section, its edits and the focus when two panes turn into one', async () => {
+    const { api, resize } = setup({ width: 1200, initial: 'profile' });
+    const name = (await screen.findByRole('textbox', { name: 'Nombre' })) as HTMLInputElement;
+    fireEvent.change(name, { target: { value: 'rechi sin guardar' } });
+    name.focus();
+
+    resize(700);
+    expect(nav()).toBeNull();
+    expect(screen.getByRole('heading', { level: 2, name: 'Perfil' })).toBeTruthy();
+    expect(screen.getByRole('textbox', { name: 'Nombre' })).toBe(name);
+    expect(name.value).toBe('rechi sin guardar');
+    expect(document.activeElement).toBe(name);
+    expect(api.updateProfile).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Volver a ajustes' }));
+    expect(nav()).toBeTruthy();
+  });
+
+  it('keeps the section when a larger text size turns two panes into one', async () => {
+    const { textScale } = setup({ width: 900 });
+    const heading = await sectionHeading('Privacidad');
+    textScale(1.25);
+    expect(nav()).toBeNull();
+    expect(screen.getByRole('heading', { level: 2, name: 'Privacidad' })).toBe(heading);
+    fireEvent.keyDown(heading, { key: 'Escape' });
+    expect(nav()).toBeTruthy();
+  });
+
+  it('moves the focus to the heading when the layout takes away the control that had it', async () => {
+    const { resize } = setup({ width: 1200 });
+    const row = screen.getByRole('button', { name: 'Notificaciones' });
+    fireEvent.click(row);
+    row.focus();
+    const notifications = await sectionHeading('Notificaciones');
+    resize(700);
+    expect(document.activeElement).toBe(notifications);
+
+    const back = screen.getByRole('button', { name: 'Volver a ajustes' });
+    back.focus();
+    resize(1200);
+    expect(back.isConnected).toBe(false);
+    expect(document.activeElement).toBe(notifications);
+  });
+
+  it('keeps the list and its focus when one pane turns into two', async () => {
+    const { resize } = setup({ width: 700 });
+    const row = screen.getByRole('button', { name: 'Idioma' });
+    row.focus();
+    resize(1200);
+    expect(await sectionHeading('Privacidad')).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Idioma' })).toBe(row);
+    expect(document.activeElement).toBe(row);
+  });
+
   it('closes with its button and with Escape, but Escape in a text field stays', async () => {
     const { spies } = setup({ initial: 'profile' });
     fireEvent.click(screen.getByRole('button', { name: 'Cerrar ajustes' }));
@@ -185,6 +254,20 @@ describe('SettingsScreen', () => {
     expect(spies.onClose).not.toHaveBeenCalled();
   });
 
+  // The profile and "Tu código QR" open from your card, not from a row of
+  // the groups: going back on one pane gives the focus to the card's button.
+  it('gives the focus back to your card after Perfil or your QR code on one pane', async () => {
+    setup({ width: 700 });
+    fireEvent.click(await within(nav()!).findByRole('button', { name: card('rechita') }));
+    await sectionHeading('Perfil');
+    fireEvent.click(screen.getByRole('button', { name: 'Volver a ajustes' }));
+    expect(document.activeElement).toBe(within(nav()!).getByRole('button', { name: card('rechita') }));
+
+    fireEvent.click(screen.getByRole('button', { name: 'Mostrar tu código QR' }));
+    fireEvent.keyDown(await sectionHeading('Tu código QR'), { key: 'Escape' });
+    expect(document.activeElement).toBe(within(nav()!).getByRole('button', { name: 'Mostrar tu código QR' }));
+  });
+
   it('reads the profile again after saving it, and tells the shell', async () => {
     const getProfile = vi
       .fn<SettingsApi['getProfile']>()
@@ -196,7 +279,8 @@ describe('SettingsScreen', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Guardar' }));
     await waitFor(() => expect(spies.onProfileChanged).toHaveBeenCalledTimes(1));
     expect(getProfile).toHaveBeenCalledTimes(2);
-    expect(await within(nav()!).findByRole('button', { name: /rechi/ })).toBeTruthy();
+    expect(await within(nav()!).findByRole('button', { name: card('rechi') })).toBeTruthy();
+    expect(within(nav()!).queryByRole('button', { name: /rechita/ })).toBeNull();
   });
 
   it('says when the profile cannot be read, and tries again', async () => {

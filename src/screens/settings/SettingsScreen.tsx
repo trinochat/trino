@@ -6,15 +6,19 @@
  * (`layoutFor`, accesibilidad.md §4.7): larger text turns them into one
  * before anything is cut. On one pane the navigation is a list of its own,
  * and a section opens over it with "Volver a ajustes" (rule 10). Each pane
- * scrolls by itself.
+ * scrolls by itself. A section shown in two panes is open: when the window
+ * narrows or the text grows, it stays on its own pane, with what is being
+ * typed, until "Volver a ajustes" or Escape.
  *
  * The profile is read here, for the card and for its section, and read
  * again after it is saved. When a view opens from something that went away
  * (a row on one pane, "Tu código QR" in the profile, "Volver al perfil"),
  * the focus moves to its heading; going back on one pane gives it to the
- * row of the section left. Escape goes back on one pane and otherwise
- * closes Settings, but not from inside a text field, where it would throw
- * away what is being typed.
+ * row of the section left, which for the profile and your QR code is the
+ * button of your card. When a change of layout takes away the control that
+ * had the focus, the focus moves to the heading of the view on screen.
+ * Escape goes back on one pane and otherwise closes Settings, but not from
+ * inside a text field, where it would throw away what is being typed.
  */
 import { ArrowLeft } from 'lucide-react';
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent, type ReactNode, type RefObject } from 'react';
@@ -36,7 +40,7 @@ import { NotificationsSection } from './sections/NotificationsSection';
 import { PrivacySection } from './sections/PrivacySection';
 import { ProfileSection } from './sections/ProfileSection';
 import { SecuritySection } from './sections/SecuritySection';
-import { SettingsNav } from './SettingsNav';
+import { SettingsNav, type SettingsNavFocus } from './SettingsNav';
 import { SettingsSection } from './SettingsSection';
 import type { SettingsScreenProps, SettingsSectionId } from './types';
 
@@ -88,18 +92,26 @@ export function SettingsScreen({
   const t = useT();
   const { effective } = useAccessibility();
   const root = useRef<HTMLDivElement>(null);
+  const sectionPane = useRef<HTMLDivElement>(null);
+  /** What had the focus in Settings last, to tell when a change of layout took it away. */
+  const lastFocus = useRef<Element | null>(null);
   const measured = useMeasuredWidth(root, width === undefined);
   const single = layoutFor(width ?? measured ?? window.innerWidth, ROOT_PX * effective.textScale) === 'single';
+  // Before the first measure the window's width is only a guess: Settings
+  // sits beside the shell's sidebar, and may get one pane where the window
+  // would have two.
+  const twoPanes = !single && (width !== undefined || measured !== null);
 
   const [profile, setProfile] = useState<ProfileResponse | null>(null);
   const [profileFailed, setProfileFailed] = useState(false);
   const [qrOpen, setQrOpen] = useState(false);
-  /** One pane: the list, or the section over it. */
-  const [showSection, setShowSection] = useState(false);
+  /** One pane: the list, or the section over it. A section shown in two panes is open too. */
+  const [showSection, setShowSection] = useState(twoPanes);
+  if (twoPanes && !showSection) setShowSection(true);
   /** The view opened from something that went away: its heading takes the focus. */
   const [focusView, setFocusView] = useState(false);
-  /** One pane, back from a section: its row takes the focus. */
-  const [focusRow, setFocusRow] = useState<SettingsSectionId | undefined>(undefined);
+  /** One pane, back from a section: its row, or your card's QR button, takes the focus. */
+  const [focusRow, setFocusRow] = useState<SettingsNavFocus | undefined>(undefined);
 
   const readProfile = useCallback(async () => {
     setProfileFailed(false);
@@ -121,6 +133,17 @@ export function SettingsScreen({
     if (focusView) setFocusView(false);
   }, [section, qrOpen, showSection]);
 
+  // A change of layout can take away the control that had the focus: the
+  // rows when two panes turn into one, "Volver a ajustes" when one pane
+  // turns into two. The heading of the view on screen takes it then, rather
+  // than the page.
+  useLayoutEffect(() => {
+    const lost = lastFocus.current;
+    if (!lost || lost.isConnected) return;
+    if (document.activeElement && document.activeElement !== document.body) return;
+    sectionPane.current?.querySelector<HTMLElement>('h2')?.focus();
+  }, [single]);
+
   const open = (id: SettingsSectionId, { qr = false, focus = single } = {}) => {
     setQrOpen(qr);
     setFocusView(focus);
@@ -129,7 +152,7 @@ export function SettingsScreen({
   };
 
   const backToList = () => {
-    setFocusRow(section);
+    setFocusRow(section === 'profile' && qrOpen ? 'qr' : section);
     setShowSection(false);
   };
 
@@ -226,6 +249,9 @@ export function SettingsScreen({
     <div
       ref={root}
       onKeyDown={onKeyDown}
+      onFocus={event => {
+        lastFocus.current = event.target;
+      }}
       className="flex h-full min-h-0 w-full min-w-0 overflow-hidden bg-ui-bg font-ui text-ui-ink [background-image:var(--t-scan)]"
     >
       {sectionOnly ? null : (
@@ -236,7 +262,6 @@ export function SettingsScreen({
           )}
         >
           <SettingsNav
-            key={listOnly ? 'list' : 'nav'}
             current={listOnly ? null : section}
             qrOpen={qrOpen}
             profile={profile ? { name: profile.handle, avatar: profile.avatar } : null}
@@ -249,6 +274,7 @@ export function SettingsScreen({
       )}
       {listOnly ? null : (
         <div
+          ref={sectionPane}
           className={cx(
             'flex min-h-0 min-w-0 flex-1 flex-col gap-4 overflow-y-auto bg-ui-surface',
             single ? 'px-4 py-5' : 'px-8 py-7',

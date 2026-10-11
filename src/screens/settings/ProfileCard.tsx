@@ -9,6 +9,7 @@
  * unit (plan-cambios-11oct §8), and empty in this batch, so no @name shows.
  */
 import { QrCode } from 'lucide-react';
+import type { Ref } from 'react';
 import { useT } from '../../lib/i18n';
 import { identityInitials } from '../../lib/initials';
 import { Avatar, cx, FOCUS_RING, FOCUS_RING_INSET, iconSize } from '../../ui';
@@ -24,9 +25,23 @@ export interface ProfileCardProps {
   qrCurrent: boolean;
   onOpenProfile(): void;
   onOpenQr(): void;
+  /** The button that opens your profile, for the focus to come back to it. */
+  profileRef?: Ref<HTMLButtonElement>;
+  /** The button that opens your QR code, for the same. */
+  qrRef?: Ref<HTMLButtonElement>;
 }
 
-export function ProfileCard({ name, avatar, findableName, current, qrCurrent, onOpenProfile, onOpenQr }: ProfileCardProps) {
+export function ProfileCard({
+  name,
+  avatar,
+  findableName,
+  current,
+  qrCurrent,
+  onOpenProfile,
+  onOpenQr,
+  profileRef,
+  qrRef,
+}: ProfileCardProps) {
   const t = useT();
   const open = current || qrCurrent;
   return (
@@ -37,6 +52,7 @@ export function ProfileCard({ name, avatar, findableName, current, qrCurrent, on
       )}
     >
       <button
+        ref={profileRef}
         type="button"
         aria-current={current ? 'page' : undefined}
         onClick={onOpenProfile}
@@ -56,6 +72,7 @@ export function ProfileCard({ name, avatar, findableName, current, qrCurrent, on
         </span>
       </button>
       <button
+        ref={qrRef}
         type="button"
         aria-label={t('settings2.nav.profileQr')}
         aria-current={qrCurrent ? 'page' : undefined}

@@ -75,6 +75,14 @@ describe('SettingsNav', () => {
     expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Idioma' }));
   });
 
+  it('gives the focus back to the card for your profile, and to its QR button for your QR code', () => {
+    setup({ current: null, focusId: 'profile' });
+    expect(document.activeElement).toBe(screen.getByRole('button', { name: /^rechita\s*Tu perfil$/ }));
+    cleanup();
+    setup({ current: null, focusId: 'qr' });
+    expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Mostrar tu código QR' }));
+  });
+
   it('has no "Apoyar a Trino"', () => {
     setup();
     expect(document.body.textContent).not.toContain('Apoyar');
