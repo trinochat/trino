@@ -230,21 +230,18 @@ fn fp(ik_sign: &[u8; 32], ik_dh: &[u8; 32], nostr: &[u8; 32]) -> String {
         .join(".")
 }
 
-/// Append a diagnostic line to ~/.trino/trino-gui.log so silent failures in the
-/// receive path leave a trace we can inspect after a live test.
-fn dbg_log(msg: &str) {
-    use std::io::Write;
-    let line = format!(
-        "[{}] {}\n",
-        chrono::Utc::now().format("%Y-%m-%d %H:%M:%S"),
-        msg
-    );
-    if let Ok(mut f) = std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(trino_home().join("trino-gui.log"))
-    {
-        let _ = f.write_all(line.as_bytes());
+/// A line for the diagnostic log, so silent failures in the receive path
+/// leave a trace after a live test. Fixed text only, and only debug builds
+/// keep the log: see diag.rs (T3).
+fn dbg_log(text: &'static str) {
+    crate::diag::note(text);
+}
+
+/// The notes of `merge_group_members` name members and prefixes of their
+/// keys: the log only gets how many there were.
+fn log_skipped_members(notes: &[String]) {
+    if !notes.is_empty() {
+        crate::diag::note_with("  group members skipped", &[("count", &notes.len())]);
     }
 }
 
@@ -758,12 +755,10 @@ async fn open_session(
 fn relay_starter(app: AppHandle, state: &AppState) -> impl FnOnce(RelayStart) {
     let inner = state.inner.clone();
     move |start: RelayStart| {
-        dbg_log(&format!(
-            "SESSION OPEN handle='{}' nostr_pub={}.. starting {} relay connection(s)",
-            start.handle,
-            &start.nostr_pub[..16.min(start.nostr_pub.len())],
-            start.relays.len()
-        ));
+        crate::diag::note_with(
+            "session open, starting the relay connections",
+            &[("relays", &start.relays.len())],
+        );
         start_relay_connections(app, inner, start.relays, start.nostr_pub, start.handle);
     }
 }
@@ -898,6 +893,7 @@ async fn forge_identity(
     };
     let handle = display_handle(&handle);
     let files = DataFiles::in_trino_home();
+    crate::diag::remove_stale_log(&files.home, crate::diag::Build::CURRENT);
 
     // PBKDF2 is slow on purpose: off the async runtime, as in `unseal`.
     let (identity, totp_secret) = tokio::task::spawn_blocking({
@@ -983,13 +979,13 @@ fn start_relay_connections(
                         == Some(expected_handle_for_task.as_str());
                     if same_identity {
                         inner.relays.push(client);
-                        dbg_log(&format!("  relay OK: {}", relay_url));
+                        dbg_log("  relay connected");
                     } else {
                         client.close();
                     }
                 }
-                Err(error) => {
-                    dbg_log(&format!("  relay FAIL: {} -> {}", relay_url, error));
+                Err(_) => {
+                    dbg_log("  relay connection failed");
                 }
             }
         });
@@ -1013,6 +1009,7 @@ pub async fn unseal(
     let _gate = state.session_gate.lock().await;
     let session_open = state.inner.lock().await.identity.is_some();
     let files = DataFiles::in_trino_home();
+    crate::diag::remove_stale_log(&files.home, crate::diag::Build::CURRENT);
     let vault = files.vault.clone();
 
     let (identity, totp_secret) = tokio::task::spawn_blocking(move || {
@@ -1025,13 +1022,15 @@ pub async fn unseal(
             let secret = totp_secret.as_deref().map(Vec::as_slice);
             match reseal_if_rotated(&mut identity, secret, &passphrase, now, save) {
                 None => {}
-                Some(Ok(())) => dbg_log(&format!(
-                    "SPK rotated to id={} ({} retired retained)",
-                    identity.signed_prekey.id,
-                    identity.retired_signed_prekeys.len()
-                )),
+                Some(Ok(())) => crate::diag::note_with(
+                    "signed prekey rotated",
+                    &[
+                        ("spk_id", &identity.signed_prekey.id),
+                        ("retired", &identity.retired_signed_prekeys.len()),
+                    ],
+                ),
                 // Keep the session usable; we simply retry next unlock.
-                Some(Err(e)) => dbg_log(&format!("SPK rotation could not be persisted: {e}")),
+                Some(Err(_)) => dbg_log("signed prekey rotation could not be saved"),
             }
         }
         Ok::<_, CommandError>((identity, totp_secret))
@@ -1117,7 +1116,7 @@ pub async fn relay_inspect_start(
                 state.inner.lock().await.inspector_relays.push(client);
                 connected.push(url);
             }
-            Err(error) => dbg_log(&format!("  inspector relay FAIL: {} -> {}", url, error)),
+            Err(_) => dbg_log("  inspector relay connection failed"),
         }
     }
 
@@ -1278,10 +1277,7 @@ pub async fn resync_session(state: State<'_, AppState>, handle: String) -> Resul
     };
     drop(inner);
 
-    dbg_log(&format!(
-        "RESYNC: forcing fresh handshake with '{}'",
-        handle
-    ));
+    dbg_log("RESYNC: forcing a fresh handshake");
     send_cipher_inner(&state, &handle, b"__trino_handshake__", Some(handshake))
         .await
         .map_err(|e| e.to_string())?;
@@ -1592,11 +1588,7 @@ pub async fn send_group_message(
             .collect();
         (targets, env)
     };
-    dbg_log(&format!(
-        "GROUP SEND gid={} -> {} members",
-        short_prefix(&gid, 8),
-        targets.len()
-    ));
+    crate::diag::note_with("group send", &[("members", &targets.len())]);
     for handle in targets {
         ensure_session_inner(&state, &handle).await?;
         send_cipher_inner(&state, &handle, &env, None).await?;
@@ -2187,11 +2179,13 @@ pub fn set_call_active(state: State<'_, AppState>, active: bool) {
         .store(active, std::sync::atomic::Ordering::SeqCst);
 }
 
-/// Frontend → trino-gui.log bridge. The Android WebView doesn't forward
-/// console.log to logcat, so this lets us see the JS call flow on device.
+/// What the frontend sends here is text, and the diagnostic log never holds
+/// text (T3): it is dropped. The command stays so the frontend's calls still
+/// succeed; in a debug build, its console (DevTools, or chrome://inspect on
+/// Android) shows the same lines.
 #[tauri::command]
 pub fn dev_log(msg: String) {
-    dbg_log(&format!("FE: {}", msg));
+    drop(msg);
 }
 
 async fn send_cipher_inner(
@@ -2241,13 +2235,10 @@ async fn send_cipher_inner(
     .map_err(|e| e.to_string())?;
 
     drop(inner);
-    dbg_log(&format!(
-        "SEND to '{}' (handshake={}) event_id={} -> {} relay(s)",
-        handle,
-        is_handshake,
-        &event.id[..8.min(event.id.len())],
-        relays.len()
-    ));
+    crate::diag::note_with(
+        "send",
+        &[("handshake", &is_handshake), ("relays", &relays.len())],
+    );
     for r in &relays {
         let _ = r.publish(&event).await;
     }
@@ -2386,12 +2377,7 @@ async fn handle_incoming_event(
     state_inner: Arc<tokio::sync::Mutex<crate::state::InnerState>>,
     event: NostrEvent,
 ) {
-    dbg_log(&format!(
-        "RECV event id={} from={} content_len={}",
-        short_prefix(&event.id, 8),
-        short_prefix(&event.pubkey, 16),
-        event.content.len()
-    ));
+    dbg_log("RECV event");
     let mut inner = state_inner.lock().await;
     let identity = match &inner.identity {
         Some(i) => i.clone(),
@@ -2404,10 +2390,7 @@ async fn handle_incoming_event(
     let friend = match admit_event(&mut inner, &event, &my_pub) {
         Admission::Process(friend) => *friend,
         Admission::Stranger => {
-            dbg_log(&format!(
-                "  DROP: sender not a known friend (have {} friends) -> emitting handshake-needed",
-                inner.friends.len()
-            ));
+            dbg_log("  DROP: sender not a known friend -> emitting handshake-needed");
             let _ = app.emit(
                 "handshake-needed",
                 HandshakeNeededEvent {
@@ -2417,7 +2400,7 @@ async fn handle_incoming_event(
             return;
         }
         Admission::Drop(reason) => {
-            dbg_log(&format!("  DROP: {}", reason));
+            dbg_log(reason);
             return;
         }
     };
@@ -2426,12 +2409,12 @@ async fn handle_incoming_event(
     // dedup, not replay protection: the cache is bounded, which is why
     // handshakes also pass `judge_handshake`.
     save_ratchets(&inner);
-    dbg_log(&format!("  friend matched: '{}'", friend.handle));
+    dbg_log("  sender is a contact");
 
     let payload: WirePayload = match serde_json::from_str(&event.content) {
         Ok(p) => p,
-        Err(e) => {
-            dbg_log(&format!("  DROP: payload JSON parse failed: {}", e));
+        Err(_) => {
+            dbg_log("  DROP: payload JSON parse failed");
             return;
         }
     };
@@ -2443,10 +2426,9 @@ async fn handle_incoming_event(
         // matches — a mismatch means someone is trying to silently replace the
         // session with a different identity. Reject it.
         if hs.ik_dh_pub != friend.bundle.ik_dh_pub {
-            dbg_log(&format!(
-                "  DROP: handshake ik_dh_pub does not match pinned bundle for '{}' (impersonation?)",
-                friend.handle
-            ));
+            dbg_log(
+                "  DROP: handshake ik_dh_pub does not match the pinned bundle (impersonation?)",
+            );
             return;
         }
         // REPLAY GATE: relay traffic is public and the dedup cache is bounded,
@@ -2457,10 +2439,18 @@ async fn handle_incoming_event(
         let now = chrono::Utc::now().timestamp();
         let mark = inner.handshake_marks.get(&friend.bundle.nostr_pub);
         if let Err(rejection) = judge_handshake(mark, event.created_at, &hs.ek_pub, now) {
-            dbg_log(&format!(
-                "  DROP: handshake from '{}' rejected: {:?}",
-                friend.handle, rejection
-            ));
+            match rejection {
+                HandshakeRejection::Stale { age } => {
+                    crate::diag::note_with("  DROP: stale handshake", &[("age_s", &age)])
+                }
+                HandshakeRejection::FromTheFuture { ahead } => crate::diag::note_with(
+                    "  DROP: handshake from the future",
+                    &[("ahead_s", &ahead)],
+                ),
+                HandshakeRejection::NotNewer { .. } => {
+                    dbg_log("  DROP: handshake not newer than the last one accepted")
+                }
+            }
             return;
         }
         record_handshake(
@@ -2476,16 +2466,20 @@ async fn handle_incoming_event(
         // session initiated by the LOWER nostr pubkey wins. So if the peer's pubkey
         // sorts below ours, we YIELD — accept their handshake and replace our own.
         let peer_wins = friend.bundle.nostr_pub.as_str() < my_pub.as_str();
-        dbg_log(&format!(
-            "  handshake present (spkId={}); has_session={} peer_wins={}",
-            hs.spk_id, have_session, peer_wins
-        ));
+        crate::diag::note_with(
+            "  handshake present",
+            &[
+                ("spk_id", &hs.spk_id),
+                ("has_session", &have_session),
+                ("peer_wins", &peer_wins),
+            ],
+        );
         if !have_session || peer_wins {
             let (identity_after, ratchet, associated_data) =
                 match respond_to_handshake(&identity, hs) {
                     Ok(answer) => answer,
-                    Err(e) => {
-                        dbg_log(&format!("  DROP: X3DH respond() failed: {}", e));
+                    Err(_) => {
+                        dbg_log("  DROP: X3DH respond() failed");
                         return;
                     }
                 };
@@ -2495,10 +2489,7 @@ async fn handle_incoming_event(
                 .associated_data
                 .insert(friend.handle.clone(), associated_data);
             save_ratchets(&inner);
-            dbg_log(&format!(
-                "  responder ratchet established for '{}'",
-                friend.handle
-            ));
+            dbg_log("  responder ratchet established");
             // Fresh session: replay any buffered outgoing so messages the peer
             // lost during the desync get re-delivered (deduped by id).
             let _ = app.emit("session-established", friend.handle.clone());
@@ -2532,22 +2523,17 @@ async fn handle_incoming_event(
     let plain = match ratchet_decrypt(ratchet, &msg, &ad) {
         Ok(p) => p,
         Err(RatchetError::Replay { .. }) => {
-            dbg_log(&format!(
-                "  skip: replayed ciphertext (dhPub={}.. n={} pn={})",
-                short_prefix(&msg.header.dh_pub, 8),
-                msg.header.n,
-                msg.header.pn
-            ));
+            crate::diag::note_with(
+                "  skip: replayed ciphertext",
+                &[("n", &msg.header.n), ("pn", &msg.header.pn)],
+            );
             return;
         }
-        Err(e) => {
-            dbg_log(&format!(
-                "  DROP: ratchet_decrypt failed (dhPub={}.. n={} pn={}): {}",
-                short_prefix(&msg.header.dh_pub, 8),
-                msg.header.n,
-                msg.header.pn,
-                e
-            ));
+        Err(_) => {
+            crate::diag::note_with(
+                "  DROP: ratchet_decrypt failed",
+                &[("n", &msg.header.n), ("pn", &msg.header.pn)],
+            );
             // AUTO-HEAL: a decrypt failure means our ratchet diverged from the
             // peer's (a lost message, a crash mid-save, call-signal flooding…).
             // Drop the broken session and ask the UI to re-handshake. The
@@ -2566,10 +2552,10 @@ async fn handle_incoming_event(
             let now = chrono::Utc::now().timestamp();
             let age = now - event.created_at;
             if !(-AUTO_HEAL_MAX_AGE_SECS..=AUTO_HEAL_MAX_AGE_SECS).contains(&age) {
-                dbg_log(&format!(
-                    "  stale undecryptable event ({}s old) — dropped without auto-heal",
-                    age
-                ));
+                crate::diag::note_with(
+                    "  stale undecryptable event dropped without auto-heal",
+                    &[("age_s", &age)],
+                );
                 return;
             }
             let last = *inner.resync_at.get(&friend.handle).unwrap_or(&0);
@@ -2578,10 +2564,7 @@ async fn handle_incoming_event(
                 inner.ratchets.remove(&friend.handle);
                 inner.associated_data.remove(&friend.handle);
                 save_ratchets(&inner);
-                dbg_log(&format!(
-                    "  AUTO-HEAL: cleared desynced session with '{}', requesting resync",
-                    friend.handle
-                ));
+                dbg_log("  AUTO-HEAL: cleared a desynced session, requesting resync");
                 let _ = app.emit("resync-needed", friend.handle.clone());
             }
             return;
@@ -2597,18 +2580,11 @@ async fn handle_incoming_event(
         Envelope::Text { body, id } => {
             // Drop duplicates (a resend after auto-heal replays the same id).
             if !id.is_empty() && !inner.remember_message_id(id.clone()) {
-                dbg_log(&format!(
-                    "  skip: duplicate message id {} from '{}'",
-                    id, friend.handle
-                ));
+                dbg_log("  skip: duplicate message id");
                 return;
             }
             save_ratchets(&inner);
-            dbg_log(&format!(
-                "  OK: text from '{}' ({} chars)",
-                friend.handle,
-                body.len()
-            ));
+            dbg_log("  OK: text received");
             record_history(
                 &mut inner,
                 friend.handle.clone(),
@@ -2636,18 +2612,10 @@ async fn handle_incoming_event(
                 .map(|r| group::is_member(r, &friend.bundle.ik_sign_pub))
                 .unwrap_or(false);
             if !allowed {
-                dbg_log(&format!(
-                    "  DROP: group msg from non-member '{}' for gid={}",
-                    friend.handle,
-                    short_prefix(&gid, 8)
-                ));
+                dbg_log("  DROP: group message from a non-member");
                 return;
             }
-            dbg_log(&format!(
-                "  OK: group msg gid={} from '{}'",
-                short_prefix(&gid, 8),
-                friend.handle
-            ));
+            dbg_log("  OK: group message received");
             record_history(
                 &mut inner,
                 group_convo(&gid),
@@ -2685,10 +2653,7 @@ async fn handle_incoming_event(
                     return;
                 }
             }
-            dbg_log(&format!(
-                "  OK: file '{}' from '{}'",
-                file.name, friend.handle
-            ));
+            dbg_log("  OK: file received");
             let convo = match &gid {
                 Some(g) => group_convo(g),
                 None => friend.handle.clone(),
@@ -2723,17 +2688,11 @@ async fn handle_incoming_event(
             // as "busy". Drop stale/future-dated and malformed signals.
             let age = chrono::Utc::now().timestamp() - event.created_at;
             if !(-60..=60).contains(&age) {
-                dbg_log(&format!(
-                    "  stale call signal from '{}' ({}s old) — ignored",
-                    friend.handle, age
-                ));
-            } else if let Err(reason) = validate_call_signal(&call) {
-                dbg_log(&format!(
-                    "  invalid call signal from '{}' ({}) — ignored",
-                    friend.handle, reason
-                ));
+                crate::diag::note_with("  stale call signal ignored", &[("age_s", &age)]);
+            } else if validate_call_signal(&call).is_err() {
+                dbg_log("  invalid call signal ignored");
             } else {
-                dbg_log(&format!("  call signal from '{}'", friend.handle));
+                dbg_log("  call signal received");
                 let _ = app.emit(
                     "call-signal",
                     CallSignalEvent {
@@ -2766,7 +2725,7 @@ enum RosterOutcome {
 /// send us validly signed rosters for groups of their own making.
 const MAX_PENDING_INVITES_PER_CONTACT: usize = 5;
 
-/// First `n` bytes of `s`, for log lines and handle suffixes. Never panics on
+/// First `n` bytes of `s`, for handle suffixes and notes. Never panics on
 /// short or non-ASCII (attacker-controlled) input.
 fn short_prefix(s: &str, n: usize) -> &str {
     s.get(..n.min(s.len())).unwrap_or("?")
@@ -2903,28 +2862,20 @@ fn accept_incoming_roster(
         now,
     ) {
         RosterOutcome::Applied { gid, notes } => {
-            for note in notes {
-                dbg_log(&format!("  {}", note));
-            }
+            log_skipped_members(&notes);
             let _ = persist_friends(inner);
             let _ = persist_groups(inner);
-            dbg_log(&format!(
-                "  OK: roster stored gid={}",
-                short_prefix(&gid, 8)
-            ));
+            dbg_log("  OK: roster stored");
             let _ = app.emit("group-updated", GroupUpdatedEvent { gid });
         }
         RosterOutcome::Invited { gid } => {
             let _ = persist_group_invites(inner);
-            dbg_log(&format!(
-                "  OK: group invite held gid={}",
-                short_prefix(&gid, 8)
-            ));
+            dbg_log("  OK: group invite held");
             if let Some(invite) = inner.group_invites.get(&gid) {
                 let _ = app.emit("group-invite", invite_info(invite));
             }
         }
-        RosterOutcome::Dropped(why) => dbg_log(&format!("  DROP: roster: {}", why)),
+        RosterOutcome::Dropped(_) => dbg_log("  DROP: roster rejected"),
     }
 }
 
@@ -3044,15 +2995,10 @@ pub async fn accept_group_invite(
     // The invite is consumed either way.
     persist_group_invites(&inner)?;
     let (roster, notes) = joined?;
-    for note in notes {
-        dbg_log(&format!("  {}", note));
-    }
+    log_skipped_members(&notes);
     persist_friends(&inner)?;
     persist_groups(&inner)?;
-    dbg_log(&format!(
-        "GROUP INVITE accepted gid={}",
-        short_prefix(&gid, 8)
-    ));
+    dbg_log("GROUP INVITE accepted");
     Ok(group_info(&roster, &my_ik))
 }
 
@@ -3102,8 +3048,8 @@ fn save_history(inner: &InnerState) {
     blob.extend_from_slice(&ct);
     // Not fatal, as before: a failed write keeps the previous history.bin
     // whole, and the next save writes everything again.
-    if let Err(error) = fsutil::atomic_write(&history_path(), &blob) {
-        dbg_log(&format!("history.bin could not be saved: {error}"));
+    if fsutil::atomic_write(&history_path(), &blob).is_err() {
+        dbg_log("history.bin could not be saved");
     }
 }
 
@@ -3191,8 +3137,8 @@ fn save_ratchets(inner: &InnerState) {
     blob.extend_from_slice(&ct);
     // Not fatal, as before: a failed write keeps the previous ratchets.bin
     // whole, and the next save writes every session again.
-    if let Err(error) = fsutil::atomic_write(&ratchets_path(), &blob) {
-        dbg_log(&format!("ratchets.bin could not be saved: {error}"));
+    if fsutil::atomic_write(&ratchets_path(), &blob).is_err() {
+        dbg_log("ratchets.bin could not be saved");
     }
 }
 
@@ -3228,7 +3174,7 @@ fn trigger_resync(inner: &mut InnerState, app: &AppHandle, handle: &str) {
     inner.ratchets.remove(handle);
     inner.associated_data.remove(handle);
     save_ratchets(inner);
-    dbg_log(&format!("  AUTO-HEAL: requesting resync with '{}'", handle));
+    dbg_log("  AUTO-HEAL: requesting resync");
     let _ = app.emit("resync-needed", handle.to_string());
 }
 
@@ -3271,11 +3217,7 @@ pub async fn resend_outbox(state: State<'_, AppState>, handle: String) -> Result
     if items.is_empty() {
         return Ok(());
     }
-    dbg_log(&format!(
-        "RESEND {} buffered msg(s) to '{}'",
-        items.len(),
-        handle
-    ));
+    crate::diag::note_with("RESEND buffered messages", &[("count", &items.len())]);
     for env in items {
         let _ = send_cipher_inner(&state, &handle, &env, None).await;
     }

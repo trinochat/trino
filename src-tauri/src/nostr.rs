@@ -295,15 +295,15 @@ impl NostrClient {
                         tokio::time::sleep(std::time::Duration::from_secs(backoff)).await;
                         match connect_async(&url_log).await {
                             Ok((w, _)) => {
-                                dlog(&format!("WS reconnected: {}", url_log));
+                                dlog("WS reconnected");
                                 backoff = 1;
                                 break w;
                             }
-                            Err(e) => {
-                                dlog(&format!(
-                                    "WS reconnect failed {}: {} (retry {}s)",
-                                    url_log, e, backoff
-                                ));
+                            Err(_) => {
+                                crate::diag::note_with(
+                                    "WS reconnect failed",
+                                    &[("retry_s", &backoff)],
+                                );
                                 backoff = (backoff * 2).min(30);
                             }
                         }
@@ -328,14 +328,14 @@ impl NostrClient {
                                 let _ = write.send(Message::Pong(payload)).await;
                             }
                             Some(Ok(Message::Close(_))) | None => {
-                                dlog(&format!("WS dropped ({}) — reconnecting", url_log));
+                                dlog("WS dropped, reconnecting");
                                 break;
                             }
                             // Pong / Binary / Frame: nothing to do, but the
                             // relay is evidently still there.
                             Some(Ok(_)) => book.on_frame(None, unix_now()),
-                            Some(Err(e)) => {
-                                dlog(&format!("WS read error {}: {} — reconnecting", url_log, e));
+                            Some(Err(_)) => {
+                                dlog("WS read error, reconnecting");
                                 break;
                             }
                         },
@@ -413,7 +413,7 @@ impl NostrClient {
         let mut c = self.sub_counter.write().await;
         *c += 1;
         let sub_id = format!("trino-{}", c);
-        dlog(&format!("SUBSCRIBE {} on {}", sub_id, self.url));
+        dlog("SUBSCRIBE");
         // The connection task keeps it, so it is re-sent after every drop.
         self.sender
             .send(ClientCommand::Subscribe(Subscription {
@@ -430,33 +430,23 @@ impl NostrClient {
     }
 }
 
-/// Append a diagnostic line to ~/.trino/trino-gui.log (mirrors commands::dbg_log).
-fn dlog(msg: &str) {
-    use std::io::Write;
-    // Must use trino_home() (honours the mobile sandbox override), NOT
-    // dirs::home_dir() — on Android the latter points outside the app sandbox
-    // and every write fails silently, so relay logs never reach trino-gui.log.
-    let path = crate::state::trino_home().join("trino-gui.log");
-    if let Ok(mut f) = std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(path)
-    {
-        let _ = f.write_all(
-            format!(
-                "[{}] {}\n",
-                chrono::Utc::now().format("%Y-%m-%d %H:%M:%S"),
-                msg
-            )
-            .as_bytes(),
-        );
-    }
+/// A line for the diagnostic log: fixed text only, and only debug builds
+/// keep the log (diag.rs, T3). Nothing a relay sends ever goes in.
+fn dlog(text: &'static str) {
+    crate::diag::note(text);
 }
 
-/// First `n` bytes of relay-supplied text, for log lines. Never panics on
-/// short or non-ASCII input (same rule as `commands::short_prefix`).
-fn log_prefix(s: &str, n: usize) -> &str {
-    s.get(..n.min(s.len())).unwrap_or("?")
+/// The log line for a relay message of type `msg_type`, which the relay
+/// chose: only the types NIP-01 defines are named.
+fn relay_message_note(msg_type: &str) -> &'static str {
+    match msg_type {
+        "OK" => "WS recv: OK",
+        "EOSE" => "WS recv: EOSE",
+        "NOTICE" => "WS recv: NOTICE",
+        "CLOSED" => "WS recv: CLOSED",
+        "AUTH" => "WS recv: AUTH",
+        _ => "WS recv: a message of another type",
+    }
 }
 
 async fn handle_relay_message(
@@ -465,10 +455,7 @@ async fn handle_relay_message(
     _pending: &Arc<RwLock<HashMap<String, OkCallback>>>,
 ) -> Result<(), NostrError> {
     let Ok(msg) = serde_json::from_str::<Vec<Value>>(text) else {
-        dlog(&format!(
-            "WS recv: non-array message: {}",
-            log_prefix(text, 60)
-        ));
+        dlog("WS recv: a message that is not an array");
         return Ok(());
     };
     if msg.is_empty() {
@@ -482,22 +469,17 @@ async fn handle_relay_message(
         match serde_json::from_value::<NostrEvent>(msg[2].clone()) {
             Ok(event) => {
                 let ok = verify_event(&event);
-                dlog(&format!(
-                    "WS EVENT kind={} from={} verify={}",
-                    event.kind,
-                    log_prefix(&event.pubkey, 16),
-                    ok
-                ));
+                crate::diag::note_with("WS EVENT", &[("kind", &event.kind), ("verified", &ok)]);
                 if ok {
                     on_event(event);
                 } else {
                     dlog("  -> verify_event FAILED (event dropped before handler)");
                 }
             }
-            Err(e) => dlog(&format!("WS EVENT deserialize failed: {}", e)),
+            Err(_) => dlog("WS EVENT deserialize failed"),
         }
     } else {
-        dlog(&format!("WS recv: {} (len {})", msg_type, msg.len()));
+        dlog(relay_message_note(msg_type));
     }
     Ok(())
 }
@@ -600,13 +582,21 @@ mod tests {
     }
 
     #[test]
-    fn log_prefix_never_splits_a_character() {
-        // A relay controls this text; slicing it mid-character used to panic
-        // and kill the connection task for good.
-        let text = format!("{}ñ and more", "a".repeat(59));
-        assert_eq!(log_prefix(&text, 60), "?");
-        assert_eq!(log_prefix("short", 60), "short");
-        assert_eq!(log_prefix(&"b".repeat(80), 60), "b".repeat(60));
+    fn what_a_relay_sends_never_reaches_the_log() {
+        // A relay controls this text. It used to be sliced into log lines,
+        // where a cut mid-character panicked and killed the connection task
+        // for good; now only fixed names go in (T3).
+        assert_eq!(relay_message_note("EOSE"), "WS recv: EOSE");
+        for chosen in [
+            format!("{}ñ and more", "a".repeat(59)),
+            "NOTICE: ana@example.org said hi".to_string(),
+            String::new(),
+        ] {
+            assert_eq!(
+                relay_message_note(&chosen),
+                "WS recv: a message of another type"
+            );
+        }
     }
 
     // ---- Catch-up subscriptions ----

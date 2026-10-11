@@ -15,6 +15,7 @@ mod state;
 mod totp_enrollment;
 mod turn;
 // -- W7 --
+mod diag;
 mod security_cmds;
 
 use state::AppState;
