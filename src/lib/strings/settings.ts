@@ -59,6 +59,8 @@ export const settings: AreaStrings = {
     'settings2.nav.accessibility': 'Accesibilidad',
     'settings2.nav.language': 'Idioma',
     'settings2.nav.advanced': 'Avanzado',
+    'settings2.profile.loading': 'Cargando tu perfil…',
+    'settings2.profile.errLoad': 'No se pudo cargar tu perfil.',
 
     // Privacidad (plan-cambios-11oct §4 W5).
     'settings2.privacy.title': 'Privacidad',
@@ -310,6 +312,8 @@ export const settings: AreaStrings = {
     'settings2.nav.accessibility': 'Accessibility',
     'settings2.nav.language': 'Language',
     'settings2.nav.advanced': 'Advanced',
+    'settings2.profile.loading': 'Loading your profile…',
+    'settings2.profile.errLoad': 'Your profile couldn’t be loaded.',
 
     'settings2.privacy.title': 'Privacy',
     'settings2.privacy.blocked': 'Blocked contacts',
@@ -554,6 +558,8 @@ export const settings: AreaStrings = {
     'settings2.nav.accessibility': 'Acessibilidade',
     'settings2.nav.language': 'Idioma',
     'settings2.nav.advanced': 'Avançado',
+    'settings2.profile.loading': 'Carregando seu perfil…',
+    'settings2.profile.errLoad': 'Não foi possível carregar seu perfil.',
 
     'settings2.privacy.title': 'Privacidade',
     'settings2.privacy.blocked': 'Contatos bloqueados',

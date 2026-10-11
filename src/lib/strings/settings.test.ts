@@ -59,6 +59,9 @@ const NAV = [
   'settings2.nav.advanced',
 ];
 
+/** The screen, while it reads your profile (SettingsScreen.tsx). */
+const SCREEN = ['settings2.profile.loading', 'settings2.profile.errLoad'];
+
 /** Settings > Privacidad and its blocked contacts (PrivacySection.tsx, BlockedContactsView.tsx). */
 const PRIVACY = [
   'settings2.privacy.title',
@@ -267,6 +270,7 @@ const KEYS: string[] = [
   ...PROFILE,
   ...QR,
   ...NAV,
+  ...SCREEN,
   ...PRIVACY,
   ...NOTIFICATIONS,
   ...SECURITY,
