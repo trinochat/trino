@@ -32,6 +32,10 @@ const KEYS: string[] = [
   'contacts.add.nameLabel',
   'contacts.add.nameEmpty',
   'contacts.add.known',
+  'contacts.add.refresh',
+  'contacts.add.refreshButton',
+  'contacts.add.refreshed',
+  'contacts.add.sharesKeys',
   'contacts.add.nameTaken',
   'contacts.add.replace',
   'contacts.add.replaceHint',
@@ -145,6 +149,10 @@ const PLACEHOLDERS: Record<string, string[]> = {
   'contacts.add.add': ['name'],
   'contacts.add.replaceButton': ['name'],
   'contacts.add.known': ['name'],
+  'contacts.add.refresh': ['name'],
+  'contacts.add.refreshButton': ['name'],
+  'contacts.add.refreshed': ['name'],
+  'contacts.add.sharesKeys': ['name'],
   'contacts.add.nameTaken': ['name'],
   'contacts.add.replace': ['name'],
   'contacts.add.added': ['name'],
@@ -213,6 +221,20 @@ describe('contacts strings', () => {
     expect(contacts.es['contacts.share.keyNote']).toBe(
       'Para verificarte, tus contactos comparan contigo los símbolos de una llamada.',
     );
+  });
+
+  // K8 names a contact that holds even one of a code's keys: only all three
+  // make the same person, and the same keys under the same name refresh it.
+  it('call a contact the same person only when it has every key of the code', () => {
+    expect(contacts.es['contacts.add.sharesKeys']).toBe(
+      'Tu contacto «{name}» ya tiene alguna de las claves de este código. Dos contactos no pueden compartir una clave, así que Trino no lo agrega.',
+    );
+    expect(contacts.es['contacts.add.refresh']).toBe(
+      'Ya tienes a «{name}» en tus contactos, con estas mismas claves. Si continúas, Trino cambia el código que tenía guardado por este.',
+    );
+    for (const lang of ['es', 'en', 'pt'] as const) {
+      expect(contacts[lang]['contacts.add.sharesKeys'], lang).not.toMatch(/persona|person|pessoa/i);
+    }
   });
 
   // Plan §1.4: the timer is per device, since a group-wide one would change

@@ -146,6 +146,46 @@ describe('AddContactPanel', () => {
     expect(screen.queryByRole('button', { name: /^Agregar a/ })).toBeNull();
   });
 
+  // K8: the same keys under the same name refresh the contact (a newer prekey).
+  it('offers to update the code of a contact with the same keys and the same name', async () => {
+    const { api, onContactAdded } = mount(async () => preview({ handle: 'Ana Torres', same_keys: true }));
+    paste(CODE);
+    expect(
+      await screen.findByText(
+        'Ya tienes a «Ana Torres» en tus contactos, con estas mismas claves. Si continúas, Trino cambia el código que tenía guardado por este.',
+      ),
+    ).toBeTruthy();
+    expect(screen.queryByText(/esta persona/)).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Actualizar el código de Ana Torres' }));
+    await waitFor(() => expect(onContactAdded).toHaveBeenCalledWith('Ana Torres'));
+    expect(api.probeNode).toHaveBeenCalledWith(expect.any(String), 'Ana Torres', undefined);
+    expect(screen.getByRole('status').textContent).toBe('Actualizaste el código de Ana Torres.');
+  });
+
+  // K8's preview names a contact holding even one of the code's keys: only all three make the same person.
+  it('never calls a contact holding only some of the keys the same person, and offers no add', async () => {
+    mount(async () => preview({ handle: 'Carlos', same_keys: false }));
+    paste(CODE);
+    expect(
+      await screen.findByText(
+        'Tu contacto «Carlos» ya tiene alguna de las claves de este código. Dos contactos no pueden compartir una clave, así que Trino no lo agrega.',
+      ),
+    ).toBeTruthy();
+    expect(screen.queryByText(/esta persona/)).toBeNull();
+    expect(screen.queryByRole('button', { name: /^Agregar a/ })).toBeNull();
+    expect(screen.getByRole('button', { name: 'Cancelar' })).toBeTruthy();
+  });
+
+  it('names the contact that holds a key when the backend refuses, without calling it the same person', async () => {
+    const { api } = mount();
+    api.probeNode.mockRejectedValueOnce(commandError('already_contact', { handle: 'Anita' }));
+    paste(CODE);
+    fireEvent.click(await screen.findByRole('button', { name: 'Agregar a Ana Torres' }));
+    expect((await screen.findByRole('alert')).textContent).toBe(
+      'Tu contacto «Anita» ya tiene alguna de las claves de este código. Dos contactos no pueden compartir una clave, así que Trino no lo agrega.',
+    );
+  });
+
   it('asks for another name when the backend says the name is taken', async () => {
     const { api } = mount();
     api.probeNode.mockRejectedValueOnce(commandError('name_taken'));
@@ -153,6 +193,26 @@ describe('AddContactPanel', () => {
     fireEvent.click(await screen.findByRole('button', { name: 'Agregar a Ana Torres' }));
     expect(await screen.findByText('Ese nombre ya lo tiene otro contacto. Elige otro.')).toBeTruthy();
     expect(screen.getByRole('textbox', { name: 'Guardar como' }).getAttribute('aria-invalid')).toBe('true');
+  });
+
+  // accesibilidad.md §3.2: every error carries an icon, its text and role="alert".
+  it('announces a taken name as an alert, and takes you to the name field', async () => {
+    const { api } = mount();
+    api.probeNode.mockRejectedValueOnce(commandError('name_taken'));
+    paste(CODE);
+    fireEvent.click(await screen.findByRole('button', { name: 'Agregar a Ana Torres' }));
+    expect((await screen.findByRole('alert')).textContent).toContain('Ese nombre ya lo tiene otro contacto. Elige otro.');
+    expect(document.activeElement).toBe(screen.getByRole('textbox', { name: 'Guardar como' }));
+  });
+
+  it('announces as an alert that a contact already holds the keys of the code', async () => {
+    const { api, onContactAdded } = mount();
+    api.probeNode.mockRejectedValueOnce(commandError('already_contact', { handle: 'Anita' }));
+    paste(CODE);
+    fireEvent.click(await screen.findByRole('button', { name: 'Agregar a Ana Torres' }));
+    expect((await screen.findByRole('alert')).textContent).toContain('«Anita»');
+    expect(onContactAdded).not.toHaveBeenCalled();
+    expect(screen.queryByRole('button', { name: /^Agregar a/ })).toBeNull();
   });
 
   it('says so when adding fails, and keeps the card to try again', async () => {

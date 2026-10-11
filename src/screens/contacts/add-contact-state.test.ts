@@ -90,6 +90,43 @@ describe('addContactReducer', () => {
     expect(run([{ type: 'submit' }], state)).toBe(state);
   });
 
+  // K8 (rd/w8 add_contact): the same keys under the same name refresh the
+  // contact, with the code's newer prekey.
+  it('updates the code of a contact with the same keys and the same name', () => {
+    const state = previewed(preview({ handle: 'Ana Torres', same_keys: true }));
+    expect(conflictOf(state)).toEqual({ kind: 'refresh', handle: 'Ana Torres' });
+    expect(state.kind === 'ready' && state.card.editingName).toBe(false);
+    expect(addRequest(state)).toEqual({ bundleJson: expect.any(String), handle: 'Ana Torres' });
+    const adding = run([{ type: 'submit' }], state);
+    expect(run([{ type: 'added', handle: 'Ana Torres' }], adding)).toEqual({
+      kind: 'added',
+      handle: 'Ana Torres',
+      refreshed: true,
+    });
+  });
+
+  // K8's preview names a contact that holds even one of the code's keys,
+  // before the one that has its name: only all three keys make the same person.
+  it('never takes a contact holding only some of the keys for the same person, and adds nothing', () => {
+    const state = previewed(preview({ handle: 'Carlos', same_keys: false }));
+    expect(conflictOf(state)).toEqual({ kind: 'sharesKeys', handle: 'Carlos' });
+    expect(addRequest(state)).toBeNull();
+    expect(run([{ type: 'submit' }], state)).toBe(state);
+  });
+
+  it('reads already_contact as the same person only when the preview found all the keys under that name', () => {
+    const adding = run([{ type: 'submit' }], previewed());
+    const refused = run([{ type: 'addFailed', error: { code: 'already_contact', handle: 'Anita' } }], adding);
+    expect(conflictOf(refused)).toEqual({ kind: 'sharesKeys', handle: 'Anita' });
+
+    const known = previewed(preview({ handle: 'Anita', same_keys: true }));
+    if (known.kind !== 'ready') throw new Error('expected ready');
+    expect(conflictOf({ ...known, error: { code: 'already_contact', handle: 'Anita' } })).toEqual({
+      kind: 'known',
+      handle: 'Anita',
+    });
+  });
+
   it('never replaces a contact with the same name and other keys without an explicit yes', () => {
     const state = previewed(preview({ handle: 'Ana Torres', same_keys: false }));
     expect(conflictOf(state)).toEqual({ kind: 'nameTaken', handle: 'Ana Torres' });

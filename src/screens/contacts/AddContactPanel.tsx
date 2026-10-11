@@ -3,12 +3,13 @@
  * see who it is before adding them. The backend checks the code's
  * signatures without saving anything (preview_contact), so "Código válido"
  * means checked. A contact is never overwritten: one with the same name and
- * other keys is replaced only after an explicit yes. There is no camera
- * button (plan §1.3: no QR scanning on the desktop in this batch).
+ * other keys is replaced only after an explicit yes, and a contact with the
+ * same keys and name only gets this code in place of its old one. There is
+ * no camera button (plan §1.3: no QR scanning on the desktop in this batch).
  */
 import { useEffect, useId, useLayoutEffect, useReducer, useRef, useState } from 'react';
 import { CircleAlert } from 'lucide-react';
-import { Avatar, Banner, Button, Checkbox, Field, Input, Textarea, iconSize } from '../../ui';
+import { Avatar, Banner, Button, Checkbox, Field, Input, Textarea, iconSize, type BannerTone } from '../../ui';
 import { isCommandError } from '../../lib/api';
 import { formatFingerprint } from '../../lib/contact-code';
 import { useT } from '../../lib/i18n';
@@ -19,6 +20,7 @@ import {
   addFailureOf,
   addRequest,
   conflictOf,
+  type AddConflict,
   type AddContactCard,
   type AddContactState,
 } from './add-contact-state';
@@ -130,7 +132,7 @@ export function AddContactPanel({ api, onContactAdded }: AddContactPanelProps) {
       )}
       {state.kind === 'added' && (
         <p role="status" className="m-0 text-ui-base font-semibold text-ui-ink">
-          {t('contacts.add.added', { name: state.handle })}
+          {t(state.refreshed ? 'contacts.add.refreshed' : 'contacts.add.added', { name: state.handle })}
         </p>
       )}
 
@@ -138,6 +140,14 @@ export function AddContactPanel({ api, onContactAdded }: AddContactPanelProps) {
     </div>
   );
 }
+
+/** What each conflict says, and the banner it takes when the preview shows it. */
+const CONFLICT = {
+  known: { copy: 'contacts.add.known', tone: 'info' },
+  refresh: { copy: 'contacts.add.refresh', tone: 'info' },
+  nameTaken: { copy: 'contacts.add.nameTaken', tone: 'warn' },
+  sharesKeys: { copy: 'contacts.add.sharesKeys', tone: 'warn' },
+} as const satisfies Record<AddConflict['kind'], { copy: string; tone: BannerTone }>;
 
 interface PreviewCardProps {
   state: Extract<AddContactState, { kind: 'ready' | 'adding' }>;
@@ -152,10 +162,24 @@ function PreviewCard({ state, card, dispatch, onSubmit, onCancel }: PreviewCardP
   const t = useT();
   const titleId = useId();
   const conflict = conflictOf(state);
+  const conflictText = conflict && t(CONFLICT[conflict.kind].copy, { name: conflict.handle });
   const request = addRequest(state);
   const error = state.kind === 'ready' ? state.error : undefined;
   const name = card.name.trim() || card.preview.handle.trim();
   const replacing = conflict?.kind === 'nameTaken' && card.confirmReplace;
+  const refreshing = conflict?.kind === 'refresh';
+  // Nothing to add: the same person under another name, or a contact holding a key of the code.
+  const blocked = conflict?.kind === 'known' || conflict?.kind === 'sharesKeys';
+  // What the backend refused is an error, read out (accesibilidad.md §3.2);
+  // what the preview showed before anything was sent is a banner.
+  const refused = error?.code === 'already_contact';
+  const nameTaken = error?.code === 'name_taken';
+
+  // A taken name leaves the add button disabled: the next step is the name field.
+  const nameRef = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    if (nameTaken) nameRef.current?.focus();
+  }, [nameTaken]);
 
   return (
     <section aria-labelledby={titleId} className={CARD}>
@@ -173,18 +197,24 @@ function PreviewCard({ state, card, dispatch, onSubmit, onCancel }: PreviewCardP
         <code className={MONO_KEY}>{formatFingerprint(card.preview.fingerprint)}</code>
       </div>
 
-      {conflict?.kind === 'known' && <Banner tone="info">{t('contacts.add.known', { name: conflict.handle })}</Banner>}
-      {conflict?.kind === 'nameTaken' && (
-        <Banner tone="warn">{t('contacts.add.nameTaken', { name: conflict.handle })}</Banner>
-      )}
+      {conflict &&
+        (refused ? (
+          <p role="alert" className={ERROR_LINE}>
+            <CircleAlert {...iconSize('md', 'mt-0.5 shrink-0')} aria-hidden="true" />
+            <span>{conflictText}</span>
+          </p>
+        ) : (
+          <Banner tone={CONFLICT[conflict.kind].tone}>{conflictText}</Banner>
+        ))}
 
       {card.editingName && conflict?.kind !== 'known' && (
         <Field
           label={t('contacts.add.nameLabel')}
           hint={card.name.trim() === '' ? t('contacts.add.nameEmpty') : undefined}
-          error={error?.code === 'name_taken' ? t('contacts.add.nameTakenError') : undefined}
+          error={nameTaken ? <span role="alert">{t('contacts.add.nameTakenError')}</span> : undefined}
         >
           <Input
+            ref={nameRef}
             value={card.name}
             onChange={event => dispatch({ type: 'rename', name: event.target.value })}
             readOnly={state.kind === 'adding'}
@@ -202,7 +232,8 @@ function PreviewCard({ state, card, dispatch, onSubmit, onCancel }: PreviewCardP
         />
       )}
 
-      {conflict?.kind !== 'known' && name !== '' && (
+      {/* Only for someone who becomes a contact: a refresh keeps the keys, and so the verification. */}
+      {(conflict === null || conflict.kind === 'nameTaken') && name !== '' && (
         <p className="m-0 text-ui-md leading-normal text-ui-muted">{t('contacts.add.verifyNote', { name })}</p>
       )}
       {error?.code === 'other' && (
@@ -213,7 +244,7 @@ function PreviewCard({ state, card, dispatch, onSubmit, onCancel }: PreviewCardP
       )}
 
       <div className="flex flex-wrap gap-2">
-        {conflict?.kind !== 'known' && (
+        {!blocked && (
           <Button
             variant="primary"
             disabled={request === null && state.kind !== 'adding'}
@@ -222,7 +253,10 @@ function PreviewCard({ state, card, dispatch, onSubmit, onCancel }: PreviewCardP
           >
             {name === ''
               ? t('common2.add')
-              : t(replacing ? 'contacts.add.replaceButton' : 'contacts.add.add', { name })}
+              : t(
+                  refreshing ? 'contacts.add.refreshButton' : replacing ? 'contacts.add.replaceButton' : 'contacts.add.add',
+                  { name },
+                )}
           </Button>
         )}
         <Button onClick={onCancel} disabled={state.kind === 'adding'}>

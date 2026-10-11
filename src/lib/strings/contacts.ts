@@ -29,6 +29,12 @@ export const contacts: AreaStrings = {
     'contacts.add.nameLabel': 'Guardar como',
     'contacts.add.nameEmpty': 'Escribe un nombre para guardar este contacto.',
     'contacts.add.known': 'Ya tienes a esta persona en tus contactos, como «{name}».',
+    'contacts.add.refresh':
+      'Ya tienes a «{name}» en tus contactos, con estas mismas claves. Si continúas, Trino cambia el código que tenía guardado por este.',
+    'contacts.add.refreshButton': 'Actualizar el código de {name}',
+    'contacts.add.refreshed': 'Actualizaste el código de {name}.',
+    'contacts.add.sharesKeys':
+      'Tu contacto «{name}» ya tiene alguna de las claves de este código. Dos contactos no pueden compartir una clave, así que Trino no lo agrega.',
     'contacts.add.nameTaken':
       'Ya tienes un contacto llamado «{name}» con otra clave. Guarda este con otro nombre, o reemplaza aquel si es la misma persona con una cuenta nueva.',
     'contacts.add.replace': 'Reemplazar a {name} por esta clave',
@@ -163,6 +169,12 @@ export const contacts: AreaStrings = {
     'contacts.add.nameLabel': 'Save as',
     'contacts.add.nameEmpty': 'Type a name to save this contact.',
     'contacts.add.known': 'You already have this person in your contacts, as “{name}”.',
+    'contacts.add.refresh':
+      'You already have “{name}” in your contacts, with these same keys. If you go on, Trino puts this code in place of the one it had saved.',
+    'contacts.add.refreshButton': "Update {name}'s code",
+    'contacts.add.refreshed': "You updated {name}'s code.",
+    'contacts.add.sharesKeys':
+      'Your contact “{name}” already has one of the keys of this code. Two contacts cannot share a key, so Trino does not add it.',
     'contacts.add.nameTaken':
       'You already have a contact named “{name}” with another key. Save this one under another name, or replace that one if it is the same person with a new account.',
     'contacts.add.replace': 'Replace {name} with this key',
@@ -297,6 +309,12 @@ export const contacts: AreaStrings = {
     'contacts.add.nameLabel': 'Salvar como',
     'contacts.add.nameEmpty': 'Escreva um nome para salvar este contato.',
     'contacts.add.known': 'Você já tem esta pessoa nos seus contatos, como “{name}”.',
+    'contacts.add.refresh':
+      'Você já tem “{name}” nos seus contatos, com estas mesmas chaves. Se continuar, o Trino troca o código que tinha salvo por este.',
+    'contacts.add.refreshButton': 'Atualizar o código de {name}',
+    'contacts.add.refreshed': 'Você atualizou o código de {name}.',
+    'contacts.add.sharesKeys':
+      'Seu contato “{name}” já tem alguma das chaves deste código. Dois contatos não podem compartilhar uma chave, então o Trino não o adiciona.',
     'contacts.add.nameTaken':
       'Você já tem um contato chamado “{name}” com outra chave. Salve este com outro nome, ou substitua aquele se for a mesma pessoa com uma conta nova.',
     'contacts.add.replace': 'Substituir {name} por esta chave',
