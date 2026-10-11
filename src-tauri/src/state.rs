@@ -89,6 +89,10 @@ pub struct InnerState {
     /// When `contact-key-mismatch` last fired for each contact (unix secs),
     /// so it fires at most once every 10 minutes per contact. Memory only.
     pub key_mismatch_at: HashMap<String, i64>,
+    /// The shared profiles (K12): this identity's "about" and revision, and
+    /// what each contact shares and announced. Persisted ENCRYPTED to
+    /// profiles.bin with a key of its own derived from the identity.
+    pub profiles: crate::commands::profile::Profiles,
 }
 
 /// The newest handshake accepted from one contact.
@@ -257,6 +261,11 @@ pub fn history_path() -> PathBuf {
 
 pub fn ratchets_path() -> PathBuf {
     trino_home().join("ratchets.bin")
+}
+
+/// The shared profiles (K12), encrypted.
+pub fn profiles_path() -> PathBuf {
+    trino_home().join(crate::commands::profile::PROFILES_FILE)
 }
 
 pub fn default_relays() -> Vec<String> {

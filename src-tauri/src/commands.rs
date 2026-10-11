@@ -19,8 +19,8 @@ use crate::ratchet::{
 };
 use crate::state::{
     config_path, default_relays, friends_path, group_invites_path, groups_path, history_path,
-    ratchets_path, trino_home, vault_path, AppState, ConfigFile, FriendRecord, FriendsFile,
-    GroupInvite, HandshakeMark, HistItem, InnerState,
+    profiles_path, ratchets_path, trino_home, vault_path, AppState, ConfigFile, FriendRecord,
+    FriendsFile, GroupInvite, HandshakeMark, HistItem, InnerState,
 };
 use crate::totp::{generate_totp_secret, otpauth_uri};
 use crate::totp_enrollment::{TotpBeginResponse, TOTP_ISSUER};
@@ -125,6 +125,8 @@ pub(crate) mod contacts_cmds;
 pub(crate) mod groups_cmds;
 #[path = "history_cmds.rs"]
 pub(crate) mod history_cmds;
+#[path = "profile.rs"]
+pub(crate) mod profile;
 
 #[derive(Serialize)]
 pub struct NodeInfo {
@@ -132,6 +134,8 @@ pub struct NodeInfo {
     pub fingerprint: String,
     pub has_session: bool,
     pub added_at: i64,
+    /// The photo of the profile the contact shares (K12), or else the one
+    /// in its contact code.
     pub avatar: Option<String>,
     pub blocked: bool,
     /// SHA-256 of the identity keys in full (K7); `None` if they do not decode.
@@ -140,6 +144,13 @@ pub struct NodeInfo {
     /// when, until the user acknowledges it (K8).
     pub previous_fingerprint: Option<String>,
     pub key_changed_at: Option<i64>,
+    /// The name and "about" of the profile the contact shares (K12). That
+    /// name never replaces `handle`, the one given here.
+    pub profile_name: Option<String>,
+    pub about: Option<String>,
+    /// The contact's Trino announced that it reads profile messages, so
+    /// this identity's profile reaches it (K12).
+    pub profile_sync: bool,
 }
 
 #[derive(Serialize, Clone)]
@@ -404,6 +415,7 @@ fn clear_sensitive_state(inner: &mut InnerState) {
     inner.clear_seen_ids();
     // -- W8 --
     inner.key_mismatch_at.clear();
+    inner.profiles.forget();
 }
 
 fn remove_file_for_wipe(path: &std::path::Path, failures: &mut Vec<String>) {
@@ -753,6 +765,9 @@ async fn open_session(
     inner.history.clear();
     load_history(&mut inner, &files.history);
     load_ratchets(&mut inner, &files.ratchets);
+    // -- W8 (K12) --
+    let profiles = files.home.join(profile::PROFILES_FILE);
+    profile::load_into(&mut inner, &profiles, chrono::Utc::now().timestamp());
     drop(inner);
 
     let relays = if cfg.relays.is_empty() {
@@ -1221,6 +1236,7 @@ pub async fn probe_node(
     persist_friends(&inner).map_err(|e| CommandError::new(ErrorCode::Io, e))?;
     if added == contacts_cmds::Added::Replaced {
         save_ratchets(&inner); // the old session is gone
+        profile::save(&inner); // and what the old keys shared
     }
     let friend = inner
         .friends
@@ -1376,6 +1392,7 @@ pub async fn wipe(state: State<'_, AppState>) -> Result<(), String> {
             group_invites_path(),
             history_path(),
             ratchets_path(),
+            profiles_path(),
             trino_home().join("trino-gui.log"),
         ],
         &mut failures,
@@ -1900,6 +1917,10 @@ pub async fn remove_node(state: State<'_, AppState>, handle: String) -> Result<(
     persist_friends(&inner)?;
     save_history(&inner);
     save_ratchets(&inner);
+    // -- W8 (K12) --
+    if inner.profiles.remove(&handle) {
+        profile::save(&inner);
+    }
     Ok(())
 }
 
@@ -1942,6 +1963,10 @@ pub async fn rename_node(
     persist_friends(&inner)?;
     save_history(&inner);
     save_ratchets(&inner);
+    // -- W8 (K12) --
+    if inner.profiles.rename(&old_handle, &new) {
+        profile::save(&inner);
+    }
     Ok(())
 }
 
@@ -2940,6 +2965,11 @@ async fn handle_incoming_event(
         dbg_log("  OK: handshake message decrypted (no UI emit)");
         return;
     }
+    // -- W8 (K12) -- A profile message ends here, never as text; text, group
+    // and file messages say whether their sender reads profiles.
+    if profile::on_message(&app, &mut inner, &friend.handle, &plain, event.created_at) {
+        return;
+    }
 
     match decode_envelope(&plain) {
         Envelope::Text { body, id } => {
@@ -3650,6 +3680,10 @@ pub struct ProfileResponse {
     pub nostr_pub: String,
     /// SHA-256 of this identity's keys in full (K7); `fingerprint` is its prefix.
     pub identity_digest: String,
+    /// The "about" this identity shares (K12).
+    pub about: String,
+    /// The version of the profile messages this backend sends (K12).
+    pub sync: u64,
 }
 
 /// What `get_profile` answers for the open session.
@@ -3666,6 +3700,8 @@ fn profile_of(inner: &InnerState) -> Result<ProfileResponse, String> {
         fingerprint: fp(ik_sign, ik_dh, nostr),
         nostr_pub: hex::encode(nostr),
         identity_digest: contacts_cmds::identity_digest(ik_sign, ik_dh, nostr),
+        about: inner.profiles.about.clone(),
+        sync: profile::PROFILE_V,
     })
 }
 

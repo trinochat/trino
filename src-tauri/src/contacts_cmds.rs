@@ -259,6 +259,8 @@ pub(crate) fn add_contact(
     // The new keys came with a code, not with a group's roster.
     friend.via_group = None;
     forget_session_with(inner, &handle, &old_nostr_pub);
+    // What the old keys shared (K12) is not what the new ones share.
+    inner.profiles.remove(&handle);
     Ok((handle, Added::Replaced))
 }
 
@@ -349,17 +351,27 @@ pub(super) fn node_info(inner: &InnerState, friend: &FriendRecord) -> NodeInfo {
     // Keys that do not decode keep the fingerprint they always had (over
     // zeros), but get no digest: a digest of zeros would name nobody.
     let (ik_sign, ik_dh, nostr) = keys.unwrap_or(([0u8; 32], [0u8; 32], [0u8; 32]));
+    // K12: what the contact shares. A photo its profile decided, even one it
+    // removed, wins over the one in its contact code.
+    let shared = inner.profiles.contacts.get(&friend.handle);
+    let avatar = match shared {
+        Some(profile) if profile.photo_set => profile.photo.clone(),
+        _ => friend.avatar.clone(),
+    };
     NodeInfo {
         handle: friend.handle.clone(),
         fingerprint: fp(&ik_sign, &ik_dh, &nostr),
         has_session: inner.ratchets.contains_key(&friend.handle),
         added_at: friend.added_at,
-        avatar: friend.avatar.clone(),
+        avatar,
         blocked: inner.blocked.contains(&friend.bundle.nostr_pub),
         identity_digest: keys
             .map(|(ik_sign, ik_dh, nostr)| identity_digest(&ik_sign, &ik_dh, &nostr)),
         previous_fingerprint: friend.previous_fingerprint.clone(),
         key_changed_at: friend.key_changed_at,
+        profile_name: shared.and_then(|profile| profile.name.clone()),
+        about: shared.and_then(|profile| profile.about.clone()),
+        profile_sync: shared.is_some_and(|profile| profile.caps >= super::profile::PROFILE_V),
     }
 }
 
@@ -696,6 +708,12 @@ mod tests {
             .outbox
             .insert("ana".into(), vec![("m1".into(), b"hola".to_vec(), NOW)]);
         inner.history.insert("ana".into(), vec![]);
+        crate::commands::profile::receive(
+            &mut inner.profiles,
+            "ana",
+            br#"{"ty":"profile","v":1,"rev":3,"name":"Ana vieja","about":""}"#,
+            NOW,
+        );
 
         let added = add_contact(&mut inner, code_of(&new_ana, "ana"), "ana", true, NOW).unwrap();
 
@@ -719,6 +737,8 @@ mod tests {
         // Recent messages must never be replayed to the new keys.
         assert!(!inner.outbox.contains_key("ana"));
         assert!(inner.history.contains_key("ana"), "the conversation stays");
+        // What the old keys shared is not what the new ones share.
+        assert!(!inner.profiles.contacts.contains_key("ana"));
 
         let node = node_info(&inner, &inner.friends["ana"]);
         assert_eq!(
@@ -727,6 +747,7 @@ mod tests {
         );
         assert_eq!(node.key_changed_at, Some(NOW));
         assert!(!node.has_session);
+        assert_eq!(node.profile_name, None);
     }
 
     #[test]
@@ -785,5 +806,94 @@ mod tests {
             "ana",
             NOW + KEY_MISMATCH_QUIET_SECS
         ));
+    }
+
+    // ---- K12: what a contact shares ----
+
+    fn shared(inner: &mut InnerState, handle: &str, message: &str) {
+        crate::commands::profile::receive(&mut inner.profiles, handle, message.as_bytes(), NOW);
+    }
+
+    #[test]
+    fn a_contact_shows_the_profile_it_shares_next_to_the_name_given_here() {
+        let ana = create_identity();
+        let mut inner = InnerState::default();
+        let mut stored = friend(&ana, "Ana del trabajo");
+        stored.avatar = Some("data:image/png;base64,Y29kZQ==".into());
+        inner.friends.insert(stored.handle.clone(), stored.clone());
+
+        // Nothing shared yet: the photo of the code.
+        let before = node_info(&inner, &stored);
+        assert_eq!(
+            before.avatar.as_deref(),
+            Some("data:image/png;base64,Y29kZQ==")
+        );
+        assert_eq!((before.profile_name, before.about), (None, None));
+        assert!(!before.profile_sync);
+
+        shared(
+            &mut inner,
+            "Ana del trabajo",
+            r#"{"ty":"profile","v":1,"rev":3,"name":"Ana M","about":"Hola","photo":"data:image/png;base64,cGVyZmls"}"#,
+        );
+        shared(
+            &mut inner,
+            "Ana del trabajo",
+            r#"{"ty":"text","body":"hola","prof":{"v":1,"have":0}}"#,
+        );
+        let after = node_info(&inner, &stored);
+
+        assert_eq!(after.handle, "Ana del trabajo", "the name given here stays");
+        assert_eq!(after.profile_name.as_deref(), Some("Ana M"));
+        assert_eq!(after.about.as_deref(), Some("Hola"));
+        assert_eq!(
+            after.avatar.as_deref(),
+            Some("data:image/png;base64,cGVyZmls")
+        );
+        assert!(after.profile_sync);
+        let json = serde_json::to_value(&after).unwrap();
+        assert_eq!(json["profile_name"], "Ana M");
+        assert_eq!(json["about"], "Hola");
+        assert_eq!(json["profile_sync"], true);
+    }
+
+    #[test]
+    fn a_photo_the_contact_removed_is_not_shown_from_its_code() {
+        let ana = create_identity();
+        let mut inner = InnerState::default();
+        let mut stored = friend(&ana, "ana");
+        stored.avatar = Some("data:image/png;base64,Y29kZQ==".into());
+        inner.friends.insert("ana".into(), stored.clone());
+
+        shared(
+            &mut inner,
+            "ana",
+            r#"{"ty":"profile","v":1,"rev":3,"name":"Ana","about":"","photo":null}"#,
+        );
+
+        assert_eq!(node_info(&inner, &stored).avatar, None);
+    }
+
+    #[test]
+    fn the_profile_says_this_about_and_that_profiles_are_sent() {
+        let inner = InnerState {
+            identity: Some(create_identity()),
+            handle: Some("ana".into()),
+            profiles: crate::commands::profile::Profiles {
+                about: "Sobre mí".into(),
+                ..Default::default()
+            },
+            ..InnerState::default()
+        };
+
+        let profile = profile_of(&inner).unwrap();
+
+        assert_eq!(profile.about, "Sobre mí");
+        assert_eq!(profile.sync, 1);
+        let json = serde_json::to_value(&profile).unwrap();
+        assert_eq!(
+            (json["about"].clone(), json["sync"].clone()),
+            ("Sobre mí".into(), 1.into())
+        );
     }
 }
