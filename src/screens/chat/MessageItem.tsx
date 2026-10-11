@@ -70,7 +70,7 @@ const FAILURE_TEXTS: Readonly<Record<Exclude<SendFailure, 'partial'>, string>> =
  */
 const YOU = new Set(Object.values(DICTS).map(texts => (texts['msg2.you'] ?? '').toLocaleLowerCase()));
 
-/** Hidden until the pointer is over the message or the focus is in it; never for screen readers. */
+/** Out of sight until the pointer is over the message or the focus is in it; screen readers always have it. */
 const MENU_REVEAL =
   'shrink-0 opacity-0 transition-opacity reduce-motion:transition-none group-hover/msg:opacity-100 group-focus-within/msg:opacity-100';
 
