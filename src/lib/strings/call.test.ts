@@ -11,6 +11,8 @@ const KEYS: string[] = [
   'call2.consent.confirmOutgoing', 'call2.consent.confirmIncoming', 'call2.consent.cancelIncoming',
   // How the call travels: "03:21 · Conexión protegida", and what that means.
   'call2.mode.protected', 'call2.mode.direct', 'call2.mode.protectedHelp', 'call2.mode.directHelp',
+  // An incoming call: in its dialog, and in the notification while the window is hidden.
+  'call2.incoming.voice', 'call2.incoming.video',
 ];
 
 const PLACEHOLDERS = {

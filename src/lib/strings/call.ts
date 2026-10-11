@@ -18,6 +18,8 @@ export const call: AreaStrings = {
     'call2.mode.direct': 'Conexión directa',
     'call2.mode.protectedHelp': 'Tu contacto no ve tu IP. La llamada pasa por un servidor de Cloudflare, que sí la ve.',
     'call2.mode.directHelp': 'Tu contacto puede ver tu IP.',
+    'call2.incoming.voice': 'Llamada entrante',
+    'call2.incoming.video': 'Videollamada entrante',
   },
   en: {
     'call2.consent.title': 'The call could not be protected.',
@@ -31,6 +33,8 @@ export const call: AreaStrings = {
     'call2.mode.protectedHelp':
       'Your contact does not see your IP address. The call goes through a Cloudflare server, which does.',
     'call2.mode.directHelp': 'Your contact can see your IP address.',
+    'call2.incoming.voice': 'Incoming call',
+    'call2.incoming.video': 'Incoming video call',
   },
   pt: {
     'call2.consent.title': 'Não foi possível proteger a chamada.',
@@ -43,5 +47,7 @@ export const call: AreaStrings = {
     'call2.mode.direct': 'Conexão direta',
     'call2.mode.protectedHelp': 'Seu contato não vê seu IP. A chamada passa por um servidor da Cloudflare, que vê.',
     'call2.mode.directHelp': 'Seu contato pode ver seu IP.',
+    'call2.incoming.voice': 'Chamada recebida',
+    'call2.incoming.video': 'Chamada de vídeo recebida',
   },
 };
