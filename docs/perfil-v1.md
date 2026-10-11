@@ -155,6 +155,13 @@ which the unlock screen reads before anything is decrypted. Renaming a
 contact moves its entry, removing a contact or replacing its keys drops it,
 locking clears it from memory and wiping deletes the file.
 
+Only a missing `profiles.bin` starts afresh at unlock. One that does not
+decrypt (damaged, or another identity's) is first moved to
+`profiles.bin.damaged`, replacing any copy there, and wiping deletes that
+too. One that cannot be read at all (another program holding it, say) stays
+as it is: that session never writes it and never sends this profile, and
+`update_profile` answers `io` until an unlock reads it again.
+
 ## Commands and events (desktop)
 
 | | |

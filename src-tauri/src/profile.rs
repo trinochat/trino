@@ -39,6 +39,8 @@ pub(crate) const NAME_MAX_CHARS: usize = 64;
 pub(crate) const ABOUT_MAX_CHARS: usize = 140;
 pub(crate) const PHOTO_MAX_BYTES: usize = 20 * 1024;
 pub(crate) const PROFILES_FILE: &str = "profiles.bin";
+/// Where a profiles.bin that does not decrypt is kept (`load_into`).
+pub(crate) const DAMAGED_PROFILES_FILE: &str = "profiles.bin.damaged";
 /// HKDF info of the profiles.bin key, apart from the history key's.
 const PROFILES_KEY_INFO: &[u8] = b"trino-profiles-key-v1";
 
@@ -59,6 +61,9 @@ pub(crate) struct Profiles {
     /// profile to. Memory only: a new session sends again where needed.
     #[serde(skip)]
     pub sent: HashSet<(String, u64)>,
+    /// profiles.bin was there at unlock but could not be read (`load_into`).
+    #[serde(skip)]
+    pub not_loaded: bool,
 }
 
 /// What one contact shares, and what its Trino announced.
@@ -675,6 +680,7 @@ impl Profiles {
     pub(crate) fn forget(&mut self) {
         self.about.zeroize();
         self.rev = 0;
+        self.not_loaded = false;
         for kept in self.contacts.values_mut() {
             kept.forget();
         }
@@ -754,31 +760,77 @@ pub(crate) fn save_at(
     crate::fsutil::atomic_write(path, &blob)
 }
 
-/// Read profiles.bin at `path`. A file that is missing, damaged or another
-/// identity's reads as no profiles at all.
-pub(crate) fn load_at(path: &Path, identity: &Identity) -> Profiles {
-    let (Ok(blob), Ok(key)) = (std::fs::read(path), profiles_key(identity)) else {
-        return Profiles::default();
-    };
+/// Why profiles.bin did not load.
+enum NotLoaded {
+    /// There is none yet: the first open with profiles.
+    Missing,
+    /// It is there but could not be read: another program may hold it, so
+    /// it may read next time.
+    Unreadable,
+    /// It reads, but does not decrypt or parse: damaged, or another
+    /// identity's.
+    Damaged,
+}
+
+/// Read profiles.bin at `path`, or say why it did not load.
+fn read_at(path: &Path, identity: &Identity) -> Result<Profiles, NotLoaded> {
+    let blob = std::fs::read(path).map_err(|error| match error.kind() {
+        std::io::ErrorKind::NotFound => NotLoaded::Missing,
+        _ => NotLoaded::Unreadable,
+    })?;
+    let key = profiles_key(identity).map_err(|_| NotLoaded::Unreadable)?;
     if blob.len() < crate::crypto::NONCE_SIZE {
-        return Profiles::default();
+        return Err(NotLoaded::Damaged);
     }
     let (nonce, ciphertext) = blob.split_at(crate::crypto::NONCE_SIZE);
-    crate::crypto::aes_gcm_decrypt(&*key, ciphertext, nonce, None)
-        .ok()
+    let json = crate::crypto::aes_gcm_decrypt(&*key, ciphertext, nonce, None)
         .map(Zeroizing::new)
-        .and_then(|json| serde_json::from_slice(&json).ok())
-        .unwrap_or_default()
+        .map_err(|_| NotLoaded::Damaged)?;
+    serde_json::from_slice(&json).map_err(|_| NotLoaded::Damaged)
+}
+
+/// Read profiles.bin at `path`. A file that is missing, damaged or another
+/// identity's reads as no profiles at all.
+#[cfg_attr(not(test), allow(dead_code))]
+pub(crate) fn load_at(path: &Path, identity: &Identity) -> Profiles {
+    read_at(path, identity).unwrap_or_default()
+}
+
+/// Move the profiles.bin at `path` aside, to `DAMAGED_PROFILES_FILE` next to
+/// it, replacing any copy put there before.
+fn put_aside(path: &Path) -> std::io::Result<()> {
+    std::fs::rename(path, path.with_file_name(DAMAGED_PROFILES_FILE))
 }
 
 /// Load profiles.bin into the session that `open_session` is opening. This
 /// identity's profile gets its first revision here, so contacts that
 /// announce support get it without waiting for an edit.
+///
+/// Only a profiles.bin that is not there starts afresh. One that does not
+/// decrypt (damaged, or another identity's) is put aside first, as
+/// `DAMAGED_PROFILES_FILE`, for whoever can still read it. One that cannot
+/// be read now, or put aside, stays as it is: this session neither writes it
+/// nor lets this profile change (`not_loaded`), and the next unlock reads it
+/// again.
 pub(crate) fn load_into(inner: &mut InnerState, path: &Path, now: i64) {
     let Some(identity) = inner.identity.as_ref() else {
         return;
     };
-    inner.profiles = load_at(path, identity);
+    let loaded = match read_at(path, identity) {
+        Ok(profiles) => Some(profiles),
+        Err(NotLoaded::Missing) => Some(Profiles::default()),
+        Err(NotLoaded::Damaged) => put_aside(path).ok().map(|()| Profiles::default()),
+        Err(NotLoaded::Unreadable) => None,
+    };
+    let Some(profiles) = loaded else {
+        dbg_log("profiles.bin could not be read: kept as it is");
+        inner.profiles = Profiles {
+            not_loaded: true,
+            ..Profiles::default()
+        };
+        return;
+    };
+    inner.profiles = profiles;
     if inner.profiles.rev == 0 {
         inner.profiles.rev = now.max(1) as u64;
         if save_at(&inner.profiles, identity, path).is_err() {
@@ -789,10 +841,34 @@ pub(crate) fn load_into(inner: &mut InnerState, path: &Path, now: i64) {
 
 /// Write profiles.bin for the open session.
 pub(crate) fn try_save(inner: &InnerState) -> std::io::Result<()> {
+    try_save_at(inner, &profiles_path())
+}
+
+/// `try_save`, to `path`. Never over a profiles.bin this session could not
+/// read (`load_into`).
+fn try_save_at(inner: &InnerState, path: &Path) -> std::io::Result<()> {
+    if inner.profiles.not_loaded {
+        return Err(std::io::Error::other(
+            "profiles.bin could not be read at unlock: it stays as it is",
+        ));
+    }
     let Some(identity) = inner.identity.as_ref() else {
         return Ok(());
     };
-    save_at(&inner.profiles, identity, &profiles_path())
+    save_at(&inner.profiles, identity, path)
+}
+
+/// Whether this identity's profile can be edited now: not while this
+/// session could not read profiles.bin, which holds its revision and its
+/// "about". `io` then: the next unlock reads it again.
+pub(crate) fn check_editable(profiles: &Profiles) -> Result<(), CommandError> {
+    if profiles.not_loaded {
+        return Err(CommandError::new(
+            ErrorCode::Io,
+            "profiles.bin could not be read at unlock",
+        ));
+    }
+    Ok(())
 }
 
 /// `try_save`, where a failure is only logged: the next change writes
@@ -1289,6 +1365,61 @@ mod tests {
     }
 
     #[test]
+    fn a_profiles_bin_that_does_not_decrypt_is_kept_aside_and_a_new_one_started() {
+        let scratch = ScratchDir::new("profiles-damaged");
+        let path = scratch.path().join(PROFILES_FILE);
+        // Damaged, or another identity's: no key here opens it.
+        let damaged = b"a nonce, then a ciphertext that no key here opens".to_vec();
+        std::fs::write(&path, &damaged).unwrap();
+        let me = create_identity();
+        let mut inner = InnerState {
+            identity: Some(me.clone()),
+            ..InnerState::default()
+        };
+
+        load_into(&mut inner, &path, NOW);
+
+        // Its bytes stay, for whoever can still read them,
+        let aside = scratch.path().join(DAMAGED_PROFILES_FILE);
+        assert_eq!(std::fs::read(&aside).unwrap(), damaged);
+        // and the session goes on with a new profiles.bin.
+        assert!(!inner.profiles.not_loaded);
+        assert_eq!(inner.profiles.rev, NOW as u64);
+        assert_eq!(load_at(&path, &me).rev, NOW as u64);
+    }
+
+    #[test]
+    fn a_profiles_bin_that_cannot_be_read_is_kept_and_never_written() {
+        let scratch = ScratchDir::new("profiles-unreadable");
+        // A directory where profiles.bin should be: reading it fails, and
+        // not because it is missing, as a file another program holds would.
+        let path = scratch.path().join(PROFILES_FILE);
+        std::fs::create_dir(&path).unwrap();
+        std::fs::write(path.join("inside"), b"keep").unwrap();
+        let mut inner = InnerState {
+            identity: Some(create_identity()),
+            ..InnerState::default()
+        };
+
+        load_into(&mut inner, &path, NOW);
+
+        assert!(inner.profiles.not_loaded);
+        assert_eq!(inner.profiles.rev, 0, "no first revision over the old one");
+        assert!(!scratch.path().join(DAMAGED_PROFILES_FILE).exists());
+        // This session never writes profiles.bin, and the profile cannot be
+        // edited: its revision would go back.
+        let elsewhere = scratch.path().join("other.bin");
+        assert!(try_save_at(&inner, &elsewhere).is_err());
+        assert!(!elsewhere.exists());
+        let error = check_editable(&inner.profiles).unwrap_err();
+        assert_eq!(error.code, ErrorCode::Io);
+        assert_eq!(std::fs::read(path.join("inside")).unwrap(), b"keep");
+        // Locking forgets that, with the rest.
+        inner.profiles.forget();
+        assert!(!inner.profiles.not_loaded);
+    }
+
+    #[test]
     fn renaming_moves_a_contacts_profile_and_removing_drops_it() {
         let mut profiles = Profiles::default();
         receive(&mut profiles, "ana", &msg(5, "Ana", "", None), NOW);
@@ -1359,6 +1490,10 @@ mod tests {
         assert!(
             wipe.contains("profiles_path(),"),
             "wipe leaves profiles.bin behind"
+        );
+        assert!(
+            wipe.contains("profile::DAMAGED_PROFILES_FILE),"),
+            "wipe leaves the copy load_into kept aside behind"
         );
     }
 

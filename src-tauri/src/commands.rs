@@ -1364,6 +1364,7 @@ pub async fn wipe(state: State<'_, AppState>) -> Result<(), String> {
             history_path(),
             ratchets_path(),
             profiles_path(),
+            trino_home().join(profile::DAMAGED_PROFILES_FILE),
             trino_home().join("trino-gui.log"),
         ],
         &mut failures,
@@ -3640,6 +3641,7 @@ pub async fn update_profile(
         if inner.identity.is_none() {
             return Err(contacts_cmds::sealed());
         }
+        profile::check_editable(&inner.profiles)?;
         let name = profile::check_name(&handle, inner.handle.as_deref())?;
         let avatar = profile::check_photo(avatar, inner.avatar.as_deref())?;
         let now = chrono::Utc::now().timestamp();
