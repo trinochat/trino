@@ -123,6 +123,8 @@ pub struct CallConfigResponse {
 pub(crate) mod contacts_cmds;
 #[path = "groups_cmds.rs"]
 pub(crate) mod groups_cmds;
+#[path = "history_cmds.rs"]
+pub(crate) mod history_cmds;
 
 #[derive(Serialize)]
 pub struct NodeInfo {
@@ -3425,23 +3427,26 @@ fn derive_history_key(identity: &crate::identity::Identity) -> [u8; 32] {
 }
 
 pub(crate) fn save_history(inner: &InnerState) {
+    // Not fatal, as before: a failed write keeps the previous history.bin
+    // whole, and the next save writes everything again.
+    if write_history(inner, &history_path()).is_err() {
+        dbg_log("history.bin could not be saved");
+    }
+}
+
+/// Encrypt the history with the history key and replace `path` with it,
+/// `nonce ‖ ciphertext`. Without a key (no session) nothing is written.
+fn write_history(inner: &InnerState, path: &Path) -> std::io::Result<()> {
     let Some(key) = inner.history_key else {
-        return;
+        return Ok(());
     };
-    let Ok(json) = serde_json::to_vec(&inner.history) else {
-        return;
-    };
-    let Ok((ct, nonce)) = crate::crypto::aes_gcm_encrypt(&key, &json, None) else {
-        return;
-    };
+    let json = serde_json::to_vec(&inner.history).map_err(std::io::Error::other)?;
+    let (ct, nonce) = crate::crypto::aes_gcm_encrypt(&key, &json, None)
+        .map_err(|error| std::io::Error::other(error.to_string()))?;
     let mut blob = Vec::with_capacity(nonce.len() + ct.len());
     blob.extend_from_slice(&nonce);
     blob.extend_from_slice(&ct);
-    // Not fatal, as before: a failed write keeps the previous history.bin
-    // whole, and the next save writes everything again.
-    if fsutil::atomic_write(&history_path(), &blob).is_err() {
-        dbg_log("history.bin could not be saved");
-    }
+    fsutil::atomic_write(path, &blob)
 }
 
 pub(crate) fn load_history(inner: &mut InnerState, path: &Path) {

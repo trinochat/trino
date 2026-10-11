@@ -254,6 +254,7 @@ pub fn run() {
             commands::groups_cmds::rename_group,
             commands::groups_cmds::leave_group,
             commands::groups_cmds::delete_group,
+            commands::history_cmds::delete_history_item,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
