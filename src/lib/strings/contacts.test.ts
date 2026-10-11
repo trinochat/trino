@@ -40,6 +40,38 @@ const KEYS: string[] = [
   'contacts.add.added',
   // Under the add and share panels: no messages from strangers in this batch.
   'contacts.mutualNote',
+  // The dialog and its tabs (Contacts:40-51).
+  'contacts.dialog.title',
+  'contacts.dialog.tabs',
+  'contacts.dialog.tabAdd',
+  'contacts.dialog.tabShare',
+  'contacts.dialog.tabInvites',
+  'contacts.dialog.tabInvitesCount',
+  // Your code (Contacts:83-105), also in Settings.
+  'contacts.share.qr',
+  'contacts.share.safe',
+  'contacts.share.codeLabel',
+  'contacts.share.copy',
+  'contacts.share.copied',
+  'contacts.share.copyFailed',
+  'contacts.share.saveQr',
+  'contacts.share.saveFailed',
+  'contacts.share.yourKey',
+  'contacts.share.keyNote',
+  'contacts.share.loading',
+  'contacts.share.failed',
+  // Group invitations (Contacts:108-123), and the note about strangers.
+  'contacts.invites.from',
+  'contacts.invites.fromOne',
+  'contacts.invites.note',
+  'contacts.invites.join',
+  'contacts.invites.joinLabel',
+  'contacts.invites.decline',
+  'contacts.invites.declineLabel',
+  'contacts.invites.failed',
+  'contacts.invites.empty',
+  'contacts.invites.strangerOne',
+  'contacts.invites.strangerMany',
 ];
 
 const PLACEHOLDERS: Record<string, string[]> = {
@@ -53,6 +85,12 @@ const PLACEHOLDERS: Record<string, string[]> = {
   'contacts.add.nameTaken': ['name'],
   'contacts.add.replace': ['name'],
   'contacts.add.added': ['name'],
+  'contacts.dialog.tabInvitesCount': ['n'],
+  'contacts.invites.from': ['count', 'name'],
+  'contacts.invites.fromOne': ['name'],
+  'contacts.invites.joinLabel': ['name'],
+  'contacts.invites.declineLabel': ['name'],
+  'contacts.invites.strangerMany': ['n'],
 };
 
 describe('contacts strings', () => {
@@ -92,5 +130,18 @@ describe('contacts strings', () => {
   // "le llegará como solicitud" becomes this.
   it('say that both have to add each other', () => {
     expect(contacts.es['contacts.mutualNote']).toBe('Para hablar, los dos tienen que agregarse con su código.');
+  });
+
+  it('say that a contact verifies you on a call, not with your key', () => {
+    expect(contacts.es['contacts.share.keyNote']).toBe(
+      'Para verificarte, tus contactos comparan contigo los símbolos de una llamada.',
+    );
+  });
+
+  // Plan §1.2: the event of a stranger is dropped, so Trino can only say someone tried.
+  it('say what Trino knows of a stranger, and no more', () => {
+    expect(contacts.es['contacts.invites.strangerOne']).toBe(
+      'Alguien que no está en tus contactos intentó escribirte. Trino todavía no puede mostrarte quién es: pídele su código.',
+    );
   });
 });
