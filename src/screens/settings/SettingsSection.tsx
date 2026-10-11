@@ -3,9 +3,11 @@
  * Settings.dc.html), at most 35 rem wide (560 px at 100 %, PropAjustes:124).
  * `autoFocus` moves the focus to the heading when the view opens from
  * somewhere that went away, such as a row of the list on one pane, so the
- * keyboard and the screen reader land on the new view.
+ * keyboard and the screen reader land on the new view. Through
+ * `headingRef` a view gives the heading the focus later, when a control
+ * that had it goes away.
  */
-import { useEffect, useId, useRef, type ReactNode } from 'react';
+import { useEffect, useId, useRef, type ReactNode, type RefObject } from 'react';
 import { cx, FOCUS_RING } from '../../ui';
 
 export interface SettingsSectionProps {
@@ -13,14 +15,24 @@ export interface SettingsSectionProps {
   /** Something before the heading on its row, such as a back button. */
   before?: ReactNode;
   autoFocus?: boolean;
+  /** The heading, for the view to give it the focus later. */
+  headingRef?: RefObject<HTMLHeadingElement | null>;
   /** 38.75 rem (620 px) instead of 35, for the QR view (PropAjustes:169). */
   wide?: boolean;
   children?: ReactNode;
 }
 
-export function SettingsSection({ title, before, autoFocus = false, wide = false, children }: SettingsSectionProps) {
+export function SettingsSection({
+  title,
+  before,
+  autoFocus = false,
+  headingRef,
+  wide = false,
+  children,
+}: SettingsSectionProps) {
   const headingId = useId();
-  const heading = useRef<HTMLHeadingElement>(null);
+  const ownHeading = useRef<HTMLHeadingElement>(null);
+  const heading = headingRef ?? ownHeading;
   useEffect(() => {
     if (autoFocus) heading.current?.focus();
     // Once, when the view opens.

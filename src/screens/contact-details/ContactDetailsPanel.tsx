@@ -79,6 +79,7 @@ export function ContactDetailsPanel({
   const nameId = useId();
   const timerId = useId();
   const cancelRemove = useRef<HTMLButtonElement>(null);
+  const renameButton = useRef<HTMLButtonElement>(null);
   const [note, setNote] = useState(() => prefs.getNote(handle));
   const [ttl, setTtl] = useState(() => prefs.getTtl(key));
   const [blocked, setBlocked] = useState(node.blocked === true);
@@ -115,6 +116,8 @@ export function ContactDetailsPanel({
     try {
       await renamed(handle, profileName);
       onRenamed(profileName);
+      // "Usar este nombre" goes away once the name is theirs.
+      renameButton.current?.focus();
     } catch (cause) {
       setError(isCommandError(cause) && cause.code === 'name_taken' ? 'contactInfo.errNameTaken' : 'contactInfo.errRename');
     } finally {
@@ -192,7 +195,12 @@ export function ContactDetailsPanel({
         </div>
       ) : null}
 
-      <Button className="self-start" leadingIcon={<Pencil {...iconSize('md')} />} onClick={() => setDialog('rename')}>
+      <Button
+        ref={renameButton}
+        className="self-start"
+        leadingIcon={<Pencil {...iconSize('md')} />}
+        onClick={() => setDialog('rename')}
+      >
         {t('contactInfo.rename')}
       </Button>
 

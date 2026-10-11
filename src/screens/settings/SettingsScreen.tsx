@@ -15,8 +15,9 @@
  * (a row on one pane, "Tu código QR" in the profile, "Volver al perfil"),
  * the focus moves to its heading; going back on one pane gives it to the
  * row of the section left, which for the profile and your QR code is the
- * button of your card. When a change of layout takes away the control that
- * had the focus, the focus moves to the heading of the view on screen.
+ * button of your card. When a change made here (the layout, the profile
+ * being read again) takes away the control that had the focus, the focus
+ * moves to the heading of the view on screen.
  * Escape goes back on one pane and otherwise closes Settings, but not from
  * inside a text field, where it would throw away what is being typed.
  */
@@ -133,16 +134,18 @@ export function SettingsScreen({
     if (focusView) setFocusView(false);
   }, [section, qrOpen, showSection]);
 
-  // A change of layout can take away the control that had the focus: the
+  // A change made here can take away the control that had the focus: the
   // rows when two panes turn into one, "Volver a ajustes" when one pane
-  // turns into two. The heading of the view on screen takes it then, rather
-  // than the page.
+  // turns into two, "Reintentar" and then the whole view while the profile
+  // is read. The heading of the view on screen takes the focus then, rather
+  // than the page. After every render: whatever changed, a lost focus is
+  // caught before it is painted.
   useLayoutEffect(() => {
     const lost = lastFocus.current;
     if (!lost || lost.isConnected) return;
     if (document.activeElement && document.activeElement !== document.body) return;
     sectionPane.current?.querySelector<HTMLElement>('h2')?.focus();
-  }, [single]);
+  });
 
   const open = (id: SettingsSectionId, { qr = false, focus = single } = {}) => {
     setQrOpen(qr);

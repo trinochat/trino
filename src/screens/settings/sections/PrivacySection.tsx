@@ -37,12 +37,15 @@ export function PrivacySection({ api, onContactsChanged, autoFocus }: PrivacySec
   // After the first view, a change of view moves the focus to the new heading.
   const [moved, setMoved] = useState(false);
 
+  /** Reads the contacts; resolves to whether they could be read. */
   const load = useCallback(async () => {
     try {
       setNodes(await api.listNodes());
       setLoadFailed(false);
+      return true;
     } catch {
       setLoadFailed(true);
+      return false;
     }
   }, [api]);
 
@@ -71,10 +74,16 @@ export function PrivacySection({ api, onContactsChanged, autoFocus }: PrivacySec
     return (
       <BlockedContactsView
         autoFocus
-        blocked={blocked}
+        blocked={nodes === null ? null : blocked}
+        loadFailed={loadFailed}
+        onRetry={load}
         onBack={() => setView('main')}
         onUnblock={async handle => {
           await api.blockNode(handle, false);
+          // Unblocked, even if the list cannot be read again just now.
+          setNodes(current =>
+            current ? current.map(contact => (contact.handle === handle ? { ...contact, blocked: false } : contact)) : current,
+          );
           onContactsChanged?.();
           await load();
         }}

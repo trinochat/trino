@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { useState } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { NodeInfo } from '../../lib/api';
 import type { PanelLayout, Trust } from '../types';
@@ -126,6 +127,36 @@ describe('ContactDetailsPanel', () => {
     }
     setup({ contact: node('ana', { profile_name: '🦜'.repeat(40) }) });
     expect(screen.getByRole('button', { name: 'Usar este nombre' })).toBeTruthy();
+  });
+
+  it('gives the focus to "Cambiar nombre" once "Usar este nombre" goes away', async () => {
+    const { prefs } = memoryPrefs();
+    const api: ContactDetailsApi = { renameNode: vi.fn(async () => {}), removeNode: vi.fn(), blockNode: vi.fn() };
+    // The shell sends the contact again under the new name.
+    function Shell() {
+      const [contact, setContact] = useState(node('ana', { profile_name: 'Ana María' }));
+      return (
+        <ContactDetailsPanel
+          node={contact}
+          trust="unverified"
+          layout="aside"
+          api={api}
+          prefs={prefs}
+          onClose={() => {}}
+          onVerify={() => {}}
+          onRenamed={name => setContact(current => ({ ...current, handle: name }))}
+          onRemoved={() => {}}
+          onChanged={() => {}}
+        />
+      );
+    }
+    render(withLang(<Shell />));
+    const use = screen.getByRole('button', { name: 'Usar este nombre' });
+    use.focus();
+    fireEvent.click(use);
+    await waitFor(() => expect(use.isConnected).toBe(false));
+    expect(screen.getByRole('complementary', { name: 'Ana María' })).toBeTruthy();
+    expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Cambiar nombre' }));
   });
 
   it('refuses to rename the contact to a name that stands for a group or the channel', async () => {

@@ -62,6 +62,7 @@ export function ProfileSection({ api, profile, profileSync, makeAvatar, onOpenQr
   const [busy, setBusy] = useState(false);
   const [notReached, setNotReached] = useState(0);
   const fileInput = useRef<HTMLInputElement>(null);
+  const editPhoto = useRef<HTMLButtonElement>(null);
   const nameInput = useRef<HTMLInputElement>(null);
   const counterId = useId();
 
@@ -139,7 +140,7 @@ export function ProfileSection({ api, profile, profileSync, makeAvatar, onOpenQr
           alt={avatar ? t('settings2.profile.photoAlt') : undefined}
         />
         <div className="flex flex-wrap gap-2">
-          <Button leadingIcon={<Camera {...iconSize('md')} />} onClick={() => fileInput.current?.click()}>
+          <Button ref={editPhoto} leadingIcon={<Camera {...iconSize('md')} />} onClick={() => fileInput.current?.click()}>
             {t('settings2.profile.editPhoto')}
           </Button>
           {avatar ? (
@@ -148,6 +149,8 @@ export function ProfileSection({ api, profile, profileSync, makeAvatar, onOpenQr
               onClick={() => {
                 edited();
                 setAvatar(null);
+                // This button goes away with the photo.
+                editPhoto.current?.focus();
               }}
               className={cx(
                 'inline-flex min-h-11 items-center rounded-ui px-4 font-ui text-ui-base font-semibold text-ui-danger hover:bg-ui-danger-bg',

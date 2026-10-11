@@ -3,6 +3,7 @@ import { cleanup, fireEvent, screen, waitFor, within } from '@testing-library/re
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { NodeInfo } from '../../../lib/api';
 import { fakeApi, node, renderEs } from '../test-utils';
+import type { SettingsApi } from '../types';
 import { PrivacySection } from './PrivacySection';
 
 afterEach(cleanup);
@@ -73,5 +74,39 @@ describe('PrivacySection', () => {
     const api = fakeApi({ listNodes: vi.fn(async () => Promise.reject(new Error('no_vault'))) });
     renderEs(<PrivacySection api={api} />);
     expect((await screen.findByRole('alert')).textContent).toContain('No se pudo cargar la lista de contactos.');
+  });
+
+  // Without the contacts, the app does not know who is blocked: the list
+  // says so and tries again, and never says that nobody is.
+  it('says in the list that the contacts could not be read, and reads them again', async () => {
+    const listNodes = vi
+      .fn<SettingsApi['listNodes']>()
+      .mockRejectedValueOnce(new Error('no_vault'))
+      .mockResolvedValue([node('ana', { blocked: true })]);
+    renderEs(<PrivacySection api={fakeApi({ listNodes })} />);
+    await screen.findByRole('alert');
+    fireEvent.click(screen.getByRole('button', { name: /Contactos bloqueados/ }));
+    const heading = await screen.findByRole('heading', { name: 'Contactos bloqueados' });
+    expect(screen.getByRole('alert').textContent).toContain('No se pudo cargar la lista de contactos.');
+    expect(screen.queryByText('No tienes contactos bloqueados.')).toBeNull();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Reintentar' }));
+    expect(await screen.findByRole('button', { name: 'Desbloquear a ana' })).toBeTruthy();
+    expect(screen.queryByRole('alert')).toBeNull();
+    expect(document.activeElement).toBe(heading);
+  });
+
+  it('says so when the list cannot be read again after an unblock, without the contact unblocked', async () => {
+    const listNodes = vi
+      .fn<SettingsApi['listNodes']>()
+      .mockResolvedValueOnce([node('ana', { blocked: true }), node('beto', { blocked: true })])
+      .mockRejectedValue(new Error('io'));
+    renderEs(<PrivacySection api={fakeApi({ listNodes })} />);
+    fireEvent.click(await screen.findByRole('button', { name: /Contactos bloqueados\s*2/ }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Desbloquear a ana' }));
+    expect((await screen.findByRole('alert')).textContent).toContain('No se pudo cargar la lista de contactos.');
+    expect(screen.queryByRole('button', { name: 'Desbloquear a ana' })).toBeNull();
+    expect(screen.getByRole('button', { name: 'Desbloquear a beto' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Reintentar' })).toBeTruthy();
   });
 });

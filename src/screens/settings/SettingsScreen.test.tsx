@@ -294,6 +294,30 @@ describe('SettingsScreen', () => {
     expect(await screen.findByRole('textbox', { name: 'Nombre' })).toBeTruthy();
   });
 
+  // "Reintentar" goes away as the profile is read again, and the view that
+  // shows it replaces the one that waited: the heading keeps the focus.
+  it('keeps the focus on the profile’s heading while it is read again, and once it is', async () => {
+    const getProfile = vi
+      .fn<SettingsApi['getProfile']>()
+      .mockRejectedValueOnce(new Error('no_vault'))
+      .mockRejectedValueOnce(new Error('no_vault'))
+      .mockResolvedValue(PROFILE);
+    setup({ initial: 'profile', api: { getProfile } });
+    await screen.findByRole('alert');
+    const first = screen.getByRole('button', { name: 'Reintentar' });
+    first.focus();
+    fireEvent.click(first);
+    await waitFor(() => expect(getProfile).toHaveBeenCalledTimes(2));
+    await screen.findByRole('alert');
+    expect(document.activeElement).toBe(screen.getByRole('heading', { level: 2, name: 'Perfil' }));
+
+    const second = screen.getByRole('button', { name: 'Reintentar' });
+    second.focus();
+    fireEvent.click(second);
+    await screen.findByRole('textbox', { name: 'Nombre' });
+    expect(document.activeElement).toBe(screen.getByRole('heading', { level: 2, name: 'Perfil' }));
+  });
+
   it('hands the slot’s actions to its sections', async () => {
     const { spies } = setup({ initial: 'security' });
     await sectionHeading('Cuenta y seguridad');

@@ -72,6 +72,7 @@ const PRIVACY = [
   'settings2.privacy.unblockA11y',
   'settings2.privacy.errUnblock',
   'settings2.privacy.errLoad',
+  'settings2.privacy.loading',
   'settings2.privacy.back',
   'settings2.privacy.callsLine',
 ];

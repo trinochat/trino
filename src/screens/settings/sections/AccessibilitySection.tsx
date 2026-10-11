@@ -10,9 +10,13 @@
  * step and stops following the system. Contrast and motion follow the
  * system until touched, then say so and offer "Usar lo del sistema".
  * Everything is in rem, so the preview, like the page, grows with the size.
+ *
+ * "Usar lo del sistema" and "Restablecer" go away once used: the focus
+ * moves to the switch the first belongs to, and to the heading after the
+ * second, never to the page.
  */
 import { Check, CircleAlert, ShieldAlert, ShieldCheck, type LucideIcon } from 'lucide-react';
-import { useState, type ReactNode } from 'react';
+import { useRef, useState, type ReactNode, type RefObject } from 'react';
 import { DEFAULT_ACCESSIBILITY, nearestTextScale, TEXT_SCALES, type Accessibility } from '../../../design/accessibility';
 import { useAccessibility } from '../../../design/useAppearance';
 import { useT } from '../../../lib/i18n';
@@ -51,6 +55,9 @@ export function AccessibilitySection({ platform, autoFocus }: AccessibilitySecti
   const { accessibility, effective, system, set, reset } = useAccessibility();
   const [unsaved, setUnsaved] = useState(false);
   const [shortcuts, setShortcuts] = useState(false);
+  const heading = useRef<HTMLHeadingElement>(null);
+  const contrastSwitch = useRef<HTMLButtonElement>(null);
+  const motionSwitch = useRef<HTMLButtonElement>(null);
   const save = (change: Partial<Accessibility>) => setUnsaved(!set(change));
 
   const followsSystem = accessibility.textScale === 'system';
@@ -58,22 +65,37 @@ export function AccessibilitySection({ platform, autoFocus }: AccessibilitySecti
   const step = TEXT_SCALES.indexOf(nearestTextScale(effective.textScale));
   const size = percent(effective.textScale);
 
-  /** Below a switch that follows the system: what the system says, or the way back to it. */
-  const origin = (follows: boolean, systemSays: boolean, back: () => void): ReactNode =>
+  /**
+   * Below a switch that follows the system: what the system says, or the
+   * way back to it, which hands the focus to the switch as it goes away.
+   */
+  const origin = (
+    follows: boolean,
+    systemSays: boolean,
+    back: () => void,
+    control: RefObject<HTMLButtonElement | null>,
+  ): ReactNode =>
     follows ? (
       <p className="m-0 -mt-2 pb-3.5 text-ui-md text-ui-muted">
         {t(systemSays ? 'settings2.a11y.systemOn' : 'settings2.a11y.systemOff')}
       </p>
     ) : (
       <div className="-mt-2 pb-3.5">
-        <Button variant="ghost" className="-ml-4" onClick={back}>
+        <Button
+          variant="ghost"
+          className="-ml-4"
+          onClick={() => {
+            back();
+            control.current?.focus();
+          }}
+        >
           {t('settings2.a11y.useSystem')}
         </Button>
       </div>
     );
 
   return (
-    <SettingsSection title={t('settings2.a11y.title')} autoFocus={autoFocus}>
+    <SettingsSection title={t('settings2.a11y.title')} autoFocus={autoFocus} headingRef={heading}>
       <p className="-mt-2 mb-0 text-ui-md text-ui-muted">{t('settings2.a11y.intro')}</p>
 
       <div className="flex flex-col gap-3 font-ui">
@@ -151,6 +173,7 @@ export function AccessibilitySection({ platform, autoFocus }: AccessibilitySecti
         ) : null}
 
         <Switch
+          ref={contrastSwitch}
           className="py-3.5"
           label={t('settings2.a11y.contrast')}
           description={t('settings2.a11y.contrastBody')}
@@ -158,10 +181,16 @@ export function AccessibilitySection({ platform, autoFocus }: AccessibilitySecti
           onCheckedChange={on => save({ contrast: on ? 'more' : 'standard' })}
         />
         <div className="border-b border-ui-line">
-          {origin(accessibility.contrast === 'system', system.moreContrast, () => save({ contrast: 'system' }))}
+          {origin(
+            accessibility.contrast === 'system',
+            system.moreContrast,
+            () => save({ contrast: 'system' }),
+            contrastSwitch,
+          )}
         </div>
 
         <Switch
+          ref={motionSwitch}
           className="py-3.5"
           label={t('settings2.a11y.motion')}
           description={t('settings2.a11y.motionBody')}
@@ -169,7 +198,7 @@ export function AccessibilitySection({ platform, autoFocus }: AccessibilitySecti
           onCheckedChange={on => save({ motion: on ? 'reduce' : 'full' })}
         />
         <div className="border-b border-ui-line">
-          {origin(accessibility.motion === 'system', system.reducedMotion, () => save({ motion: 'system' }))}
+          {origin(accessibility.motion === 'system', system.reducedMotion, () => save({ motion: 'system' }), motionSwitch)}
         </div>
 
         <Switch
@@ -182,7 +211,14 @@ export function AccessibilitySection({ platform, autoFocus }: AccessibilitySecti
       </div>
 
       {differsFromDefaults(accessibility) ? (
-        <Button variant="ghost" className="-ml-4 self-start" onClick={() => setUnsaved(!reset())}>
+        <Button
+          variant="ghost"
+          className="-ml-4 self-start"
+          onClick={() => {
+            setUnsaved(!reset());
+            heading.current?.focus();
+          }}
+        >
           {t('settings2.a11y.reset')}
         </Button>
       ) : null}

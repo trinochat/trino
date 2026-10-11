@@ -139,6 +139,30 @@ describe('AccessibilitySection', () => {
     expect(screen.queryByRole('button', { name: 'Restablecer' })).toBeNull();
   });
 
+  // Both buttons go away once used: the focus moves to what stays beside
+  // them, never to the page.
+  it('gives the focus to the switch after "Usar lo del sistema", and to the heading after "Restablecer"', () => {
+    setup('windows', {}, { moreContrast: false, reducedMotion: true });
+    fireEvent.click(sw('Más contraste'));
+    fireEvent.click(sw('Reducir movimiento'));
+    const [contrastBack, motionBack] = screen.getAllByRole('button', { name: 'Usar lo del sistema' });
+    contrastBack!.focus();
+    fireEvent.click(contrastBack!);
+    expect(contrastBack!.isConnected).toBe(false);
+    expect(document.activeElement).toBe(sw('Más contraste'));
+    motionBack!.focus();
+    fireEvent.click(motionBack!);
+    expect(motionBack!.isConnected).toBe(false);
+    expect(document.activeElement).toBe(sw('Reducir movimiento'));
+
+    fireEvent.click(sw('Espaciado amplio'));
+    const reset = screen.getByRole('button', { name: 'Restablecer' });
+    reset.focus();
+    fireEvent.click(reset);
+    expect(reset.isConnected).toBe(false);
+    expect(document.activeElement).toBe(screen.getByRole('heading', { name: 'Accesibilidad' }));
+  });
+
   it('lists the keyboard shortcuts in a dialog that Escape closes', () => {
     setup();
     fireEvent.click(screen.getByRole('button', { name: 'Ver atajos de teclado' }));

@@ -71,6 +71,7 @@ export const settings: AreaStrings = {
     'settings2.privacy.unblockA11y': 'Desbloquear a {name}',
     'settings2.privacy.errUnblock': 'No se pudo desbloquear a {name}.',
     'settings2.privacy.errLoad': 'No se pudo cargar la lista de contactos.',
+    'settings2.privacy.loading': 'Cargando tus contactos…',
     'settings2.privacy.back': 'Volver a Privacidad',
     'settings2.privacy.callsLine':
       'Tus llamadas pasan por un servidor de Cloudflare: tu contacto no ve tu IP, pero Cloudflare sí. Si una llamada no se puede proteger, Trino te pregunta antes de llamar directo.',
@@ -364,6 +365,7 @@ export const settings: AreaStrings = {
     'settings2.privacy.unblockA11y': 'Unblock {name}',
     'settings2.privacy.errUnblock': 'Couldn’t unblock {name}.',
     'settings2.privacy.errLoad': 'The list of contacts couldn’t be loaded.',
+    'settings2.privacy.loading': 'Loading your contacts…',
     'settings2.privacy.back': 'Back to Privacy',
     'settings2.privacy.callsLine':
       'Your calls go through a Cloudflare server: your contact doesn’t see your IP, but Cloudflare does. If a call can’t be protected, Trino asks you before calling directly.',
@@ -650,6 +652,7 @@ export const settings: AreaStrings = {
     'settings2.privacy.unblockA11y': 'Desbloquear {name}',
     'settings2.privacy.errUnblock': 'Não foi possível desbloquear {name}.',
     'settings2.privacy.errLoad': 'Não foi possível carregar a lista de contatos.',
+    'settings2.privacy.loading': 'Carregando seus contatos…',
     'settings2.privacy.back': 'Voltar para Privacidade',
     'settings2.privacy.callsLine':
       'Suas chamadas passam por um servidor da Cloudflare: seu contato não vê seu IP, mas a Cloudflare vê. Se uma chamada não puder ser protegida, o Trino pergunta antes de ligar diretamente.',

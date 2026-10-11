@@ -183,6 +183,15 @@ describe('ProfileSection, always', () => {
     await waitFor(() => expect(api.updateProfile).toHaveBeenCalledWith('rechita', null, 'Respondo en las tardes.'));
   });
 
+  it('gives the focus to "Editar foto" once "Quitar foto" goes away', () => {
+    setup({}, { profile: { ...PROFILE, avatar: 'data:image/jpeg;base64,BBBB' } });
+    const remove = screen.getByRole('button', { name: 'Quitar foto' });
+    remove.focus();
+    fireEvent.click(remove);
+    expect(remove.isConnected).toBe(false);
+    expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Editar foto' }));
+  });
+
   it('keeps the name to 40 characters and asks for one before saving', async () => {
     const { api } = setup();
     const name = screen.getByRole('textbox', { name: 'Nombre' }) as HTMLInputElement;
