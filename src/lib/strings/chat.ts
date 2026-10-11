@@ -105,6 +105,9 @@ export const chat: AreaStrings = {
     'msg2.copied': 'Mensaje copiado.',
     'msg2.copyFailed': 'No se pudo copiar el mensaje.',
     'msg2.deleteFailed': 'No se pudo borrar el mensaje.',
+    'msg2.deleteTitle': '¿Borrar este mensaje para ti?',
+    'msg2.deleteBody': 'Se borra solo de este equipo, para siempre. Si {name} ya lo tiene, conserva su copia.',
+    'msg2.deleteBodyGroup': 'Se borra solo de este equipo, para siempre. Quienes ya lo tienen conservan su copia.',
 
     'channel.title': 'Novedades de Trino',
     'channel.subtitle': 'Canal oficial · solo lectura',
@@ -229,6 +232,9 @@ export const chat: AreaStrings = {
     'msg2.copied': 'Message copied.',
     'msg2.copyFailed': 'The message could not be copied.',
     'msg2.deleteFailed': 'The message could not be deleted.',
+    'msg2.deleteTitle': 'Delete this message for you?',
+    'msg2.deleteBody': 'It is deleted from this device only, for good. If {name} already has it, they keep their copy.',
+    'msg2.deleteBodyGroup': 'It is deleted from this device only, for good. Whoever already has it keeps their copy.',
 
     'channel.title': 'Trino news',
     'channel.subtitle': 'Official channel · read only',
@@ -354,6 +360,9 @@ export const chat: AreaStrings = {
     'msg2.copied': 'Mensagem copiada.',
     'msg2.copyFailed': 'Não foi possível copiar a mensagem.',
     'msg2.deleteFailed': 'Não foi possível apagar a mensagem.',
+    'msg2.deleteTitle': 'Apagar esta mensagem para você?',
+    'msg2.deleteBody': 'Ela é apagada só deste aparelho, para sempre. Se {name} já tem a mensagem, continua com a cópia.',
+    'msg2.deleteBodyGroup': 'Ela é apagada só deste aparelho, para sempre. Quem já tem a mensagem continua com a cópia.',
 
     'channel.title': 'Novidades do Trino',
     'channel.subtitle': 'Canal oficial · somente leitura',

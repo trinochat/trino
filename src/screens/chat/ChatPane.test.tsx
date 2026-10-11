@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { act, cleanup, fireEvent, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, screen, waitFor, within } from '@testing-library/react';
 import { useState } from 'react';
 import type { ChatHeaderInfo, ChatPaneProps, Msg } from '../types';
 import { ChatPane } from './ChatPane';
@@ -61,6 +61,21 @@ function Pane(p: ChatPaneProps) {
   );
 }
 
+/** The pane with its messages kept by the test: a deleted one leaves once the backend is done, as in the shell. */
+function DeletingPane(p: ChatPaneProps) {
+  const [messages, setMessages] = useState(p.messages);
+  return (
+    <Pane
+      {...p}
+      messages={messages}
+      onDeleteForMe={async key => {
+        await p.onDeleteForMe?.(key);
+        setMessages(current => current.filter(msg => msg.key !== key));
+      }}
+    />
+  );
+}
+
 function show(overrides: Partial<ChatPaneProps> = {}) {
   const p = props(overrides);
   renderIn(<Pane {...p} />);
@@ -70,6 +85,15 @@ function show(overrides: Partial<ChatPaneProps> = {}) {
 const box = () => screen.queryByRole('textbox', { name: /^Mensaje para/ }) as HTMLTextAreaElement | null;
 const choose = (item: string) => {
   fireEvent.click(screen.getByRole('button', { name: 'Opciones del mensaje' }));
+  fireEvent.click(screen.getByRole('menuitem', { name: item }));
+};
+/** The options button of message `key`. */
+const optionsOf = (key: string) =>
+  within(document.querySelector<HTMLElement>(`[data-message="${key}"]`)!).getByRole('button', { name: 'Opciones del mensaje' });
+/** Opens the options of message `key` from its focused button, and picks `item`. */
+const chooseOn = (key: string, item: string) => {
+  optionsOf(key).focus();
+  fireEvent.click(optionsOf(key));
   fireEvent.click(screen.getByRole('menuitem', { name: item }));
 };
 
@@ -104,9 +128,74 @@ describe('ChatPane', () => {
   it('says so, as an alert, when a message cannot be copied or deleted', async () => {
     show({ onDeleteForMe: vi.fn(async () => Promise.reject(new Error('not_found'))) });
     choose('Borrar para mí');
+    fireEvent.click(within(screen.getByRole('alertdialog')).getByRole('button', { name: 'Borrar para mí' }));
     expect((await screen.findByRole('alert')).textContent).toContain('No se pudo borrar el mensaje.');
     choose('Copiar');
     await waitFor(() => expect(screen.getByRole('alert').textContent).toContain('No se pudo copiar el mensaje.'));
+  });
+
+  it('asks before deleting a message for you, starting on Cancelar, and deletes it only when you confirm', () => {
+    const p = show();
+    choose('Borrar para mí');
+    const question = screen.getByRole('alertdialog', { name: '¿Borrar este mensaje para ti?' });
+    const cancel = within(question).getByRole('button', { name: 'Cancelar' });
+    expect(document.activeElement).toBe(cancel);
+    const confirm = within(question).getByRole('button', { name: 'Borrar para mí' });
+    expect(confirm.querySelector('svg.lucide-trash2')).not.toBeNull();
+    fireEvent.click(cancel);
+    expect(screen.queryByRole('alertdialog')).toBeNull();
+    expect(p.onDeleteForMe).not.toHaveBeenCalled();
+
+    choose('Borrar para mí');
+    fireEvent.click(within(screen.getByRole('alertdialog')).getByRole('button', { name: 'Borrar para mí' }));
+    expect(screen.queryByRole('alertdialog')).toBeNull();
+    expect(p.onDeleteForMe).toHaveBeenCalledWith('k1');
+  });
+
+  it('gives the focus to the next message once one is deleted, else to the one before, else to the log', async () => {
+    const three = [
+      message('k1', at(2026, 10, 11, 10, 40), { text: 'Primero' }),
+      message('k2', at(2026, 10, 11, 10, 41), { text: 'Segundo' }),
+      message('k3', at(2026, 10, 11, 10, 42), { side: 'me', text: 'Tercero' }),
+    ];
+    renderIn(<DeletingPane {...props({ messages: three })} />);
+    const deleteFromKeyboard = async (key: string) => {
+      chooseOn(key, 'Borrar para mí');
+      await act(async () => {
+        fireEvent.click(within(screen.getByRole('alertdialog')).getByRole('button', { name: 'Borrar para mí' }));
+      });
+      expect(document.querySelector(`[data-message="${key}"]`)).toBeNull();
+    };
+    await deleteFromKeyboard('k2');
+    expect(document.activeElement).toBe(optionsOf('k3'));
+    await deleteFromKeyboard('k3');
+    expect(document.activeElement).toBe(optionsOf('k1'));
+    await deleteFromKeyboard('k1');
+    expect(document.activeElement).toBe(screen.getByRole('log', { name: 'Mensajes' }));
+  });
+
+  it('leaves the focus on the message when it could not be deleted', async () => {
+    renderIn(<DeletingPane {...props({ onDeleteForMe: vi.fn(async () => Promise.reject(new Error('io'))) })} />);
+    chooseOn('k1', 'Borrar para mí');
+    await act(async () => {
+      fireEvent.click(within(screen.getByRole('alertdialog')).getByRole('button', { name: 'Borrar para mí' }));
+    });
+    expect(screen.getByRole('alert').textContent).toContain('No se pudo borrar el mensaje.');
+    expect(document.activeElement).toBe(optionsOf('k1'));
+  });
+
+  it('says plainly that the message goes from this device only, for good, and others keep their copy', () => {
+    const description = () => {
+      const question = screen.getByRole('alertdialog');
+      return document.getElementById(question.getAttribute('aria-describedby') ?? '')?.textContent;
+    };
+    show();
+    choose('Borrar para mí');
+    expect(description()).toBe('Se borra solo de este equipo, para siempre. Si Ana Torres ya lo tiene, conserva su copia.');
+    cleanup();
+    show({ convo: { kind: 'group', gid: 'g1' }, header: FAMILIA, onCall: undefined });
+    choose('Borrar para mí');
+    expect(description()).toBe('Se borra solo de este equipo, para siempre. Quienes ya lo tienen conservan su copia.');
   });
 
   it('warns when the security code changed, with Verificar and Entendido', () => {

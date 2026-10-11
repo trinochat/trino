@@ -3,6 +3,8 @@
  * deviation 3): Responder, Copiar when it has text, Reenviar, and Borrar para
  * mí when the backend keeps it deleted (K11). There is no "Borrar para
  * todos": it would need a new message type the 0.1.0 shows as JSON (plan §1.2).
+ * Borrar para mí cannot be undone, so it is the danger item, and the chat
+ * asks before it goes.
  */
 import { useT } from '../../lib/i18n';
 import { Menu, type MenuItem } from '../../ui';
@@ -24,6 +26,6 @@ export function MessageMenu({ onReply, onCopy, onForward, onDelete, align, class
   const items: MenuItem[] = [{ id: 'reply', label: t('msg2.reply'), onSelect: onReply }];
   if (onCopy) items.push({ id: 'copy', label: t('common2.copy'), onSelect: onCopy });
   items.push({ id: 'forward', label: t('msg2.forward'), onSelect: onForward });
-  if (onDelete) items.push({ id: 'delete', label: t('msg2.deleteForMe'), onSelect: onDelete });
+  if (onDelete) items.push({ id: 'delete', label: t('msg2.deleteForMe'), tone: 'danger', onSelect: onDelete });
   return <Menu label={t('msg2.options')} items={items} align={align} className={className} />;
 }

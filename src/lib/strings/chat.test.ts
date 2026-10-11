@@ -54,6 +54,9 @@ const KEYS: string[] = [
   'msg2.copied',
   'msg2.copyFailed',
   'msg2.deleteFailed',
+  'msg2.deleteTitle',
+  'msg2.deleteBody',
+  'msg2.deleteBodyGroup',
   // The composer, its tray of files and what it replies to.
   'composer2.label',
   'composer2.placeholder',
@@ -152,6 +155,7 @@ const PLACEHOLDERS: Record<string, string[]> = {
   'msg2.partial': ['names'],
   'msg2.ttl': ['time'],
   'msg2.file': ['name'],
+  'msg2.deleteBody': ['name'],
   'media.view': ['name'],
   'media.downloadName': ['name'],
 };

@@ -51,6 +51,13 @@ describe('MessageItem', () => {
     expect(screen.queryByText(/para todos/i)).toBeNull();
   });
 
+  it('marks Borrar para mí as the dangerous one: it cannot be undone', () => {
+    show(theirs('Hola'));
+    openMenu();
+    expect(classesOf(screen.getByRole('menuitem', { name: 'Borrar para mí' }))).toContain('text-ui-danger');
+    expect(classesOf(screen.getByRole('menuitem', { name: 'Reenviar' }))).not.toContain('text-ui-danger');
+  });
+
   it('leaves Borrar para mí out without the backend that keeps it deleted (K11)', () => {
     show(theirs('Hola'), { actions: actions({ onDeleteForMe: undefined }) });
     openMenu();
