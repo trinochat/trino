@@ -23,9 +23,9 @@ function setup(
   api.listCallHistory.mockResolvedValue(wires);
   const { events, emit, listening } = fakeEvents();
   const { prefs, storage } = fakePrefs(seed);
-  const options: CallLogOptions = { api, events, prefs, enabled: true, watching: () => false, ...over };
+  const options: CallLogOptions = { api, events, prefs, enabled: true, watching: () => false, now: T0, ...over };
   const hook = renderHook((props: CallLogOptions) => useCallLog(props), { initialProps: options });
-  return { api, emit, listening, storage, hook };
+  return { api, emit, listening, storage, hook, options };
 }
 
 describe('useCallLog', () => {
@@ -69,6 +69,34 @@ describe('useCallLog', () => {
     act(() => emit.callLogged(log('a', T0)));
     act(() => hook.result.current.renamed('Ana', 'Ana Torres'));
     expect(hook.result.current.entries[0]?.peer).toBe('Ana Torres');
+  });
+
+  // The chat drops a call with its disappearing messages on the shell's
+  // cleanup, and the backend prunes it; the log goes on the same clock.
+  it('drops a call once the clock passes its disappearing-message time, and stops counting it', async () => {
+    const { emit, hook, options } = setup({}, { wires: [log('gone', T0 - 10, { ttl: 60 }), log('kept', T0 - 20)] });
+    await waitFor(() => expect(hook.result.current.entries.map(e => e.call.id)).toEqual(['gone', 'kept']));
+    expect(hook.result.current.missedUnseen).toBe(2);
+    act(() => emit.callLogged(log('later', T0 - 5, { ttl: 30 })));
+    expect(hook.result.current.entries.map(e => e.call.id)).toEqual(['later', 'gone', 'kept']);
+
+    hook.rerender({ ...options, now: T0 + 25 });
+    expect(hook.result.current.entries.map(e => e.call.id)).toEqual(['gone', 'kept']);
+    hook.rerender({ ...options, now: T0 + 50 });
+    expect(hook.result.current.entries.map(e => e.call.id)).toEqual(['kept']);
+    expect(hook.result.current.missedUnseen).toBe(1);
+  });
+
+  // remove_node deletes the contact's history, where the backend keeps its calls.
+  it('forgets the calls of a removed contact', async () => {
+    const { emit, hook } = setup();
+    await act(async () => {});
+    act(() => emit.callLogged(log('a', T0)));
+    act(() => emit.callLogged({ ...log('b', T0 + 1), peer: 'Bea' }));
+    expect(hook.result.current.missedUnseen).toBe(2);
+    act(() => hook.result.current.removed('Ana'));
+    expect(hook.result.current.entries.map(e => e.peer)).toEqual(['Bea']);
+    expect(hook.result.current.missedUnseen).toBe(1);
   });
 
   it('asks and listens for nothing without the call log (K13)', async () => {

@@ -11,5 +11,8 @@ export {
   missedUnseen,
   renamePeer,
   sortCalls,
+  withoutExpired,
+  withoutPeer,
   type CallFilter,
+  type LoggedCall,
 } from './call-history-model';

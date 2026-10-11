@@ -1,7 +1,16 @@
 import { describe, expect, it } from 'vitest';
 import type { CallEventWire, CallLogWire } from '../../lib/api';
 import type { CallLogEntry } from '../types';
-import { addCall, filterCalls, fromLog, missedUnseen, renamePeer, sortCalls } from './call-history-model';
+import {
+  addCall,
+  filterCalls,
+  fromLog,
+  missedUnseen,
+  renamePeer,
+  sortCalls,
+  withoutExpired,
+  withoutPeer,
+} from './call-history-model';
 
 const T0 = 1_760_000_000;
 
@@ -21,7 +30,25 @@ describe('the call log', () => {
       peer: 'Ana',
       ts: T0,
       call: { id: 'a1', direction: 'outgoing', video: false, outcome: 'answered', durationSec: 240 },
+      // It goes with its chat's disappearing messages, as its message does.
+      expiresAt: T0 + 60,
     });
+    for (const ttl of [undefined, null, 0]) expect(fromLog(wire('a2', T0, { ttl }))).not.toHaveProperty('expiresAt');
+  });
+
+  // The backend prunes a call at ts + ttl (prune_expired), and the chat drops
+  // its copy then; the log has to as well, or it counts what is gone.
+  it('drops the calls whose disappearing-message time has run out', () => {
+    const log = [entry('short', T0 + 2, { ttl: 60 }), entry('kept', T0 + 1), entry('long', T0, { ttl: 3_600 })];
+    expect(withoutExpired(log, T0 + 61)).toBe(log);
+    expect(ids(withoutExpired(log, T0 + 62))).toEqual(['kept', 'long']);
+    expect(ids(withoutExpired(log, T0 + 3_600))).toEqual(['kept']);
+  });
+
+  it('forgets the calls of a contact that was removed', () => {
+    const log = [entry('a', T0 + 2), entry('b', T0 + 1, {}, 'Bea'), entry('a2', T0)];
+    expect(ids(withoutPeer(log, 'Ana'))).toEqual(['b']);
+    expect(withoutPeer(log, 'nadie')).toBe(log);
   });
 
   it('lists the newest first, and adds a call once', () => {

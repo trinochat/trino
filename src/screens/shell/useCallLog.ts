@@ -4,10 +4,22 @@
  * missed calls that started after the log was last seen
  * (`trino.pref.callsSeenAt`); a call that arrives while the log is on screen
  * and the window has the focus is seen already, so N does not grow.
+ *
+ * A call lives in its contact's chat history, so it leaves the log when it
+ * leaves there: with the chat's disappearing messages, on the shell's
+ * cleanup clock (`now`), and with the contact when it is removed.
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { CallLogEntry } from '../types';
-import { addCall, fromLog, missedUnseen, renamePeer, sortCalls } from '../inbox/call-history-model';
+import {
+  addCall,
+  fromLog,
+  missedUnseen,
+  renamePeer,
+  sortCalls,
+  withoutExpired,
+  withoutPeer,
+  type LoggedCall,
+} from '../inbox/call-history-model';
 import { listenAll, nowSeconds } from './listen';
 import type { ShellApi, ShellEvents, ShellPrefs } from './shell-api';
 
@@ -19,12 +31,17 @@ export interface CallLogOptions {
   enabled: boolean;
   /** The log is on screen and the window has the focus. */
   watching(): boolean;
+  /**
+   * Epoch seconds of the shell's cleanup of disappearing messages, every
+   * 10 s: a call whose time ran out by then is gone from its chat, and here.
+   */
+  now: number;
 }
 
 export function useCallLog(options: CallLogOptions) {
   const latest = useRef(options);
   latest.current = options;
-  const [entries, setEntries] = useState<readonly CallLogEntry[]>([]);
+  const [entries, setEntries] = useState<readonly LoggedCall[]>([]);
   const [seenAt, setSeenAt] = useState(() => options.prefs.getCallsSeenAt());
   const seenRef = useRef(seenAt);
 
@@ -59,13 +76,18 @@ export function useCallLog(options: CallLogOptions) {
   }, [options.enabled, reload, markSeen]);
 
   const renamed = useCallback((from: string, to: string) => setEntries(current => renamePeer(current, from, to)), []);
+  /** A contact was removed: the backend deleted its history, and its calls with it. */
+  const removed = useCallback((handle: string) => setEntries(current => withoutPeer(current, handle)), []);
 
+  const { now } = options;
+  const live = useMemo(() => withoutExpired(entries, now), [entries, now]);
   return {
-    entries,
+    entries: live,
     seenAt,
-    missedUnseen: useMemo(() => missedUnseen(entries, seenAt), [entries, seenAt]),
+    missedUnseen: useMemo(() => missedUnseen(live, seenAt), [live, seenAt]),
     markSeen,
     renamed,
+    removed,
     reload,
   };
 }

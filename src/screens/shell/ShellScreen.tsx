@@ -152,6 +152,8 @@ export function ShellScreen(props: ShellScreenProps) {
     prefs,
     enabled: capabilities.callLog,
     watching: () => logShownRef.current && latest.current.isWindowFocused(),
+    // The chats' cleanup clock: a call leaves the log when it leaves its chat.
+    now: conv.now,
   });
 
   // What is on screen is read: the chat that opens, and the call log.
@@ -232,6 +234,7 @@ export function ShellScreen(props: ShellScreenProps) {
   const removeContact = (handle: string) => {
     conv.removed(handle);
     setDraft(handle, '');
+    callLog.removed(handle);
     prefs.forgetContact(handle);
     if (open?.kind === 'contact' && open.handle === handle) forgetOpen();
   };
@@ -535,6 +538,8 @@ export function ShellScreen(props: ShellScreenProps) {
               selectedCallKey={fromCall && open?.kind === 'contact' && open.handle === fromCall.peer ? fromCall.key : null}
               onCallBack={handle => call.start(handle, false)}
               onOpenCallChat={(handle, key) => {
+                // A chat for someone who is no longer a contact could only fail to send.
+                if (!nodeOf(handle)) return;
                 openConvo({ kind: 'contact', handle });
                 setFromCall({ key, peer: handle });
               }}

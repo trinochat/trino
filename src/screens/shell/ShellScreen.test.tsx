@@ -336,6 +336,63 @@ describe('ShellScreen: new chat, new call and the call log', () => {
     expect(call.start).toHaveBeenCalledWith('Ana', false);
   });
 
+  // Bea's chat has disappearing messages: on the cleanup that drops the call
+  // from her chat, and from the backend, it leaves the log and its count.
+  it('drops a call from the log, and from "Llamadas · N", on the cleanup that drops it from its chat', async () => {
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval', 'Date'] });
+    try {
+      const now = Math.floor(Date.now() / 1000);
+      const fading: CallLogWire = {
+        peer: 'Bea',
+        ts: now - 5,
+        call: { id: 'e1e1e1e1e1e1e1e1', direction: 'incoming', video: false, outcome: 'missed', duration_sec: 0, ttl: 10 },
+      };
+      setup({}, { calls: [fading] });
+      expect(await screen.findByRole('tab', { name: 'Llamadas, 1 perdida sin ver' })).toBeTruthy();
+      act(() => vi.advanceTimersByTime(10_000));
+      const calls = screen.getByRole('tab', { name: 'Llamadas' });
+      fireEvent.click(calls);
+      expect(screen.getByText('Todavía no hay llamadas.')).toBeTruthy();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  // remove_node deletes the contact's history, where the backend keeps its calls.
+  it("forgets a removed contact's calls in the log and in its count", async () => {
+    const missed = (peer: string, id: string): CallLogWire => ({
+      peer,
+      ts: NOW - 30,
+      call: { id, direction: 'incoming', video: false, outcome: 'missed', duration_sec: 0 },
+    });
+    const { slots } = setup({}, { calls: [missed('Ana', 'a1a1a1a1a1a1a1a1'), missed('Bea', 'b1b1b1b1b1b1b1b1')] });
+    expect(await screen.findByRole('tab', { name: 'Llamadas, 2 perdidas sin ver' })).toBeTruthy();
+    fireEvent.click(await row('Ana'));
+    fireEvent.click(screen.getByRole('button', { name: 'Detalles' }));
+    act(() => lastProps(slots.contactDetails).onRemoved());
+
+    const calls = screen.getByRole('tab', { name: 'Llamadas, 1 perdida sin ver' });
+    fireEvent.click(calls);
+    const log = screen.getByRole('list', { name: 'Historial de llamadas' });
+    expect(within(log).queryByRole('button', { name: /^Ana/ })).toBeNull();
+    expect(within(log).getByRole('button', { name: /^Bea/ })).toBeTruthy();
+  });
+
+  it('never opens a chat from the log for someone who is not a contact', async () => {
+    const gone: CallLogWire = {
+      peer: 'Zoe',
+      ts: NOW - 60,
+      call: { id: 'z1z1z1z1z1z1z1z1', direction: 'outgoing', video: false, outcome: 'answered', duration_sec: 30 },
+    };
+    const { slots } = setup({}, { calls: [gone] });
+    await row('Ana');
+    fireEvent.click(screen.getByRole('tab', { name: 'Llamadas' }));
+    const log = await screen.findByRole('list', { name: 'Historial de llamadas' });
+    fireEvent.click(within(log).getByRole('button', { name: /^Zoe/ }));
+    expect(slots.chat).not.toHaveBeenCalled();
+    expect(screen.queryByRole('region', { name: 'Chat con Zoe' })).toBeNull();
+  });
+
   it('has only the chats when the calls are not recorded (no K13)', async () => {
     const { api } = setup({ capabilities: { connection: true, sendAck: true, deleteForMe: true, callLog: false } });
     await row('Ana');
