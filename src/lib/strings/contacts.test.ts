@@ -72,7 +72,8 @@ const KEYS: string[] = [
   'contacts.invites.joinLabel',
   'contacts.invites.decline',
   'contacts.invites.declineLabel',
-  'contacts.invites.failed',
+  'contacts.invites.joinFailed',
+  'contacts.invites.declineFailed',
   'contacts.invites.empty',
   'contacts.invites.strangerOne',
   'contacts.invites.strangerMany',
@@ -161,6 +162,8 @@ const PLACEHOLDERS: Record<string, string[]> = {
   'contacts.invites.fromOne': ['name'],
   'contacts.invites.joinLabel': ['name'],
   'contacts.invites.declineLabel': ['name'],
+  'contacts.invites.joinFailed': ['from', 'name'],
+  'contacts.invites.declineFailed': ['name'],
   'contacts.invites.strangerMany': ['n'],
   'groupPanel.memberCount': ['n'],
   'groupPanel.adminIs': ['name'],
@@ -244,6 +247,19 @@ describe('contacts strings', () => {
       'Tus mensajes nuevos en este grupo se borran de los equipos de todos después de {time}. Cada persona elige el tiempo de sus propios mensajes.',
     );
     expect(contacts.es['groupPanel.inviteHint']).toBe('Solo le llega a contactos que también te tengan agregado.');
+  });
+
+  // accept_group_invite and decline_group_invite take the invitation out
+  // before anything else, and keep it out when they fail: no retry to promise.
+  it('promise no retry for an invitation the backend already took out', () => {
+    expect(contacts.es['contacts.invites.joinFailed']).toBe(
+      'No se pudo entrar a «{name}», y esa invitación ya no se puede usar. Pídele a {from} que te invite otra vez.',
+    );
+    for (const lang of ['es', 'en', 'pt'] as const) {
+      for (const key of ['contacts.invites.joinFailed', 'contacts.invites.declineFailed']) {
+        expect(contacts[lang][key], `${lang} ${key}`).not.toMatch(/inténtalo|try again|tente de novo/i);
+      }
+    }
   });
 
   // Plan §1.2: the event of a stranger is dropped, so Trino can only say someone tried.

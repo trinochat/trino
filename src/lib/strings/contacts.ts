@@ -68,7 +68,10 @@ export const contacts: AreaStrings = {
     'contacts.invites.joinLabel': 'Unirme a {name}',
     'contacts.invites.decline': 'Rechazar',
     'contacts.invites.declineLabel': 'Rechazar la invitación a {name}',
-    'contacts.invites.failed': 'No se pudo responder a la invitación. Inténtalo de nuevo.',
+    'contacts.invites.joinFailed':
+      'No se pudo entrar a «{name}», y esa invitación ya no se puede usar. Pídele a {from} que te invite otra vez.',
+    'contacts.invites.declineFailed':
+      'No se pudo rechazar la invitación a «{name}». Si vuelve a aparecer, recházala otra vez.',
     'contacts.invites.empty': 'No tienes invitaciones a grupos.',
     'contacts.invites.strangerOne':
       'Alguien que no está en tus contactos intentó escribirte. Trino todavía no puede mostrarte quién es: pídele su código.',
@@ -208,7 +211,9 @@ export const contacts: AreaStrings = {
     'contacts.invites.joinLabel': 'Join {name}',
     'contacts.invites.decline': 'Decline',
     'contacts.invites.declineLabel': 'Decline the invitation to {name}',
-    'contacts.invites.failed': 'The invitation could not be answered. Try again.',
+    'contacts.invites.joinFailed':
+      'You could not join “{name}”, and that invitation can no longer be used. Ask {from} to invite you again.',
+    'contacts.invites.declineFailed': 'The invitation to “{name}” could not be declined. If it comes back, decline it again.',
     'contacts.invites.empty': 'You have no group invitations.',
     'contacts.invites.strangerOne':
       'Someone who is not in your contacts tried to write to you. Trino cannot show you who it is yet: ask them for their code.',
@@ -348,7 +353,10 @@ export const contacts: AreaStrings = {
     'contacts.invites.joinLabel': 'Entrar em {name}',
     'contacts.invites.decline': 'Recusar',
     'contacts.invites.declineLabel': 'Recusar o convite para {name}',
-    'contacts.invites.failed': 'Não foi possível responder ao convite. Tente de novo.',
+    'contacts.invites.joinFailed':
+      'Não foi possível entrar em “{name}”, e esse convite não pode mais ser usado. Peça para {from} convidar você de novo.',
+    'contacts.invites.declineFailed':
+      'Não foi possível recusar o convite para “{name}”. Se ele aparecer de novo, recuse outra vez.',
     'contacts.invites.empty': 'Você não tem convites para grupos.',
     'contacts.invites.strangerOne':
       'Alguém que não está nos seus contatos tentou escrever para você. O Trino ainda não pode mostrar quem é: peça o código dessa pessoa.',

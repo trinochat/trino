@@ -34,12 +34,15 @@ function mount(props: Partial<InvitesPanelProps> = {}) {
     declineGroupInvite: vi.fn(async (_gid: string) => {}),
   };
   const handlers = { onGroupJoined: vi.fn(), onInvitesChanged: vi.fn() };
-  render(
+  const view = (more: Partial<InvitesPanelProps>) => (
     <I18nContext.Provider value={makeT('es')}>
-      <InvitesPanel api={api} invites={[invite('g1', 'Proyecto final')]} strangerAttempts={0} {...handlers} {...props} />
-    </I18nContext.Provider>,
+      <InvitesPanel api={api} invites={[invite('g1', 'Proyecto final')]} strangerAttempts={0} {...handlers} {...more} />
+    </I18nContext.Provider>
   );
-  return { api, ...handlers };
+  const { rerender } = render(view(props));
+  /** The shell read the invitations again. */
+  const reread = (invites: GroupInvite[]) => rerender(view({ ...props, invites }));
+  return { api, reread, ...handlers };
 }
 
 describe('InvitesPanel', () => {
@@ -81,15 +84,47 @@ describe('InvitesPanel', () => {
     expect(onGroupJoined).not.toHaveBeenCalled();
   });
 
-  it('says so when an answer fails, on that invitation only', async () => {
-    const { api, onGroupJoined } = mount({ invites: [invite('g1', 'Proyecto final'), invite('g2', 'Familia')] });
+  // accept_group_invite takes the invitation out before it tries to join, and
+  // keeps it out when joining fails (take_group_invite: "The invite is
+  // consumed either way"): a retry could only fail. So the panel reads the
+  // invitations again and says what is left to do, without promising a retry.
+  it('says a failed join used up that invitation, and reads the invitations again', async () => {
+    const { api, onGroupJoined, onInvitesChanged, reread } = mount({
+      invites: [invite('g1', 'Proyecto final'), invite('g2', 'Familia')],
+    });
     api.acceptGroupInvite.mockRejectedValueOnce(new Error('io'));
     fireEvent.click(screen.getByRole('button', { name: 'Unirme a Proyecto final' }));
     const alert = await screen.findByRole('alert');
-    expect(alert.textContent).toContain('No se pudo responder a la invitación.');
-    expect(screen.getAllByRole('article')[0]!.contains(alert)).toBe(true);
+    expect(alert.textContent).toBe(
+      'No se pudo entrar a «Proyecto final», y esa invitación ya no se puede usar. Pídele a Ana Torres que te invite otra vez.',
+    );
+    expect(onInvitesChanged).toHaveBeenCalledTimes(1);
     expect(onGroupJoined).not.toHaveBeenCalled();
-    expect((screen.getByRole('button', { name: 'Unirme a Proyecto final' }) as HTMLButtonElement).disabled).toBe(false);
+
+    // The used invitation is gone from the backend; the alert stays with the panel.
+    reread([invite('g2', 'Familia')]);
+    expect(screen.getAllByRole('article')).toHaveLength(1);
+    expect(screen.getByRole('alert').textContent).toContain('«Proyecto final»');
+  });
+
+  it('says a failed decline may come back, and reads the invitations again', async () => {
+    const { api, onInvitesChanged } = mount();
+    api.declineGroupInvite.mockRejectedValueOnce(new Error('io'));
+    fireEvent.click(screen.getByRole('button', { name: 'Rechazar la invitación a Proyecto final' }));
+    expect((await screen.findByRole('alert')).textContent).toBe(
+      'No se pudo rechazar la invitación a «Proyecto final». Si vuelve a aparecer, recházala otra vez.',
+    );
+    expect(onInvitesChanged).toHaveBeenCalledTimes(1);
+  });
+
+  it('clears what failed when another invitation is answered', async () => {
+    const { api, onGroupJoined } = mount({ invites: [invite('g1', 'Proyecto final'), invite('g2', 'Familia')] });
+    api.acceptGroupInvite.mockRejectedValueOnce(new Error('io'));
+    fireEvent.click(screen.getByRole('button', { name: 'Unirme a Proyecto final' }));
+    await screen.findByRole('alert');
+    fireEvent.click(screen.getByRole('button', { name: 'Unirme a Familia' }));
+    await waitFor(() => expect(onGroupJoined).toHaveBeenCalledWith('g2'));
+    expect(screen.queryByRole('alert')).toBeNull();
   });
 
   it('says when there are no invitations', () => {
