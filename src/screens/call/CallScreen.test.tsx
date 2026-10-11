@@ -78,6 +78,25 @@ describe('CallScreen', () => {
     expect(controller.confirmMatch).toHaveBeenCalledTimes(1);
   });
 
+  // A box that clips (overflow-hidden) loses its automatic minimum height in the card's column: the stage then
+  // never grew with the open comparison, and cut "Coinciden" and "No coinciden" off at 150 % text in 1024×700,
+  // in the smallest window, and under the alert of "No coinciden" (review of W6, measured in headless Edge).
+  // Only the call screen itself scrolls; whatever clips between it and the answers grows with what it holds.
+  it('lets the open comparison grow the call card instead of cutting its answers off', () => {
+    show({ sas: { indices: INDICES, verified: false } });
+    fireEvent.click(screen.getByRole('button', { name: /^Símbolos de la llamada/ }));
+    fireEvent.click(screen.getByRole('button', { name: 'No coinciden' }));
+    const clipping: string[] = [];
+    for (const answer of [screen.getByRole('button', { name: 'Coinciden' }), screen.getByRole('button', { name: 'No coinciden' })]) {
+      for (let box = answer.parentElement; box && box !== callScreen(); box = box.parentElement) {
+        if (/(?:^|\s)overflow-(?:y-)?(?:hidden|clip|auto|scroll)(?:\s|$)/.test(box.className) && !box.classList.contains('min-h-min')) {
+          clipping.push(box.className);
+        }
+      }
+    }
+    expect(clipping).toEqual([]);
+  });
+
   it('mutes and switches the camera with toggles whose icon shows the state', () => {
     const { controller, unmount } = show();
     const mute = screen.getByRole('button', { name: 'Silenciar micrófono' });

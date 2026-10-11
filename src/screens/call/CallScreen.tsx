@@ -91,7 +91,12 @@ export function CallScreen({ controller: call, outputs, sinkId, onSinkChange }: 
           />
         </header>
 
-        <div className="relative flex flex-[1_0_14.375rem] flex-col overflow-hidden rounded-ui bg-ui-raised">
+        {/*
+         * The stage clips the remote video to its corners, and so loses its automatic minimum height:
+         * min-h-min gives it back, so the open comparison grows the card (and this screen scrolls)
+         * instead of cutting "Coinciden" and "No coinciden" off.
+         */}
+        <div className="relative flex min-h-min flex-[1_0_14.375rem] flex-col overflow-hidden rounded-ui bg-ui-raised">
           {call.video && (
             <video
               ref={theirVideo}
