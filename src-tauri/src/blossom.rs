@@ -5,16 +5,40 @@
 //   2. upload the CIPHERTEXT to a Blossom server (BUD-01/02), addressed by its
 //      sha256, authorised with a signed kind-24242 nostr event,
 //   3. send only { url, key, sha256, name, mime, size } through the E2E chat.
-// The Blossom host only ever sees ciphertext.
+// The Blossom host only ever sees ciphertext. Every request goes through
+// net.rs: deadlines, no redirects, answers read up to a size.
 
 use crate::crypto::{aes_gcm_decrypt, aes_gcm_encrypt, random_array, sha256, CryptoError};
 use crate::identity::Identity;
+use crate::net::{self, Deadlines};
 use crate::nostr::build_and_sign_event;
 use base64::Engine;
+use serde::Serialize;
+use std::time::Duration;
 use thiserror::Error;
 
 // Default public Blossom servers (tried in order). The host only stores ciphertext.
 pub const DEFAULT_BLOSSOM: &[&str] = &["https://blossom.primal.net", "https://blossom.band"];
+
+/// How far back an authorization is dated. A server rejects one from its
+/// future (BUD-11: `created_at` must be in the past), so a clock that runs
+/// a little ahead of the server's must not make every upload fail.
+const AUTH_CLOCK_MARGIN_SECS: i64 = 60;
+/// How long an authorization stays valid, from now.
+const AUTH_LIFETIME_SECS: i64 = 3_600;
+/// Up to 25 MB each way on a slow line: generous, but never forever.
+const TRANSFER: Deadlines = Deadlines {
+    connect: Duration::from_secs(10),
+    total: Duration::from_secs(120),
+};
+/// The largest blob there can be: the largest attachment
+/// (`MAX_ATTACHMENT_BYTES` in commands.rs), its 12-byte nonce and its
+/// 16-byte tag. A download past it is refused.
+pub const MAX_BLOB_BYTES: usize = 25 * 1024 * 1024 + 12 + 16;
+/// The descriptor a server answers an upload with is small JSON.
+const MAX_DESCRIPTOR_BYTES: usize = 16 * 1024;
+/// How much of a server's `X-Reason` is kept.
+const MAX_REASON_CHARS: usize = 80;
 
 #[derive(Debug, Error)]
 pub enum BlossomError {
@@ -22,12 +46,22 @@ pub enum BlossomError {
     Crypto(#[from] CryptoError),
     #[error("http: {0}")]
     Http(String),
+    /// Every server failed: why, for each one, in the order they were tried.
     #[error("all blossom servers failed")]
-    AllFailed,
+    AllFailed { servers: Vec<ServerFailure> },
     #[error("hash mismatch — downloaded blob is corrupt or tampered")]
     HashMismatch,
     #[error("bad key/blob")]
     BadInput,
+}
+
+/// Why one server did not take or give a blob: `timeout`, `connect`,
+/// `network`, `http <status>` (with the server's `X-Reason`, BUD-01, when it
+/// gives one), `hash mismatch`, or an answer past its size. Never a URL.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub struct ServerFailure {
+    pub server: String,
+    pub reason: String,
 }
 
 pub struct EncryptedFile {
@@ -61,13 +95,18 @@ pub fn decrypt_file(blob: &[u8], key_hex: &str) -> Result<Vec<u8>, BlossomError>
     Ok(aes_gcm_decrypt(&key, ct, nonce, None)?)
 }
 
+/// The `Authorization` token of a request: a kind-24242 event (BUD-01),
+/// base64url without padding as BUD-11 asks, dated a minute back so a server
+/// whose clock runs behind ours still takes it.
 fn build_auth(identity: &Identity, verb: &str, sha256_hex: &str) -> Result<String, BlossomError> {
-    // Kind-24242 authorization event (BUD-01), base64'd into the Authorization header.
-    let expiration = chrono::Utc::now().timestamp() + 3600;
+    let now = chrono::Utc::now().timestamp();
     let tags = vec![
         vec!["t".to_string(), verb.to_string()],
         vec!["x".to_string(), sha256_hex.to_string()],
-        vec!["expiration".to_string(), expiration.to_string()],
+        vec![
+            "expiration".to_string(),
+            (now + AUTH_LIFETIME_SECS).to_string(),
+        ],
     ];
     let event = build_and_sign_event(
         &identity.nostr.priv_bytes,
@@ -75,11 +114,11 @@ fn build_auth(identity: &Identity, verb: &str, sha256_hex: &str) -> Result<Strin
         24242,
         &format!("{} blob", verb),
         tags,
-        None,
+        Some(now - AUTH_CLOCK_MARGIN_SECS),
     )
     .map_err(|e| BlossomError::Http(e.to_string()))?;
     let json = serde_json::to_string(&event).map_err(|e| BlossomError::Http(e.to_string()))?;
-    Ok(base64::engine::general_purpose::STANDARD.encode(json))
+    Ok(base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(json))
 }
 
 /// Upload ciphertext to the first Blossom server that accepts it. Returns the URL.
@@ -88,31 +127,92 @@ pub async fn upload(
     blob: &[u8],
     sha256_hex: &str,
 ) -> Result<String, BlossomError> {
+    upload_to(DEFAULT_BLOSSOM, TRANSFER, identity, blob, sha256_hex).await
+}
+
+/// `upload` to `servers`, in order, each with `deadlines`. When all fail,
+/// the error says why for each one (K2): nothing is swallowed.
+async fn upload_to(
+    servers: &[&str],
+    deadlines: Deadlines,
+    identity: &Identity,
+    blob: &[u8],
+    sha256_hex: &str,
+) -> Result<String, BlossomError> {
     let auth = build_auth(identity, "upload", sha256_hex)?;
-    let client = reqwest::Client::new();
-    for server in DEFAULT_BLOSSOM {
-        let url = format!("{}/upload", server.trim_end_matches('/'));
-        let res = client
-            .put(&url)
-            .header("Authorization", format!("Nostr {}", auth))
-            .header("Content-Type", "application/octet-stream")
-            .body(blob.to_vec())
-            .send()
-            .await;
-        match res {
-            Ok(r) if r.status().is_success() => {
-                if let Ok(desc) = r.json::<serde_json::Value>().await {
-                    if let Some(u) = desc.get("url").and_then(|v| v.as_str()) {
-                        return Ok(u.to_string());
-                    }
-                }
-                // Fallback: canonical address form if the descriptor lacks `url`.
-                return Ok(format!("{}/{}", server.trim_end_matches('/'), sha256_hex));
-            }
-            _ => continue,
+    let client = net::client(deadlines).map_err(|e| BlossomError::Http(e.to_string()))?;
+    let mut failures = Vec::new();
+    for server in servers {
+        match put_blob(&client, server, &auth, blob, sha256_hex).await {
+            Ok(url) => return Ok(url),
+            Err(reason) => failures.push(ServerFailure {
+                server: server.to_string(),
+                reason,
+            }),
         }
     }
-    Err(BlossomError::AllFailed)
+    Err(BlossomError::AllFailed { servers: failures })
+}
+
+/// PUT `blob` on `server`: the URL it is at, or why not.
+async fn put_blob(
+    client: &reqwest::Client,
+    server: &str,
+    auth: &str,
+    blob: &[u8],
+    sha256_hex: &str,
+) -> Result<String, String> {
+    let base = server.trim_end_matches('/');
+    let mut response = client
+        .put(format!("{base}/upload"))
+        .header(reqwest::header::AUTHORIZATION, format!("Nostr {auth}"))
+        .header(reqwest::header::CONTENT_TYPE, "application/octet-stream")
+        .body(blob.to_vec())
+        .send()
+        .await
+        .map_err(|e| net::reason(&e).to_string())?;
+    if !response.status().is_success() {
+        return Err(http_failure(&response));
+    }
+    // The blob is stored: the descriptor only says where. Without a usable
+    // `url` in it, the canonical address.
+    let url = net::read_capped(&mut response, MAX_DESCRIPTOR_BYTES)
+        .await
+        .ok()
+        .and_then(|body| serde_json::from_slice::<serde_json::Value>(&body).ok())
+        .and_then(|descriptor| descriptor.get("url")?.as_str().map(str::to_string));
+    Ok(url.unwrap_or_else(|| format!("{base}/{sha256_hex}")))
+}
+
+/// `http <status>`, followed by the server's `X-Reason` when it gives one,
+/// stripped of control characters and cut short.
+fn http_failure(response: &reqwest::Response) -> String {
+    let status = response.status().as_u16();
+    let reason: String = response
+        .headers()
+        .get("x-reason")
+        .and_then(|value| value.to_str().ok())
+        .map(|value| {
+            value
+                .chars()
+                .filter(|c| !c.is_control())
+                .take(MAX_REASON_CHARS)
+                .collect::<String>()
+        })
+        .unwrap_or_default();
+    match reason.trim() {
+        "" => format!("http {status}"),
+        reason => format!("http {status}: {reason}"),
+    }
+}
+
+/// A sha256 in lower-case hex, the only thing that goes into a download URL:
+/// it comes from the peer's `FileRef`.
+fn is_sha256_hex(value: &str) -> bool {
+    value.len() == 64
+        && value
+            .bytes()
+            .all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
 }
 
 /// Download a blob by hash and verify its sha256 before returning it.
@@ -122,24 +222,58 @@ pub async fn upload(
 /// deanonymization). Blossom is content-addressed, so we refetch the blob by
 /// hash from OUR OWN known servers only — never a host the peer chose.
 pub async fn download(_url: &str, sha256_hex: &str) -> Result<Vec<u8>, BlossomError> {
-    for server in DEFAULT_BLOSSOM {
-        let addr = format!("{}/{}", server.trim_end_matches('/'), sha256_hex);
-        let Ok(res) = reqwest::get(&addr).await else {
-            continue;
-        };
-        if !res.status().is_success() {
-            continue;
-        }
-        let Ok(bytes) = res.bytes().await else {
-            continue;
-        };
-        let bytes = bytes.to_vec();
-        if hex::encode(sha256(&bytes)) == sha256_hex {
-            return Ok(bytes);
-        }
-        // Hash mismatch from this server → try the next, don't trust it.
+    download_from(DEFAULT_BLOSSOM, TRANSFER, MAX_BLOB_BYTES, sha256_hex).await
+}
+
+/// `download` from `servers`, in order, each with `deadlines` and at most
+/// `max` bytes.
+async fn download_from(
+    servers: &[&str],
+    deadlines: Deadlines,
+    max: usize,
+    sha256_hex: &str,
+) -> Result<Vec<u8>, BlossomError> {
+    if !is_sha256_hex(sha256_hex) {
+        return Err(BlossomError::BadInput);
     }
-    Err(BlossomError::AllFailed)
+    let client = net::client(deadlines).map_err(|e| BlossomError::Http(e.to_string()))?;
+    let mut failures = Vec::new();
+    for server in servers {
+        match get_blob(&client, server, max, sha256_hex).await {
+            Ok(bytes) => return Ok(bytes),
+            Err(reason) => failures.push(ServerFailure {
+                server: server.to_string(),
+                reason,
+            }),
+        }
+    }
+    Err(BlossomError::AllFailed { servers: failures })
+}
+
+/// GET the blob `sha256_hex` from `server`, or why not.
+async fn get_blob(
+    client: &reqwest::Client,
+    server: &str,
+    max: usize,
+    sha256_hex: &str,
+) -> Result<Vec<u8>, String> {
+    let address = format!("{}/{}", server.trim_end_matches('/'), sha256_hex);
+    let mut response = client
+        .get(&address)
+        .send()
+        .await
+        .map_err(|e| net::reason(&e).to_string())?;
+    if !response.status().is_success() {
+        return Err(http_failure(&response));
+    }
+    let bytes = net::read_capped(&mut response, max)
+        .await
+        .map_err(|e| e.to_string())?;
+    // A server that sends other bytes is not trusted: the next one is tried.
+    if hex::encode(sha256(&bytes)) != sha256_hex {
+        return Err("hash mismatch".to_string());
+    }
+    Ok(bytes)
 }
 
 #[cfg(test)]
@@ -175,5 +309,222 @@ mod tests {
     fn sha_addresses_ciphertext() {
         let enc = encrypt_file(b"hola").unwrap();
         assert_eq!(hex::encode(sha256(&enc.blob)), enc.sha256_hex);
+    }
+
+    // ---- K2: authorization, failures and deadlines ----
+
+    use crate::identity::create_identity;
+    use crate::net::mock::{self, Reply};
+    use crate::nostr::{verify_event, NostrEvent};
+    use std::time::Duration;
+
+    const QUICK: Deadlines = Deadlines {
+        connect: Duration::from_secs(2),
+        total: Duration::from_millis(500),
+    };
+
+    fn sha_of(blob: &[u8]) -> String {
+        hex::encode(sha256(blob))
+    }
+
+    fn tag<'a>(event: &'a NostrEvent, name: &str) -> &'a str {
+        event
+            .tags
+            .iter()
+            .find(|t| t.first().map(String::as_str) == Some(name))
+            .and_then(|t| t.get(1))
+            .map(String::as_str)
+            .unwrap_or_else(|| panic!("missing tag {name}"))
+    }
+
+    /// Fails the test instead of hanging when a transfer has no deadline.
+    async fn within<T>(work: impl std::future::Future<Output = T>) -> T {
+        tokio::time::timeout(Duration::from_secs(5), work)
+            .await
+            .expect("still waiting after 5 s: no deadline")
+    }
+
+    #[test]
+    fn the_authorization_is_base64url_without_padding() {
+        // BUD-11. A long event almost always has a '+' or a '/' in standard
+        // base64, and some padding: try a few.
+        let me = create_identity();
+        for n in 0..8u8 {
+            let sha = hex::encode([n; 32]);
+            let token = build_auth(&me, "upload", &sha).unwrap();
+            assert!(!token.contains(['+', '/', '=']), "{token}");
+            let json = base64::engine::general_purpose::URL_SAFE_NO_PAD
+                .decode(&token)
+                .expect("base64url without padding");
+            let event: NostrEvent = serde_json::from_slice(&json).unwrap();
+            assert!(verify_event(&event));
+            assert_eq!(event.kind, 24242);
+            assert_eq!(tag(&event, "t"), "upload");
+            assert_eq!(tag(&event, "x"), sha);
+        }
+    }
+
+    #[test]
+    fn the_authorization_is_dated_back_for_a_server_clock_behind_ours() {
+        // A server rejects an authorization from its future (BUD-11).
+        let me = create_identity();
+        let now = chrono::Utc::now().timestamp();
+        let token = build_auth(&me, "upload", &hex::encode([1u8; 32])).unwrap();
+        let json = base64::engine::general_purpose::URL_SAFE_NO_PAD
+            .decode(&token)
+            .unwrap();
+        let event: NostrEvent = serde_json::from_slice(&json).unwrap();
+
+        assert!(
+            (event.created_at - (now - AUTH_CLOCK_MARGIN_SECS)).abs() <= 5,
+            "created_at {} is not a minute back from {now}",
+            event.created_at
+        );
+        assert_eq!(AUTH_CLOCK_MARGIN_SECS, 60);
+        let expiration: i64 = tag(&event, "expiration").parse().unwrap();
+        assert!((expiration - (now + 3_600)).abs() <= 5, "{expiration}");
+    }
+
+    #[tokio::test]
+    async fn an_upload_moves_on_to_the_next_server_when_one_fails() {
+        let me = create_identity();
+        let blob = b"ciphertext".to_vec();
+        let sha = sha_of(&blob);
+        let (failing, _) =
+            mock::serve(|_| vec![mock::response("500 Internal Server Error", "", b"")]).await;
+        let descriptor =
+            |base: &str| format!(r#"{{"url":"{base}/{}","size":10}}"#, sha_of(b"ciphertext"));
+        let (working, seen) = mock::serve(|base| {
+            vec![mock::response(
+                "200 OK",
+                "Content-Type: application/json\r\n",
+                descriptor(base).as_bytes(),
+            )]
+        })
+        .await;
+
+        let url = within(upload_to(&[&failing, &working], QUICK, &me, &blob, &sha))
+            .await
+            .unwrap();
+
+        assert_eq!(url, format!("{working}/{sha}"));
+        let seen = seen.lock().unwrap();
+        let request = &seen[0];
+        assert!(
+            request.head.starts_with("PUT /upload HTTP/1.1\r\n"),
+            "{}",
+            request.head
+        );
+        assert_eq!(request.body, blob);
+        let auth = mock::header(&request.head, "authorization").unwrap();
+        let token = auth.strip_prefix("Nostr ").expect("the Nostr scheme");
+        assert!(base64::engine::general_purpose::URL_SAFE_NO_PAD
+            .decode(token)
+            .is_ok());
+    }
+
+    #[tokio::test]
+    async fn when_every_server_fails_the_error_says_why_for_each() {
+        let me = create_identity();
+        let blob = b"ciphertext".to_vec();
+        let (refusing, _) = mock::serve(|_| {
+            vec![mock::response(
+                "413 Payload Too Large",
+                "X-Reason: blob too big\r\n",
+                b"",
+            )]
+        })
+        .await;
+        let (silent, _) = mock::serve(|_| vec![Reply::Never]).await;
+        let (plain_error, _) =
+            mock::serve(|_| vec![mock::response("503 Service Unavailable", "", b"")]).await;
+
+        let error = within(upload_to(
+            &[&refusing, &silent, &plain_error],
+            QUICK,
+            &me,
+            &blob,
+            &sha_of(&blob),
+        ))
+        .await
+        .unwrap_err();
+
+        let BlossomError::AllFailed { servers } = error else {
+            panic!("expected AllFailed, got {error:?}");
+        };
+        let failure = |server: &str, reason: &str| ServerFailure {
+            server: server.to_string(),
+            reason: reason.to_string(),
+        };
+        assert_eq!(
+            servers,
+            [
+                failure(&refusing, "http 413: blob too big"),
+                failure(&silent, "timeout"),
+                failure(&plain_error, "http 503"),
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn a_download_moves_on_from_a_silent_or_lying_server() {
+        let blob = b"the encrypted file".to_vec();
+        let sha = sha_of(&blob);
+        let (silent, _) = mock::serve(|_| vec![Reply::Never]).await;
+        let (lying, _) = mock::serve(|_| vec![mock::response("200 OK", "", b"other bytes")]).await;
+        let (working, seen) = mock::serve(|_| vec![mock::response("200 OK", "", &blob)]).await;
+
+        let got = within(download_from(
+            &[&silent, &lying, &working],
+            QUICK,
+            1024,
+            &sha,
+        ))
+        .await
+        .unwrap();
+
+        assert_eq!(got, blob);
+        assert!(seen.lock().unwrap()[0]
+            .head
+            .starts_with(&format!("GET /{sha} HTTP/1.1\r\n")));
+    }
+
+    #[tokio::test]
+    async fn a_download_larger_than_any_file_is_refused() {
+        let blob = vec![7u8; 2048];
+        let (big, _) = mock::serve(|_| vec![mock::until_close("200 OK", &blob)]).await;
+
+        // Lengths only: a failure must not print every byte.
+        let error = within(download_from(&[&big], QUICK, 1024, &sha_of(&blob)))
+            .await
+            .map(|got| got.len())
+            .unwrap_err();
+
+        let BlossomError::AllFailed { servers } = error else {
+            panic!("expected AllFailed, got {error:?}");
+        };
+        assert_eq!(servers[0].reason, "the answer is larger than 1024 bytes");
+    }
+
+    #[tokio::test]
+    async fn a_hash_that_is_not_one_never_goes_into_a_url() {
+        // It comes from the peer's FileRef.
+        let (server, seen) = mock::serve(|_| vec![mock::response("200 OK", "", b"x")]).await;
+        for bad in ["../../etc/passwd", "ABCD", "", &"g".repeat(64)] {
+            let error = download_from(&[&server], QUICK, 1024, bad)
+                .await
+                .unwrap_err();
+            assert!(
+                matches!(error, BlossomError::BadInput),
+                "{bad:?}: {error:?}"
+            );
+        }
+        assert!(seen.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn the_largest_blob_is_the_largest_attachment_sealed() {
+        // 25 MB of file, its 12-byte nonce and its 16-byte tag.
+        assert_eq!(MAX_BLOB_BYTES, 25 * 1024 * 1024 + 12 + 16);
     }
 }

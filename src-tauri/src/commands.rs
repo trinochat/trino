@@ -1609,33 +1609,37 @@ pub async fn send_group_message(
 }
 
 /// Encrypt file bytes, upload the ciphertext to Blossom, return the E2E reference.
+/// When every file server fails, the error says why for each (`upload_failed`).
 async fn prepare_file(
-    state: &State<'_, AppState>,
+    state: &AppState,
     name: &str,
     mime: &str,
     data_b64: &str,
     thumb: Option<String>,
-) -> Result<FileRef, String> {
+) -> Result<FileRef, CommandError> {
+    let too_large = || CommandError::internal("attachment is too large (25 MB max)");
     if data_b64.len() > MAX_ATTACHMENT_BYTES.div_ceil(3) * 4 + 4 {
-        return Err("attachment is too large (25 MB max)".to_string());
+        return Err(too_large());
     }
     let mut data = base64::engine::general_purpose::STANDARD
         .decode(data_b64)
-        .map_err(|_| "bad base64".to_string())?;
+        .map_err(|_| CommandError::internal("bad base64"))?;
     if data.len() > MAX_ATTACHMENT_BYTES {
-        return Err("attachment is too large (25 MB max)".to_string());
+        return Err(too_large());
     }
-    let thumb = checked_inline_raster(thumb)?;
+    let thumb = checked_inline_raster(thumb).map_err(CommandError::internal)?;
     let size = data.len() as u64;
-    let enc = blossom::encrypt_file(&data).map_err(|e| e.to_string())?;
+    let enc = blossom::encrypt_file(&data)?;
     data.zeroize();
     let identity = {
         let inner = state.inner.lock().await;
-        inner.identity.as_ref().ok_or("vault sealed")?.clone()
+        inner
+            .identity
+            .as_ref()
+            .ok_or_else(|| CommandError::new(ErrorCode::NoVault, "vault sealed"))?
+            .clone()
     };
-    let url = blossom::upload(&identity, &enc.blob, &enc.sha256_hex)
-        .await
-        .map_err(|e| e.to_string())?;
+    let url = blossom::upload(&identity, &enc.blob, &enc.sha256_hex).await?;
     Ok(FileRef {
         url,
         key: enc.key_hex,
@@ -1655,15 +1659,19 @@ pub async fn send_file(
     mime: String,
     data_b64: String,
     thumb: Option<String>,
-) -> Result<FileRef, String> {
+) -> Result<FileRef, CommandError> {
     let file = prepare_file(&state, &name, &mime, &data_b64, thumb).await?;
     let env = encode_envelope(&Envelope::File {
         file: file.clone(),
         gid: None,
         body: None,
     });
-    ensure_session_inner(&state, &handle).await?;
-    send_cipher_inner(&state, &handle, &env, None).await?;
+    ensure_session_inner(&state, &handle)
+        .await
+        .map_err(CommandError::internal)?;
+    send_cipher_inner(&state, &handle, &env, None)
+        .await
+        .map_err(CommandError::internal)?;
     let mut inner = state.inner.lock().await;
     record_history(
         &mut inner,
@@ -1687,13 +1695,21 @@ pub async fn send_group_file(
     mime: String,
     data_b64: String,
     thumb: Option<String>,
-) -> Result<FileRef, String> {
+) -> Result<FileRef, CommandError> {
     let file = prepare_file(&state, &name, &mime, &data_b64, thumb).await?;
     let (targets, env) = {
         let inner = state.inner.lock().await;
-        let identity = inner.identity.as_ref().ok_or("vault sealed")?.clone();
+        let identity = inner
+            .identity
+            .as_ref()
+            .ok_or_else(|| CommandError::new(ErrorCode::NoVault, "vault sealed"))?
+            .clone();
         let my_ik = hex::encode(identity.ik_sign.pub_bytes);
-        let roster = inner.groups.get(&gid).ok_or("unknown group")?.clone();
+        let roster = inner
+            .groups
+            .get(&gid)
+            .ok_or_else(|| CommandError::internal("unknown group"))?
+            .clone();
         let env = encode_envelope(&Envelope::File {
             file: file.clone(),
             gid: Some(gid.clone()),
@@ -1714,8 +1730,12 @@ pub async fn send_group_file(
         (targets, env)
     };
     for handle in targets {
-        ensure_session_inner(&state, &handle).await?;
-        send_cipher_inner(&state, &handle, &env, None).await?;
+        ensure_session_inner(&state, &handle)
+            .await
+            .map_err(CommandError::internal)?;
+        send_cipher_inner(&state, &handle, &env, None)
+            .await
+            .map_err(CommandError::internal)?;
     }
     let mut inner = state.inner.lock().await;
     record_history(

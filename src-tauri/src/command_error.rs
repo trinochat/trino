@@ -1,8 +1,9 @@
 //! The error of the commands that create and open the identity: `forge`,
-//! `unseal`, `totp_begin` and `totp_verify`. The UI shows its own text for
-//! each `code`; the `message` is English for the log. Every other command
-//! still fails with a plain string.
+//! `unseal`, `totp_begin` and `totp_verify`, and of the redesign's commands
+//! after them. The UI shows its own text for each `code`; the `message` is
+//! English for the log. The older commands still fail with a plain string.
 
+use crate::blossom::{BlossomError, ServerFailure};
 use crate::passphrase::PassphraseError;
 use crate::vault::VaultError;
 use serde::Serialize;
@@ -27,6 +28,9 @@ pub enum ErrorCode {
     UnsupportedVault,
     Io,
     Internal,
+    // -- W7 --
+    /// Every file server failed to take an upload; `servers` says why (K2).
+    UploadFailed,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
@@ -36,6 +40,9 @@ pub struct CommandError {
     /// The minimum length, with `PassphraseTooShort` only.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub min: Option<usize>,
+    /// Why each file server failed, with `UploadFailed` only (K2).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub servers: Option<Vec<ServerFailure>>,
 }
 
 impl CommandError {
@@ -44,6 +51,15 @@ impl CommandError {
             code,
             message: message.into(),
             min: None,
+            servers: None,
+        }
+    }
+
+    /// Every file server failed: `servers` says why, for each one.
+    pub fn upload_failed(servers: Vec<ServerFailure>) -> Self {
+        CommandError {
+            servers: Some(servers),
+            ..CommandError::new(ErrorCode::UploadFailed, "every file server failed")
         }
     }
 
@@ -82,6 +98,17 @@ impl From<VaultError> for CommandError {
             | VaultError::Identity(_) => ErrorCode::Internal,
         };
         CommandError::new(code, error.to_string())
+    }
+}
+
+impl From<BlossomError> for CommandError {
+    fn from(error: BlossomError) -> Self {
+        match error {
+            BlossomError::AllFailed { servers } => CommandError::upload_failed(servers),
+            // A bad key or blob, or a failure in the crypto: nothing a file
+            // server did.
+            other => CommandError::internal(other.to_string()),
+        }
     }
 }
 
@@ -191,6 +218,7 @@ mod tests {
             ErrorCode::UnsupportedVault,
             ErrorCode::Io,
             ErrorCode::Internal,
+            ErrorCode::UploadFailed,
         ]
         .iter()
         .map(|code| serde_json::to_value(code).unwrap())
@@ -209,7 +237,43 @@ mod tests {
                 "unsupported_vault",
                 "io",
                 "internal",
+                "upload_failed",
             ]
         );
+    }
+
+    #[test]
+    fn an_upload_failure_reaches_the_ui_with_each_server() {
+        use crate::blossom::{BlossomError, ServerFailure};
+        let failed = CommandError::from(BlossomError::AllFailed {
+            servers: vec![
+                ServerFailure {
+                    server: "https://blossom.primal.net".to_string(),
+                    reason: "http 413: blob too big".to_string(),
+                },
+                ServerFailure {
+                    server: "https://blossom.band".to_string(),
+                    reason: "timeout".to_string(),
+                },
+            ],
+        });
+        assert_eq!(
+            serde_json::to_value(&failed).unwrap(),
+            json!({
+                "code": "upload_failed",
+                "message": "every file server failed",
+                "servers": [
+                    { "server": "https://blossom.primal.net", "reason": "http 413: blob too big" },
+                    { "server": "https://blossom.band", "reason": "timeout" },
+                ],
+            })
+        );
+        // Anything else from Blossom is internal, and has no `servers`.
+        let other = CommandError::from(BlossomError::BadInput);
+        assert_eq!(other.code, ErrorCode::Internal);
+        assert!(serde_json::to_value(&other)
+            .unwrap()
+            .get("servers")
+            .is_none());
     }
 }
