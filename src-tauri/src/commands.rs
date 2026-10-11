@@ -1316,37 +1316,47 @@ pub async fn resync_session(state: State<'_, AppState>, handle: String) -> Resul
     Ok(())
 }
 
+/// A text to a contact (K4). It counts as sent once a relay says OK, and is
+/// stored with the time of that receipt, which says which relay took it.
 #[tauri::command]
 pub async fn send_message(
     state: State<'_, AppState>,
     handle: String,
     text: String,
-) -> Result<(), String> {
+) -> Result<SendReceipt, CommandError> {
+    Ok(send_text(&state, &handle, text, ACK_WAIT).await?)
+}
+
+/// `send_message`, waiting up to `wait` for a relay's OK.
+async fn send_text(
+    state: &AppState,
+    handle: &str,
+    text: String,
+    wait: std::time::Duration,
+) -> Result<SendReceipt, SendError> {
     if text.trim().is_empty() {
-        return Err("empty message".to_string());
+        return Err(SendError::Empty);
     }
     let id = new_msg_id();
     let env = encode_envelope(&Envelope::Text {
         body: text.clone(),
         id: id.clone(),
     });
-    send_cipher_inner(&state, &handle, &env, None)
-        .await
-        .map_err(|e| e.to_string())?;
+    let receipt = send_acked(state, handle, &env, unix_now(), wait).await?;
     let mut inner = state.inner.lock().await;
-    remember_outgoing(&mut inner, &handle, id, env);
+    remember_outgoing(&mut inner, handle, id, env);
     record_history(
         &mut inner,
-        handle.clone(),
+        handle.to_string(),
         HistItem {
             side: "me".into(),
             from: None,
             text: Some(text),
             file: None,
-            ts: chrono::Utc::now().timestamp(),
+            ts: receipt.ts,
         },
     );
-    Ok(())
+    Ok(receipt)
 }
 
 #[tauri::command]
@@ -1465,17 +1475,22 @@ fn group_info(roster: &GroupRoster, my_ik: &str) -> GroupInfo {
 }
 
 /// Establish a pairwise session with `handle` (initiate + send handshake) if none.
-async fn ensure_session_inner(state: &State<'_, AppState>, handle: &str) -> Result<(), String> {
+async fn ensure_session(state: &AppState, handle: &str) -> Result<(), SendError> {
+    let failed = |e: &dyn std::fmt::Display| SendError::Failed(e.to_string());
     let handshake = {
         let mut inner = state.inner.lock().await;
         if inner.ratchets.contains_key(handle) {
             return Ok(());
         }
-        let identity = inner.identity.as_ref().ok_or("vault sealed")?.clone();
-        let friend = inner.friends.get(handle).ok_or("unknown node")?.clone();
-        let init = initiate(&identity, &friend.bundle).map_err(|e| e.to_string())?;
-        let spk_pub = decode_array_32(&friend.bundle.spk_pub).map_err(|e| e.to_string())?;
-        let ratchet = init_initiator(init.master_secret, spk_pub).map_err(|e| e.to_string())?;
+        let identity = inner.identity.as_ref().ok_or(SendError::Sealed)?.clone();
+        let friend = inner
+            .friends
+            .get(handle)
+            .ok_or(SendError::UnknownContact)?
+            .clone();
+        let init = initiate(&identity, &friend.bundle).map_err(|e| failed(&e))?;
+        let spk_pub = decode_array_32(&friend.bundle.spk_pub).map_err(|e| failed(&e))?;
+        let ratchet = init_initiator(init.master_secret, spk_pub).map_err(|e| failed(&e))?;
         inner.ratchets.insert(handle.to_string(), ratchet);
         inner
             .associated_data
@@ -1488,7 +1503,14 @@ async fn ensure_session_inner(state: &State<'_, AppState>, handle: &str) -> Resu
             opk_id: init.message.opk_id,
         }
     };
-    send_cipher_inner(state, handle, b"__trino_handshake__", Some(handshake)).await
+    publish_sealed(state, handle, b"__trino_handshake__", Some(handshake)).await
+}
+
+/// `ensure_session`, for the callers that answer with a string.
+async fn ensure_session_inner(state: &AppState, handle: &str) -> Result<(), String> {
+    ensure_session(state, handle)
+        .await
+        .map_err(|e| e.to_string())
 }
 
 /// Send the signed roster to every member (except us) over their pairwise channel.
@@ -1587,57 +1609,60 @@ pub async fn add_group_member(
     Ok(group_info(&roster, &my_ik))
 }
 
+/// A text to a group (K4). Every member is tried, whatever happens to the
+/// others, and the receipt says whom it reached. `only` resends to the
+/// members it names after a partial failure: the first send stored the
+/// message, so a resend does not store it again.
 #[tauri::command]
 pub async fn send_group_message(
     state: State<'_, AppState>,
     gid: String,
     text: String,
-) -> Result<(), String> {
+    only: Option<Vec<String>>,
+) -> Result<GroupSendReceipt, CommandError> {
+    Ok(send_group_text(&state, &gid, text, only.as_deref(), ACK_WAIT).await?)
+}
+
+/// `send_group_message`, waiting up to `wait` for each member's relay OK.
+async fn send_group_text(
+    state: &AppState,
+    gid: &str,
+    text: String,
+    only: Option<&[String]>,
+    wait: std::time::Duration,
+) -> Result<GroupSendReceipt, SendError> {
     if text.trim().is_empty() {
-        return Err("empty message".to_string());
+        return Err(SendError::Empty);
     }
     let (targets, env) = {
         let inner = state.inner.lock().await;
-        let identity = inner.identity.as_ref().ok_or("vault sealed")?.clone();
+        let identity = inner.identity.as_ref().ok_or(SendError::Sealed)?;
         let my_ik = hex::encode(identity.ik_sign.pub_bytes);
-        let roster = inner.groups.get(&gid).ok_or("unknown group")?.clone();
+        let roster = inner.groups.get(gid).ok_or(SendError::UnknownGroup)?;
         let env = encode_envelope(&Envelope::Group {
-            gid: gid.clone(),
+            gid: gid.to_string(),
             ep: roster.epoch,
             body: text.clone(),
         });
-        let targets: Vec<String> = roster
-            .members
-            .iter()
-            .filter(|m| m.ik_sign_pub != my_ik)
-            .filter_map(|m| {
-                inner
-                    .friends
-                    .values()
-                    .find(|f| f.bundle.ik_sign_pub == m.ik_sign_pub)
-                    .map(|f| f.handle.clone())
-            })
-            .collect();
-        (targets, env)
+        (member_handles(&inner, roster, &my_ik, only), env)
     };
     crate::diag::note_with("group send", &[("members", &targets.len())]);
-    for handle in targets {
-        ensure_session_inner(&state, &handle).await?;
-        send_cipher_inner(&state, &handle, &env, None).await?;
+    let receipt = fan_out(state, &targets, &env, unix_now(), wait).await?;
+    if only.is_none() {
+        let mut inner = state.inner.lock().await;
+        record_history(
+            &mut inner,
+            group_convo(gid),
+            HistItem {
+                side: "me".into(),
+                from: None,
+                text: Some(text),
+                file: None,
+                ts: receipt.ts,
+            },
+        );
     }
-    let mut inner = state.inner.lock().await;
-    record_history(
-        &mut inner,
-        group_convo(&gid),
-        HistItem {
-            side: "me".into(),
-            from: None,
-            text: Some(text),
-            file: None,
-            ts: chrono::Utc::now().timestamp(),
-        },
-    );
-    Ok(())
+    Ok(receipt)
 }
 
 /// Encrypt file bytes, upload the ciphertext to Blossom, return the E2E reference.
@@ -1653,24 +1678,28 @@ async fn prepare_file(
     if data_b64.len() > MAX_ATTACHMENT_BYTES.div_ceil(3) * 4 + 4 {
         return Err(too_large());
     }
-    let mut data = base64::engine::general_purpose::STANDARD
-        .decode(data_b64)
-        .map_err(|_| CommandError::internal("bad base64"))?;
+    let thumb = checked_inline_raster(thumb).map_err(CommandError::internal)?;
+    let identity = {
+        let inner = state.inner.lock().await;
+        let identity = inner.identity.as_ref().ok_or(SendError::Sealed)?.clone();
+        // With no relay to announce the file, the upload would be wasted (K4).
+        if !inner.relays.iter().any(|relay| relay.is_connected()) {
+            return Err(SendError::Offline.into());
+        }
+        identity
+    };
+    // Wiped when dropped, whichever way this returns.
+    let data = Zeroizing::new(
+        base64::engine::general_purpose::STANDARD
+            .decode(data_b64)
+            .map_err(|_| CommandError::internal("bad base64"))?,
+    );
     if data.len() > MAX_ATTACHMENT_BYTES {
         return Err(too_large());
     }
-    let thumb = checked_inline_raster(thumb).map_err(CommandError::internal)?;
     let size = data.len() as u64;
     let enc = blossom::encrypt_file(&data)?;
-    data.zeroize();
-    let identity = {
-        let inner = state.inner.lock().await;
-        inner
-            .identity
-            .as_ref()
-            .ok_or_else(|| CommandError::new(ErrorCode::NoVault, "vault sealed"))?
-            .clone()
-    };
+    drop(data);
     let url = blossom::upload(&identity, &enc.blob, &enc.sha256_hex).await?;
     Ok(FileRef {
         url,
@@ -1683,6 +1712,8 @@ async fn prepare_file(
     })
 }
 
+/// A file to a contact (K4): uploaded, then announced like a text, and sent
+/// once a relay says OK. Answers with the file and its receipt together.
 #[tauri::command]
 pub async fn send_file(
     state: State<'_, AppState>,
@@ -1691,19 +1722,15 @@ pub async fn send_file(
     mime: String,
     data_b64: String,
     thumb: Option<String>,
-) -> Result<FileRef, CommandError> {
+) -> Result<SentFile, CommandError> {
     let file = prepare_file(&state, &name, &mime, &data_b64, thumb).await?;
     let env = encode_envelope(&Envelope::File {
         file: file.clone(),
         gid: None,
         body: None,
     });
-    ensure_session_inner(&state, &handle)
-        .await
-        .map_err(CommandError::internal)?;
-    send_cipher_inner(&state, &handle, &env, None)
-        .await
-        .map_err(CommandError::internal)?;
+    ensure_session(&state, &handle).await?;
+    let receipt = send_acked(&state, &handle, &env, unix_now(), ACK_WAIT).await?;
     let mut inner = state.inner.lock().await;
     record_history(
         &mut inner,
@@ -1713,12 +1740,15 @@ pub async fn send_file(
             from: None,
             text: None,
             file: Some(file.clone()),
-            ts: chrono::Utc::now().timestamp(),
+            ts: receipt.ts,
         },
     );
-    Ok(file)
+    Ok(SentFile { file, receipt })
 }
 
+/// A file to a group (K4), like `send_group_message`: every member is
+/// tried, `only` resends to the members it names and does not store it
+/// again.
 #[tauri::command]
 pub async fn send_group_file(
     state: State<'_, AppState>,
@@ -1727,61 +1757,37 @@ pub async fn send_group_file(
     mime: String,
     data_b64: String,
     thumb: Option<String>,
-) -> Result<FileRef, CommandError> {
+    only: Option<Vec<String>>,
+) -> Result<SentGroupFile, CommandError> {
     let file = prepare_file(&state, &name, &mime, &data_b64, thumb).await?;
     let (targets, env) = {
         let inner = state.inner.lock().await;
-        let identity = inner
-            .identity
-            .as_ref()
-            .ok_or_else(|| CommandError::new(ErrorCode::NoVault, "vault sealed"))?
-            .clone();
+        let identity = inner.identity.as_ref().ok_or(SendError::Sealed)?;
         let my_ik = hex::encode(identity.ik_sign.pub_bytes);
-        let roster = inner
-            .groups
-            .get(&gid)
-            .ok_or_else(|| CommandError::internal("unknown group"))?
-            .clone();
+        let roster = inner.groups.get(&gid).ok_or(SendError::UnknownGroup)?;
         let env = encode_envelope(&Envelope::File {
             file: file.clone(),
             gid: Some(gid.clone()),
             body: None,
         });
-        let targets: Vec<String> = roster
-            .members
-            .iter()
-            .filter(|m| m.ik_sign_pub != my_ik)
-            .filter_map(|m| {
-                inner
-                    .friends
-                    .values()
-                    .find(|f| f.bundle.ik_sign_pub == m.ik_sign_pub)
-                    .map(|f| f.handle.clone())
-            })
-            .collect();
-        (targets, env)
+        (member_handles(&inner, roster, &my_ik, only.as_deref()), env)
     };
-    for handle in targets {
-        ensure_session_inner(&state, &handle)
-            .await
-            .map_err(CommandError::internal)?;
-        send_cipher_inner(&state, &handle, &env, None)
-            .await
-            .map_err(CommandError::internal)?;
+    let receipt = fan_out(&state, &targets, &env, unix_now(), ACK_WAIT).await?;
+    if only.is_none() {
+        let mut inner = state.inner.lock().await;
+        record_history(
+            &mut inner,
+            group_convo(&gid),
+            HistItem {
+                side: "me".into(),
+                from: None,
+                text: None,
+                file: Some(file.clone()),
+                ts: receipt.ts,
+            },
+        );
     }
-    let mut inner = state.inner.lock().await;
-    record_history(
-        &mut inner,
-        group_convo(&gid),
-        HistItem {
-            side: "me".into(),
-            from: None,
-            text: None,
-            file: Some(file.clone()),
-            ts: chrono::Utc::now().timestamp(),
-        },
-    );
-    Ok(file)
+    Ok(SentGroupFile { file, receipt })
 }
 
 /// Download + verify + decrypt a file, returning a `data:` URL for the frontend.
@@ -2240,29 +2246,158 @@ pub fn dev_log(msg: String) {
     drop(msg);
 }
 
-async fn send_cipher_inner(
-    state: &State<'_, AppState>,
+// ---- the send path (K4) -----------------------------------------------------
+
+/// How long a message waits for a relay to confirm it (K4).
+const ACK_WAIT: std::time::Duration = std::time::Duration::from_secs(10);
+
+/// The largest `["EVENT", …]` frame a relay takes. Relays drop larger ones
+/// without a word (strfry's `maxEventSize` is 64 KiB); a big inline preview
+/// of a file used to go out that way, and never arrive.
+const MAX_EVENT_BYTES: usize = 64 * 1024;
+
+/// A message one relay at least took (K4): its time, which is also the time
+/// it is stored with, and the relays that took it.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub struct SendReceipt {
+    pub ts: i64,
+    pub accepted_by: Vec<String>,
+}
+
+/// A group message (K4): every member is tried, whatever happens to the
+/// others. `accepted` and `failed` are their handles.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub struct GroupSendReceipt {
+    pub ts: i64,
+    pub accepted: Vec<String>,
+    pub failed: Vec<String>,
+}
+
+/// What `send_file` answers: the file with its receipt, in one object
+/// (`SentFile` in src/lib/api.ts). When the UI hands it back to
+/// `forward_file`, `FileRef` ignores the receipt's fields.
+#[derive(Serialize)]
+pub struct SentFile {
+    #[serde(flatten)]
+    pub file: FileRef,
+    #[serde(flatten)]
+    pub receipt: SendReceipt,
+}
+
+/// What `send_group_file` answers, as `SentFile` does.
+#[derive(Serialize)]
+pub struct SentGroupFile {
+    #[serde(flatten)]
+    pub file: FileRef,
+    #[serde(flatten)]
+    pub receipt: GroupSendReceipt,
+}
+
+/// Why a message was not sent.
+#[derive(Debug, PartialEq, Eq)]
+enum SendError {
+    Sealed,
+    UnknownContact,
+    UnknownGroup,
+    Empty,
+    /// The session has no relays at all.
+    NoRelays,
+    NoSession,
+    /// No relay is up.
+    Offline,
+    NotAccepted,
+    TooLong,
+    /// The X3DH, the ratchet or the signature failed; for the log.
+    Failed(String),
+}
+
+impl std::fmt::Display for SendError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // The commands that still answer with a string show these, as before.
+        f.write_str(match self {
+            SendError::Sealed => "vault sealed",
+            SendError::UnknownContact => "unknown node",
+            SendError::UnknownGroup => "unknown group",
+            SendError::Empty => "empty message",
+            SendError::NoRelays => "network is still connecting",
+            SendError::NoSession => "no session — run connect first",
+            SendError::Offline => "no relay is connected",
+            SendError::NotAccepted => "no relay accepted the message",
+            SendError::TooLong => "the message is too large for the relays",
+            SendError::Failed(reason) => reason,
+        })
+    }
+}
+
+impl From<SendError> for CommandError {
+    fn from(error: SendError) -> Self {
+        let code = match &error {
+            SendError::Sealed => ErrorCode::NoVault,
+            SendError::NoSession => ErrorCode::NoSession,
+            SendError::NoRelays | SendError::Offline => ErrorCode::Offline,
+            SendError::NotAccepted => ErrorCode::NotAccepted,
+            SendError::TooLong => ErrorCode::MessageTooLong,
+            SendError::UnknownContact
+            | SendError::UnknownGroup
+            | SendError::Empty
+            | SendError::Failed(_) => ErrorCode::Internal,
+        };
+        CommandError::new(code, error.to_string())
+    }
+}
+
+fn unix_now() -> i64 {
+    chrono::Utc::now().timestamp()
+}
+
+/// Encrypt `plaintext` for `handle` into a signed event dated `created_at`
+/// (now when `None`), and return it with the relays to send it to.
+///
+/// Every outgoing message of a contact passes here. The session moves on
+/// only when the event fits a relay (`MAX_EVENT_BYTES`), so a message
+/// refused for its size costs no ratchet step. With `need_relay_up`,
+/// nothing is encrypted while no relay is up.
+async fn seal_for(
+    state: &AppState,
     handle: &str,
     plaintext: &[u8],
     handshake: Option<WireHandshake>,
-) -> Result<(), String> {
+    created_at: Option<i64>,
+    need_relay_up: bool,
+) -> Result<(NostrEvent, Vec<Arc<NostrClient>>), SendError> {
+    let failed = |e: &dyn std::fmt::Display| SendError::Failed(e.to_string());
     let mut inner = state.inner.lock().await;
-    let identity = inner.identity.as_ref().ok_or("vault sealed")?.clone();
-    let friend = inner.friends.get(handle).ok_or("unknown node")?.clone();
+    let identity = inner.identity.as_ref().ok_or(SendError::Sealed)?;
+    let signing_key = Zeroizing::new(identity.nostr.priv_bytes);
+    let signing_pub = identity.nostr.pub_bytes;
+    let recipient = inner
+        .friends
+        .get(handle)
+        .ok_or(SendError::UnknownContact)?
+        .bundle
+        .nostr_pub
+        .clone();
     let relays = inner.relays.clone();
     if relays.is_empty() {
-        return Err("network is still connecting".to_string());
+        return Err(SendError::NoRelays);
     }
-    let ad = inner.associated_data.get(handle).ok_or("no AD")?.clone();
-    let ratchet = inner
+    let ad = inner
+        .associated_data
+        .get(handle)
+        .ok_or(SendError::NoSession)?
+        .clone();
+    // A copy: the session itself only moves on once the event fits.
+    let mut ratchet = inner
         .ratchets
-        .get_mut(handle)
-        .ok_or("no session — run connect first")?;
+        .get(handle)
+        .ok_or(SendError::NoSession)?
+        .clone();
+    if need_relay_up && !relays.iter().any(|relay| relay.is_connected()) {
+        return Err(SendError::Offline);
+    }
 
     let ct: EncryptedMessage =
-        ratchet_encrypt(ratchet, plaintext, &ad).map_err(|e| e.to_string())?;
-    save_ratchets(&inner); // sending chain advanced — persist it
-
+        ratchet_encrypt(&mut ratchet, plaintext, &ad).map_err(|e| failed(&e))?;
     let is_handshake = handshake.is_some();
     let payload = WirePayload {
         header: WireHeader {
@@ -2274,27 +2409,176 @@ async fn send_cipher_inner(
         ciphertext: ct.ciphertext,
         handshake,
     };
-    let payload_json = serde_json::to_string(&payload).map_err(|e| e.to_string())?;
-
+    let payload_json = serde_json::to_string(&payload).map_err(|e| failed(&e))?;
     let event = build_and_sign_event(
-        &identity.nostr.priv_bytes,
-        &identity.nostr.pub_bytes,
+        &signing_key,
+        &signing_pub,
         TRINO_KIND,
         &payload_json,
-        vec![vec!["p".to_string(), friend.bundle.nostr_pub.clone()]],
-        None,
+        vec![vec!["p".to_string(), recipient]],
+        created_at,
     )
-    .map_err(|e| e.to_string())?;
+    .map_err(|e| failed(&e))?;
+    if event_frame_bytes(&event) > MAX_EVENT_BYTES {
+        // The advanced copy of the session is dropped, and wiped with it.
+        return Err(SendError::TooLong);
+    }
 
+    inner.ratchets.insert(handle.to_string(), ratchet);
+    save_ratchets(&inner); // sending chain advanced — persist it
     drop(inner);
     crate::diag::note_with(
         "send",
         &[("handshake", &is_handshake), ("relays", &relays.len())],
     );
-    for r in &relays {
-        let _ = r.publish(&event).await;
+    Ok((event, relays))
+}
+
+/// The size of `event` as a relay receives it.
+fn event_frame_bytes(event: &NostrEvent) -> usize {
+    serde_json::json!(["EVENT", event]).to_string().len()
+}
+
+/// Encrypt and publish without waiting for any relay: handshakes, call
+/// signals, rosters and resends, as before K4. A relay that is down gets it
+/// once it is back.
+async fn publish_sealed(
+    state: &AppState,
+    handle: &str,
+    plaintext: &[u8],
+    handshake: Option<WireHandshake>,
+) -> Result<(), SendError> {
+    let (event, relays) = seal_for(state, handle, plaintext, handshake, None, false).await?;
+    for relay in &relays {
+        let _ = relay.publish(&event).await;
     }
     Ok(())
+}
+
+/// `publish_sealed`, for the callers that answer with a string.
+async fn send_cipher_inner(
+    state: &AppState,
+    handle: &str,
+    plaintext: &[u8],
+    handshake: Option<WireHandshake>,
+) -> Result<(), String> {
+    publish_sealed(state, handle, plaintext, handshake)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// Send `plaintext` to `handle` dated `ts`, and wait up to `wait` for the
+/// first relay that takes it (K4).
+async fn send_acked(
+    state: &AppState,
+    handle: &str,
+    plaintext: &[u8],
+    ts: i64,
+    wait: std::time::Duration,
+) -> Result<SendReceipt, SendError> {
+    let (event, relays) = seal_for(state, handle, plaintext, None, Some(ts), true).await?;
+    let accepted_by = first_acceptance(&relays, &event, wait).await?;
+    Ok(SendReceipt {
+        ts: event.created_at,
+        accepted_by,
+    })
+}
+
+/// Publish `event` to the relays that are up and answer as soon as one of
+/// them takes it. A relay that is down is not asked: a message the UI shows
+/// as failed must not go out later by itself.
+async fn first_acceptance(
+    relays: &[Arc<NostrClient>],
+    event: &NostrEvent,
+    wait: std::time::Duration,
+) -> Result<Vec<String>, SendError> {
+    use futures_util::StreamExt;
+    let mut answers: futures_util::stream::FuturesUnordered<_> = relays
+        .iter()
+        .filter(|relay| relay.is_connected())
+        .map(|relay| async move { (relay.url(), relay.publish_acked(event, wait).await) })
+        .collect();
+    if answers.is_empty() {
+        return Err(SendError::Offline);
+    }
+    while let Some((url, ack)) = answers.next().await {
+        if ack == crate::nostr::Ack::Accepted {
+            return Ok(vec![url.to_string()]);
+        }
+    }
+    Err(SendError::NotAccepted)
+}
+
+/// Whether any relay of the session is up.
+async fn any_relay_up(state: &AppState) -> bool {
+    let inner = state.inner.lock().await;
+    inner.relays.iter().any(|relay| relay.is_connected())
+}
+
+/// The handles of `roster`'s members other than us that are contacts, in
+/// roster order; with `only`, just the ones it names.
+fn member_handles(
+    inner: &InnerState,
+    roster: &GroupRoster,
+    my_ik: &str,
+    only: Option<&[String]>,
+) -> Vec<String> {
+    roster
+        .members
+        .iter()
+        .filter(|m| m.ik_sign_pub != my_ik)
+        .filter_map(|m| {
+            inner
+                .friends
+                .values()
+                .find(|f| f.bundle.ik_sign_pub == m.ik_sign_pub)
+                .map(|f| f.handle.clone())
+        })
+        .filter(|handle| only.is_none_or(|only| only.contains(handle)))
+        .collect()
+}
+
+/// Send `plaintext` to each of `targets`, all dated `ts`, each waiting for
+/// its own relay OK. Every member is tried whatever happens to the others:
+/// the send used to stop at the first one that failed. When nobody takes
+/// it, it is `NotAccepted`.
+async fn fan_out(
+    state: &AppState,
+    targets: &[String],
+    plaintext: &[u8],
+    ts: i64,
+    wait: std::time::Duration,
+) -> Result<GroupSendReceipt, SendError> {
+    let mut receipt = GroupSendReceipt {
+        ts,
+        accepted: Vec::new(),
+        failed: Vec::new(),
+    };
+    if targets.is_empty() {
+        return Ok(receipt);
+    }
+    if !any_relay_up(state).await {
+        return Err(SendError::Offline);
+    }
+    let sends = targets.iter().map(|handle| async move {
+        let sent = match ensure_session(state, handle).await {
+            Ok(()) => send_acked(state, handle, plaintext, ts, wait)
+                .await
+                .map(drop),
+            Err(error) => Err(error),
+        };
+        (handle, sent)
+    });
+    for (handle, sent) in futures_util::future::join_all(sends).await {
+        match sent {
+            Ok(()) => receipt.accepted.push(handle.clone()),
+            Err(_) => receipt.failed.push(handle.clone()),
+        }
+    }
+    if receipt.accepted.is_empty() {
+        return Err(SendError::NotAccepted);
+    }
+    Ok(receipt)
 }
 
 /// What to do with a signature-verified event from a relay, decided before any
@@ -4531,6 +4815,350 @@ mod tests {
             attempts.load(Ordering::SeqCst),
             after_lock,
             "it kept trying after the lock"
+        );
+    }
+
+    // ---- K4: a message counts as sent once a relay says OK ----
+
+    use crate::nostr::test_relay::{unreachable_client, Answer, TestRelay};
+
+    /// How long these tests wait for an OK that will not come.
+    const SHORT_WAIT: std::time::Duration = std::time::Duration::from_millis(300);
+
+    /// `contact` as `handle`, with a session open, as `connect_node` leaves it.
+    fn add_session(inner: &mut InnerState, me: &Identity, contact: &Identity, handle: &str) {
+        inner
+            .friends
+            .insert(handle.to_string(), friend(contact, handle));
+        let bundle = public_bundle_for(contact);
+        let init = initiate(me, &bundle).unwrap();
+        let spk = decode_array_32(&bundle.spk_pub).unwrap();
+        inner.ratchets.insert(
+            handle.to_string(),
+            init_initiator(init.master_secret, spk).unwrap(),
+        );
+        inner
+            .associated_data
+            .insert(handle.to_string(), init.associated_data);
+    }
+
+    /// The unlocked session of `me`, sending through `relays`. It has no
+    /// history key, so nothing is ever written to the real data directory.
+    async fn sending_state(me: &Identity, relays: Vec<Arc<NostrClient>>) -> AppState {
+        let state = AppState::default();
+        {
+            let mut inner = state.inner.lock().await;
+            inner.identity = Some(me.clone());
+            inner.handle = Some("me".to_string());
+            inner.relays = relays;
+        }
+        state
+    }
+
+    /// How many messages the session with `handle` has sent.
+    async fn sent_so_far(state: &AppState, handle: &str) -> u32 {
+        state.inner.lock().await.ratchets[handle].sending_msg_number
+    }
+
+    fn pub_hex(id: &Identity) -> String {
+        hex::encode(id.nostr.pub_bytes)
+    }
+
+    #[tokio::test]
+    async fn a_message_counts_as_sent_once_a_relay_says_ok() {
+        let relay = TestRelay::start(Answer::Accept).await;
+        let (me, bob) = (create_identity(), create_identity());
+        let state = sending_state(&me, vec![relay.client().await]).await;
+        add_session(&mut *state.inner.lock().await, &me, &bob, "bob");
+
+        let receipt = send_text(&state, "bob", "hola".to_string(), SHORT_WAIT)
+            .await
+            .unwrap();
+
+        assert_eq!(receipt.accepted_by, std::slice::from_ref(&relay.url));
+        let events = relay.events();
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].created_at, receipt.ts);
+        assert_eq!(events[0].recipient(), Some(pub_hex(&bob).as_str()));
+        let inner = state.inner.lock().await;
+        let stored = inner.history["bob"].last().unwrap();
+        assert_eq!(stored.ts, receipt.ts, "stored with the time of the receipt");
+        assert_eq!(stored.text.as_deref(), Some("hola"));
+        assert_eq!(stored.side, "me");
+    }
+
+    #[tokio::test]
+    async fn a_message_no_relay_takes_is_not_accepted_and_not_stored() {
+        let refusing = TestRelay::start(Answer::Reject).await;
+        let silent = TestRelay::start(Answer::Silent).await;
+        let (me, bob) = (create_identity(), create_identity());
+        let relays = vec![refusing.client().await, silent.client().await];
+        let state = sending_state(&me, relays).await;
+        add_session(&mut *state.inner.lock().await, &me, &bob, "bob");
+
+        let error = send_text(&state, "bob", "hola".to_string(), SHORT_WAIT)
+            .await
+            .unwrap_err();
+
+        assert_eq!(error, SendError::NotAccepted);
+        assert_eq!((refusing.events().len(), silent.events().len()), (1, 1));
+        assert!(!state.inner.lock().await.history.contains_key("bob"));
+    }
+
+    #[tokio::test]
+    async fn without_a_relay_up_nothing_is_encrypted_or_sent() {
+        let (me, bob) = (create_identity(), create_identity());
+        for relays in [vec![unreachable_client(Arc::default())], vec![]] {
+            let state = sending_state(&me, relays).await;
+            add_session(&mut *state.inner.lock().await, &me, &bob, "bob");
+
+            let error = send_text(&state, "bob", "hola".to_string(), SHORT_WAIT)
+                .await
+                .unwrap_err();
+
+            assert_eq!(CommandError::from(error).code, ErrorCode::Offline);
+            assert_eq!(sent_so_far(&state, "bob").await, 0, "the session moved on");
+        }
+    }
+
+    #[tokio::test]
+    async fn a_message_too_big_for_the_relays_is_refused_without_a_ratchet_step() {
+        let relay = TestRelay::start(Answer::Accept).await;
+        let (me, bob) = (create_identity(), create_identity());
+        let state = sending_state(&me, vec![relay.client().await]).await;
+        add_session(&mut *state.inner.lock().await, &me, &bob, "bob");
+
+        // About 80 KB once encrypted and hex-encoded: relays drop it unseen.
+        let error = send_text(&state, "bob", "x".repeat(40_000), SHORT_WAIT)
+            .await
+            .unwrap_err();
+
+        assert_eq!(error, SendError::TooLong);
+        assert_eq!(sent_so_far(&state, "bob").await, 0);
+        assert!(relay.events().is_empty());
+        // About 40 KB fits, on the same session.
+        send_text(&state, "bob", "x".repeat(20_000), SHORT_WAIT)
+            .await
+            .unwrap();
+        assert_eq!(sent_so_far(&state, "bob").await, 1);
+    }
+
+    #[tokio::test]
+    async fn a_message_to_a_contact_without_a_session_says_so() {
+        let relay = TestRelay::start(Answer::Accept).await;
+        let (me, bob) = (create_identity(), create_identity());
+        let state = sending_state(&me, vec![relay.client().await]).await;
+        state
+            .inner
+            .lock()
+            .await
+            .friends
+            .insert("bob".to_string(), friend(&bob, "bob"));
+
+        let error = send_text(&state, "bob", "hola".to_string(), SHORT_WAIT)
+            .await
+            .unwrap_err();
+
+        assert_eq!(error, SendError::NoSession);
+        assert!(relay.events().is_empty());
+    }
+
+    /// Me, admin of a group with bob, carol and dave, all with sessions.
+    async fn group_of_three(state: &AppState, me: &Identity, others: &[Identity; 3]) -> String {
+        let mut inner = state.inner.lock().await;
+        let handles = ["bob", "carol", "dave"];
+        for (who, handle) in others.iter().zip(handles) {
+            add_session(&mut inner, me, who, handle);
+        }
+        let members: Vec<(&Identity, &str)> = others.iter().zip(handles).collect();
+        let roster = roster_of(me, &members);
+        let gid = roster.group_id.clone();
+        inner.groups.insert(gid.clone(), roster);
+        gid
+    }
+
+    #[tokio::test]
+    async fn a_group_message_reaches_every_member_it_can_whatever_happens_to_one() {
+        let me = create_identity();
+        let others = [create_identity(), create_identity(), create_identity()];
+        let relay = TestRelay::start(Answer::RejectTo(pub_hex(&others[1]))).await;
+        let state = sending_state(&me, vec![relay.client().await]).await;
+        let gid = group_of_three(&state, &me, &others).await;
+
+        let receipt = send_group_text(&state, &gid, "hola grupo".to_string(), None, SHORT_WAIT)
+            .await
+            .unwrap();
+
+        assert_eq!(receipt.accepted, ["bob", "dave"]);
+        assert_eq!(receipt.failed, ["carol"]);
+        let events = relay.events();
+        assert_eq!(events.len(), 3, "every member was tried");
+        assert!(events.iter().all(|e| e.created_at == receipt.ts));
+        let inner = state.inner.lock().await;
+        let stored = inner.history[&group_convo(&gid)].last().unwrap();
+        assert_eq!(stored.ts, receipt.ts);
+        assert_eq!(stored.text.as_deref(), Some("hola grupo"));
+    }
+
+    #[tokio::test]
+    async fn a_resend_goes_only_to_the_members_named_and_is_not_stored_again() {
+        let me = create_identity();
+        let others = [create_identity(), create_identity(), create_identity()];
+        let relay = TestRelay::start(Answer::Accept).await;
+        let state = sending_state(&me, vec![relay.client().await]).await;
+        let gid = group_of_three(&state, &me, &others).await;
+        let only = ["carol".to_string()];
+
+        let receipt = send_group_text(&state, &gid, "hola".to_string(), Some(&only), SHORT_WAIT)
+            .await
+            .unwrap();
+
+        assert_eq!(receipt.accepted, ["carol"]);
+        assert!(receipt.failed.is_empty());
+        let events = relay.events();
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].recipient(), Some(pub_hex(&others[1]).as_str()));
+        assert!(
+            !state
+                .inner
+                .lock()
+                .await
+                .history
+                .contains_key(&group_convo(&gid)),
+            "the first send stored it already"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_group_message_no_member_takes_is_not_accepted() {
+        let me = create_identity();
+        let others = [create_identity(), create_identity(), create_identity()];
+        let relay = TestRelay::start(Answer::Reject).await;
+        let state = sending_state(&me, vec![relay.client().await]).await;
+        let gid = group_of_three(&state, &me, &others).await;
+
+        let error = send_group_text(&state, &gid, "hola".to_string(), None, SHORT_WAIT)
+            .await
+            .unwrap_err();
+
+        assert_eq!(error, SendError::NotAccepted);
+        assert!(!state
+            .inner
+            .lock()
+            .await
+            .history
+            .contains_key(&group_convo(&gid)));
+    }
+
+    fn sample_file() -> FileRef {
+        FileRef {
+            url: "https://blossom.band/abc".to_string(),
+            key: "00".repeat(32),
+            sha256: "ab".repeat(32),
+            mime: "image/png".to_string(),
+            name: "foto.png".to_string(),
+            size: 3,
+            thumb: None,
+        }
+    }
+
+    #[test]
+    fn the_ui_receives_the_receipts_in_the_contract_shape() {
+        // `SendReceipt`, `GroupSendReceipt` and `SentFile` in src/lib/api.ts.
+        let receipt = SendReceipt {
+            ts: NOW,
+            accepted_by: vec!["wss://relay.damus.io".to_string()],
+        };
+        assert_eq!(
+            serde_json::to_value(&receipt).unwrap(),
+            serde_json::json!({ "ts": NOW, "accepted_by": ["wss://relay.damus.io"] })
+        );
+        let group = GroupSendReceipt {
+            ts: NOW,
+            accepted: vec!["bob".to_string()],
+            failed: vec!["carol".to_string()],
+        };
+        assert_eq!(
+            serde_json::to_value(&group).unwrap(),
+            serde_json::json!({ "ts": NOW, "accepted": ["bob"], "failed": ["carol"] })
+        );
+        let sent = SentFile {
+            file: sample_file(),
+            receipt,
+        };
+        assert_eq!(
+            serde_json::to_value(&sent).unwrap(),
+            serde_json::json!({
+                "url": "https://blossom.band/abc",
+                "key": "00".repeat(32),
+                "sha256": "ab".repeat(32),
+                "mime": "image/png",
+                "name": "foto.png",
+                "size": 3,
+                "ts": NOW,
+                "accepted_by": ["wss://relay.damus.io"],
+            })
+        );
+        let sent_to_group = SentGroupFile {
+            file: sample_file(),
+            receipt: group,
+        };
+        let value = serde_json::to_value(&sent_to_group).unwrap();
+        assert_eq!(value["accepted"], serde_json::json!(["bob"]));
+        assert_eq!(value["failed"], serde_json::json!(["carol"]));
+        assert_eq!(value["name"], "foto.png");
+    }
+
+    #[test]
+    fn a_sent_file_given_back_to_forward_file_is_just_the_file() {
+        // The UI forwards the `SentFile` it got from `send_file`.
+        let sent = serde_json::to_value(SentFile {
+            file: sample_file(),
+            receipt: SendReceipt {
+                ts: NOW,
+                accepted_by: vec!["wss://nos.lol".to_string()],
+            },
+        })
+        .unwrap();
+
+        let file: FileRef = serde_json::from_value(sent).expect("extra fields are ignored");
+
+        assert_eq!(file, sample_file());
+        let forwarded = encode_envelope(&Envelope::File {
+            file,
+            gid: None,
+            body: None,
+        });
+        let forwarded: serde_json::Value = serde_json::from_slice(&forwarded).unwrap();
+        assert!(forwarded["file"].get("ts").is_none());
+        assert!(forwarded["file"].get("accepted_by").is_none());
+    }
+
+    #[test]
+    fn send_errors_reach_the_ui_with_their_codes_and_the_old_texts() {
+        for (error, code) in [
+            (SendError::Sealed, ErrorCode::NoVault),
+            (SendError::NoSession, ErrorCode::NoSession),
+            (SendError::NoRelays, ErrorCode::Offline),
+            (SendError::Offline, ErrorCode::Offline),
+            (SendError::NotAccepted, ErrorCode::NotAccepted),
+            (SendError::TooLong, ErrorCode::MessageTooLong),
+            (SendError::UnknownContact, ErrorCode::Internal),
+            (SendError::UnknownGroup, ErrorCode::Internal),
+            (SendError::Empty, ErrorCode::Internal),
+        ] {
+            assert_eq!(CommandError::from(error).code, code);
+        }
+        // The commands that still answer with a string keep their texts.
+        assert_eq!(SendError::Sealed.to_string(), "vault sealed");
+        assert_eq!(SendError::UnknownContact.to_string(), "unknown node");
+        assert_eq!(
+            SendError::NoRelays.to_string(),
+            "network is still connecting"
+        );
+        assert_eq!(
+            SendError::NoSession.to_string(),
+            "no session — run connect first"
         );
     }
 }

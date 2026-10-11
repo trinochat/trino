@@ -29,6 +29,14 @@ pub enum ErrorCode {
     Io,
     Internal,
     // -- W7 --
+    /// No relay is up: nothing was sent (K4).
+    Offline,
+    /// Relays are up, but none took the event, or none said so in time (K4).
+    NotAccepted,
+    /// The event is larger than relays take: they would drop it unseen (K4).
+    MessageTooLong,
+    /// There is no session with the contact yet (K4).
+    NoSession,
     /// Every file server failed to take an upload; `servers` says why (K2).
     UploadFailed,
 }
@@ -218,6 +226,10 @@ mod tests {
             ErrorCode::UnsupportedVault,
             ErrorCode::Io,
             ErrorCode::Internal,
+            ErrorCode::Offline,
+            ErrorCode::NotAccepted,
+            ErrorCode::MessageTooLong,
+            ErrorCode::NoSession,
             ErrorCode::UploadFailed,
         ]
         .iter()
@@ -237,6 +249,10 @@ mod tests {
                 "unsupported_vault",
                 "io",
                 "internal",
+                "offline",
+                "not_accepted",
+                "message_too_long",
+                "no_session",
                 "upload_failed",
             ]
         );

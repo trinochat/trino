@@ -338,6 +338,46 @@ pub struct NostrClient {
     /// Set by `close`: it stops a client that is waiting to connect, which
     /// reads no commands until it has a socket.
     closed: watch::Sender<bool>,
+    /// The events `publish_acked` waits on (K4); the connection task hands
+    /// each relay OK to its event.
+    pending_ok: PendingOks,
+}
+
+/// What a relay answered to an event (NIP-01 `OK`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Ack {
+    /// The relay stored it (or had it already).
+    Accepted,
+    /// The relay refused it.
+    Rejected,
+    /// No answer in time, or no socket to ask on.
+    NoAnswer,
+}
+
+/// Takes an event out of `pending` when its wait ends, however it ends: an
+/// answer, the deadline, or a dropped wait.
+struct PendingOk<'a> {
+    pending: &'a PendingOks,
+    id: &'a str,
+}
+
+impl Drop for PendingOk<'_> {
+    fn drop(&mut self) {
+        lock_pending(self.pending).remove(self.id);
+    }
+}
+
+fn lock_pending(pending: &PendingOks) -> std::sync::MutexGuard<'_, HashMap<String, OkCallback>> {
+    pending
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
+/// NIP-01 answers an event the relay already has with `true` and a
+/// `duplicate:` message; some relays say `false` instead. Either way the
+/// relay has it.
+fn is_duplicate(message: Option<&str>) -> bool {
+    message.is_some_and(|message| message.starts_with("duplicate:"))
 }
 
 enum ClientCommand {
@@ -382,7 +422,7 @@ impl NostrClient {
         let connection = Connection {
             url: url.to_string(),
             on_event,
-            pending_ok,
+            pending_ok: Arc::clone(&pending_ok),
             connected: Arc::clone(&connected),
             options,
         };
@@ -393,6 +433,7 @@ impl NostrClient {
             sub_counter: Arc::new(RwLock::new(0)),
             connected,
             closed,
+            pending_ok,
         })
     }
 
@@ -411,6 +452,26 @@ impl NostrClient {
             .send(ClientCommand::Send(payload))
             .map_err(|e| NostrError::Send(e.to_string()))?;
         Ok(())
+    }
+
+    /// Publish `event` and wait up to `wait` for this relay's OK (K4).
+    pub async fn publish_acked(&self, event: &NostrEvent, wait: Duration) -> Ack {
+        let (answer, answered) = oneshot::channel();
+        lock_pending(&self.pending_ok).insert(event.id.clone(), answer);
+        let _waiting = PendingOk {
+            pending: &self.pending_ok,
+            id: &event.id,
+        };
+        if self.publish(event).await.is_err() {
+            return Ack::NoAnswer;
+        }
+        match tokio::time::timeout(wait, answered).await {
+            Ok(Ok((true, _))) => Ack::Accepted,
+            Ok(Ok((false, message))) if is_duplicate(message.as_deref()) => Ack::Accepted,
+            Ok(Ok((false, _))) => Ack::Rejected,
+            // The deadline, or a connection task that ended.
+            Ok(Err(_)) | Err(_) => Ack::NoAnswer,
+        }
     }
 
     /// Subscribe with `filter` exactly as given, re-sent unchanged after every
@@ -644,7 +705,7 @@ fn relay_message_note(msg_type: &str) -> &'static str {
     }
 }
 
-fn handle_relay_message(text: &str, on_event: &EventHandler, _pending: &PendingOks) {
+fn handle_relay_message(text: &str, on_event: &EventHandler, pending: &PendingOks) {
     let Ok(msg) = serde_json::from_str::<Vec<Value>>(text) else {
         dlog("WS recv: a message that is not an array");
         return;
@@ -656,7 +717,20 @@ fn handle_relay_message(text: &str, on_event: &EventHandler, _pending: &PendingO
         return;
     };
 
-    if msg_type == "EVENT" && msg.len() >= 3 {
+    if msg_type == "OK" {
+        // ["OK", <event id>, <true|false>, <message>] (NIP-01), for an event
+        // `publish_acked` waits on. Anything else is ignored.
+        if let (Some(id), Some(accepted)) = (
+            msg.get(1).and_then(Value::as_str),
+            msg.get(2).and_then(Value::as_bool),
+        ) {
+            let message = msg.get(3).and_then(Value::as_str).map(str::to_string);
+            if let Some(answer) = lock_pending(pending).remove(id) {
+                let _ = answer.send((accepted, message));
+            }
+        }
+        dlog(relay_message_note(msg_type));
+    } else if msg_type == "EVENT" && msg.len() >= 3 {
         match serde_json::from_value::<NostrEvent>(msg[2].clone()) {
             Ok(event) => {
                 let ok = verify_event(&event);
@@ -690,6 +764,14 @@ pub(crate) mod test_relay {
     pub(crate) enum Answer {
         /// `["OK", id, true, ""]`.
         Accept,
+        /// `["OK", id, false, "blocked: …"]`.
+        Reject,
+        /// `["OK", id, false, "duplicate: …"]`: it had the event already.
+        Duplicate,
+        /// Nothing at all.
+        Silent,
+        /// Refuses the events addressed (`p`) to this pubkey, takes the rest.
+        RejectTo(String),
     }
 
     pub(crate) struct TestRelay {
@@ -768,13 +850,17 @@ pub(crate) mod test_relay {
                         continue;
                     };
                     events.lock().unwrap().push(event.clone());
-                    let accepted = match &answer {
-                        Answer::Accept => Some(true),
+                    let (ok, message) = match &answer {
+                        Answer::Accept => (true, ""),
+                        Answer::Reject => (false, "blocked: test"),
+                        Answer::Duplicate => (false, "duplicate: already have this event"),
+                        Answer::Silent => continue,
+                        Answer::RejectTo(pubkey) if event.recipient() == Some(pubkey) => {
+                            (false, "blocked: test")
+                        }
+                        Answer::RejectTo(_) => (true, ""),
                     };
-                    accepted.map(|ok| {
-                        let message = if ok { "" } else { "blocked: test" };
-                        serde_json::json!(["OK", event.id, ok, message])
-                    })
+                    Some(serde_json::json!(["OK", event.id, ok, message]))
                 }
                 Some("REQ") => frame.get(1).map(|id| serde_json::json!(["EOSE", id])),
                 _ => None,
@@ -1217,5 +1303,77 @@ mod tests {
         wait_until("the queued event to arrive", || relay.events().len() == 1).await;
         assert_eq!(relay.events()[0].id, event.id);
         client.close();
+    }
+
+    // ---- K4: a relay's OK ----
+
+    fn some_event() -> NostrEvent {
+        let kp = generate_nostr_keypair();
+        build_and_sign_event(&kp.priv_bytes, &kp.pub_bytes, TRINO_KIND, "x", vec![], None).unwrap()
+    }
+
+    #[tokio::test]
+    async fn a_published_event_waits_for_the_relays_ok() {
+        for (answer, expected) in [
+            (Answer::Accept, Ack::Accepted),
+            (Answer::Reject, Ack::Rejected),
+            // NIP-01 answers a duplicate with `true`; some relays say `false`.
+            // Either way the relay has the event.
+            (Answer::Duplicate, Ack::Accepted),
+            (Answer::Silent, Ack::NoAnswer),
+        ] {
+            let relay = TestRelay::start(answer.clone()).await;
+            let client = relay.client().await;
+
+            let ack = client
+                .publish_acked(&some_event(), Duration::from_millis(300))
+                .await;
+
+            assert_eq!(ack, expected, "{answer:?}");
+            assert_eq!(relay.events().len(), 1);
+            client.close();
+        }
+    }
+
+    #[tokio::test]
+    async fn a_wait_that_ends_leaves_nothing_behind() {
+        let relay = TestRelay::start(Answer::Silent).await;
+        let client = relay.client().await;
+
+        let ack = client
+            .publish_acked(&some_event(), Duration::from_millis(100))
+            .await;
+        // A wait that is dropped halfway, like a send that already has its OK
+        // from another relay.
+        let dropped = tokio::time::timeout(
+            Duration::from_millis(50),
+            client.publish_acked(&some_event(), Duration::from_secs(10)),
+        )
+        .await;
+
+        assert_eq!(ack, Ack::NoAnswer);
+        assert!(dropped.is_err());
+        assert!(client.pending_ok.lock().unwrap().is_empty());
+        client.close();
+    }
+
+    #[test]
+    fn an_ok_reaches_the_event_it_answers_and_only_that() {
+        let pending = PendingOks::default();
+        let (tx, mut rx) = oneshot::channel();
+        pending.lock().unwrap().insert("e1".to_string(), tx);
+        let handler: EventHandler = Arc::new(|_| panic!("an OK is not an event"));
+
+        handle_relay_message(r#"["OK","other",true,""]"#, &handler, &pending);
+        assert!(rx.try_recv().is_err(), "an OK for another event");
+        handle_relay_message(r#"["OK","e1","yes",""]"#, &handler, &pending);
+        assert!(rx.try_recv().is_err(), "a malformed OK");
+        handle_relay_message(r#"["OK","e1",false,"blocked: spam"]"#, &handler, &pending);
+
+        assert_eq!(
+            rx.try_recv(),
+            Ok((false, Some("blocked: spam".to_string())))
+        );
+        assert!(pending.lock().unwrap().is_empty());
     }
 }
