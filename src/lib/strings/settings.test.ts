@@ -172,6 +172,47 @@ const APPEARANCE = [
   'settings2.appearance.errSave',
 ];
 
+/** Settings > Accesibilidad and its shortcuts (AccessibilitySection.tsx, KeyboardShortcutsDialog.tsx). */
+const ACCESSIBILITY = [
+  'settings2.a11y.title',
+  'settings2.a11y.intro',
+  'settings2.a11y.textSize',
+  'settings2.a11y.textSizeSystem',
+  'settings2.a11y.textSizeSystemWindows',
+  'settings2.a11y.textSizeSystemOther',
+  'settings2.a11y.textSizeValue',
+  'settings2.a11y.textSizeValueA11y',
+  'settings2.a11y.previewA11y',
+  'settings2.a11y.textSizeHint',
+  'settings2.a11y.shortcuts',
+  'settings2.a11y.vision',
+  'settings2.a11y.visionBody',
+  'settings2.a11y.legend',
+  'settings2.a11y.legendVerified',
+  'settings2.a11y.legendKeyChanged',
+  'settings2.a11y.legendFailed',
+  'settings2.a11y.contrast',
+  'settings2.a11y.contrastBody',
+  'settings2.a11y.motion',
+  'settings2.a11y.motionBody',
+  'settings2.a11y.spacing',
+  'settings2.a11y.spacingBody',
+  'settings2.a11y.systemOn',
+  'settings2.a11y.systemOff',
+  'settings2.a11y.useSystem',
+  'settings2.a11y.reset',
+  'settings2.a11y.errSave',
+  'settings2.shortcuts.title',
+  'settings2.shortcuts.search',
+  'settings2.shortcuts.lock',
+  'settings2.shortcuts.textSize',
+  'settings2.shortcuts.textSizeSystem',
+  'settings2.shortcuts.send',
+  'settings2.shortcuts.newLine',
+  'settings2.shortcuts.newLineKeys',
+  'settings2.shortcuts.close',
+];
+
 const KEYS: string[] = [
   ...NOTIFICATION_CONTENT,
   ...PROFILE,
@@ -180,6 +221,7 @@ const KEYS: string[] = [
   ...NOTIFICATIONS,
   ...SECURITY,
   ...APPEARANCE,
+  ...ACCESSIBILITY,
 ];
 
 const PLACEHOLDERS: Record<string, string[]> = {
@@ -191,6 +233,9 @@ const PLACEHOLDERS: Record<string, string[]> = {
   'settings2.security.autolockMinutes': ['n'],
   'settings2.passphrase.errShort': ['min'],
   'settings2.appearance.accentChosen': ['name'],
+  'settings2.a11y.textSizeSystem': ['n'],
+  'settings2.a11y.textSizeValue': ['n'],
+  'settings2.a11y.textSizeValueA11y': ['n'],
 };
 
 describe('settings strings', () => {
