@@ -223,9 +223,4 @@ describe('stepTextScale', () => {
     expect(stepTextScale(2.25, 'down')).toBe(2);
     expect(stepTextScale(0.9, 'up')).toBe(1);
   });
-
-  it('goes back to 100 % on reset, whatever the factor', () => {
-    expect(stepTextScale(1.75, 'reset')).toBe(1);
-    expect(stepTextScale(1.35, 'reset')).toBe(1);
-  });
 });

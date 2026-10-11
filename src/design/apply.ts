@@ -234,28 +234,37 @@ export function changeScanLines(host: AppearanceHost, on: boolean): boolean {
   return saved;
 }
 
-type TextSizeStep = Parameters<typeof stepTextScale>[1];
+/** What a text size shortcut asks for: a step up or down, or the system's size. */
+type TextSizeShortcut = Parameters<typeof stepTextScale>[1] | 'system';
 
 /**
- * One step of text size from the size in effect, stored as the person's own
- * choice: from then on it no longer follows the system.
+ * Applies a text size shortcut. A step goes from the size in effect and is
+ * stored as the person's own choice, which no longer follows the system; a
+ * step that changes nothing, such as Ctrl + `-` at 100 %, stores nothing,
+ * so whatever followed the system still does. `system` follows it again.
  */
-function stepTextSize(host: AppearanceHost, step: TextSizeStep): void {
+function changeTextSize(host: AppearanceHost, shortcut: TextSizeShortcut): void {
   const { accessibility, effective } = displayState(host);
-  changeAccessibility(host, { ...accessibility, textScale: stepTextScale(effective.textScale, step) });
+  if (shortcut === 'system') {
+    if (accessibility.textScale !== 'system') changeAccessibility(host, { ...accessibility, textScale: 'system' });
+    return;
+  }
+  const textScale = stepTextScale(effective.textScale, shortcut);
+  if (textScale !== effective.textScale) changeAccessibility(host, { ...accessibility, textScale });
 }
 
 /**
- * The step of a text size shortcut, by `event.key`: Ctrl + `+` or `=` up (`+`
+ * The text size shortcut of a key, by `event.key`: Ctrl + `+` or `=` up (`+`
  * has its own key on Latin American keyboards, where `=` needs Shift; the
- * keypad gives `+` too), Ctrl + `-` down, Ctrl + 0 back to 100 %. Ctrl + Alt
- * is AltGr on Windows, which types characters, so it is left alone.
+ * keypad gives `+` too), Ctrl + `-` down, Ctrl + 0 back to the system's size,
+ * which the text size follows by default. Ctrl + Alt is AltGr on Windows,
+ * which types characters, so it is left alone.
  */
-function shortcutStep(event: KeyboardEvent): TextSizeStep | null {
+function shortcutOf(event: KeyboardEvent): TextSizeShortcut | null {
   if (!event.ctrlKey || event.altKey || event.defaultPrevented) return null;
   if (event.key === '+' || event.key === '=') return 'up';
   if (event.key === '-') return 'down';
-  if (event.key === '0') return 'reset';
+  if (event.key === '0') return 'system';
   return null;
 }
 
@@ -285,10 +294,10 @@ export function initAppearance(host: AppearanceHost, options: InitAppearanceOpti
   });
 
   const onKeyDown = (event: Event) => {
-    const step = shortcutStep(event as KeyboardEvent);
-    if (!step) return;
+    const shortcut = shortcutOf(event as KeyboardEvent);
+    if (!shortcut) return;
     event.preventDefault();
-    stepTextSize(host, step);
+    changeTextSize(host, shortcut);
   };
   // A touchpad pinch arrives as Ctrl + wheel in small pieces: they add up, so
   // one gesture does not jump from 100 to 200 %.
@@ -299,7 +308,7 @@ export function initAppearance(host: AppearanceHost, options: InitAppearanceOpti
     event.preventDefault();
     wheel += deltaY;
     while (Math.abs(wheel) >= WHEEL_STEP) {
-      stepTextSize(host, wheel < 0 ? 'up' : 'down');
+      changeTextSize(host, wheel < 0 ? 'up' : 'down');
       wheel -= Math.sign(wheel) * WHEEL_STEP;
     }
   };

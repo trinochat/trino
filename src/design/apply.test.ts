@@ -616,11 +616,11 @@ describe('the text size shortcuts', () => {
   beforeEach(resetAccessibility);
 
   it.each([
-    ['+', 1.1, '17.6px'],
-    ['=', 1.1, '17.6px'],
-    ['-', 1, '16px'],
-  ])('Ctrl + %s steps the text size and stores it', (key, textScale, size) => {
-    const { host, data, key: press } = fakeWindow();
+    ['+', 'system', 1.1, '17.6px'],
+    ['=', 'system', 1.1, '17.6px'],
+    ['-', 1.25, 1.1, '17.6px'],
+  ] as const)('Ctrl + %s steps the text size from %s and stores it', (key, from, textScale, size) => {
+    const { host, data, key: press } = fakeWindow(a11yEntry({ textScale: from }));
     initAppearance(host);
     expect(press({ key, ctrlKey: true })).toBe(true);
     expect(storedTextScale(data)).toBe(textScale);
@@ -639,16 +639,45 @@ describe('the text size shortcuts', () => {
     expect(storedTextScale(data)).toBe(1.1);
   });
 
-  it('Ctrl + 0 goes back to 100 %, from the top row or the keypad', () => {
-    const { host, data, key } = fakeWindow(a11yEntry({ textScale: 1.75 }));
+  // The text size follows the system by default (David's decision), so
+  // Ctrl + 0 goes back to following it, not to a fixed 100 %.
+  it("Ctrl + 0 follows the system's size again, from the top row or the keypad", () => {
+    const { host, data, key } = fakeWindow({ ...a11yEntry({ textScale: 1.75 }), [SYSTEM_TEXT_SCALE_STORAGE_KEY]: '1.25' });
     initAppearance(host);
     expect(root().style.fontSize).toBe('28px');
-    key({ key: '0', code: 'Digit0', ctrlKey: true });
-    expect(storedTextScale(data)).toBe(1);
+    expect(key({ key: '0', code: 'Digit0', ctrlKey: true })).toBe(true);
+    expect(storedTextScale(data)).toBe('system');
+    expect(root().style.fontSize).toBe('20px');
     key({ key: '+', ctrlKey: true });
+    expect(storedTextScale(data)).toBe(1.5);
     key({ key: '0', code: 'Numpad0', ctrlKey: true });
-    expect(storedTextScale(data)).toBe(1);
-    expect(root().style.fontSize).toBe('16px');
+    expect(storedTextScale(data)).toBe('system');
+    expect(root().style.fontSize).toBe('20px');
+  });
+
+  // At 100 % Ctrl + - has nowhere to go, and at 200 % Ctrl + + neither: the
+  // size stays, and so does the system's say over it.
+  it('keeps following the system after a step that changes nothing', async () => {
+    let factor = 1;
+    const low = fakeWindow();
+    initAppearance(low.host, { readSystemTextScale: async () => factor });
+    expect(low.key({ key: '-', ctrlKey: true })).toBe(true);
+    expect(low.wheel({ deltaY: 100, ctrlKey: true })).toBe(true);
+    expect(low.data.has(ACCESSIBILITY_STORAGE_KEY)).toBe(false);
+    // Windows moves to 125 %, and the page still follows.
+    factor = 1.25;
+    low.fire(new Event('focus'));
+    await new Promise(resolve => setTimeout(resolve, 0));
+    expect(root().style.fontSize).toBe('20px');
+
+    resetAccessibility();
+    // Windows at 225 %, which Trino shows at 200 %, and the mode already stored.
+    const high = fakeWindow({ ...a11yEntry({ textScale: 'system' }), [SYSTEM_TEXT_SCALE_STORAGE_KEY]: '2.25' });
+    initAppearance(high.host);
+    high.key({ key: '+', ctrlKey: true });
+    high.key({ key: '=', ctrlKey: true });
+    expect(storedTextScale(high.data)).toBe('system');
+    expect(root().style.fontSize).toBe('32px');
   });
 
   it("stops following the system's size, from the step after it", () => {

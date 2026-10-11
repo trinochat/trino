@@ -124,12 +124,12 @@ export function saveAccessibility(storage: AppearanceStorage, value: Accessibili
 }
 
 /**
- * The text size one step up or down from a factor, within 100 and 200 %, or
- * 100 % on reset: Ctrl + `+`, Ctrl + `-` and Ctrl + 0. From a factor between
- * steps, such as Windows' 135 %, it goes to the next step in that direction.
+ * The text size one step up or down from a factor, within 100 and 200 %:
+ * Ctrl + `+` and Ctrl + `-`. From a factor between steps, such as Windows'
+ * 135 %, it goes to the next step in that direction. Ctrl + 0 is no step: it
+ * follows the system again (apply.ts).
  */
-export function stepTextScale(current: number, step: 'up' | 'down' | 'reset'): TextScale {
-  if (step === 'reset') return MIN_TEXT_SCALE;
+export function stepTextScale(current: number, step: 'up' | 'down'): TextScale {
   if (step === 'up') return TEXT_SCALES.find(scale => scale > current) ?? MAX_TEXT_SCALE;
   return [...TEXT_SCALES].reverse().find(scale => scale < current) ?? MIN_TEXT_SCALE;
 }

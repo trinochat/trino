@@ -13,7 +13,8 @@ applyThemePreference(loadThemePreference());
 // settings (the root font size, data-vision, data-contrast, data-motion,
 // data-spacing), applied before the first render so nothing flashes or jumps.
 // Whatever follows the system (colour scheme, contrast, motion, Windows' text
-// size) keeps following it, and Ctrl + / Ctrl - / Ctrl 0 change the text size.
+// size) keeps following it. Ctrl + and Ctrl - change the text size, and
+// Ctrl 0 follows Windows' again.
 initAppearance(window, { readSystemTextScale: api.systemTextScale });
 
 ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
