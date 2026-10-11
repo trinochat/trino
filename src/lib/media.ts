@@ -13,9 +13,42 @@ export interface ProcessedFile {
   thumb: string | null; // small preview as a data: URL
 }
 
-const THUMB_MAX = 240; // px, longest side
 const FULL_IMAGE_MAX = 4096;
 const MAX_FILE_BYTES = 25 * 1024 * 1024;
+
+/**
+ * The longest inline preview, in characters of its data URL. The preview
+ * travels inside the file's message, whose ciphertext goes in hex (twice its
+ * size), and relays drop a message over 64 KB without a word: past this, the
+ * picture never arrives. screens/chat/composer/sticker-limits.test.ts works
+ * out the worst case; stickers share the ceiling.
+ */
+export const THUMB_MAX_CHARS = 28_000;
+
+/**
+ * The longest side in px and the JPEG quality of each try at a preview, from
+ * the first to the last. A noisy photo can pass the ceiling at 240 px; at
+ * 120 px nothing does.
+ */
+const THUMB_STEPS: ReadonlyArray<readonly [side: number, quality: number]> = [
+  [240, 0.5],
+  [200, 0.45],
+  [160, 0.4],
+  [120, 0.35],
+];
+
+/**
+ * The first preview that fits under `THUMB_MAX_CHARS`, trying smaller sizes
+ * and qualities in turn, or null: the file is sent without one. `encode`
+ * draws the picture with that longest side and quality, as a data URL.
+ */
+export function fitThumb(encode: (side: number, quality: number) => string): string | null {
+  for (const [side, quality] of THUMB_STEPS) {
+    const url = encode(side, quality);
+    if (url.length <= THUMB_MAX_CHARS) return url;
+  }
+  return null;
+}
 
 export async function processFile(file: File): Promise<ProcessedFile> {
   if (file.size > MAX_FILE_BYTES) {
@@ -41,9 +74,11 @@ async function processImage(file: File): Promise<ProcessedFile> {
   );
   const full = drawToCanvas(img, fullWidth, fullHeight);
   const cleanB64 = stripPrefix(full.toDataURL('image/jpeg', 0.9));
-  // Thumbnail.
-  const [tw, th] = fit(img.naturalWidth, img.naturalHeight, THUMB_MAX);
-  const thumb = drawToCanvas(img, tw, th).toDataURL('image/jpeg', 0.5);
+  // Thumbnail, small enough to travel inside the message.
+  const thumb = fitThumb((side, quality) => {
+    const [tw, th] = fit(img.naturalWidth, img.naturalHeight, side);
+    return drawToCanvas(img, tw, th).toDataURL('image/jpeg', quality);
+  });
   URL.revokeObjectURL(img.src);
   const base = file.name.replace(/\.[^.]+$/, '') || 'image';
   return { name: `${base}.jpg`, mime: 'image/jpeg', dataB64: cleanB64, thumb };
@@ -103,7 +138,7 @@ function fileToBase64(file: File): Promise<string> {
   });
 }
 
-function videoThumbnail(file: File): Promise<string> {
+function videoThumbnail(file: File): Promise<string | null> {
   return new Promise((resolve, reject) => {
     const url = URL.createObjectURL(file);
     const video = document.createElement('video');
@@ -125,8 +160,10 @@ function videoThumbnail(file: File): Promise<string> {
     };
     video.onseeked = () => {
       try {
-        const [tw, th] = fit(video.videoWidth || THUMB_MAX, video.videoHeight || THUMB_MAX, THUMB_MAX);
-        const thumb = drawToCanvas(video, tw, th).toDataURL('image/jpeg', 0.5);
+        const thumb = fitThumb((side, quality) => {
+          const [tw, th] = fit(video.videoWidth || side, video.videoHeight || side, side);
+          return drawToCanvas(video, tw, th).toDataURL('image/jpeg', quality);
+        });
         settled = true;
         URL.revokeObjectURL(url);
         resolve(thumb);
