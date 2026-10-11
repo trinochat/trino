@@ -7,14 +7,16 @@
 use super::contacts_cmds::{not_found, sealed};
 use super::{history_path, write_history};
 use crate::command_error::CommandError;
-use crate::state::{AppState, HistItem};
+use crate::state::{AppState, HistItem, InnerState};
 use std::collections::HashMap;
+use std::path::Path;
 use tauri::State;
 
-/// Delete from `history[convo]` the first message sent at `ts` by `side`
-/// whose text is `text` or whose file has `sha256` (both, when both are
-/// given). The first one that matches, never one by its position: positions
-/// move as messages arrive and expire.
+/// Take out of `history[convo]` the first message sent at `ts` by `side`
+/// (and, in a group, by `from`, when given) whose text is `text` or whose
+/// file has `sha256` (both, when both are given). The first one that
+/// matches, never one by its position: positions move as messages arrive
+/// and expire. Returns it with where it was, for `write_without`.
 ///
 /// One of `text` and `sha256` must say which message: an item with neither,
 /// such as a call (K13), is never a message the user picked.
@@ -23,10 +25,10 @@ pub(crate) fn delete_item(
     convo: &str,
     ts: i64,
     side: &str,
+    from: Option<&str>,
     text: Option<&str>,
     sha256: Option<&str>,
-) -> Result<(), CommandError> {
-    use zeroize::Zeroize;
+) -> Result<(usize, HistItem), CommandError> {
     if text.is_none() && sha256.is_none() {
         return Err(CommandError::internal(
             "say which message: its text or the sha256 of its file",
@@ -40,13 +42,34 @@ pub(crate) fn delete_item(
         .position(|item| {
             item.ts == ts
                 && item.side == side
+                && from.is_none_or(|from| item.from.as_deref() == Some(from))
                 && text.is_none_or(|text| item.text.as_deref() == Some(text))
                 && sha256.is_none_or(|sha256| {
                     item.file.as_ref().is_some_and(|file| file.sha256 == sha256)
                 })
         })
         .ok_or_else(|| not_found("no such message"))?;
-    let mut removed = items.remove(position);
+    Ok((position, items.remove(position)))
+}
+
+/// Write history.bin to `path` without `removed`, the message `delete_item`
+/// took out of `convo` with where it was, then wipe it. A failure here is
+/// the caller's to know, unlike other saves: the message goes back where it
+/// was, so the chat shows what history.bin still holds and trying again
+/// finds it.
+pub(crate) fn write_without(
+    inner: &mut InnerState,
+    path: &Path,
+    convo: &str,
+    removed: (usize, HistItem),
+) -> Result<(), CommandError> {
+    use zeroize::Zeroize;
+    let (position, mut removed) = removed;
+    if let Err(error) = write_history(inner, path) {
+        let items = inner.history.entry(convo.to_string()).or_default();
+        items.insert(position.min(items.len()), removed);
+        return Err(CommandError::io(&error));
+    }
     if let Some(text) = removed.text.as_mut() {
         text.zeroize();
     }
@@ -56,13 +79,16 @@ pub(crate) fn delete_item(
     Ok(())
 }
 
-/// Delete one message here, for good (K11).
+/// Delete one message here, for good (K11). `from` names the sender of a
+/// group message, so one of two members who sent the same text in the same
+/// second is told apart; left out, the first that matches goes.
 #[tauri::command]
 pub async fn delete_history_item(
     state: State<'_, AppState>,
     convo: String,
     ts: i64,
     side: String,
+    from: Option<String>,
     text: Option<String>,
     sha256: Option<String>,
 ) -> Result<(), CommandError> {
@@ -70,18 +96,16 @@ pub async fn delete_history_item(
     if inner.identity.is_none() {
         return Err(sealed());
     }
-    delete_item(
+    let removed = delete_item(
         &mut inner.history,
         &convo,
         ts,
         &side,
+        from.as_deref(),
         text.as_deref(),
         sha256.as_deref(),
     )?;
-    // Unlike other saves, a failure here is the caller's to know: the message
-    // would come back at the next unlock.
-    write_history(&inner, &history_path()).map_err(|error| CommandError::io(&error))?;
-    Ok(())
+    write_without(&mut inner, &history_path(), &convo, removed)
 }
 
 #[cfg(test)]
@@ -142,7 +166,7 @@ mod tests {
             ("bob".to_string(), vec![text("me", "hola", NOW)]),
         ]);
 
-        delete_item(&mut history, "ana", NOW, "me", Some("hola"), None).unwrap();
+        delete_item(&mut history, "ana", NOW, "me", None, Some("hola"), None).unwrap();
 
         assert_eq!(
             texts(&history["ana"]),
@@ -162,7 +186,7 @@ mod tests {
             vec![file("them", "aa", NOW), file("them", "bb", NOW)],
         )]);
 
-        delete_item(&mut history, "grp:g1", NOW, "them", None, Some("bb")).unwrap();
+        delete_item(&mut history, "grp:g1", NOW, "them", None, None, Some("bb")).unwrap();
 
         let left: Vec<&str> = history["grp:g1"]
             .iter()
@@ -181,14 +205,16 @@ mod tests {
             ("ana", NOW, "them", "hola"),
             ("ana", NOW, "me", "otra"),
         ] {
-            let error = delete_item(&mut history, convo, ts, side, Some(body), None).unwrap_err();
+            let error =
+                delete_item(&mut history, convo, ts, side, None, Some(body), None).unwrap_err();
             assert_eq!(
                 error.code,
                 ErrorCode::NotFound,
                 "{convo} {ts} {side} {body}"
             );
         }
-        let error = delete_item(&mut history, "ana", NOW, "me", None, Some("aa")).unwrap_err();
+        let error =
+            delete_item(&mut history, "ana", NOW, "me", None, None, Some("aa")).unwrap_err();
         assert_eq!(error.code, ErrorCode::NotFound);
         assert_eq!(history["ana"].len(), 1);
     }
@@ -202,7 +228,7 @@ mod tests {
             vec![item(json!({ "side": "me", "ts": NOW }))],
         )]);
 
-        let error = delete_item(&mut history, "ana", NOW, "me", None, None).unwrap_err();
+        let error = delete_item(&mut history, "ana", NOW, "me", None, None, None).unwrap_err();
 
         assert_eq!(error.code, ErrorCode::Internal);
         assert_eq!(history["ana"].len(), 1);
@@ -235,11 +261,11 @@ mod tests {
             (Some(""), Some("")),
         ] {
             assert!(
-                delete_item(&mut history, "ana", NOW, "me", body, sha256).is_err(),
+                delete_item(&mut history, "ana", NOW, "me", None, body, sha256).is_err(),
                 "{body:?} {sha256:?}"
             );
         }
-        delete_item(&mut history, "ana", NOW, "me", Some("hola"), None).unwrap();
+        delete_item(&mut history, "ana", NOW, "me", None, Some("hola"), None).unwrap();
 
         let left = &history["ana"];
         assert_eq!(left.len(), 1);
@@ -265,6 +291,7 @@ mod tests {
             "ana",
             NOW + 1,
             "me",
+            None,
             Some("se va"),
             None,
         )
@@ -285,5 +312,113 @@ mod tests {
             texts(&reloaded.history["ana"]),
             [("me".to_string(), Some("se queda"))]
         );
+    }
+
+    #[test]
+    fn a_message_comes_back_where_it_was_when_history_bin_cannot_be_written() {
+        let scratch = ScratchDir::new("delete-for-me-fails");
+        // A directory where history.bin should go: no write can replace it.
+        let path = scratch.path().join("history.bin");
+        std::fs::create_dir(&path).unwrap();
+        std::fs::write(path.join("inside"), b"x").unwrap();
+        let mut inner = InnerState {
+            history_key: Some([7; 32]),
+            ..InnerState::default()
+        };
+        inner.history.insert(
+            "ana".into(),
+            vec![
+                text("me", "uno", NOW),
+                text("me", "dos", NOW + 1),
+                text("me", "tres", NOW + 2),
+            ],
+        );
+        let removed = delete_item(
+            &mut inner.history,
+            "ana",
+            NOW + 1,
+            "me",
+            None,
+            Some("dos"),
+            None,
+        );
+
+        let error = write_without(&mut inner, &path, "ana", removed.unwrap()).unwrap_err();
+
+        assert_eq!(error.code, ErrorCode::Io);
+        assert_eq!(
+            texts(&inner.history["ana"]),
+            [
+                ("me".to_string(), Some("uno")),
+                ("me".to_string(), Some("dos")),
+                ("me".to_string(), Some("tres")),
+            ],
+            "the chat shows what history.bin still holds"
+        );
+        // Trying again finds it.
+        let again = delete_item(
+            &mut inner.history,
+            "ana",
+            NOW + 1,
+            "me",
+            None,
+            Some("dos"),
+            None,
+        );
+        assert_eq!(again.unwrap().0, 1);
+    }
+
+    /// A message of `sender` in a group, as it arrives.
+    fn from(sender: &str, body: &str, ts: i64) -> HistItem {
+        item(json!({ "side": "them", "from": sender, "text": body, "ts": ts }))
+    }
+
+    #[test]
+    fn in_a_group_the_sender_says_which_message() {
+        // Bob and Carol both sent "ok" in the same second.
+        let both = || {
+            HashMap::from([(
+                "grp:g1".to_string(),
+                vec![from("bob", "ok", NOW), from("carol", "ok", NOW)],
+            )])
+        };
+        let senders = |history: &HashMap<String, Vec<HistItem>>| -> Vec<String> {
+            history["grp:g1"]
+                .iter()
+                .filter_map(|i| i.from.clone())
+                .collect()
+        };
+
+        let mut history = both();
+        delete_item(
+            &mut history,
+            "grp:g1",
+            NOW,
+            "them",
+            Some("carol"),
+            Some("ok"),
+            None,
+        )
+        .unwrap();
+        assert_eq!(senders(&history), ["bob"]);
+
+        // Without `from`, the first that matches goes, as before.
+        let mut history = both();
+        delete_item(&mut history, "grp:g1", NOW, "them", None, Some("ok"), None).unwrap();
+        assert_eq!(senders(&history), ["carol"]);
+
+        let mut history = both();
+        let error = delete_item(
+            &mut history,
+            "grp:g1",
+            NOW,
+            "them",
+            Some("dave"),
+            Some("ok"),
+            None,
+        )
+        .unwrap_err();
+        assert_eq!(error.code, ErrorCode::NotFound);
+        assert_eq!(senders(&history), ["bob", "carol"]);
     }
 }

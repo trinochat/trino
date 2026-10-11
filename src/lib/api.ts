@@ -507,14 +507,23 @@ export const api = {
   deleteGroup: (gid: string): Promise<void> => invoke('delete_group', { gid }),
   // K11: deletes one message here for good. `convo` is the history key (the
   // handle, or `grp:<gid>`); a text matches on `text`, a file on `sha256`.
+  // `from`, the sender of a group message (HistItem.from), tells apart two
+  // members who sent the same in the same second; left out, the payload is
+  // as before and the first that matches goes.
   deleteHistoryItem: (
     convo: string,
     ts: number,
     side: 'me' | 'them',
     text?: string | null,
     sha256?: string | null,
+    from?: string | null,
   ): Promise<void> =>
-    invoke('delete_history_item', { convo, ts, side, text: text ?? null, sha256: sha256 ?? null }),
+    invoke(
+      'delete_history_item',
+      from === undefined
+        ? { convo, ts, side, text: text ?? null, sha256: sha256 ?? null }
+        : { convo, ts, side, text: text ?? null, sha256: sha256 ?? null, from },
+    ),
   // K13: records a call that ended in its contact's chat, at the time it
   // started (epoch seconds), and answers with the log entry. The same `id`
   // twice answers with the entry already there.

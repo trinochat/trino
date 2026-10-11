@@ -155,6 +155,13 @@ describe('the new commands', () => {
       { convo: 'grp:g1', ts: 1760000000, side: 'them', text: null, sha256: 'abc' },
     ],
     [
+      // Two members may send the same text in the same second: `from` says whose.
+      'deleteHistoryItem for a group message, with its sender',
+      () => api.deleteHistoryItem('grp:g1', 1760000000, 'them', 'ok', undefined, 'Bob'),
+      'delete_history_item',
+      { convo: 'grp:g1', ts: 1760000000, side: 'them', text: 'ok', sha256: null, from: 'Bob' },
+    ],
+    [
       'recordCall',
       () => api.recordCall('Ana', CALL, 1760000000),
       'record_call',
