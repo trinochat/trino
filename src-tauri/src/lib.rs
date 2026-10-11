@@ -14,6 +14,8 @@ mod passphrase;
 mod state;
 mod totp_enrollment;
 mod turn;
+// -- W7 --
+mod security_cmds;
 
 use state::AppState;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -233,6 +235,7 @@ pub fn run() {
             a11y::system_text_scale,
             // -- W7 --
             commands::get_autostart,
+            security_cmds::check_passphrase,
             // -- W8 --
         ])
         .run(tauri::generate_context!())
