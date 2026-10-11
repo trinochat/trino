@@ -296,11 +296,14 @@ fn open_identity(inner: &InnerState) -> Result<Identity, CommandError> {
     inner.identity.clone().ok_or_else(sealed)
 }
 
-/// A roster change goes nowhere without a relay: refuse it before anything
-/// changes here, so the user can try again once connected.
+/// A roster change goes nowhere without a relay that is up (K3): refuse it,
+/// as `offline`, before anything changes here, so the user can try again
+/// once connected.
 fn check_online(inner: &InnerState, change: &RosterChange) -> Result<(), CommandError> {
-    if !change.targets.is_empty() && inner.relays.is_empty() {
-        return Err(CommandError::internal(
+    let any_up = inner.relays.iter().any(|relay| relay.is_connected());
+    if !change.targets.is_empty() && !any_up {
+        return Err(CommandError::new(
+            ErrorCode::Offline,
             "no relay is connected: the change would reach nobody",
         ));
     }
@@ -739,6 +742,36 @@ mod tests {
         let out = ingest_incoming_roster(&mut inner, next, "admin", &ik(&admin), &ik(&me), NOW);
         assert_eq!(out, RosterOutcome::Invited { gid: gid.clone() });
         assert!(!inner.groups.contains_key(&gid));
+    }
+
+    #[tokio::test]
+    async fn a_roster_change_waits_for_a_relay_that_is_up() {
+        // Since K3 the session holds a client for every relay, up or not, so
+        // having relays says nothing: only one that is up can carry it.
+        use crate::nostr::test_relay::{unreachable_client, Answer, TestRelay};
+        let (me, ana) = (create_identity(), create_identity());
+        let change = RosterChange {
+            roster: roster_of(&me, &[(&ana, "ana")]),
+            targets: vec!["ana".to_string()],
+        };
+        let mut inner = InnerState::default();
+
+        for relays in [vec![], vec![unreachable_client(Default::default())]] {
+            inner.relays = relays;
+            let error = check_online(&inner, &change).unwrap_err();
+            assert_eq!(error.code, ErrorCode::Offline);
+        }
+
+        let relay = TestRelay::start(Answer::Accept).await;
+        inner.relays.push(relay.client().await);
+        assert!(check_online(&inner, &change).is_ok());
+        // A change nobody else has to hear about needs no relay.
+        inner.relays.clear();
+        let alone = RosterChange {
+            targets: Vec::new(),
+            ..change
+        };
+        assert!(check_online(&inner, &alone).is_ok());
     }
 
     /// What 0.1.0 checks the admin's signature over: a frozen copy of
