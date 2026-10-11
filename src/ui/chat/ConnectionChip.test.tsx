@@ -7,6 +7,8 @@ afterEach(cleanup);
 
 const classesOf = (element: Element | null) => (element?.getAttribute('class') ?? '').split(/\s+/);
 
+const STATE_COLOURS = ['text-ui-ok', 'text-ui-warn', 'text-ui-danger'];
+
 describe('ConnectionChip', () => {
   // Colour alone tells nothing to someone who cannot see it, and forced
   // colours drop a dot drawn as a background: each state has its own icon,
@@ -23,6 +25,10 @@ describe('ConnectionChip', () => {
     expect(mark?.tagName.toLowerCase()).toBe('svg');
     expect(mark?.getAttribute('data-icon')).toBe(icon);
     expect(classesOf(mark)).toContain(colour);
+    // Never another state's colour beside its own, which one of them would win.
+    for (const other of STATE_COLOURS.filter(name => name !== colour)) {
+      expect(classesOf(mark)).not.toContain(other);
+    }
     expect(classesOf(mark).filter(name => name.startsWith('bg-'))).toEqual([]);
   });
 
