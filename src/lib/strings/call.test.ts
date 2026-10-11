@@ -22,10 +22,28 @@ const KEYS: string[] = [
   // Before locking or closing the window during a call.
   'call2.endConfirm.title', 'call2.endConfirm.lock', 'call2.endConfirm.close',
   'call2.endConfirm.lockConfirm', 'call2.endConfirm.closeConfirm',
+  // The call screen (Call:81-164).
+  'call2.screen.label', 'call2.screen.calling', 'call2.screen.connecting', 'call2.screen.back',
+  'call2.screen.controls', 'call2.screen.mute', 'call2.screen.camera', 'call2.screen.output',
+  'call2.screen.outputUnnamed', 'call2.screen.hangup', 'call2.screen.remoteVideo', 'call2.screen.localVideo',
+  'call2.screen.cameraError',
+  // The SAS v2 of the call: the key at the top and the comparison (Call:112-153).
+  'call2.sas.pill', 'call2.sas.pillVerified', 'call2.sas.verified', 'call2.sas.title', 'call2.sas.body',
+  'call2.sas.list', 'call2.sas.match', 'call2.sas.mismatch', 'call2.sas.mismatchAlert',
+  // The bar over the chats while the call is minimized (Main:43-66).
+  'call2.bar.region', 'call2.bar.with', 'call2.bar.return',
 ];
 
 const PLACEHOLDERS = {
   'call2.consent.bodyIncoming': ['name'],
+  'call2.screen.label': ['name'],
+  'call2.screen.outputUnnamed': ['n'],
+  'call2.screen.remoteVideo': ['name'],
+  'call2.sas.pill': ['words'],
+  'call2.sas.pillVerified': ['words'],
+  'call2.sas.title': ['name'],
+  'call2.sas.body': ['name'],
+  'call2.bar.with': ['name'],
 };
 
 describe('call strings', () => {
@@ -54,6 +72,14 @@ describe('call strings', () => {
       'La llamada terminó porque cambió la clave de la conexión. Vuelve a llamar y comparen los símbolos otra vez.',
     );
     expect(call.es['call2.end.logged']).toBe('Queda registrada en el chat.');
+  });
+
+  // plan §6, mitigation 1: a peer on 0.1.0 shows other symbols, and the app cannot tell.
+  it('ask both people to update when the symbols do not match', () => {
+    expect(call.es['call2.sas.mismatchAlert']).toBe(
+      'Puede que alguien esté en medio. Cuelga y vuelve a llamar. Si tu contacto no ha actualizado Trino, verá otros símbolos: actualicen los dos y comparen otra vez.',
+    );
+    expect(call.es['call2.sas.title']).toBe('Compara estos símbolos con {name}');
   });
 
   it.each(LANG_CODES)('promise nothing that is not built yet in %s', lang => {

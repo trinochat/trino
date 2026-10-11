@@ -5,8 +5,10 @@
  */
 import { render, type RenderResult } from '@testing-library/react';
 import type { ReactNode } from 'react';
+import { vi } from 'vitest';
 import { I18nContext, makeT, type Lang } from '../../lib/i18n';
 import { LangCtx } from '../../lib/i18n-context';
+import type { CallController } from './useCallController';
 
 export function renderIn(node: ReactNode, lang: Lang = 'es'): RenderResult {
   const t = makeT(lang);
@@ -49,4 +51,42 @@ export function countingStorage(): { storage: Storage; accesses: string[] } {
     },
   } as Storage;
   return { storage, accesses };
+}
+
+/** A call controller in a given moment, with spies for its actions: for the screens' tests. */
+export function fakeController(over: Partial<CallController> = {}): CallController {
+  return {
+    view: 'connected',
+    activePeer: 'ana',
+    peer: { handle: 'ana', name: 'Ana Torres', avatar: null, verified: false, identityDigest: null },
+    direction: 'outgoing',
+    video: false,
+    minimized: false,
+    setMinimized: vi.fn(),
+    connectedAt: null,
+    mode: null,
+    consent: null,
+    answerConsent: vi.fn(),
+    media: { muted: false, cameraOn: false, hasVideo: false },
+    localStream: null,
+    remoteStream: null,
+    sas: null,
+    confirmMatch: vi.fn(),
+    notice: null,
+    ended: null,
+    dismissEnded: vi.fn(),
+    callAgain: vi.fn(),
+    endConfirm: null,
+    answerEndConfirm: vi.fn(),
+    nameOf: (handle: string) => (handle === 'ana' ? 'Ana Torres' : handle),
+    start: vi.fn(),
+    accept: vi.fn(),
+    reject: vi.fn(),
+    hangup: vi.fn(),
+    toggleMute: vi.fn(),
+    toggleCamera: vi.fn(),
+    hangupAndWait: vi.fn(async () => {}),
+    confirmEnd: vi.fn(async () => true),
+    ...over,
+  };
 }
