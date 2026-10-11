@@ -117,6 +117,12 @@ pub struct CallConfigResponse {
     pub ice_servers: Vec<CallIceServer>,
 }
 
+// -- W8 -- Contacts (K7, K8), groups (K9, K10), "delete for me" (K11) and
+// the shared profile (K12). Child modules, so they reach the helpers of this
+// file (sessions, sending, persistence) without making them public.
+#[path = "contacts_cmds.rs"]
+pub(crate) mod contacts_cmds;
+
 #[derive(Serialize)]
 pub struct NodeInfo {
     pub handle: String,
@@ -125,6 +131,8 @@ pub struct NodeInfo {
     pub added_at: i64,
     pub avatar: Option<String>,
     pub blocked: bool,
+    /// SHA-256 of the identity keys in full (K7); `None` if they do not decode.
+    pub identity_digest: Option<String>,
 }
 
 #[derive(Serialize, Clone)]
@@ -1221,26 +1229,20 @@ pub async fn probe_node(
         added_at: record.added_at,
         avatar,
         blocked: false,
+        identity_digest: Some(contacts_cmds::identity_digest(
+            &ik_pub, &ik_dh_pub, &nostr_pub,
+        )),
     })
 }
 
 #[tauri::command]
 pub async fn list_nodes(state: State<'_, AppState>) -> Result<Vec<NodeInfo>, String> {
     let inner = state.inner.lock().await;
-    let mut out = vec![];
-    for f in inner.friends.values() {
-        let ik_pub = decode_array_32(&f.bundle.ik_sign_pub).unwrap_or([0u8; 32]);
-        let ik_dh = decode_array_32(&f.bundle.ik_dh_pub).unwrap_or([0u8; 32]);
-        let nostr = decode_array_32(&f.bundle.nostr_pub).unwrap_or([0u8; 32]);
-        out.push(NodeInfo {
-            handle: f.handle.clone(),
-            fingerprint: fp(&ik_pub, &ik_dh, &nostr),
-            has_session: inner.ratchets.contains_key(&f.handle),
-            added_at: f.added_at,
-            avatar: f.avatar.clone(),
-            blocked: inner.blocked.contains(&f.bundle.nostr_pub),
-        });
-    }
+    let mut out: Vec<NodeInfo> = inner
+        .friends
+        .values()
+        .map(|f| contacts_cmds::node_info(&inner, f))
+        .collect();
     out.sort_by_key(|item| std::cmp::Reverse(item.added_at));
     Ok(out)
 }
@@ -3608,22 +3610,30 @@ pub struct ProfileResponse {
     pub avatar: Option<String>,
     pub fingerprint: String,
     pub nostr_pub: String,
+    /// SHA-256 of this identity's keys in full (K7); `fingerprint` is its prefix.
+    pub identity_digest: String,
+}
+
+/// What `get_profile` answers for the open session.
+fn profile_of(inner: &InnerState) -> Result<ProfileResponse, String> {
+    let identity = inner.identity.as_ref().ok_or("vault sealed")?;
+    let (ik_sign, ik_dh, nostr) = (
+        &identity.ik_sign.pub_bytes,
+        &identity.ik_dh.pub_bytes,
+        &identity.nostr.pub_bytes,
+    );
+    Ok(ProfileResponse {
+        handle: inner.handle.clone().unwrap_or_default(),
+        avatar: inner.avatar.clone(),
+        fingerprint: fp(ik_sign, ik_dh, nostr),
+        nostr_pub: hex::encode(nostr),
+        identity_digest: contacts_cmds::identity_digest(ik_sign, ik_dh, nostr),
+    })
 }
 
 #[tauri::command]
 pub async fn get_profile(state: State<'_, AppState>) -> Result<ProfileResponse, String> {
-    let inner = state.inner.lock().await;
-    let identity = inner.identity.as_ref().ok_or("vault sealed")?;
-    Ok(ProfileResponse {
-        handle: inner.handle.clone().unwrap_or_default(),
-        avatar: inner.avatar.clone(),
-        fingerprint: fp(
-            &identity.ik_sign.pub_bytes,
-            &identity.ik_dh.pub_bytes,
-            &identity.nostr.pub_bytes,
-        ),
-        nostr_pub: hex::encode(identity.nostr.pub_bytes),
-    })
+    profile_of(&*state.inner.lock().await)
 }
 
 #[tauri::command]
