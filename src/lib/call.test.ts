@@ -678,3 +678,131 @@ describe('answering', () => {
     expect(api.sendCallSignal).not.toHaveBeenCalled();
   });
 });
+
+// Additions for the redesigned call screen (W6). Nothing here changes what
+// goes on the wire or how TURN is used; the old screen keeps working as it is.
+describe('additions for the redesigned call screen', () => {
+  const LOCAL_DTLS = 'aa' + '01'.repeat(31);
+  const REMOTE_DTLS = 'bb' + '01'.repeat(31);
+
+  function videoOfferFrom(callId = OFFER_ID): string {
+    return JSON.stringify({ t: 'offer', callId, sdp: sdp('offer', false), video: true });
+  }
+
+  it('answers a video call with audio only when asked to', async () => {
+    api.getTurnServers.mockResolvedValue(turnOk());
+    const { call, cb } = await setup();
+    call.handleSignal(PEER, videoOfferFrom());
+    await call.acceptIncoming({ video: false });
+    expect(getUserMedia).toHaveBeenCalledTimes(1);
+    expect(getUserMedia.mock.calls[0]![0].video).toBe(false);
+    expect(cb.onState).toHaveBeenCalledWith('connecting', expect.objectContaining({ video: false }));
+    expect(sent().map(s => s.signal.t)).toEqual(['answer']);
+  });
+
+  it('still answers a video call with video by default', async () => {
+    api.getTurnServers.mockResolvedValue(turnOk());
+    const { call } = await setup();
+    call.handleSignal(PEER, videoOfferFrom());
+    await call.acceptIncoming();
+    expect(getUserMedia.mock.calls[0]![0].video).not.toBe(false);
+  });
+
+  it('never turns a voice call into a video call when answering', async () => {
+    api.getTurnServers.mockResolvedValue(turnOk());
+    const { call } = await setup();
+    call.handleSignal(PEER, offerFrom());
+    await call.acceptIncoming({ video: true });
+    expect(getUserMedia.mock.calls[0]![0].video).toBe(false);
+  });
+
+  it("tells every state which call it belongs to, the final one included", async () => {
+    api.getTurnServers.mockResolvedValue(turnOk());
+    const { call, cb } = await setup();
+    await call.startCall(PEER, false);
+    const id = sent()[0]!.signal.callId;
+    call.hangup();
+    expect(cb.onState.mock.calls.map(([state, info]) => [state, info.callId])).toEqual([
+      ['starting', id],
+      ['ringing-out', id],
+      ['ended', id],
+    ]);
+  });
+
+  it('gives the ringing state the id of the incoming call', async () => {
+    const { call, cb } = await setup();
+    call.handleSignal(PEER, offerFrom());
+    expect(cb.onState).toHaveBeenLastCalledWith('ringing-in', { peer: PEER, video: false, callId: OFFER_ID });
+  });
+
+  it('hands over the inputs of the SAS: the call id and both DTLS fingerprints, lowercase and without colons', async () => {
+    api.getTurnServers.mockResolvedValue(turnOk());
+    const { call } = await setup();
+    const onSasInputs = vi.fn();
+    call.initCall({ ...(await setupCallbacks()), onSasInputs });
+    await connectedCall(call);
+    await settle();
+    const id = sent()[0]!.signal.callId;
+    expect(onSasInputs).toHaveBeenCalledWith({ callId: id, localDtls: LOCAL_DTLS, remoteDtls: REMOTE_DTLS });
+  });
+
+  it('hands them over when answering, too', async () => {
+    api.getTurnServers.mockResolvedValue(turnOk());
+    const { call } = await setup();
+    const onSasInputs = vi.fn();
+    call.initCall({ ...(await setupCallbacks()), onSasInputs });
+    call.handleSignal(PEER, offerFrom());
+    await call.acceptIncoming();
+    await settle();
+    // Answering, the offer is the remote description and the answer the local one.
+    expect(onSasInputs).toHaveBeenCalledWith({ callId: OFFER_ID, localDtls: REMOTE_DTLS, remoteDtls: LOCAL_DTLS });
+  });
+
+  it('hands them over again when the other side renegotiates, so a new fingerprint is noticed', async () => {
+    api.getTurnServers.mockResolvedValue(turnOk());
+    const { call } = await setup();
+    const onSasInputs = vi.fn();
+    call.initCall({ ...(await setupCallbacks()), onSasInputs });
+    await connectedCall(call);
+    await settle();
+    const id = sent()[0]!.signal.callId;
+    const other = 'cc' + '02'.repeat(31);
+    const renegotiation = sdp('offer', false).replace(/AA(:01){31}/, 'CC' + ':02'.repeat(31));
+    call.handleSignal(PEER, JSON.stringify({ t: 'offer', callId: id, sdp: renegotiation, renegotiate: true }));
+    await settle();
+    expect(onSasInputs).toHaveBeenLastCalledWith(expect.objectContaining({ callId: id, remoteDtls: other }));
+  });
+
+  it('says nothing about a call that ended while its SAS was being worked out', async () => {
+    api.getTurnServers.mockResolvedValue(turnOk());
+    const { call, cb } = await setup();
+    let ended = false;
+    call.initCall({
+      ...(await setupCallbacks()),
+      onSas: cb.onSas,
+      onSasInputs: () => {
+        if (!ended) {
+          ended = true;
+          call.hangup(); // as the redesign does when a fingerprint changes
+        }
+      },
+    });
+    await connectedCall(call);
+    await settle();
+    expect(cb.onSas).toHaveBeenLastCalledWith('');
+  });
+});
+
+/** A fresh set of the required callbacks, for a test that adds an optional one. */
+async function setupCallbacks() {
+  return {
+    onState: vi.fn(),
+    onLocalStream: vi.fn(),
+    onRemoteStream: vi.fn(),
+    onSas: vi.fn(),
+    onError: vi.fn(),
+    onMedia: vi.fn(),
+    onConnectionMode: vi.fn(),
+    onDirectConsent: vi.fn(),
+  };
+}

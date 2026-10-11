@@ -74,8 +74,20 @@ export type CallErrorCode =
   | 'no-answer'
   | 'connection';
 
+/**
+ * What the SAS v2 of a call is made from (docs/sas-v2.md), as `parseFp`
+ * gives the fingerprints: 64 lowercase hex digits, without colons.
+ */
+export interface SasInputs {
+  callId: string;
+  localDtls: string;
+  remoteDtls: string;
+}
+
 export interface CallCallbacks {
-  onState: (s: CallState, info: { peer: string | null; video: boolean }) => void;
+  // `callId` is the id of the call the state belongs to, the final 'ended'
+  // or 'rejected' included; null only when there is no call.
+  onState: (s: CallState, info: { peer: string | null; video: boolean; callId: string | null }) => void;
   onLocalStream: (s: MediaStream | null) => void;
   onRemoteStream: (s: MediaStream | null) => void;
   // Short Authentication String (Telegram-style emoji code) from the DTLS
@@ -89,6 +101,11 @@ export interface CallCallbacks {
   // TURN failed: ask whether to go direct (null closes the question). Answer
   // with answerDirectConsent(); anything but an explicit yes cancels.
   onDirectConsent: (request: DirectConsentRequest | null) => void;
+  // The inputs of the call's SAS v2, each time a description is applied:
+  // after the answer, and again on every renegotiation. The redesigned
+  // screen derives the symbols from them and ends the call if the remote
+  // fingerprint changes (docs/sas-v2.md, "The DTLS fingerprint rule").
+  onSasInputs?: (inputs: SasInputs) => void;
 }
 
 interface Signal {
@@ -276,12 +293,16 @@ function parseFp(sdp?: string | null): string | null {
 }
 
 async function computeSas(): Promise<void> {
-  if (!pc || !cbs) return;
-  const a = parseFp(pc.localDescription?.sdp);
-  const b = parseFp(pc.remoteDescription?.sdp);
+  const p = pc;
+  if (!p || !cbs) return;
+  const a = parseFp(p.localDescription?.sdp);
+  const b = parseFp(p.remoteDescription?.sdp);
   if (!a || !b) return;
+  if (callId) cbs.onSasInputs?.({ callId, localDtls: a, remoteDtls: b });
+  if (pc !== p) return; // the call ended (onSasInputs may end it)
   const joined = [a, b].sort().join('|');
   const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(joined));
+  if (pc !== p || !cbs) return; // ended meanwhile: its emojis would outlive it
   const bytes = new Uint8Array(digest);
   const emojis = Array.from({ length: 5 }, (_, i) => SAS_EMOJIS[bytes[i]! % SAS_EMOJIS.length]);
   cbs.onSas(emojis.join(' '));
@@ -493,7 +514,7 @@ function syncMediaFlag(): void {
 function setState(next: CallState): void {
   state = next;
   syncMediaFlag();
-  cbs?.onState(next, { peer, video });
+  cbs?.onState(next, { peer, video, callId });
 }
 
 async function send(to: string, s: Signal): Promise<boolean> {
@@ -830,20 +851,26 @@ function armRingTimeout(): void {
 }
 
 // ── answering ───────────────────────────────────────────────────────────────
-export async function acceptIncoming(): Promise<void> {
+/**
+ * Answer the ringing call. `{ video: false }` answers a video call with the
+ * microphone only ("Contestar solo con audio"): the caller's video still
+ * arrives, and the camera can be turned on later. It never adds video to a
+ * voice call.
+ */
+export async function acceptIncoming(opts?: { video?: boolean }): Promise<void> {
   if (!pendingOffer || state !== 'ringing-in') return;
   const { from, sig } = pendingOffer;
   pendingOffer = null;
-  await answerOffer(from, sig);
+  await answerOffer(from, sig, opts?.video !== false);
 }
 
-async function answerOffer(from: string, sig: Signal): Promise<void> {
+async function answerOffer(from: string, sig: Signal, withVideo = true): Promise<void> {
   clearRing();
   const my = generation;
   const id = sig.callId;
   peer = from;
   callId = id;
-  video = !!sig.video;
+  video = !!sig.video && withVideo;
   polite = true; // callee is polite
   outgoing = false;
   answered = false;
@@ -1085,6 +1112,8 @@ async function handleRenegotiation(from: string, s: Signal): Promise<void> {
   try {
     candidates.embed(); // an ICE-restart answer carries its new candidates
     await p.setRemoteDescription({ type: 'offer', sdp: s.sdp });
+    if (pc !== p) return;
+    void computeSas(); // the offer may carry another fingerprint (onSasInputs)
     if (pc !== p) return;
     await flushIce();
     const answer = await p.createAnswer();
