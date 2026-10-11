@@ -5,7 +5,12 @@
  * notice of invitations or of a stranger; the tabs "Chats | Llamadas · N";
  * and your profile at the foot. Chats has the search, the chips and the
  * chats; Calls has its chips, the log and its note. Without the call log
- * (K13) there are no tabs, only the chats. Each list scrolls on its own.
+ * (K13) there are no tabs, only the chats.
+ *
+ * Each list scrolls on its own and keeps at least 8 rem. Everything between
+ * the head and the foot is one region that scrolls when it does not fit, as
+ * at 200 % in a small window: #root cuts off whatever overflows
+ * (accesibilidad.md §4.7, rule 9), so nothing there may only shrink.
  */
 import { PhoneOutgoing, Plus, Search } from 'lucide-react';
 import { useId, type Ref } from 'react';
@@ -143,42 +148,45 @@ export function InboxPanel(props: InboxPanelProps) {
           <IconButton variant="secondary" aria-label={t('inbox.newChat')} icon={<Plus {...iconSize('lg')} />} onClick={props.onNewChat} />
         )}
       </div>
-      {connection && (
-        <ConnectionChip status={connection.status} label={connectionLabel(connection, t)} className="mx-1 self-start" />
-      )}
-      {notice && (
-        <Banner
-          tone="info"
-          action={
-            <Button variant="ghost" onClick={notice.onAction}>
-              {t('inbox.notice.view')}
-            </Button>
-          }
-        >
-          {notice.text}
-        </Banner>
-      )}
-      {calls === null ? (
-        <div className="flex min-h-0 flex-1 flex-col gap-3">{chats}</div>
-      ) : (
-        <InboxTabs
-          tab={tab}
-          onTabChange={props.onTabChange}
-          missedUnseen={props.missedUnseen}
-          chats={chats}
-          calls={
-            <CallHistoryList
-              rows={calls}
-              filter={props.callFilter}
-              onFilterChange={props.onCallFilterChange}
-              selectedKey={props.selectedCallKey}
-              onCall={props.onCallBack}
-              onOpenChat={props.onOpenCallChat}
-              now={props.now}
-            />
-          }
-        />
-      )}
+      {/* Its padding, edge to edge, keeps the focus rings inside what it clips. */}
+      <div className="-mx-3 -my-1 flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto px-3 py-1">
+        {connection && (
+          <ConnectionChip status={connection.status} label={connectionLabel(connection, t)} className="mx-1 self-start" />
+        )}
+        {notice && (
+          <Banner
+            tone="info"
+            action={
+              <Button variant="ghost" onClick={notice.onAction}>
+                {t('inbox.notice.view')}
+              </Button>
+            }
+          >
+            {notice.text}
+          </Banner>
+        )}
+        {calls === null ? (
+          <div className="flex flex-1 flex-col gap-3">{chats}</div>
+        ) : (
+          <InboxTabs
+            tab={tab}
+            onTabChange={props.onTabChange}
+            missedUnseen={props.missedUnseen}
+            chats={chats}
+            calls={
+              <CallHistoryList
+                rows={calls}
+                filter={props.callFilter}
+                onFilterChange={props.onCallFilterChange}
+                selectedKey={props.selectedCallKey}
+                onCall={props.onCallBack}
+                onOpenChat={props.onOpenCallChat}
+                now={props.now}
+              />
+            }
+          />
+        )}
+      </div>
       <ProfileFooter me={props.me} onShareCode={props.onShareCode} onOpenSettings={props.onOpenSettings} />
     </div>
   );

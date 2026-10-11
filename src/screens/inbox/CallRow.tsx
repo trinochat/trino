@@ -4,6 +4,11 @@
  * "Llamar a {name}". The row opens the contact's chat. A missed call is told
  * by its icon (PhoneMissed), its words ("Perdida") and its weight, and only
  * then by `danger`.
+ *
+ * The call whose chat is open is marked as ChatRow marks its chat: the accent
+ * tint, which `raised` cannot be (it is the sidebar's own colour in Terminal
+ * light), and a bar on its leading edge, a border that a Windows contrast
+ * theme keeps and paints in the system highlight.
  */
 import { Phone } from 'lucide-react';
 import { CALL_EVENT_ICONS, callEventIcon, callEventText, isMissed } from '../../lib/call-events';
@@ -41,7 +46,14 @@ export function CallRow({ row, selected, now, onCall, onOpenChat }: CallRowProps
   const missed = isMissed(entry.call);
   const Icon = CALL_EVENT_ICONS[callEventIcon(entry.call)];
   return (
-    <div className={cx('flex items-center gap-1 rounded-ui', selected && 'bg-ui-raised')}>
+    <div className={cx('relative flex items-center gap-1 rounded-ui', selected && 'bg-ui-accent-soft')}>
+      {selected && (
+        <span
+          data-selection-bar=""
+          aria-hidden="true"
+          className="pointer-events-none absolute inset-y-2 start-0 rounded-full border-s-[3px] border-ui-accent-text forced-colors:border-[color:Highlight]"
+        />
+      )}
       <button
         type="button"
         aria-current={selected ? 'true' : undefined}

@@ -1,7 +1,8 @@
 /**
  * The Calls tab (PropLlamadas:53-87): the chips Todas and Perdidas, the calls
- * in a scroll of their own, and a note that stays in view: the log only has
- * the calls that came in with Trino open and unlocked (K13).
+ * in a scroll of their own that keeps at least 8 rem, and a note that stays
+ * in view: the log only has the calls that came in with Trino open and
+ * unlocked (K13).
  */
 import { isMissed } from '../../lib/call-events';
 import { useT } from '../../lib/i18n';
@@ -37,7 +38,10 @@ export function CallHistoryList({ rows, filter, onFilterChange, selectedKey, onC
         onValueChange={onFilterChange}
       />
       {visible.length > 0 ? (
-        <ul aria-label={t('inbox.calls.listLabel')} className="-mx-1 flex min-h-0 flex-1 flex-col gap-0.5 overflow-y-auto px-1">
+        <ul
+          aria-label={t('inbox.calls.listLabel')}
+          className="-mx-1 flex min-h-[8rem] grow basis-0 flex-col gap-0.5 overflow-y-auto px-1"
+        >
           {visible.map(row => (
             <li key={row.entry.key}>
               <CallRow row={row} selected={row.entry.key === selectedKey} now={now} onCall={onCall} onOpenChat={onOpenChat} />

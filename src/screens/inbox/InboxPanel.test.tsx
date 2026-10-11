@@ -124,16 +124,48 @@ describe('InboxPanel: the chats', () => {
   it('gives a muted chat the BellOff icon and an outlined count, not only grey', () => {
     renderEs(<InboxPanel {...props()} />);
     const item = rowNamed(/^Familia/).closest('li')!;
-    expect(item.querySelector('svg.lucide-bell-off')).not.toBeNull();
-    expect(within(item).getByRole('img', { name: 'Silenciado' })).toBeTruthy();
+    const bell = item.querySelector('svg.lucide-bell-off');
+    expect(bell).not.toBeNull();
+    // The word is in the row's own name (below), so the picture is decoration.
+    expect(bell!.closest('[aria-hidden="true"]')).not.toBeNull();
     const badge = within(rowNamed(/^Familia/)).getByText('3').closest('span');
     expect(classesOf(badge)).toContain('border-ui-muted');
     expect(rowNamed(/^Ana/).closest('li')!.querySelector('svg.lucide-bell-off')).toBeNull();
   });
 
+  // Tabbing through the chats reads each row's name only: an image beside the
+  // button never reaches it, so "Silenciado" has to be inside the row.
+  it('says "Silenciado" in the name of a muted row, read or not', () => {
+    const quiet = { ...ITEMS[1]!, unread: 0 };
+    const { rerender } = renderEs(<InboxPanel {...props()} />);
+    expect(rowNamed(/^Familia.*Silenciado/)).toBeTruthy();
+    expect(within(rowNamed(/^Familia/).closest('li')!).queryByRole('img')).toBeNull();
+    expect(rowNamed(/^Ana/).textContent).not.toContain('Silenciado');
+
+    rerender(
+      <LangCtx.Provider value={{ lang: 'es', setLang: () => {} }}>
+        <I18nContext.Provider value={makeT('es')}>
+          <InboxPanel {...props({ items: [quiet] })} />
+        </I18nContext.Provider>
+      </LangCtx.Provider>,
+    );
+    expect(rowNamed(/^Familia.*Silenciado/)).toBeTruthy();
+  });
+
   it('says in words which row is a group, since Terminal squares every avatar', () => {
     renderEs(<InboxPanel {...props()} />);
     expect(rowNamed(/^Familia/).textContent).toContain('Grupo · Papá: Llego a las 7');
+  });
+
+  it('keeps "Grupo" on a group row while it shows a draft', () => {
+    const items = ITEMS.map(item => (item.key === 'grp:g1' ? { ...item, draft: 'Llego tarde' } : item));
+    renderEs(<InboxPanel {...props({ items })} />);
+    const familia = rowNamed(/^Familia/);
+    expect(familia.textContent).toContain('Grupo · Borrador: Llego tarde');
+    expect(within(familia).getByText('Grupo · Borrador:')).toBeTruthy();
+    // A contact's draft has no group tag.
+    expect(rowNamed(/^Carlos/).textContent).toContain('Borrador: Mañana te confirmo la hora');
+    expect(rowNamed(/^Carlos/).textContent).not.toContain('Grupo');
   });
 
   it('shows a draft with its prefix, and the trust of a contact whose key changed', () => {
@@ -336,5 +368,98 @@ describe('InboxPanel: the tabs', () => {
     expect(screen.queryByRole('tablist')).toBeNull();
     expect(screen.getByRole('searchbox', { name: 'Buscar chats' })).toBeTruthy();
     expect(screen.getByRole('list', { name: 'Chats' })).toBeTruthy();
+  });
+});
+
+/**
+ * At 200 % in the 640×480 window, or at 150 % with a notice, the head, the
+ * notice, the tabs, the search, the chips and the foot are taller than the
+ * sidebar. Edge measured the list squeezed to 0 px and the chips drawn over
+ * the foot, since only the list could shrink and #root cuts off the rest
+ * (accesibilidad.md §4.7, rule 9). jsdom lays nothing out, so these pin the
+ * structure that keeps everything reachable: one scroll region between the
+ * head and the foot, and lists that keep a height of their own inside it.
+ */
+describe('InboxPanel: room for large text', () => {
+  const NOTICE = { text: 'Tienes invitaciones a grupos sin responder.', onAction: () => {} };
+  /** The nearest ancestor that scrolls. */
+  const scrollerOf = (element: Element): Element | null => {
+    for (let node = element.parentElement; node; node = node.parentElement) {
+      if (classesOf(node).includes('overflow-y-auto')) return node;
+    }
+    return null;
+  };
+  /**
+   * Nothing between a list and its region may let the list shrink to nothing.
+   * Its basis is a length, not `flex-1`'s 0 %: a percentage of a height not
+   * known yet counts the whole content, and Edge then grew the list to every
+   * row and scrolled the region even at 100 %. With 0 px it adds only its 8 rem
+   * to what the region must hold, and scrolls on its own while there is room.
+   */
+  const expectRoomFor = (list: Element, region: Element) => {
+    expect(classesOf(list)).toEqual(expect.arrayContaining(['min-h-[8rem]', 'grow', 'basis-0', 'overflow-y-auto']));
+    expect(classesOf(list)).not.toContain('min-h-0');
+    expect(classesOf(list)).not.toContain('flex-1');
+    for (let node = list.parentElement; node && node !== region; node = node.parentElement) {
+      expect(classesOf(node)).not.toContain('min-h-0');
+    }
+  };
+
+  it('scrolls everything between the head and the foot as one region, the chats keeping a height of their own', () => {
+    renderEs(<InboxPanel {...props({ notice: NOTICE })} />);
+    const region = scrollerOf(screen.getByRole('tablist', { name: 'Ver' }));
+    expect(region).not.toBeNull();
+    expect(classesOf(region)).toEqual(expect.arrayContaining(['min-h-0', 'flex-1']));
+    for (const part of [
+      screen.getByText('Conectado · 3 de 3 servidores'),
+      screen.getByText(NOTICE.text),
+      screen.getByRole('searchbox', { name: 'Buscar chats' }),
+      screen.getByRole('group', { name: 'Filtrar chats' }),
+    ]) {
+      expect(scrollerOf(part)).toBe(region);
+    }
+    // The head and the foot stay in view, outside the region.
+    const newChat = screen.getByRole('button', { name: 'Nuevo chat' });
+    const settings = screen.getByRole('button', { name: 'Ajustes' });
+    expect(region!.contains(newChat)).toBe(false);
+    expect(region!.contains(settings)).toBe(false);
+    expect(region!.compareDocumentPosition(settings) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    const list = screen.getByRole('list', { name: 'Chats' });
+    expect(scrollerOf(list)).toBe(region);
+    expectRoomFor(list, region!);
+  });
+
+  it('does the same in the Calls tab', () => {
+    const calls = [
+      {
+        entry: {
+          key: 'call:m1',
+          peer: 'Ana',
+          ts: T0,
+          call: { id: 'm1', direction: 'incoming' as const, video: false, outcome: 'missed' as const, durationSec: 0 },
+        },
+        name: 'Ana',
+        callable: true,
+      },
+    ];
+    renderEs(<InboxPanel {...props({ notice: NOTICE, tab: 'calls', calls })} />);
+    const region = scrollerOf(screen.getByRole('tablist', { name: 'Ver' }));
+    expect(region).not.toBeNull();
+    expect(scrollerOf(screen.getByRole('group', { name: 'Filtrar llamadas' }))).toBe(region);
+    expect(scrollerOf(screen.getByText(NOTICE.text))).toBe(region);
+    const list = screen.getByRole('list', { name: 'Historial de llamadas' });
+    expect(scrollerOf(list)).toBe(region);
+    expectRoomFor(list, region!);
+    expect(region!.contains(screen.getByRole('button', { name: 'Ajustes' }))).toBe(false);
+  });
+
+  it('does the same without tabs (no K13)', () => {
+    renderEs(<InboxPanel {...props({ calls: null, notice: NOTICE })} />);
+    const list = screen.getByRole('list', { name: 'Chats' });
+    const region = scrollerOf(list);
+    expect(region).not.toBeNull();
+    expect(scrollerOf(screen.getByRole('searchbox', { name: 'Buscar chats' }))).toBe(region);
+    expect(scrollerOf(screen.getByText(NOTICE.text))).toBe(region);
+    expectRoomFor(list, region!);
   });
 });

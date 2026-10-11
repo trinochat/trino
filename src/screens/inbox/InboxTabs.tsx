@@ -39,9 +39,11 @@ export function InboxTabs({ tab, onTabChange, missedUnseen, chats, calls }: Inbo
         { value: 'chats', label: t('inbox.tabs.chats'), panel: chats },
         { value: 'calls', label: callsLabel, panel: calls },
       ]}
-      className="min-h-0 flex-1"
+      // No min-h-0: in the sidebar's scroll region the tabs keep their
+      // content's height, and the region scrolls instead (InboxPanel).
+      className="flex-1"
       // A hidden panel keeps the `hidden` attribute's display: none.
-      panelClassName="min-h-0 flex-1 flex-col gap-3 [&:not([hidden])]:flex"
+      panelClassName="flex-1 flex-col gap-3 [&:not([hidden])]:flex"
     />
   );
 }
