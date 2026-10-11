@@ -33,6 +33,7 @@ import {
   type ConversationsAction,
   type SendFailureInfo,
 } from './conversations';
+import { listenAll, nowSeconds } from './listen';
 import type { ShellApi, ShellCapabilities, ShellEvents, ShellPrefs } from './shell-api';
 
 /**
@@ -98,8 +99,6 @@ export interface ConversationsState {
   removed(key: string): void;
 }
 
-const nowSeconds = () => Math.floor(Date.now() / 1000);
-
 function defaultKey(): string {
   return typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
     ? crypto.randomUUID()
@@ -120,24 +119,6 @@ export function sendFailureOf(error: unknown): SendFailure {
 
 /** A file to send: what the chat prepared, or a sticker. */
 type Outgoing = Pick<ProcessedFile, 'name' | 'mime' | 'dataB64' | 'thumb'>;
-
-/** Calls `unsubscribe` for every listener, including those whose subscription is still on its way. */
-function listenAll(subscriptions: ReadonlyArray<Promise<() => void>>): () => void {
-  let active = true;
-  const stops: Array<() => void> = [];
-  for (const subscription of subscriptions) {
-    subscription
-      .then(stop => {
-        if (active) stops.push(stop);
-        else stop();
-      })
-      .catch(() => {});
-  }
-  return () => {
-    active = false;
-    for (const stop of stops.splice(0)) stop();
-  };
-}
 
 function sameRecord<T>(a: Readonly<Record<string, T>>, b: Readonly<Record<string, T>>): boolean {
   const keys = Object.keys(a);
