@@ -7,14 +7,10 @@
  */
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type RefObject } from 'react';
 import { prefersReducedMotion } from '../../design/apply';
+import { rootPx } from './root-size';
 
 /** How close to the end, in rem, still counts as at the end: a few lines. */
 const NEAR_END_REM = 6;
-
-/** The root size in px, which grows with the text size: 16 px at 100 %. */
-function rootPx(doc: Document): number {
-  return parseFloat(doc.defaultView?.getComputedStyle(doc.documentElement).fontSize ?? '') || 16;
-}
 
 function nearEnd(element: HTMLElement): boolean {
   const below = element.scrollHeight - element.scrollTop - element.clientHeight;

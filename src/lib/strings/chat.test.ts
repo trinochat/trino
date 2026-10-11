@@ -6,6 +6,26 @@ import { expectAreaContract } from './contract-test-utils';
 // composer2, msg2, channel, media, emoji and sticker2. A call in the chat
 // takes its words from callEvent.* (common.ts), not from here.
 const KEYS: string[] = [
+  // The pane: its header, the warning of a changed code, and what stands for the composer.
+  'chat2.verified',
+  'chat2.unverified',
+  'chat2.keyChanged',
+  'chat2.verify',
+  'chat2.member',
+  'chat2.members',
+  'chat2.ended',
+  'chat2.blocked',
+  'chat2.ttl',
+  'chat2.voiceCall',
+  'chat2.videoCall',
+  'chat2.details',
+  'chat2.groupDetails',
+  'chat2.keyChangedBanner',
+  'chat2.understood',
+  'chat2.blockedNote',
+  'chat2.openDetails',
+  'chat2.endedNote',
+  'chat2.noChat',
   // The log of a conversation.
   'chat2.log',
   'chat2.empty',
@@ -95,6 +115,9 @@ const KEYS: string[] = [
 ];
 
 const PLACEHOLDERS: Record<string, string[]> = {
+  'chat2.members': ['n'],
+  'chat2.ttl': ['time'],
+  'chat2.keyChangedBanner': ['name'],
   'composer2.label': ['name'],
   'composer2.tooLong': ['count', 'max'],
   'composer2.replyingTo': ['author'],
