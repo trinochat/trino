@@ -26,6 +26,9 @@ export interface WindowTitlebarProps {
   api: WindowApi;
 }
 
+/** How long the page has to stop resizing before the bar asks the window again, in ms. */
+const RESIZE_PAUSE_MS = 100;
+
 /** 46 px wide and as tall as the bar, like the system's own buttons. */
 const BUTTON = cx(
   'inline-flex h-full w-[2.875rem] items-center justify-center text-ui-ink transition-colors reduce-motion:transition-none',
@@ -37,9 +40,11 @@ export function WindowTitlebar({ api }: WindowTitlebarProps) {
   const [maximized, setMaximized] = useState(false);
 
   // Maximizing also happens outside the bar (a double click, Win + ↑), and
-  // always resizes the page: ask again then.
+  // always resizes the page: ask again then. Dragging an edge resizes it many
+  // times a second, so ask once the resizing pauses.
   useEffect(() => {
     let live = true;
+    let pause: ReturnType<typeof setTimeout> | undefined;
     const read = () => {
       api.isMaximized().then(
         value => {
@@ -48,11 +53,16 @@ export function WindowTitlebar({ api }: WindowTitlebarProps) {
         () => {},
       );
     };
+    const onResize = () => {
+      clearTimeout(pause);
+      pause = setTimeout(read, RESIZE_PAUSE_MS);
+    };
     read();
-    window.addEventListener('resize', read);
+    window.addEventListener('resize', onResize);
     return () => {
       live = false;
-      window.removeEventListener('resize', read);
+      clearTimeout(pause);
+      window.removeEventListener('resize', onResize);
     };
   }, [api]);
 

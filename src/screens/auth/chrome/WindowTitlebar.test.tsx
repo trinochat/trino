@@ -40,15 +40,43 @@ describe('WindowTitlebar', () => {
   });
 
   it('offers to restore a maximized window, and follows the window as it changes', async () => {
-    const { api, state } = fakeWindow(true);
-    renderAuth(<WindowTitlebar api={api} />);
-    await settle();
-    expect(screen.getByRole('button', { name: 'Restaurar' })).toBeTruthy();
-    // Maximizing from the system (double click, Win + ↑) resizes the page.
-    state.maximized = false;
-    fireEvent(window, new Event('resize'));
-    await settle();
-    expect(screen.getByRole('button', { name: 'Maximizar' })).toBeTruthy();
+    vi.useFakeTimers();
+    try {
+      const { api, state } = fakeWindow(true);
+      renderAuth(<WindowTitlebar api={api} />);
+      await settle();
+      expect(screen.getByRole('button', { name: 'Restaurar' })).toBeTruthy();
+      // Maximizing from the system (double click, Win + ↑) resizes the page.
+      state.maximized = false;
+      fireEvent(window, new Event('resize'));
+      await act(async () => {
+        vi.advanceTimersByTime(150);
+      });
+      await settle();
+      expect(screen.getByRole('button', { name: 'Maximizar' })).toBeTruthy();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  // Dragging an edge of the window fires resize many times a second: the
+  // bar asks the window once the burst is over, not once per event.
+  it('asks the window once after a burst of resizes', async () => {
+    vi.useFakeTimers();
+    try {
+      const { api } = fakeWindow();
+      renderAuth(<WindowTitlebar api={api} />);
+      await settle();
+      expect(api.isMaximized).toHaveBeenCalledTimes(1);
+      for (let i = 0; i < 5; i += 1) fireEvent(window, new Event('resize'));
+      expect(api.isMaximized).toHaveBeenCalledTimes(1);
+      await act(async () => {
+        vi.advanceTimersByTime(150);
+      });
+      expect(api.isMaximized).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('speaks the language of the app', async () => {
