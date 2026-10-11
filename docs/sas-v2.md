@@ -18,6 +18,7 @@ Files:
 | `src/lib/sas.ts` | The derivation (WebCrypto). |
 | `src/lib/sas-symbols.ts` | Loads the table; lookups by index and language. |
 | `src/lib/SasSymbol.tsx` | `SasIcon` (the icon alone) and `SasSymbol` (icon and word). |
+| `src/screens/verify/verification-marks.ts` | How a verification is stored, and how the marks of 0.1.0 are told apart. |
 
 ## Derivation
 
@@ -126,6 +127,33 @@ inside the app, as ZRTP does, would make the contact's symbols strong
 enough to verify. It was set aside: it would be a protocol addition and a
 third derivation. The decision changes nothing in this spec's derivations
 or vectors.
+
+### Marks made before v2
+
+A verification is stored on the device that made it: on the desktop, as
+`verified:<handle>` in the app's local preferences. From v2 the mark says
+how the contact was verified, then the contact's fingerprint at that
+moment (the short fingerprint, `fp` in `src-tauri/src/commands.rs`: 16
+lowercase hex digits in groups of 4 joined by dots, never a colon):
+
+- `call:<fingerprint>`: "They match" on a call's SAS;
+- `qr:<fingerprint>`: a QR with the full identity digest, scanned in
+  person.
+
+A contact counts as verified only while its mark has one of these forms
+and the fingerprint in it is still the contact's.
+`src/screens/verify/verification-marks.ts` writes and reads them.
+
+0.1.0 stored the bare fingerprint, set by a button beside the contact's
+6 emojis: a contact SAS of 36 bits, which an offline birthday search of
+about 2^18 per side beats (see [What a match
+proves](#what-a-match-proves-and-how-much)). Decided on 11 Oct 2026:
+**those marks no longer count.** No platform reads them as verified, and
+each one tells the person once, naming the contacts that had such a mark,
+that they should verify them again: by a call, or by scanning a QR in
+person where the device can scan one (not the desktop, which therefore
+only offers the call). Once told, the old marks are removed. The mobile
+app applies the same rule to its own storage.
 
 ### The DTLS fingerprint rule
 
@@ -297,9 +325,11 @@ creepy-crawly or about death; `Flower2` rather than `Flower`, which looks like
     has not updated Trino, they will see other symbols, so both should update
     and compare again.
   - The release announcement says so too.
-- **The contact SAS changes as well**, from 6 emojis to 7 icons. Existing
-  `verified:<handle>` marks stay valid, because they store the fingerprint,
-  not the SAS.
+- **The contact SAS changes as well**, from 6 emojis to 7 icons, and it no
+  longer verifies (see [How a contact gets
+  verified](#how-a-contact-gets-verified)). The `verified:<handle>` marks
+  of 0.1.0 came from comparing those emojis, so they no longer count: see
+  [Marks made before v2](#marks-made-before-v2).
 - The copy changes from "Compare these emojis" to "Compare these symbols".
 
 ## One table, three platforms
