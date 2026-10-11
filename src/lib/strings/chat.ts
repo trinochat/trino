@@ -103,6 +103,20 @@ export const chat: AreaStrings = {
     'msg2.copyFailed': 'No se pudo copiar el mensaje.',
     'msg2.deleteFailed': 'No se pudo borrar el mensaje.',
 
+    'channel.title': 'Novedades de Trino',
+    'channel.subtitle': 'Canal oficial · solo lectura',
+    'channel.verified': 'Firmado por el equipo de Trino',
+    'channel.bundled': 'Incluidas en esta versión de Trino',
+    'channel.untrusted':
+      'Llegaron novedades que no pasaron la verificación de firma, así que no se muestran. Ves las que vienen con esta versión de Trino.',
+    'channel.mute': 'Silenciar novedades',
+    'channel.log': 'Novedades',
+    'channel.readOnly': 'Solo el equipo de Trino publica en este canal.',
+    'channel.open': 'Abrir enlace',
+    'channel.version': 'Versión {version}',
+    'channel.unread': 'Sin leer',
+    'channel.empty': 'Todavía no hay novedades.',
+
     'media.view': 'Ver {name}',
     'media.download': 'Descargar',
     'media.downloadName': 'Descargar {name}',
@@ -209,6 +223,20 @@ export const chat: AreaStrings = {
     'msg2.copied': 'Message copied.',
     'msg2.copyFailed': 'The message could not be copied.',
     'msg2.deleteFailed': 'The message could not be deleted.',
+
+    'channel.title': 'Trino news',
+    'channel.subtitle': 'Official channel · read only',
+    'channel.verified': 'Signed by the Trino team',
+    'channel.bundled': 'Included in this version of Trino',
+    'channel.untrusted':
+      'News arrived that failed the signature check, so they are not shown. You see the ones that come with this version of Trino.',
+    'channel.mute': 'Mute news',
+    'channel.log': 'News',
+    'channel.readOnly': 'Only the Trino team posts in this channel.',
+    'channel.open': 'Open link',
+    'channel.version': 'Version {version}',
+    'channel.unread': 'Unread',
+    'channel.empty': 'No news yet.',
 
     'media.view': 'View {name}',
     'media.download': 'Download',
@@ -317,6 +345,20 @@ export const chat: AreaStrings = {
     'msg2.copied': 'Mensagem copiada.',
     'msg2.copyFailed': 'Não foi possível copiar a mensagem.',
     'msg2.deleteFailed': 'Não foi possível apagar a mensagem.',
+
+    'channel.title': 'Novidades do Trino',
+    'channel.subtitle': 'Canal oficial · somente leitura',
+    'channel.verified': 'Assinado pela equipe do Trino',
+    'channel.bundled': 'Incluídas nesta versão do Trino',
+    'channel.untrusted':
+      'Chegaram novidades que não passaram na verificação de assinatura, então não são mostradas. Você vê as que vêm com esta versão do Trino.',
+    'channel.mute': 'Silenciar novidades',
+    'channel.log': 'Novidades',
+    'channel.readOnly': 'Somente a equipe do Trino publica neste canal.',
+    'channel.open': 'Abrir link',
+    'channel.version': 'Versão {version}',
+    'channel.unread': 'Não lidas',
+    'channel.empty': 'Ainda não há novidades.',
 
     'media.view': 'Ver {name}',
     'media.download': 'Baixar',
