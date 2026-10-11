@@ -85,9 +85,8 @@ give very different bounds:
   - The bound assumes that neither fingerprint changes after the first
     answer. If a renegotiation could carry new fingerprints on both legs,
     the attacker would choose both and the search would fall to a birthday
-    search of about 2^21 per leg. The call screen must not let a match
-    outlive a change of the remote fingerprint, and should end the call if
-    it changes.
+    search of about 2^21 per leg. So no match may outlive a change of the
+    remote fingerprint: see [The DTLS fingerprint rule](#the-dtls-fingerprint-rule).
 - **Contact SAS: about 2^21 work, offline.** Its only inputs are the two
   identity digests: static, with nothing fresh and nothing committed. Someone
   who swaps both contact codes during the exchange gives Alice an identity X
@@ -98,29 +97,48 @@ give very different bounds:
   compares. Alice and Bob then see the same 7 symbols while each holds her
   key.
 
-**Consequences:**
-
-- "They match" in a **call** may mark the contact as verified
-  (`verified:<handle>` with the current fingerprint).
-- A **contact** SAS match is not enough, on its own, to mark a contact as
-  verified. 0.1.0's 6 emojis (36 bits) had the same weakness.
-- **Open decision, to take before the call and contact screens on desktop,
-  mobile and web build on this:** how a contact gets verified outside a
-  call. The options:
-  1. compare the full identity digest (a QR scan, or a long safety number of
-     at least 128 bits), and keep the 7 symbols for calls only;
-  2. verify contacts only through the call SAS, and drop "They match →
-     verified" from the contact dialog;
-  3. derive the contact SAS from a commit-then-reveal exchange of fresh
-     nonces inside the app, as ZRTP does. This is an app message, not a
-     change to the call signals, but it is a protocol addition and a third
-     derivation.
-
-  Options 1 and 2 change nothing in this spec's derivations or vectors.
-
 The `trino-sas-call-v2` and `trino-sas-contact-v2` prefixes keep the two
 derivations apart: the same two people get different symbols for a call and
 for their contact check.
+
+### How a contact gets verified
+
+Decided on 10 Oct 2026, for the desktop app, the mobile app and the website
+alike. A contact is marked as verified in only two ways:
+
+1. **"They match" on a call's SAS.** It writes `verified:<handle>` with the
+   contact's current fingerprint, under [The DTLS fingerprint
+   rule](#the-dtls-fingerprint-rule).
+2. **Scanning, in person, a QR code with the full identity digest** (at
+   least 128 bits). Only a platform with a camera offers it; the desktop
+   app cannot scan, so no desktop screen shows this way.
+
+The **contact SAS is a quick check** and never verifies: its 7 symbols come
+with no "They match" button, and comparing them never writes
+`verified:<handle>`. At about 2^21 offline work (above) a match cannot
+carry a verification; 0.1.0's 6 emojis (36 bits) had the same weakness. No
+copy presents the contact's symbols, or any short key, as a way to verify:
+the way to verify a contact is to call them and compare the call's
+symbols.
+
+Deriving the contact SAS from a commit-then-reveal exchange of fresh nonces
+inside the app, as ZRTP does, would make the contact's symbols strong
+enough to verify. It was set aside: it would be a protocol addition and a
+third derivation. The decision changes nothing in this spec's derivations
+or vectors.
+
+### The DTLS fingerprint rule
+
+A requirement for every call screen, on every platform. If the remote DTLS
+fingerprint changes during a call (the same call id, another fingerprint
+after the first answer):
+
+- **the call ends**, and the person is told that the connection's key
+  changed and that they should call again and compare the symbols again;
+- **a verification made during that call is undone:** if the contact was
+  not verified when the call started and "They match" was pressed in it,
+  `verified:<handle>` is cleared. A contact verified before the call keeps
+  its mark, which came from an earlier call or a QR scan.
 
 ## Symbols
 
