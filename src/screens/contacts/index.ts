@@ -1,4 +1,5 @@
 // The contacts unit (W4): what the shell and Settings mount.
+export type { ContactsApi } from './contacts-api';
 export {
   NewChatDialog,
   newChatShortcuts,

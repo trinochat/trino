@@ -17,6 +17,7 @@ import { useLang } from '../../../lib/i18n-context';
 import { identityInitials } from '../../../lib/initials';
 import { safeInlineRasterSrc } from '../../../lib/safe-media';
 import type { NewChatPurpose, NewChatSlotProps } from '../../types';
+import { LABEL } from '../styles';
 import { contactIndex } from './contact-index';
 
 /** No API: this batch looks nobody up on the network. */
@@ -46,9 +47,6 @@ export function newChatShortcuts(
   ];
 }
 
-/** The theme's label style (src/ui/chat/label.ts), at the 13 px of the board. */
-const LETTER =
-  'm-0 px-1 font-ui-label text-ui-sm font-semibold text-ui-muted [letter-spacing:var(--t-label-spacing)] [text-transform:var(--t-label-transform)]';
 const LIST = 'm-0 flex list-none flex-col overflow-hidden rounded-ui-lg border border-ui-line p-0';
 const ROW_BUTTON = cx(
   'flex min-w-0 flex-1 items-center gap-3 bg-transparent text-left text-ui-ink hover:bg-ui-raised',
@@ -137,7 +135,7 @@ export function NewChatDialog({
         <div className="flex min-h-0 flex-col gap-3.5">
           {letters.map(({ letter, nodes }) => (
             <section key={letter} className="flex flex-col gap-1.5">
-              <h3 className={LETTER}>{letter}</h3>
+              <h3 className={cx('m-0 px-1', LABEL)}>{letter}</h3>
               <ul aria-label={t('contacts.newChat.letterList', { letter })} className={LIST}>
                 {nodes.map((node, index) => (
                   <li key={node.handle} className={cx('flex items-center gap-1', index > 0 && 'border-t border-ui-line')}>
