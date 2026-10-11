@@ -2,7 +2,8 @@
  * The unlock screen of the redesign (R3.6, Unlock:50-90): the avatar, a
  * greeting and why Trino is locked; the password, and the code of the
  * authenticator app only when the vault has 2FA (or asks for one); one error
- * at a time in an alert tied to its field; and "¿Olvidaste la contraseña?",
+ * at a time in an alert tied to its field, or to the password when it is
+ * about none, and that field takes the focus; and "¿Olvidaste la contraseña?",
  * which explains what wiping loses and asks before doing it.
  *
  * The password never reaches the console: a failure is logged by its code.
@@ -30,6 +31,14 @@ interface ShownError {
 
 /** The digits of a TOTP code as typed: "482 913" is 482913. */
 const codeDigits = (value: string) => value.replace(/\D/g, '').slice(0, 6);
+
+/**
+ * The field that takes the focus with an error: the one it is about, or the
+ * password when it is about none. "Desbloquear" was disabled while
+ * unlocking, and WebView2 moves the focus off a disabled control to the
+ * page, where the next Tab starts again at the window bar.
+ */
+const focusFieldOf = (shown: ShownError): FieldName => shown.field ?? 'pass';
 
 export function UnlockScreen({ handle, totpEnabled, reason, api, onUnlocked, onNoVault, onWiped }: UnlockScreenProps) {
   const t = useT();
@@ -68,10 +77,8 @@ export function UnlockScreen({ handle, totpEnabled, reason, api, onUnlocked, onN
 
   const show = (shown: ShownError) => {
     setError(shown);
-    if (shown.field) {
-      const field = shown.field;
-      setFocusRequest(previous => ({ field, n: (previous?.n ?? 0) + 1 }));
-    }
+    const field = focusFieldOf(shown);
+    setFocusRequest(previous => ({ field, n: (previous?.n ?? 0) + 1 }));
   };
 
   const submit = (event: FormEvent) => {
@@ -116,7 +123,15 @@ export function UnlockScreen({ handle, totpEnabled, reason, api, onUnlocked, onN
     if (error?.field === field) setError(null);
   };
 
-  const invalid = (field: FieldName) => (error?.field === field ? { 'aria-invalid': true as const, 'aria-describedby': errorId } : {});
+  /**
+   * The field that takes the focus with the error is described by it, so a
+   * screen reader reads it there even when the moving focus cuts the alert
+   * short; it is invalid only when the error is about it.
+   */
+  const errorProps = (field: FieldName) =>
+    error && focusFieldOf(error) === field
+      ? { 'aria-invalid': error.field === field ? (true as const) : undefined, 'aria-describedby': errorId }
+      : {};
 
   return (
     <AuthFrame width="narrow" labelledBy={titleId}>
@@ -139,7 +154,7 @@ export function UnlockScreen({ handle, totpEnabled, reason, api, onUnlocked, onN
               setPass(event.target.value);
               edited('pass');
             }}
-            {...invalid('pass')}
+            {...errorProps('pass')}
           />
         </Field>
         {askCode ? (
@@ -155,7 +170,7 @@ export function UnlockScreen({ handle, totpEnabled, reason, api, onUnlocked, onN
                 setCode(event.target.value);
                 edited('code');
               }}
-              {...invalid('code')}
+              {...errorProps('code')}
             />
           </Field>
         ) : null}

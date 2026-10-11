@@ -203,6 +203,32 @@ describe('UnlockScreen', () => {
     expect((screen.getByRole('button', { name: 'Desbloquear' }) as HTMLButtonElement).disabled).toBe(false);
   });
 
+  // "Desbloquear" is disabled while unlocking, and WebView2 moves the focus
+  // off a disabled control to the page, where the next Tab starts again at
+  // the window bar. jsdom keeps the focus on a disabled control and cannot
+  // blur one, so the button is blurred just before it is pressed.
+  it('takes the focus back to the password after an error about no field', async () => {
+    for (const error of [failure('io'), failure('internal'), failure('unsupported_vault'), 'vault sealed']) {
+      const label = JSON.stringify(error);
+      setup({ api: { unseal: vi.fn(() => Promise.reject(error)), wipe: vi.fn() } });
+      type(password(), PASS);
+      const submit = screen.getByRole<HTMLButtonElement>('button', { name: 'Desbloquear' });
+      submit.focus();
+      submit.blur();
+      unlock();
+      expect(submit.disabled, label).toBe(true);
+      expect(document.activeElement, label).toBe(document.body);
+      await settle();
+      expect(document.activeElement, label).toBe(password());
+      // The password is not what failed, but the message is read from there,
+      // as a screen reader may drop the alert when the focus moves.
+      expect(password().getAttribute('aria-invalid'), label).toBeNull();
+      const described = (password().getAttribute('aria-describedby') ?? '').split(' ');
+      expect(described.map(id => document.getElementById(id)?.textContent), label).toContain(alertText());
+      cleanup();
+    }
+  });
+
   it('never writes the password to the console', async () => {
     const spies = (['log', 'info', 'warn', 'error', 'debug'] as const).map(method =>
       vi.spyOn(console, method).mockImplementation(() => {}),
