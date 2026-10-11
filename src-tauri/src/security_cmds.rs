@@ -1,5 +1,6 @@
 //! The security commands of the first run and the settings: the passphrase
-//! policy checked on its own (K1), and TOTP turned on and off (K5).
+//! policy checked on its own (K1), TOTP turned on and off (K5) and a new
+//! passphrase (K6).
 //!
 //! The settings' commands seal the vault again. While they do, they hold
 //! `session_gate`, as `forge`, `unseal`, `lock_vault` and `wipe` do: a wipe
@@ -78,6 +79,31 @@ pub async fn totp_disable(
     Ok(())
 }
 
+/// A new passphrase (K6). `next` must pass the policy, checked first; then
+/// `current` opens the vault, with a valid `totp_code` when TOTP is on, and
+/// the vault is sealed again with `next` and the same TOTP secret.
+#[tauri::command]
+pub async fn change_passphrase(
+    state: State<'_, AppState>,
+    current: String,
+    next: String,
+    totp_code: Option<String>,
+) -> Result<(), CommandError> {
+    let current = Zeroizing::new(current);
+    let next = Zeroizing::new(next);
+    let totp_code = totp_code.map(Zeroizing::new);
+    let _gate = state.session_gate.lock().await;
+    require_session(&*state.inner.lock().await)?;
+    let vault = vault_path();
+    run_blocking(move || {
+        let code = totp_code.as_deref().map(String::as_str);
+        reseal_with_new_passphrase(&vault, &current, &next, code, |bytes| {
+            fsutil::atomic_write(&vault, bytes)
+        })
+    })
+    .await
+}
+
 /// The open session's TOTP secret from `totp_begin`, once `totp_verify`
 /// confirmed it: nobody may turn on a secret their app does not have.
 fn confirmed_secret(inner: &InnerState) -> Result<Zeroizing<Vec<u8>>, CommandError> {
@@ -145,6 +171,23 @@ fn disable_totp(
         return Ok(());
     }
     seal_and_write(&identity, None, passphrase, write)
+}
+
+/// Seal the vault at `vault` with `next` instead of `current`, keeping its
+/// TOTP secret or the lack of one, and save it with `write`. The policy on
+/// `next` is checked before anything is opened; a vault with TOTP needs its
+/// `code`.
+fn reseal_with_new_passphrase(
+    vault: &Path,
+    current: &str,
+    next: &str,
+    code: Option<&str>,
+    write: impl FnOnce(&[u8]) -> std::io::Result<()>,
+) -> Result<(), CommandError> {
+    validate_passphrase(next)?;
+    let (identity, secret) = open_vault(vault, current, submitted_code(code))?;
+    let secret = secret.map(Zeroizing::new);
+    seal_and_write(&identity, secret.as_deref().map(Vec::as_slice), next, write)
 }
 
 /// Seal `identity` with `passphrase` and, if given, `secret`, and save it
@@ -397,5 +440,122 @@ mod tests {
         let code: String = code.split_whitespace().collect();
         assert!(!code.contains("fs::write("), "a plain write");
         assert!(code.contains("fsutil::atomic_write(&vault,bytes)"));
+    }
+
+    // ---- K6: a new passphrase ----
+
+    const NEW_PASSPHRASE: &str = "otra frase larga para el baúl";
+
+    #[test]
+    fn a_new_passphrase_opens_the_vault_and_the_old_one_no_longer_does() {
+        let scratch = ScratchDir::new("passphrase-new");
+        let vault = vault_with(&scratch, None);
+
+        reseal_with_new_passphrase(&vault, PASSPHRASE, NEW_PASSPHRASE, None, save_to(&vault))
+            .unwrap();
+
+        let old = open_vault(&vault, PASSPHRASE, None).unwrap_err();
+        assert_eq!(old.code, ErrorCode::WrongPassphrase);
+        let (_, secret) = open_vault(&vault, NEW_PASSPHRASE, None).unwrap();
+        assert_eq!(secret, None, "TOTP stays off");
+    }
+
+    #[test]
+    fn a_new_passphrase_keeps_totp_and_asks_for_its_code() {
+        let scratch = ScratchDir::new("passphrase-totp");
+        let secret = generate_totp_secret();
+        let vault = vault_with(&scratch, Some(&secret));
+
+        let missing =
+            reseal_with_new_passphrase(&vault, PASSPHRASE, NEW_PASSPHRASE, None, save_to(&vault))
+                .unwrap_err();
+        assert_eq!(missing.code, ErrorCode::TotpRequired);
+        let wrong = reseal_with_new_passphrase(
+            &vault,
+            PASSPHRASE,
+            NEW_PASSPHRASE,
+            Some(&wrong_code(&secret)),
+            save_to(&vault),
+        )
+        .unwrap_err();
+        assert_eq!(wrong.code, ErrorCode::InvalidTotp);
+
+        with_fresh_code(&secret, |code| {
+            reseal_with_new_passphrase(
+                &vault,
+                PASSPHRASE,
+                NEW_PASSPHRASE,
+                Some(code),
+                save_to(&vault),
+            )
+        })
+        .unwrap();
+
+        assert!(
+            vault_requires_totp(&bytes_of(&vault)).unwrap(),
+            "the header"
+        );
+        let (_, sealed) = open_with_code(&vault, NEW_PASSPHRASE, &secret).unwrap();
+        assert_eq!(
+            sealed.as_deref(),
+            Some(secret.as_slice()),
+            "the same secret"
+        );
+    }
+
+    #[test]
+    fn the_new_passphrase_must_pass_the_policy_before_anything_is_opened() {
+        // No vault at all: the policy answers before the key derivation.
+        let scratch = ScratchDir::new("passphrase-policy");
+        let nowhere = scratch.path().join("vault.bin");
+        let never = |_: &[u8]| -> std::io::Result<()> { panic!("written") };
+
+        let short =
+            reseal_with_new_passphrase(&nowhere, PASSPHRASE, "corta", None, never).unwrap_err();
+        assert_eq!(
+            (short.code, short.min),
+            (ErrorCode::PassphraseTooShort, Some(MIN_PASSPHRASE_CHARS))
+        );
+        let common = reseal_with_new_passphrase(&nowhere, PASSPHRASE, "Contraseña123", None, never)
+            .unwrap_err();
+        assert_eq!(common.code, ErrorCode::PassphraseTooCommon);
+    }
+
+    #[test]
+    fn a_wrong_current_passphrase_changes_nothing() {
+        let scratch = ScratchDir::new("passphrase-wrong");
+        let vault = vault_with(&scratch, None);
+        let before = bytes_of(&vault);
+
+        let error = reseal_with_new_passphrase(
+            &vault,
+            "not the passphrase",
+            NEW_PASSPHRASE,
+            None,
+            save_to(&vault),
+        )
+        .unwrap_err();
+
+        assert_eq!(error.code, ErrorCode::WrongPassphrase);
+        assert_eq!(bytes_of(&vault), before);
+    }
+
+    #[test]
+    fn a_new_passphrase_that_cannot_be_saved_keeps_the_old_one() {
+        let scratch = ScratchDir::new("passphrase-unsaved");
+        let vault = vault_with(&scratch, None);
+        let before = bytes_of(&vault);
+
+        let error = reseal_with_new_passphrase(&vault, PASSPHRASE, NEW_PASSPHRASE, None, |_| {
+            Err(std::io::Error::other("disk full"))
+        })
+        .unwrap_err();
+
+        assert_eq!(error.code, ErrorCode::Io);
+        assert_eq!(
+            bytes_of(&vault),
+            before,
+            "the old passphrase still opens it"
+        );
     }
 }

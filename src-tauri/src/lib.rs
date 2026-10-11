@@ -242,6 +242,7 @@ pub fn run() {
             connection::connection_status,
             security_cmds::totp_enable,
             security_cmds::totp_disable,
+            security_cmds::change_passphrase,
             // -- W8 --
         ])
         .run(tauri::generate_context!())
