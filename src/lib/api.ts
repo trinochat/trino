@@ -102,6 +102,10 @@ export const COMMAND_ERROR_CODES = [
   'not_found',
   // The shared profile (K12): a name, an "about" or a photo over its limit.
   'profile_invalid',
+  // A contact's name the app cannot use: one the chats read as the channel
+  // or a group (`channel`, `grp:…`), or with control, format or bidi
+  // characters, or with nothing that shows (probe_node, rename_node).
+  'invalid_name',
 ] as const;
 
 export type CommandErrorCode = (typeof COMMAND_ERROR_CODES)[number];
@@ -379,6 +383,8 @@ export const api = {
   shareBundle: (): Promise<string> => invoke('share_bundle'),
   // `replaceExisting` (K8) replaces a contact that has the name, after the
   // user confirmed it; left out, the payload is the one older backends take.
+  // Rejects with `invalid_name` for a name the chats read as the channel or
+  // a group, or with control, format or bidi characters.
   probeNode: (bundleJson: string, handle: string, replaceExisting?: boolean): Promise<NodeInfo> =>
     invoke(
       'probe_node',
@@ -432,6 +438,8 @@ export const api = {
   forwardFile: (target: string, isGroup: boolean, file: FileRef): Promise<void> =>
     invoke('forward_file', { target, isGroup, file }),
   removeNode: (handle: string): Promise<void> => invoke('remove_node', { handle }),
+  // Rejects with `name_taken` (another contact's name), `invalid_name` (as
+  // for probeNode) or `not_found`.
   renameNode: (oldHandle: string, newHandle: string): Promise<void> =>
     invoke('rename_node', { oldHandle, newHandle }),
   blockNode: (handle: string, blocked: boolean): Promise<void> =>

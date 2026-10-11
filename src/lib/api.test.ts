@@ -87,14 +87,25 @@ describe('command errors', () => {
       'not_admin',
       'not_found',
       'profile_invalid',
+      'invalid_name',
     ]);
   });
 
   // K12: a name, an "about" or a photo over its limit. Added at the end, so
-  // no earlier code moves.
-  it('end with the code of the shared profile', () => {
-    expect(COMMAND_ERROR_CODES[COMMAND_ERROR_CODES.length - 1]).toBe('profile_invalid');
+  // no earlier code moved; only the code of a contact's name came after it.
+  it('keep the code of the shared profile after the codes before it', () => {
+    expect(COMMAND_ERROR_CODES.indexOf('profile_invalid')).toBe(21);
+    expect(COMMAND_ERROR_CODES[COMMAND_ERROR_CODES.length - 2]).toBe('profile_invalid');
     expect(isCommandError({ code: 'profile_invalid', message: 'about is longer than 140' })).toBe(true);
+  });
+
+  // A contact's name the app cannot use: one the chats read as the channel
+  // or a group (`channel`, `grp:…`), with control, format or bidi
+  // characters, or with nothing that shows. Added at the end, so no earlier
+  // code moves.
+  it('end with the code of a name a contact cannot have', () => {
+    expect(COMMAND_ERROR_CODES[COMMAND_ERROR_CODES.length - 1]).toBe('invalid_name');
+    expect(isCommandError({ code: 'invalid_name', message: 'that name is a group' })).toBe(true);
   });
 
   it('are recognised with their extra fields', () => {

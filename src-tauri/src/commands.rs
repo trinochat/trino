@@ -1181,7 +1181,10 @@ pub async fn share_bundle(state: State<'_, AppState>) -> Result<String, String> 
 /// Add the contact of a code as `handle` (K8). A name another key holds is
 /// `name_taken` unless `replace_existing`, which the UI passes only after
 /// the user confirmed; the same keys under another name are
-/// `already_contact`. Callers from before K8 leave `replace_existing` out.
+/// `already_contact`; a new name the chats would read as the channel or a
+/// group, or that holds control, format or bidi characters or shows
+/// nothing, is `invalid_name`. Callers from before K8 leave
+/// `replace_existing` out.
 #[tauri::command]
 pub async fn probe_node(
     state: State<'_, AppState>,
@@ -1893,13 +1896,13 @@ pub async fn rename_node(
     state: State<'_, AppState>,
     old_handle: String,
     new_handle: String,
-) -> Result<(), String> {
+) -> Result<(), CommandError> {
     let mut inner = state.inner.lock().await;
     let Some(profile_moved) = contacts_cmds::rename_contact(&mut inner, &old_handle, &new_handle)?
     else {
         return Ok(());
     };
-    persist_friends(&inner)?;
+    persist_friends(&inner).map_err(|e| CommandError::new(ErrorCode::Io, e))?;
     save_history(&inner);
     save_ratchets(&inner);
     // -- W8 (K12) --
@@ -3246,7 +3249,9 @@ fn accept_incoming_roster(
 /// own identity key did not sign its keys; when its identity key is already a
 /// contact with different DH/Nostr keys (the pinned ones win); when its DH or
 /// Nostr key already belongs to another contact (incoming events are matched
-/// to contacts by Nostr key); or when no free handle is left for it.
+/// to contacts by Nostr key); or when no free handle is left for it. A name
+/// that cannot name a contact here (`contacts_cmds::check_local_handle`) is
+/// left out of its handle.
 fn merge_group_members(
     friends: &mut HashMap<String, FriendRecord>,
     roster: &GroupRoster,
@@ -3285,10 +3290,18 @@ fn merge_group_members(
             ));
             continue;
         }
-        let handle = if m.handle.is_empty() || friends.contains_key(&m.handle) {
-            format!("{}-{}", m.handle, short_prefix(&m.ik_sign_pub, 4))
+        // The name the member gives itself, if it can name a contact here.
+        // One the chats would read as the channel or a group, or with
+        // control, format or bidi characters, or showing nothing, is left
+        // out as an empty one is: the key tells the member apart.
+        let name = match contacts_cmds::check_local_handle(&m.handle) {
+            Ok(()) => m.handle.as_str(),
+            Err(_) => "",
+        };
+        let handle = if name.is_empty() || friends.contains_key(name) {
+            format!("{}-{}", name, short_prefix(&m.ik_sign_pub, 4))
         } else {
-            m.handle.clone()
+            name.to_string()
         };
         if friends.contains_key(&handle) {
             notes.push(format!("skip member {who}: handle {handle:?} is taken"));
@@ -4019,6 +4032,49 @@ mod tests {
         assert_eq!(friends.len(), 2);
         assert_eq!(friends[&taken].bundle.ik_sign_pub, ik(&dave));
         assert_eq!(notes.len(), 1, "{notes:?}");
+    }
+
+    #[test]
+    fn merge_never_names_a_member_as_the_channel_or_a_group() {
+        // The names members give themselves in a roster: here the chats
+        // would read them as the announcements channel or as a group, and a
+        // bidi control would reorder the list. The key tells them apart.
+        let (admin, me, a, b, c, d) = (
+            create_identity(),
+            create_identity(),
+            create_identity(),
+            create_identity(),
+            create_identity(),
+            create_identity(),
+        );
+        let roster = roster_of(
+            &admin,
+            &[
+                (&me, "me"),
+                (&a, "channel"),
+                (&b, "grp:4f1c"),
+                (&c, "Ana\u{202E}"),
+                (&d, "   "),
+            ],
+        );
+        let mut friends = HashMap::new();
+
+        let notes = merge_group_members(&mut friends, &roster, &ik(&me), NOW);
+
+        assert!(notes.is_empty(), "{notes:?}");
+        let handle_of = |id: &Identity| {
+            friends
+                .values()
+                .find(|f| f.bundle.ik_sign_pub == ik(id))
+                .map(|f| f.handle.clone())
+        };
+        for id in [&a, &b, &c, &d] {
+            assert_eq!(handle_of(id), Some(format!("-{}", &ik(id)[..4])));
+        }
+        assert_eq!(handle_of(&admin).as_deref(), Some("admin"));
+        assert!(friends
+            .keys()
+            .all(|handle| contacts_cmds::check_local_handle(handle).is_ok()));
     }
 
     #[test]

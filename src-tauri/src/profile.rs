@@ -218,7 +218,8 @@ fn shows_nothing(c: char) -> bool {
 }
 
 /// A name a profile can carry: only allowed characters, and at least one
-/// that shows.
+/// that shows. A contact's name here follows it too
+/// (`contacts_cmds::check_local_handle`).
 pub(crate) fn readable_name(name: &str) -> bool {
     name.chars().all(|c| allowed_char(c, false)) && !name.chars().all(shows_nothing)
 }

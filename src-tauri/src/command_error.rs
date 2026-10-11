@@ -54,6 +54,11 @@ pub enum ErrorCode {
     /// A name, an "about" or a photo over the limits of the shared profile
     /// (K12).
     ProfileInvalid,
+    // -- B1 --
+    /// A name a contact cannot have here: one the UI reads as the
+    /// announcements channel (`channel`) or a group (`grp:…`), or one with
+    /// a control, format or bidi character, or with nothing that shows.
+    InvalidName,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
@@ -333,6 +338,7 @@ mod tests {
             ErrorCode::NotFound,
             ErrorCode::NotAdmin,
             ErrorCode::ProfileInvalid,
+            ErrorCode::InvalidName,
         ]
         .iter()
         .map(|code| serde_json::to_value(code).unwrap())
@@ -345,7 +351,8 @@ mod tests {
                 "already_contact",
                 "not_found",
                 "not_admin",
-                "profile_invalid"
+                "profile_invalid",
+                "invalid_name"
             ]
         );
     }

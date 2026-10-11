@@ -76,6 +76,32 @@ fn invalid_code(message: &str) -> CommandError {
     CommandError::new(ErrorCode::InvalidCode, message)
 }
 
+/// The keys the chats give a meaning of their own (src/lib/convo.ts): the
+/// announcements channel, and the chat of a group, `grp:<gid>`, as the
+/// history keys it (`group_convo`) and the UI keeps a group's settings.
+const CHANNEL_KEY: &str = "channel";
+const GROUP_KEY_PREFIX: &str = "grp:";
+
+/// Whether `handle`, trimmed, can name a contact here: not a key the chats
+/// read as the channel or a group, and a name a profile could carry (no
+/// control, format or bidi character, something that shows). Otherwise
+/// `invalid_name`.
+pub(crate) fn check_local_handle(handle: &str) -> Result<(), CommandError> {
+    if handle == CHANNEL_KEY || handle.starts_with(GROUP_KEY_PREFIX) {
+        return Err(CommandError::new(
+            ErrorCode::InvalidName,
+            "the chats read that name as the channel or a group",
+        ));
+    }
+    if !super::profile::readable_name(handle) {
+        return Err(CommandError::new(
+            ErrorCode::InvalidName,
+            "the name holds a control, format or bidi character, or nothing that shows",
+        ));
+    }
+    Ok(())
+}
+
 /// Lowercase hex of exactly 32 bytes. Keys are compared as strings all over
 /// the app, and events arrive with lowercase keys: an upper-case copy would
 /// pass every comparison as a different key.
@@ -248,6 +274,8 @@ pub(crate) fn preview(inner: &InnerState, code: &ContactCode) -> ContactPreview 
 ///   `replace_existing`: then the contact gets the new keys, the session
 ///   with the old ones is dropped, and the old fingerprint is kept until the
 ///   user acknowledges the change. The conversation stays.
+///
+/// A name no contact has yet must pass `check_local_handle`.
 pub(crate) fn add_contact(
     inner: &mut InnerState,
     code: ContactCode,
@@ -256,8 +284,8 @@ pub(crate) fn add_contact(
     now: i64,
 ) -> Result<(String, Added), CommandError> {
     let handle = handle.trim().to_string();
-    if handle.is_empty() {
-        return Err(CommandError::internal("handle required"));
+    if !inner.friends.contains_key(&handle) {
+        check_local_handle(&handle)?;
     }
     if let Some(other) = holder_of_keys(inner, &code.bundle, Some(&handle)) {
         return Err(CommandError::already_contact(&other.handle));
@@ -321,22 +349,29 @@ pub(crate) fn remove_contact(inner: &mut InnerState, handle: &str) -> bool {
 /// everything kept here under its name: its session, the messages kept to
 /// replay, its chat and the profile it shares. `None` when the name stays
 /// the same; otherwise whether profiles.bin must be written again.
+///
+/// A name `check_local_handle` refuses is `invalid_name`, another
+/// contact's is `name_taken`, and an unknown `old` is `not_found`.
 pub(crate) fn rename_contact(
     inner: &mut InnerState,
     old: &str,
     new: &str,
-) -> Result<Option<bool>, String> {
+) -> Result<Option<bool>, CommandError> {
     let new = new.trim();
-    if new.is_empty() {
-        return Err("nombre vacío".into());
-    }
     if old == new {
         return Ok(None);
     }
+    check_local_handle(new)?;
     if inner.friends.contains_key(new) {
-        return Err("ya existe un contacto con ese nombre".into());
+        return Err(CommandError::new(
+            ErrorCode::NameTaken,
+            "another contact has that name",
+        ));
     }
-    let mut record = inner.friends.remove(old).ok_or("contacto no encontrado")?;
+    let mut record = inner
+        .friends
+        .remove(old)
+        .ok_or_else(|| not_found("unknown contact"))?;
     // No contact has the new name: nothing kept under it is this one's.
     let dropped_profile = forget_kept_under(inner, new);
     record.handle = new.to_string();
@@ -969,6 +1004,109 @@ mod tests {
         // and a contact renamed to it.
         rename_contact(&mut inner, "bob", "Ana trabajo").unwrap();
         assert_eq!(kinds_under(&inner, "Ana trabajo"), ["contact"]);
+    }
+
+    /// Names a contact cannot have: the chats would read them as the
+    /// announcements channel or a group (src/lib/convo.ts), or they reorder
+    /// the text, break the line or show nothing.
+    const UNUSABLE_NAMES: [&str; 9] = [
+        "channel",
+        "grp:",
+        "grp:4f1c",
+        "Ana\u{202E}",
+        "An\u{7}a",
+        "Ana\nLópez",
+        "\u{200B}",
+        "\u{3164}",
+        "   ",
+    ];
+
+    #[test]
+    fn a_new_contact_cannot_take_a_name_the_chats_read_as_something_else() {
+        let ana = create_identity();
+        let mut inner = InnerState::default();
+
+        for name in UNUSABLE_NAMES {
+            let error =
+                add_contact(&mut inner, code_of(&ana, "ana"), name, false, NOW).unwrap_err();
+            assert_eq!(error.code, ErrorCode::InvalidName, "{name:?}");
+        }
+
+        assert!(inner.friends.is_empty());
+        assert_eq!(
+            serde_json::to_value(CommandError::new(ErrorCode::InvalidName, "x")).unwrap()["code"],
+            "invalid_name"
+        );
+        // Only those keys mean something else.
+        for name in [
+            "Channel",
+            "channel 2",
+            "grp",
+            "mi grp:x",
+            "Ana 👩\u{200D}💻",
+        ] {
+            let mut inner = InnerState::default();
+            let added = add_contact(&mut inner, code_of(&ana, "ana"), name, false, NOW).unwrap();
+            assert_eq!(added, (name.to_string(), Added::New));
+        }
+    }
+
+    #[test]
+    fn a_contact_kept_under_such_a_name_can_be_refreshed_and_renamed_away() {
+        // A name from before these rules stays until the user changes it.
+        let ana = create_identity();
+        let mut inner = InnerState::default();
+        inner
+            .friends
+            .insert("grp:viejo".into(), friend(&ana, "grp:viejo"));
+
+        let added = add_contact(
+            &mut inner,
+            code_of(&ana, "grp:viejo"),
+            "grp:viejo",
+            false,
+            NOW,
+        )
+        .unwrap();
+
+        assert_eq!(added, ("grp:viejo".to_string(), Added::Refreshed));
+        assert_eq!(
+            rename_contact(&mut inner, "grp:viejo", "Ana").unwrap(),
+            Some(false)
+        );
+        assert!(inner.friends.contains_key("Ana"));
+    }
+
+    #[test]
+    fn renaming_says_why_a_name_cannot_be_used() {
+        let (ana, bob) = (create_identity(), create_identity());
+        let mut inner = InnerState::default();
+        inner.friends.insert("ana".into(), friend(&ana, "ana"));
+        inner.friends.insert("bob".into(), friend(&bob, "bob"));
+
+        let taken = rename_contact(&mut inner, "ana", " bob ").unwrap_err();
+        assert_eq!(taken.code, ErrorCode::NameTaken);
+        assert_eq!(
+            serde_json::to_value(&taken).unwrap()["code"],
+            "name_taken",
+            "the UI reads the code"
+        );
+        for name in UNUSABLE_NAMES {
+            let error = rename_contact(&mut inner, "ana", name).unwrap_err();
+            assert_eq!(error.code, ErrorCode::InvalidName, "{name:?}");
+        }
+        let missing = rename_contact(&mut inner, "nadie", "otro").unwrap_err();
+        assert_eq!(missing.code, ErrorCode::NotFound);
+
+        assert_eq!(rename_contact(&mut inner, "ana", " ana ").unwrap(), None);
+        assert_eq!(
+            inner.friends["ana"].bundle.ik_sign_pub,
+            public_bundle_for(&ana).ik_sign_pub
+        );
+        assert_eq!(
+            inner.friends["bob"].bundle.ik_sign_pub,
+            public_bundle_for(&bob).ik_sign_pub
+        );
     }
 
     #[test]
