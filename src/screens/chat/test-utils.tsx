@@ -48,3 +48,20 @@ export function message(key: string, ts: number, extra: Partial<Msg> = {}): Msg 
 export function classesOf(element: Element | null | undefined): string[] {
   return (element?.getAttribute('class') ?? '').split(/\s+/).filter(Boolean);
 }
+
+/** The colour classes of an element (`text-ui-muted`, `hover:bg-ui-raised`), not its text sizes (`text-ui-md`). */
+export function colourClasses(element: Element): string[] {
+  return classesOf(element).filter(
+    name =>
+      /^(?:[\w/-]+:)*(?:text|border(?:-[xytrblse])?|bg|outline|decoration)-ui-/.test(name) &&
+      !/-ui-(?:xs|sm|md|base|lg|title)$/.test(name),
+  );
+}
+
+/** The colour classes of an element and of everything inside it. */
+export function colourClassesWithin(element: Element): string[] {
+  return [element, ...Array.from(element.querySelectorAll('*'))].flatMap(colourClasses);
+}
+
+/** Your bubble's own colours, the only ones that read on it in every theme (accesibilidad.md §3.2). */
+export const BUBBLE_ME_COLOUR = /(?:^|:)(?:text|border|bg)-ui-bubble-me(?:-ink|-muted|-line)?$/;
