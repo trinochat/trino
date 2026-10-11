@@ -150,6 +150,7 @@ import {
 } from './screens/auth';
 import type { LockReason, OnboardingApi, OnboardingIntent, UnlockApi } from './screens/types';
 import { capabilities } from './app/capabilities';
+import { installBrowserChromeGuard } from './app/browser-chrome';
 import './App.css';
 
 const isMobile = /android|iphone|ipad|ipod/i.test(navigator.userAgent);
@@ -251,6 +252,10 @@ function App({ api: backend = BACKEND, windowApi = TAURI_WINDOW, Main = MainShel
     saveThemePreference(next);
     setThemeState(next);
   };
+
+  // Trino is an app, not a web page: no browser menu outside the text fields
+  // and none of the browser's shortcuts, on every screen (src/app/browser-chrome.ts).
+  useEffect(() => installBrowserChromeGuard(window), []);
 
   useEffect(() => {
     applyThemePreference(theme);

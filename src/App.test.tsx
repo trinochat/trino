@@ -190,4 +190,22 @@ describe('App', () => {
     expect(localStorage.getItem('trino.consent')).toBeNull();
     expect(localStorage.getItem('verified:ana')).toBeNull();
   });
+
+  // MC-1 (David, 11 Oct): no browser menu outside the text fields and none of
+  // the browser's shortcuts, from the first screen on, and nothing left behind
+  // once the app is gone. The cases are in src/app/browser-chrome.test.ts.
+  it('takes the browser’s menu and shortcuts away, and keeps the menu of the text fields', async () => {
+    const { unmount } = renderApp(fakeApi(VAULT));
+    const title = await heading('Hola de nuevo, Rechita');
+    const password = screen.getByLabelText('Contraseña');
+    // fireEvent answers false once a listener cancelled what the browser does.
+    expect(fireEvent.contextMenu(title)).toBe(false);
+    expect(fireEvent.contextMenu(password)).toBe(true);
+    expect(fireEvent.keyDown(password, { key: 'F5' })).toBe(false);
+    expect(fireEvent.keyDown(title, { key: 'r', ctrlKey: true })).toBe(false);
+
+    unmount();
+    expect(fireEvent.contextMenu(document.body)).toBe(true);
+    expect(fireEvent.keyDown(document.body, { key: 'F5' })).toBe(true);
+  });
 });
