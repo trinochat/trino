@@ -13,9 +13,38 @@ const NOTIFICATION_CONTENT = [
   'settings2.notif.newSticker',
 ];
 
-const KEYS: string[] = [...NOTIFICATION_CONTENT];
+/** Settings > Perfil (sections/ProfileSection.tsx). */
+const PROFILE = [
+  'settings2.profile.title',
+  'settings2.profile.editPhoto',
+  'settings2.profile.removePhoto',
+  'settings2.profile.photoAlt',
+  'settings2.profile.name',
+  'settings2.profile.about',
+  'settings2.profile.aboutCount',
+  'settings2.profile.shared',
+  'settings2.profile.sharedPending',
+  'settings2.profile.sharedPendingOne',
+  'settings2.profile.local',
+  'settings2.profile.findYou',
+  'settings2.profile.qrRow',
+  'settings2.profile.qrRowBody',
+  'settings2.profile.saved',
+  'settings2.profile.errInvalid',
+  'settings2.profile.errSave',
+  'settings2.profile.errPhoto',
+  'settings2.profile.errName',
+];
 
-const PLACEHOLDERS: Record<string, string[]> = {};
+/** "Tu código QR" (ProfileQrView.tsx). */
+const QR = ['settings2.qr.title', 'settings2.qr.back'];
+
+const KEYS: string[] = [...NOTIFICATION_CONTENT, ...PROFILE, ...QR];
+
+const PLACEHOLDERS: Record<string, string[]> = {
+  'settings2.profile.aboutCount': ['n'],
+  'settings2.profile.sharedPending': ['n'],
+};
 
 describe('settings strings', () => {
   it('have exactly the keys of their screens, in every language', () => {
@@ -25,6 +54,20 @@ describe('settings strings', () => {
   it('say in Spanish what a notification shows', () => {
     expect(settings.es['settings2.notif.appName']).toBe('Trino Chat');
     expect(settings.es['settings2.notif.newMessage']).toBe('Nuevo mensaje');
+  });
+
+  // plan-cambios-11oct §6.1: the line of the board with the shared profile,
+  // who does not get it yet, and the line of plan §1.5 without it.
+  it('say in Spanish who gets your profile, as the plan fixed', () => {
+    expect(settings.es['settings2.profile.shared']).toBe(
+      'Tu nombre, tu foto y lo que escribas en «Sobre mí» les llegan cifrados a tus contactos y a tus grupos. Los servidores de Trino no los ven.',
+    );
+    expect(settings.es['settings2.profile.sharedPending']).toBe(
+      'Todavía no les llega a {n} de tus contactos: les llegará cuando te escriban desde una versión nueva de Trino.',
+    );
+    expect(settings.es['settings2.profile.local']).toBe(
+      'Tu foto y tu nombre se quedan en este equipo. Tus contactos te ven con el nombre que tenía tu código cuando te agregaron.',
+    );
   });
 });
 
