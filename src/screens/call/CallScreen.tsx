@@ -6,6 +6,9 @@
  * to its bar (plan §1.8, deviation 5); the sound goes on through
  * CallMediaSink, so the videos here are muted.
  *
+ * It covers the shell, so it takes the focus as it shows (the contact's
+ * name): nothing hidden behind it keeps the focus, and Escape works at once.
+ *
  * CallLayer lays it over the shell's area and passes the audio outputs.
  */
 import { Mic, MicOff, Minimize2, Video, VideoOff } from 'lucide-react';
@@ -36,6 +39,15 @@ export function CallScreen({ controller: call, outputs, sinkId, onSinkChange }: 
     call.view === 'connected' && call.connectedAt !== null
       ? callClock(call.connectedAt, now)
       : t(call.view === 'connecting' ? 'call2.screen.connecting' : 'call2.screen.calling');
+
+  // A passive effect: it runs after a dialog that closed in the same commit (the incoming call) gave the
+  // focus back to what had it before, such as the chat now under this screen. A dialog still open over
+  // the shell keeps its focus (aria-modal).
+  const nameRef = useRef<HTMLHeadingElement>(null);
+  useEffect(() => {
+    if (document.activeElement?.closest('[aria-modal="true"]')) return;
+    nameRef.current?.focus();
+  }, []);
 
   const theirVideo = useRef<HTMLVideoElement>(null);
   const myVideo = useRef<HTMLVideoElement>(null);
@@ -78,7 +90,13 @@ export function CallScreen({ controller: call, outputs, sinkId, onSinkChange }: 
         <header className="flex flex-wrap items-center gap-3">
           <Avatar initials={identityInitials(name)} src={call.peer?.avatar ?? undefined} size={44} />
           <div className="flex min-w-0 flex-[1_1_12.5rem] flex-col gap-0.5">
-            <h2 className="m-0 font-ui-display text-[1.125rem] font-bold leading-tight [overflow-wrap:anywhere]">{name}</h2>
+            <h2
+              ref={nameRef}
+              tabIndex={-1}
+              className="m-0 font-ui-display text-[1.125rem] font-bold leading-tight outline-none [overflow-wrap:anywhere]"
+            >
+              {name}
+            </h2>
             <div className="flex flex-wrap items-center gap-x-1.5 text-ui-md text-ui-muted">
               <span className="font-ui-mono">{status}</span>
               <ConnectionModeLine mode={call.mode} ringing={ringing} />

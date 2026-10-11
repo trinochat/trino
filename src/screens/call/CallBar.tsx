@@ -5,6 +5,7 @@
  * screen says it.
  */
 import { Mic, MicOff, Phone } from 'lucide-react';
+import type { Ref } from 'react';
 import { useT } from '../../lib/i18n';
 import { FOCUS_RING, cx, iconSize } from '../../ui';
 import { callClock } from './call-view-model';
@@ -22,9 +23,21 @@ export interface CallBarProps {
   onReturn(): void;
   /** Before connecting: "Llamando…" while it rings, "Conectando…" otherwise. */
   ringing?: boolean;
+  /** "Volver a la llamada", which gets the focus when the call is minimized (ActiveCallBar). */
+  returnRef?: Ref<HTMLButtonElement>;
 }
 
-export function CallBar({ peerName, connectedAt, now, muted, onToggleMute, onHangUp, onReturn, ringing = false }: CallBarProps) {
+export function CallBar({
+  peerName,
+  connectedAt,
+  now,
+  muted,
+  onToggleMute,
+  onHangUp,
+  onReturn,
+  ringing = false,
+  returnRef,
+}: CallBarProps) {
   const t = useT();
   const status =
     connectedAt === null
@@ -48,6 +61,7 @@ export function CallBar({ peerName, connectedAt, now, muted, onToggleMute, onHan
         <CallToggle label={t('call2.screen.mute')} pressed={muted} icons={{ pressed: MicOff, idle: Mic }} size="bar" onClick={onToggleMute} />
         <HangUpButton label={t('call2.screen.hangup')} size="bar" onClick={onHangUp} />
         <button
+          ref={returnRef}
           type="button"
           onClick={onReturn}
           className={cx('min-h-11 rounded-ui px-2 text-ui-md font-semibold text-ui-accent-text hover:underline', FOCUS_RING)}

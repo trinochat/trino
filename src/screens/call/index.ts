@@ -1,7 +1,8 @@
 /**
  * Calls (W6): the controller over call.ts and the screens it feeds. The
  * integration (I5) creates the controller with `useCallController(deps)`
- * and gives the shell `callSlot(controller)`.
+ * and gives the shell `callSlot(controller)`; while
+ * `callCoversShell(controller)`, the shell makes its panes inert.
  */
 export {
   useCallController,
@@ -15,7 +16,7 @@ export {
   type CallSounds,
   type EndConfirmReason,
 } from './useCallController';
-export { ActiveCallBar, CallLayer, callSlot, type CallLayerProps } from './CallLayer';
+export { ActiveCallBar, CallLayer, callCoversShell, callSlot, type CallLayerProps } from './CallLayer';
 export { CallBar, type CallBarProps } from './CallBar';
 export { CallScreen, type CallScreenProps } from './CallScreen';
 export { CallEndedCard, type CallEndedCardProps } from './CallEndedCard';

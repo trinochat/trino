@@ -5,8 +5,12 @@
  * keeps playing. The shell (W2) mounts `CallSlot.layer` in a positioned box
  * over its panes, below the title bar, and `CallSlot.bar` above both panes;
  * `callSlot` makes both from the controller.
+ *
+ * The focus follows the call: the call screen takes it as it shows (see
+ * CallScreen), and minimizing hands it to the bar's "Volver a la llamada".
+ * While `callCoversShell`, the shell makes its panes inert.
  */
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { CallSlot } from '../types';
 import { CallBar } from './CallBar';
 import { CallEndedCard } from './CallEndedCard';
@@ -22,16 +26,22 @@ export interface CallLayerProps {
   controller: CallController;
 }
 
+/**
+ * The call screen covers the shell: a call rings out, connects or is on, and
+ * is not minimized. Meanwhile the shell makes its panes inert, so nothing
+ * behind the call screen takes the focus (I5 adds the flag to CallSlot).
+ */
+export function callCoversShell(call: Pick<CallController, 'view' | 'minimized'>): boolean {
+  return (call.view === 'ringing-out' || call.view === 'connecting' || call.view === 'connected') && !call.minimized;
+}
+
 export function CallLayer({ controller: call }: CallLayerProps) {
   const [sinkId, setSinkId] = useState<string>();
   const outputs = useAudioOutputs(call.activePeer !== null);
-  const inProgress = call.view === 'ringing-out' || call.view === 'connecting' || call.view === 'connected';
   return (
     <>
       <CallMediaSink stream={call.remoteStream} sinkId={sinkId} />
-      {inProgress && !call.minimized && (
-        <CallScreen controller={call} outputs={outputs} sinkId={sinkId} onSinkChange={setSinkId} />
-      )}
+      {callCoversShell(call) && <CallScreen controller={call} outputs={outputs} sinkId={sinkId} onSinkChange={setSinkId} />}
       <IncomingCallDialog
         open={call.view === 'incoming'}
         name={call.peer?.name ?? ''}
@@ -52,9 +62,18 @@ export function CallLayer({ controller: call }: CallLayerProps) {
   );
 }
 
-/** The bar of a minimized call, ticking its time. */
+/**
+ * The bar of a minimized call, ticking its time. It shows as the call screen
+ * goes away, and that screen's focus falls to the page: "Volver a la llamada"
+ * takes it. A focus held anywhere else stays there.
+ */
 export function ActiveCallBar({ controller: call }: CallLayerProps) {
   const now = useNow(call.connectedAt !== null);
+  const returnRef = useRef<HTMLButtonElement>(null);
+  useEffect(() => {
+    const active = document.activeElement;
+    if (active === null || active === document.body) returnRef.current?.focus();
+  }, []);
   return (
     <CallBar
       peerName={call.peer?.name ?? ''}
@@ -65,6 +84,7 @@ export function ActiveCallBar({ controller: call }: CallLayerProps) {
       onToggleMute={call.toggleMute}
       onHangUp={call.hangup}
       onReturn={() => call.setMinimized(false)}
+      returnRef={returnRef}
     />
   );
 }
