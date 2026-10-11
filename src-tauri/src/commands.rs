@@ -1354,6 +1354,7 @@ async fn send_text(
             from: None,
             text: Some(text),
             file: None,
+            call: None,
             ts: receipt.ts,
         },
     );
@@ -1659,6 +1660,7 @@ async fn send_group_text(
                 from: None,
                 text: Some(text),
                 file: None,
+                call: None,
                 ts: receipt.ts,
             },
         );
@@ -1741,6 +1743,7 @@ pub async fn send_file(
             from: None,
             text: None,
             file: Some(file.clone()),
+            call: None,
             ts: receipt.ts,
         },
     );
@@ -1784,6 +1787,7 @@ pub async fn send_group_file(
                 from: None,
                 text: None,
                 file: Some(file.clone()),
+                call: None,
                 ts: receipt.ts,
             },
         );
@@ -1856,6 +1860,7 @@ pub async fn forward_file(
                 from: None,
                 text: None,
                 file: Some(file),
+                call: None,
                 ts: chrono::Utc::now().timestamp(),
             },
         );
@@ -1876,6 +1881,7 @@ pub async fn forward_file(
                 from: None,
                 text: None,
                 file: Some(file),
+                call: None,
                 ts: chrono::Utc::now().timestamp(),
             },
         );
@@ -1971,13 +1977,26 @@ pub async fn block_node(
 /// whose ts + ttl has passed.
 #[tauri::command]
 pub async fn prune_expired(state: State<'_, AppState>) -> Result<(), String> {
-    use base64::Engine as _;
     let now = chrono::Utc::now().timestamp();
     let mut inner = state.inner.lock().await;
+    if prune_history(&mut inner.history, now) {
+        save_history(&inner);
+    }
+    Ok(())
+}
+
+/// Drop from `history` what has expired at `now`; whether anything went.
+/// A call (K13) goes with its chat's disappearing messages: its `ttl` is the
+/// chat's timer when the call was recorded.
+fn prune_history(history: &mut HashMap<String, Vec<HistItem>>, now: i64) -> bool {
+    use base64::Engine as _;
     let mut changed = false;
-    for items in inner.history.values_mut() {
+    for items in history.values_mut() {
         let before = items.len();
         items.retain(|it| {
+            if crate::call_log::expired(it, now) {
+                return false;
+            }
             let ttl = it.text.as_deref().and_then(|t| {
                 let enc = t.strip_prefix("trm1:")?;
                 let bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD
@@ -1995,10 +2014,7 @@ pub async fn prune_expired(state: State<'_, AppState>) -> Result<(), String> {
             changed = true;
         }
     }
-    if changed {
-        save_history(&inner);
-    }
-    Ok(())
+    changed
 }
 
 // ---- Sticker library (stored unencrypted in ~/.trino/stickers) ----
@@ -2930,6 +2946,7 @@ async fn handle_incoming_event(
                     from: None,
                     text: Some(body.clone()),
                     file: None,
+                    call: None,
                     ts: event.created_at,
                 },
             );
@@ -2961,6 +2978,7 @@ async fn handle_incoming_event(
                     from: Some(friend.handle.clone()),
                     text: Some(body.clone()),
                     file: None,
+                    call: None,
                     ts: event.created_at,
                 },
             );
@@ -3004,6 +3022,7 @@ async fn handle_incoming_event(
                     from,
                     text: None,
                     file: Some(file.clone()),
+                    call: None,
                     ts: event.created_at,
                 },
             );
@@ -3355,7 +3374,7 @@ pub async fn decline_group_invite(state: State<'_, AppState>, gid: String) -> Re
 
 // ---- encrypted chat history -------------------------------------------------
 
-const HISTORY_CAP: usize = 500; // keep last N per conversation (bounds the file)
+pub(crate) const HISTORY_CAP: usize = 500; // keep last N per conversation (bounds the file)
 
 fn derive_history_key(identity: &crate::identity::Identity) -> [u8; 32] {
     let okm = crate::crypto::hkdf_expand(
@@ -3370,7 +3389,7 @@ fn derive_history_key(identity: &crate::identity::Identity) -> [u8; 32] {
     k
 }
 
-fn save_history(inner: &InnerState) {
+pub(crate) fn save_history(inner: &InnerState) {
     let Some(key) = inner.history_key else {
         return;
     };
@@ -3390,7 +3409,7 @@ fn save_history(inner: &InnerState) {
     }
 }
 
-fn load_history(inner: &mut InnerState, path: &Path) {
+pub(crate) fn load_history(inner: &mut InnerState, path: &Path) {
     let Some(key) = inner.history_key else {
         return;
     };
@@ -5161,5 +5180,67 @@ mod tests {
             SendError::NoSession.to_string(),
             "no session — run connect first"
         );
+    }
+
+    // ---- K13: calls go with the chat's disappearing messages ----
+
+    #[test]
+    fn pruning_drops_the_calls_whose_timer_ran_out_and_keeps_the_rest() {
+        use crate::call_log::{CallDirection, CallEvent, CallOutcome};
+        let item = |ts: i64| HistItem {
+            side: "them".to_string(),
+            from: None,
+            text: None,
+            file: None,
+            call: None,
+            ts,
+        };
+        let call = |id: &str, ttl: Option<i64>| HistItem {
+            call: Some(CallEvent {
+                id: id.to_string(),
+                direction: CallDirection::Incoming,
+                video: false,
+                outcome: CallOutcome::Missed,
+                duration_sec: 0,
+                ttl,
+            }),
+            ..item(NOW - 100)
+        };
+        // A disappearing text, as the frontend writes it.
+        let timed_text = HistItem {
+            text: Some(format!(
+                "trm1:{}",
+                base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(r#"{"d":60,"t":"hola"}"#)
+            )),
+            ..item(NOW - 100)
+        };
+        let plain_text = HistItem {
+            text: Some("hola".to_string()),
+            ..item(NOW - 100)
+        };
+        let mut history = HashMap::from([(
+            "ana".to_string(),
+            vec![
+                call("expired-call-00001", Some(60)),
+                call("running-call-00001", Some(3_600)),
+                call("no-timer-call-0001", None),
+                timed_text,
+                plain_text,
+            ],
+        )]);
+
+        assert!(prune_history(&mut history, NOW));
+
+        let calls: Vec<&str> = history["ana"]
+            .iter()
+            .filter_map(|it| it.call.as_ref().map(|c| c.id.as_str()))
+            .collect();
+        assert_eq!(calls, ["running-call-00001", "no-timer-call-0001"]);
+        assert_eq!(
+            history["ana"].len(),
+            3,
+            "the timed text went too, as before"
+        );
+        assert!(!prune_history(&mut history, NOW), "nothing left to drop");
     }
 }

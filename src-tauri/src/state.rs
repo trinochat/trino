@@ -1,3 +1,4 @@
+use crate::call_log::CallEvent;
 use crate::group::{FileRef, GroupRoster};
 use crate::identity::{Identity, PublicBundle};
 use crate::nostr::NostrClient;
@@ -154,6 +155,10 @@ pub struct HistItem {
     pub text: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub file: Option<FileRef>,
+    /// A call with this contact (K13); such an item has no text or file.
+    /// Older versions read past it.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub call: Option<CallEvent>,
     pub ts: i64,
 }
 

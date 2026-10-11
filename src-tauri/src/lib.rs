@@ -15,6 +15,7 @@ mod state;
 mod totp_enrollment;
 mod turn;
 // -- W7 --
+mod call_log;
 mod connection;
 mod diag;
 mod net;
@@ -243,6 +244,8 @@ pub fn run() {
             security_cmds::totp_enable,
             security_cmds::totp_disable,
             security_cmds::change_passphrase,
+            call_log::record_call,
+            call_log::list_call_history,
             // -- W8 --
         ])
         .run(tauri::generate_context!())
