@@ -125,6 +125,16 @@ const KEYS: string[] = [
   'groupPanel.inviteList',
   'groupPanel.inviting',
   'groupPanel.invitePartial',
+  // A new group (a deviation of the canvas: no board draws it).
+  'groupNew.title',
+  'groupNew.adminNote',
+  'groupNew.create',
+  'groupNew.creating',
+  'groupNew.adding',
+  'groupNew.failed',
+  'groupNew.partial',
+  'groupNew.open',
+  'groupNew.noContacts',
 ];
 
 const PLACEHOLDERS: Record<string, string[]> = {
@@ -156,6 +166,8 @@ const PLACEHOLDERS: Record<string, string[]> = {
   'groupPanel.inviteTitle': ['group'],
   'groupPanel.inviting': ['done', 'name', 'total'],
   'groupPanel.invitePartial': ['names'],
+  'groupNew.adding': ['done', 'name', 'total'],
+  'groupNew.partial': ['names'],
 };
 
 describe('contacts strings', () => {
