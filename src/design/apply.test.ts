@@ -730,7 +730,8 @@ describe('the text size shortcuts', () => {
 
   it('Ctrl + wheel takes one step for every 100 of deltaY, up for a negative one', () => {
     const { host, data, wheel } = fakeWindow();
-    initAppearance(host);
+    // One instant: the pieces belong to one gesture, however slow the run.
+    initAppearance(host, { now: () => 0 });
     expect(wheel({ deltaY: -100, ctrlKey: true })).toBe(true);
     expect(storedTextScale(data)).toBe(1.1);
     // A touchpad pinch arrives in small pieces: they add up.
@@ -741,6 +742,32 @@ describe('the text size shortcuts', () => {
     expect(storedTextScale(data)).toBe(1.25);
     wheel({ deltaY: 250, ctrlKey: true });
     expect(storedTextScale(data)).toBe(1);
+  });
+
+  // What is left of one movement would swallow the first notch of the next.
+  it('starts the wheel afresh when it turns the other way', () => {
+    let now = 0;
+    const { host, data, wheel } = fakeWindow();
+    initAppearance(host, { now: () => now });
+    wheel({ deltaY: -160, ctrlKey: true });
+    expect(storedTextScale(data)).toBe(1.1);
+    now += 50;
+    // 60 up was left over: one notch down still takes one step down.
+    wheel({ deltaY: 100, ctrlKey: true });
+    expect(storedTextScale(data)).toBe(1);
+  });
+
+  it('starts the wheel afresh after a pause of 300 ms', () => {
+    let now = 0;
+    const { host, data, wheel } = fakeWindow(a11yEntry({ textScale: 1.25 }));
+    initAppearance(host, { now: () => now });
+    wheel({ deltaY: -60, ctrlKey: true });
+    now += 301;
+    wheel({ deltaY: -60, ctrlKey: true });
+    expect(storedTextScale(data)).toBe(1.25);
+    now += 299;
+    wheel({ deltaY: -60, ctrlKey: true });
+    expect(storedTextScale(data)).toBe(1.5);
   });
 
   it('leaves the wheel alone without Ctrl, and listens to it with passive: false to cancel it', () => {

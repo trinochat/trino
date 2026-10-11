@@ -49,6 +49,8 @@ export interface InitAppearanceOptions {
    * 125 % (`api.systemTextScale`). Without it, the last size read stays.
    */
   readSystemTextScale?: () => Promise<number>;
+  /** The clock of the Ctrl + wheel gestures, in ms: `performance.now` by default. */
+  now?: () => number;
 }
 
 const DARK_SCHEME = '(prefers-color-scheme: dark)';
@@ -63,6 +65,8 @@ export const ROOT_PX = 16;
 
 /** Ctrl + wheel takes one step of text size for this much `deltaY` (a mouse notch). */
 const WHEEL_STEP = 100;
+/** A pause this long between two Ctrl + wheel events ends a gesture, in ms. */
+const WHEEL_PAUSE_MS = 300;
 
 const NO_STORAGE: AppearanceStorage = { getItem: () => null, setItem: () => {} };
 
@@ -300,12 +304,19 @@ export function initAppearance(host: AppearanceHost, options: InitAppearanceOpti
     changeTextSize(host, shortcut);
   };
   // A touchpad pinch arrives as Ctrl + wheel in small pieces: they add up, so
-  // one gesture does not jump from 100 to 200 %.
+  // one gesture does not jump from 100 to 200 %. What is left of a gesture
+  // goes once the wheel turns the other way or pauses, or it would swallow
+  // the first notch of the next one.
+  const now = options.now ?? (() => performance.now());
   let wheel = 0;
+  let lastWheel = Number.NEGATIVE_INFINITY;
   const onWheel = (event: Event) => {
     const { ctrlKey, deltaY } = event as WheelEvent;
     if (!ctrlKey) return;
     event.preventDefault();
+    const at = now();
+    if (deltaY * wheel < 0 || at - lastWheel >= WHEEL_PAUSE_MS) wheel = 0;
+    lastWheel = at;
     wheel += deltaY;
     while (Math.abs(wheel) >= WHEEL_STEP) {
       changeTextSize(host, wheel < 0 ? 'up' : 'down');
