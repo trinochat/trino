@@ -533,7 +533,7 @@ fn display_handle(raw: &str) -> String {
 
 /// The TOTP code typed at unlock, if any. An empty or blank field is no code,
 /// so a vault with TOTP answers `totp_required`, not `invalid_totp`.
-fn submitted_code(code: Option<&str>) -> Option<&str> {
+pub(crate) fn submitted_code(code: Option<&str>) -> Option<&str> {
     code.map(str::trim).filter(|code| !code.is_empty())
 }
 
@@ -585,8 +585,9 @@ fn create_account(
 }
 
 /// Open the vault at `vault` with `passphrase` and, if it holds a TOTP
-/// secret, `totp_code`. Returns the identity and that secret.
-fn open_vault(
+/// secret, `totp_code`. Returns the identity and that secret. The settings
+/// open it too, to seal it again (security_cmds.rs).
+pub(crate) fn open_vault(
     vault: &Path,
     passphrase: &str,
     totp_code: Option<&str>,
