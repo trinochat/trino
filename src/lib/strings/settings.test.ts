@@ -265,6 +265,46 @@ const ADVANCED = [
   'settings2.network.yourKey',
 ];
 
+/** The details of a contact (contact-details/ContactDetailsPanel.tsx, RenameContactDialog.tsx). */
+const CONTACT_INFO = [
+  'contactInfo.close',
+  'contactInfo.verified',
+  'contactInfo.unverified',
+  'contactInfo.keyChanged',
+  'contactInfo.verify',
+  'contactInfo.viewVerification',
+  'contactInfo.about',
+  'contactInfo.profileName',
+  'contactInfo.useProfileName',
+  'contactInfo.errNameTaken',
+  'contactInfo.rename',
+  'contactInfo.renameTitle',
+  'contactInfo.renameLabel',
+  'contactInfo.renameHint',
+  'contactInfo.errRenameEmpty',
+  'contactInfo.errRename',
+  'contactInfo.note',
+  'contactInfo.noteHint',
+  'contactInfo.ttl',
+  'contactInfo.ttlOff',
+  'contactInfo.ttl30s',
+  'contactInfo.ttl5m',
+  'contactInfo.ttl1h',
+  'contactInfo.ttl1d',
+  'contactInfo.ttl1w',
+  'contactInfo.ttlOn',
+  'contactInfo.ttlOffBody',
+  'contactInfo.block',
+  'contactInfo.blockBody',
+  'contactInfo.unblock',
+  'contactInfo.blockedBody',
+  'contactInfo.errBlock',
+  'contactInfo.remove',
+  'contactInfo.removeTitle',
+  'contactInfo.removeBody',
+  'contactInfo.errRemove',
+];
+
 const KEYS: string[] = [
   ...NOTIFICATION_CONTENT,
   ...PROFILE,
@@ -278,6 +318,7 @@ const KEYS: string[] = [
   ...ACCESSIBILITY,
   ...LANGUAGE,
   ...ADVANCED,
+  ...CONTACT_INFO,
 ];
 
 const PLACEHOLDERS: Record<string, string[]> = {
@@ -296,6 +337,11 @@ const PLACEHOLDERS: Record<string, string[]> = {
   'settings2.network.observing': ['relays'],
   'settings2.network.size': ['n'],
   'settings2.network.yourKey': ['key'],
+  'contactInfo.profileName': ['name'],
+  'contactInfo.renameTitle': ['name'],
+  'contactInfo.ttlOn': ['time'],
+  'contactInfo.blockedBody': ['name'],
+  'contactInfo.removeTitle': ['name'],
 };
 
 describe('settings strings', () => {
