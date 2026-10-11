@@ -72,6 +72,59 @@ const KEYS: string[] = [
   'contacts.invites.empty',
   'contacts.invites.strangerOne',
   'contacts.invites.strangerMany',
+  // The group panel (Group:70-115) and its dialogs.
+  'groupPanel.memberCount',
+  'groupPanel.memberCountOne',
+  'groupPanel.adminIs',
+  'groupPanel.adminYou',
+  'groupPanel.rename',
+  'groupPanel.mute',
+  'groupPanel.ttl',
+  'groupPanel.ttlOff',
+  'groupPanel.ttl30s',
+  'groupPanel.ttl5m',
+  'groupPanel.ttl1h',
+  'groupPanel.ttl1d',
+  'groupPanel.ttl1w',
+  'groupPanel.ttlOn',
+  'groupPanel.ttlOffNote',
+  'groupPanel.members',
+  'groupPanel.membersLoading',
+  'groupPanel.membersFailed',
+  'groupPanel.invite',
+  'groupPanel.you',
+  'groupPanel.statusMember',
+  'groupPanel.statusAdmin',
+  'groupPanel.verified',
+  'groupPanel.unverified',
+  'groupPanel.viaGroup',
+  'groupPanel.notContact',
+  'groupPanel.write',
+  'groupPanel.writeTo',
+  'groupPanel.remove',
+  'groupPanel.signed',
+  'groupPanel.leave',
+  'groupPanel.delete',
+  'groupPanel.ended',
+  'groupPanel.notAdmin',
+  'groupPanel.leaveTitle',
+  'groupPanel.leaveBody',
+  'groupPanel.leaveFailed',
+  'groupPanel.deleteTitle',
+  'groupPanel.deleteBody',
+  'groupPanel.deleteFailed',
+  'groupPanel.removeTitle',
+  'groupPanel.removeBody',
+  'groupPanel.removeConfirm',
+  'groupPanel.removeFailed',
+  'groupPanel.name',
+  'groupPanel.renameFailed',
+  'groupPanel.inviteTitle',
+  'groupPanel.inviteHint',
+  'groupPanel.inviteNone',
+  'groupPanel.inviteList',
+  'groupPanel.inviting',
+  'groupPanel.invitePartial',
 ];
 
 const PLACEHOLDERS: Record<string, string[]> = {
@@ -91,6 +144,18 @@ const PLACEHOLDERS: Record<string, string[]> = {
   'contacts.invites.joinLabel': ['name'],
   'contacts.invites.declineLabel': ['name'],
   'contacts.invites.strangerMany': ['n'],
+  'groupPanel.memberCount': ['n'],
+  'groupPanel.adminIs': ['name'],
+  'groupPanel.ttlOn': ['time'],
+  'groupPanel.writeTo': ['name'],
+  'groupPanel.remove': ['name'],
+  'groupPanel.leaveTitle': ['group'],
+  'groupPanel.deleteTitle': ['group'],
+  'groupPanel.removeTitle': ['name'],
+  'groupPanel.removeFailed': ['name'],
+  'groupPanel.inviteTitle': ['group'],
+  'groupPanel.inviting': ['done', 'name', 'total'],
+  'groupPanel.invitePartial': ['names'],
 };
 
 describe('contacts strings', () => {
@@ -136,6 +201,15 @@ describe('contacts strings', () => {
     expect(contacts.es['contacts.share.keyNote']).toBe(
       'Para verificarte, tus contactos comparan contigo los símbolos de una llamada.',
     );
+  });
+
+  // Plan §1.4: the timer is per device, since a group-wide one would change
+  // the signed bytes of the roster; the board's "para todo el grupo" is not true.
+  it('say that each person sets the time of their own messages in a group', () => {
+    expect(contacts.es['groupPanel.ttlOn']).toBe(
+      'Tus mensajes nuevos en este grupo se borran de los equipos de todos después de {time}. Cada persona elige el tiempo de sus propios mensajes.',
+    );
+    expect(contacts.es['groupPanel.inviteHint']).toBe('Solo le llega a contactos que también te tengan agregado.');
   });
 
   // Plan §1.2: the event of a stranger is dropped, so Trino can only say someone tried.
