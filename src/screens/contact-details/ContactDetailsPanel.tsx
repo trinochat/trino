@@ -84,6 +84,20 @@ export function ContactDetailsPanel({
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<'block' | 'name' | 'remove' | null>(null);
   const [removeFailed, setRemoveFailed] = useState(false);
+  const [shownFor, setShownFor] = useState(handle);
+
+  // Another contact in the same panel (or this one renamed): read what this
+  // device keeps for them now, before anything of the last one shows or is
+  // written under their name.
+  if (shownFor !== handle) {
+    setShownFor(handle);
+    setNote(prefs.getNote(handle));
+    setTtl(prefs.getTtl(key));
+    setBlocked(node.blocked === true);
+    setDialog(null);
+    setError(null);
+    setRemoveFailed(false);
+  }
 
   // The shell sends the contact again after a change.
   useEffect(() => setBlocked(node.blocked === true), [node.blocked]);

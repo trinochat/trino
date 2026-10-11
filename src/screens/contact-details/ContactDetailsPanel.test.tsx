@@ -1,9 +1,9 @@
 // @vitest-environment jsdom
-import { cleanup, fireEvent, screen, waitFor, within } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { NodeInfo } from '../../lib/api';
 import type { PanelLayout, Trust } from '../types';
-import { commandError, memoryPrefs, node, renderEs } from '../settings/test-utils';
+import { commandError, memoryPrefs, node, renderEs, withLang } from '../settings/test-utils';
 import { ContactDetailsPanel, type ContactDetailsApi, type ContactDetailsPanelProps } from './ContactDetailsPanel';
 
 afterEach(cleanup);
@@ -142,6 +142,30 @@ describe('ContactDetailsPanel', () => {
     expect(screen.getByText('Solo se guarda en este equipo.')).toBeTruthy();
     fireEvent.change(note, { target: { value: 'Prima de Bogotá' } });
     expect(prefs.getNote('ana')).toBe('Prima de Bogotá');
+  });
+
+  it('follows another contact without a new mount: their note and timer, not the last ones', () => {
+    const { prefs } = memoryPrefs({ 'note:ana': 'Prima', 'note:beto': 'Vecino', 'ttl:beto': '3600' });
+    const api: ContactDetailsApi = { renameNode: vi.fn(), removeNode: vi.fn(), blockNode: vi.fn() };
+    const panel = (contact: NodeInfo) => (
+      <ContactDetailsPanel
+        node={contact}
+        trust="unverified"
+        layout="aside"
+        api={api}
+        prefs={prefs}
+        onClose={() => {}}
+        onVerify={() => {}}
+        onRenamed={() => {}}
+        onRemoved={() => {}}
+        onChanged={() => {}}
+      />
+    );
+    const { rerender } = render(withLang(panel(node('ana'))));
+    expect((screen.getByRole('textbox', { name: 'Nota privada' }) as HTMLTextAreaElement).value).toBe('Prima');
+    rerender(withLang(panel(node('beto'))));
+    expect((screen.getByRole('textbox', { name: 'Nota privada' }) as HTMLTextAreaElement).value).toBe('Vecino');
+    expect((screen.getByRole('combobox', { name: 'Mensajes temporales' }) as HTMLSelectElement).value).toBe('3600');
   });
 
   it('sets the timer of your new messages, and says honestly what it does', () => {
