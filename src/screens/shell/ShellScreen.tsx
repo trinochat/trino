@@ -7,6 +7,12 @@
  * the details of a contact or a group sit beside the chat from 70 rem and in
  * a dialog below. Under 47.5 rem there is one pane, with Atrás.
  *
+ * The focus follows the panes. A pane that leaves takes its focused control
+ * with it, so the conversation one pane opens takes the focus (the main
+ * pane, named for what it shows), and Atrás gives it back to the row the
+ * conversation came from. Under "No leídos" the chat just opened stays
+ * listed, read, until the chip or the chat changes.
+ *
  * Ctrl+K goes back to Chats and to the search; Ctrl+L locks.
  */
 import { Fragment, useEffect, useRef, useState, type ReactNode } from 'react';
@@ -89,6 +95,9 @@ type Overlay =
   | { kind: 'verify'; handle: string }
   | { kind: 'forward'; from: ConvoRef; key: string };
 
+/** Where the focus goes once a change took the control that had it off the page. */
+type FocusTarget = 'main' | 'settings' | { row: string | null };
+
 export function ShellScreen(props: ShellScreenProps) {
   const { api, events, slots, call, capabilities } = props;
   const prefs = props.prefs ?? devicePrefs;
@@ -118,6 +127,18 @@ export function ShellScreen(props: ShellScreenProps) {
   const [strangersSeen, setStrangersSeen] = useState(0);
   const [searchFocus, setSearchFocus] = useState(0);
   const searchRef = useRef<HTMLInputElement>(null);
+  /** The chat opened from the list: listed under any chip until the chip or the chat changes. */
+  const [kept, setKept] = useState<string | null>(null);
+  const navRef = useRef<HTMLElement>(null);
+  const mainRef = useRef<HTMLElement>(null);
+  const settingsRef = useRef<HTMLButtonElement>(null);
+  /**
+   * Set by a change that can take the focused control off the page: one pane
+   * swaps the list and the conversation, and a closing panel takes its
+   * buttons along. Applied after the next render, and only if the focus fell
+   * to the page: a dialog that gave it back to its opener keeps it there.
+   */
+  const focusNext = useRef<FocusTarget | null>(null);
 
   const openKey = open ? convoKey(open) : null;
   const listShown = !single || pane === 'list';
@@ -203,12 +224,37 @@ export function ShellScreen(props: ShellScreenProps) {
     if (searchFocus > 0) searchRef.current?.focus();
   }, [searchFocus]);
 
+  // A focus that fell with its pane goes where you are now: into the
+  // conversation that one pane opened, back to the row it came from, or
+  // back to Ajustes. A row that is gone leaves it on the sidebar itself.
+  useEffect(() => {
+    const target = focusNext.current;
+    focusNext.current = null;
+    if (!target) return;
+    const active = document.activeElement;
+    if (active && active !== document.body && active.isConnected) return;
+    const nav = navRef.current;
+    if (target === 'main') {
+      mainRef.current?.focus();
+    } else if (target === 'settings') {
+      (settingsRef.current ?? nav)?.focus();
+    } else {
+      const row = [...(nav?.querySelectorAll<HTMLElement>('[data-row-key]') ?? [])].find(
+        item => target.row !== null && item.dataset.rowKey === target.row,
+      );
+      (row?.querySelector('button') ?? nav)?.focus();
+    }
+  });
+
   const nodeOf = (handle: string) => conv.nodes.find(node => node.handle === handle);
   const groupOf = (gid: string) => conv.groups.find(group => group.gid === gid);
   const callable = (handle: string) => {
     const node = nodeOf(handle);
     return node !== undefined && !node.blocked;
   };
+
+  /** The call whose chat is open, opened from the log: its row stays marked. */
+  const selectedCallKey = fromCall && open?.kind === 'contact' && open.handle === fromCall.peer ? fromCall.key : null;
 
   const closeOverlay = () => setOverlay(null);
   const openConvo = (ref: ConvoRef) => {
@@ -217,12 +263,23 @@ export function ShellScreen(props: ShellScreenProps) {
     setPane('main');
     setDetails(false);
     setFromCall(null);
+    setKept(null);
+    focusNext.current = 'main';
   };
-  const back = () => setPane('list');
+  /** Atrás on one pane: the list, with the focus on the row of the conversation that was open. */
+  const back = () => {
+    setPane('list');
+    focusNext.current = { row: tab === 'calls' && selectedCallKey ? selectedCallKey : openKey };
+  };
   const forgetOpen = () => {
     setOpen(null);
     setDetails(false);
     setPane('list');
+    focusNext.current = { row: null };
+  };
+  const closeDetails = () => {
+    setDetails(false);
+    focusNext.current = 'main';
   };
 
   const renameContact = (from: string, to: string) => {
@@ -345,6 +402,7 @@ export function ShellScreen(props: ShellScreenProps) {
           onClose: () => {
             setMain('convo');
             if (single) setPane('list');
+            focusNext.current = 'settings';
           },
           onLockNow: props.onLock,
           ...props.settings,
@@ -362,6 +420,18 @@ export function ShellScreen(props: ShellScreenProps) {
           })
         : (chat ?? empty);
 
+  /** What the main pane shows: its name when it takes the focus. */
+  const mainLabel =
+    main === 'settings'
+      ? t('inbox.profile.settings')
+      : open?.kind === 'channel'
+        ? t('inbox.channel')
+        : open?.kind === 'contact'
+          ? open.handle
+          : open?.kind === 'group'
+            ? groupOf(open.gid)?.name || undefined
+            : undefined;
+
   const detailsLayout: PanelLayout = layout === 'double-aside' ? 'aside' : 'dialog';
   let detailsPanel: ReactNode = null;
   if (details && open && main === 'convo' && mainShown) {
@@ -372,7 +442,7 @@ export function ShellScreen(props: ShellScreenProps) {
           node,
           trust: conv.trust[node.handle] ?? 'unverified',
           layout: detailsLayout,
-          onClose: () => setDetails(false),
+          onClose: closeDetails,
           onVerify: () => setOverlay({ kind: 'verify', handle: node.handle }),
           onRenamed: to => renameContact(node.handle, to),
           onRemoved: () => removeContact(node.handle),
@@ -386,7 +456,7 @@ export function ShellScreen(props: ShellScreenProps) {
           group,
           contacts: conv.nodes,
           layout: detailsLayout,
-          onClose: () => setDetails(false),
+          onClose: closeDetails,
           onChanged: () => {
             void conv.refreshGroups();
             void conv.refreshNodes();
@@ -512,16 +582,29 @@ export function ShellScreen(props: ShellScreenProps) {
       <div className="flex min-h-0 flex-1">
         {listShown && (
           <nav
+            ref={navRef}
             aria-label={t('shell.nav')}
-            className={cx('flex min-h-0 flex-col border-e border-ui-line', single ? 'min-w-0 flex-1' : 'w-[20rem] shrink-0')}
+            // Where the focus waits when the row it should go back to is gone.
+            tabIndex={-1}
+            className={cx(
+              'flex min-h-0 flex-col border-e border-ui-line outline-none',
+              single ? 'min-w-0 flex-1' : 'w-[20rem] shrink-0',
+            )}
           >
             <InboxPanel
               wordmark={THEMES[`${appearance.style}-light`].wordmark}
               items={items}
               selectedKey={openKey}
-              onSelect={openConvo}
+              onSelect={ref => {
+                openConvo(ref);
+                setKept(convoKey(ref));
+              }}
+              keepKey={kept}
               filter={filter}
-              onFilterChange={setFilter}
+              onFilterChange={next => {
+                setFilter(next);
+                setKept(null);
+              }}
               search={search}
               onSearchChange={setSearch}
               searchRef={searchRef}
@@ -535,7 +618,7 @@ export function ShellScreen(props: ShellScreenProps) {
               callFilter={callFilter}
               onCallFilterChange={setCallFilter}
               missedUnseen={callLog.missedUnseen}
-              selectedCallKey={fromCall && open?.kind === 'contact' && open.handle === fromCall.peer ? fromCall.key : null}
+              selectedCallKey={selectedCallKey}
               onCallBack={handle => call.start(handle, false)}
               onOpenCallChat={(handle, key) => {
                 // A chat for someone who is no longer a contact could only fail to send.
@@ -548,7 +631,9 @@ export function ShellScreen(props: ShellScreenProps) {
                 setMain('settings');
                 setPane('main');
                 setDetails(false);
+                focusNext.current = 'main';
               }}
+              settingsRef={settingsRef}
               hasContacts={!conv.nodesLoaded || conv.nodes.length > 0 || conv.groups.length > 0}
               onAddContact={() => setOverlay({ kind: 'contacts', tab: 'add' })}
               notice={notice}
@@ -556,7 +641,17 @@ export function ShellScreen(props: ShellScreenProps) {
             />
           </nav>
         )}
-        {mainShown && <main className="flex min-h-0 min-w-0 flex-1 flex-col bg-ui-surface">{mainContent}</main>}
+        {mainShown && (
+          <main
+            ref={mainRef}
+            // Takes the focus when one pane opens it, so a screen reader names what opened.
+            tabIndex={-1}
+            aria-label={mainLabel}
+            className="flex min-h-0 min-w-0 flex-1 flex-col bg-ui-surface outline-none"
+          >
+            {mainContent}
+          </main>
+        )}
         {detailsLayout === 'aside' && detailsPanel && (
           <aside
             aria-label={t('shell.details')}

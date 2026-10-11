@@ -66,6 +66,14 @@ export interface InboxPanelProps {
   notice?: { text: string; onAction(): void } | null;
   /** Epoch seconds. */
   now: number;
+  /**
+   * A chat listed whatever the chip: the one just opened from the list, which
+   * reading would take out of "No leídos" with the focus on its row. The shell
+   * lets it go when the chip or the chat changes.
+   */
+  keepKey?: string | null;
+  /** The Settings button of the foot, for the shell to give the focus back to. */
+  settingsRef?: Ref<HTMLButtonElement>;
 }
 
 /** The chips of the inbox, in order; "Solicitudes" joins them with message requests (R6b). */
@@ -89,7 +97,7 @@ export function InboxPanel(props: InboxPanelProps) {
   const { connection, calls, tab, notice } = props;
   const onCalls = calls !== null && tab === 'calls';
 
-  const visible = filterItems(props.items, props.filter, props.search);
+  const visible = filterItems(props.items, props.filter, props.search, props.keepKey ?? null);
   const chats = (
     <>
       <div className="relative flex items-center">
@@ -187,7 +195,12 @@ export function InboxPanel(props: InboxPanelProps) {
           />
         )}
       </div>
-      <ProfileFooter me={props.me} onShareCode={props.onShareCode} onOpenSettings={props.onOpenSettings} />
+      <ProfileFooter
+        me={props.me}
+        onShareCode={props.onShareCode}
+        onOpenSettings={props.onOpenSettings}
+        settingsRef={props.settingsRef}
+      />
     </div>
   );
 }

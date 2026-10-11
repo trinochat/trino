@@ -2,7 +2,8 @@
  * The Calls tab (PropLlamadas:53-87): the chips Todas and Perdidas, the calls
  * in a scroll of their own that keeps at least 8 rem, and a note that stays
  * in view: the log only has the calls that came in with Trino open and
- * unlocked (K13).
+ * unlocked (K13). Each item carries its call's key (data-row-key), for the
+ * shell to give the focus back to the row of the call whose chat it opened.
  */
 import { isMissed } from '../../lib/call-events';
 import { useT } from '../../lib/i18n';
@@ -43,7 +44,7 @@ export function CallHistoryList({ rows, filter, onFilterChange, selectedKey, onC
           className="-mx-1 flex min-h-[8rem] grow basis-0 flex-col gap-0.5 overflow-y-auto px-1"
         >
           {visible.map(row => (
-            <li key={row.entry.key}>
+            <li key={row.entry.key} data-row-key={row.entry.key}>
               <CallRow row={row} selected={row.entry.key === selectedKey} now={now} onCall={onCall} onOpenChat={onOpenChat} />
             </li>
           ))}

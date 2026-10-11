@@ -172,4 +172,14 @@ describe('filterItems', () => {
     expect(names(filterItems(items, 'all', '  beta  '))).toEqual(['Novedades de Trino']);
     expect(filterItems(items, 'groups', 'ana')).toEqual([]);
   });
+
+  // Opening an unread chat reads it; under "No leídos" its row would vanish
+  // with the focus on it. The shell keeps that one row until the chip or the
+  // chat changes; the search still applies, since you typed it.
+  it('keeps one chat whatever the chip, but not past the search', () => {
+    expect(names(filterItems(items, 'unread', '', 'Carlos')).sort()).toEqual(['Ana', 'Carlos', 'Novedades de Trino']);
+    expect(names(filterItems(items, 'groups', '', 'Carlos'))).toEqual(['Carlos', 'Familia']);
+    expect(names(filterItems(items, 'unread', 'ana', 'Carlos'))).toEqual(['Ana']);
+    expect(filterItems(items, 'unread', '', null)).toEqual(filterItems(items, 'unread', ''));
+  });
 });

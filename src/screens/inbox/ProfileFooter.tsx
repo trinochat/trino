@@ -3,6 +3,7 @@
  * code to share and Settings. The lock moved to Settings and Ctrl+L.
  */
 import { QrCode, Settings } from 'lucide-react';
+import type { Ref } from 'react';
 import { identityInitials } from '../../lib/initials';
 import { useT } from '../../lib/i18n';
 import { Avatar, IconButton, iconSize } from '../../ui';
@@ -11,9 +12,11 @@ export interface ProfileFooterProps {
   me: { handle: string; avatarSrc?: string };
   onShareCode(): void;
   onOpenSettings(): void;
+  /** Settings takes the list's place on one pane; closing it brings the focus back here. */
+  settingsRef?: Ref<HTMLButtonElement>;
 }
 
-export function ProfileFooter({ me, onShareCode, onOpenSettings }: ProfileFooterProps) {
+export function ProfileFooter({ me, onShareCode, onOpenSettings, settingsRef }: ProfileFooterProps) {
   const t = useT();
   return (
     <div className="flex items-center gap-2.5 border-t border-ui-line px-1.5 pt-2.5">
@@ -23,7 +26,12 @@ export function ProfileFooter({ me, onShareCode, onOpenSettings }: ProfileFooter
         <span className="text-ui-sm text-ui-muted">{t('inbox.profile.caption')}</span>
       </span>
       <IconButton aria-label={t('inbox.profile.share')} icon={<QrCode {...iconSize('lg')} />} onClick={onShareCode} />
-      <IconButton aria-label={t('inbox.profile.settings')} icon={<Settings {...iconSize('lg')} />} onClick={onOpenSettings} />
+      <IconButton
+        ref={settingsRef}
+        aria-label={t('inbox.profile.settings')}
+        icon={<Settings {...iconSize('lg')} />}
+        onClick={onOpenSettings}
+      />
     </div>
   );
 }

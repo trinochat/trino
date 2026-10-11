@@ -129,11 +129,23 @@ function fold(text: string): string {
   return text.normalize('NFD').replace(/\p{M}/gu, '').toLowerCase();
 }
 
-export function filterItems(items: readonly InboxItem[], filter: InboxFilter, query: string): InboxItem[] {
+/**
+ * The chats a chip and a search leave. `keep` names a chat the chip does not
+ * hide: the shell's open chat, opened from this list, which reading takes
+ * out of "No leídos" while its row has the focus. The search still applies.
+ */
+export function filterItems(
+  items: readonly InboxItem[],
+  filter: InboxFilter,
+  query: string,
+  keep: string | null = null,
+): InboxItem[] {
   const needle = fold(query.trim());
   return items.filter(item => {
-    if (filter === 'unread' && !(item.unread > 0)) return false;
-    if (filter === 'groups' && item.ref.kind !== 'group') return false;
+    if (item.key !== keep) {
+      if (filter === 'unread' && !(item.unread > 0)) return false;
+      if (filter === 'groups' && item.ref.kind !== 'group') return false;
+    }
     return !needle || fold(item.name).includes(needle) || fold(item.preview ?? '').includes(needle);
   });
 }

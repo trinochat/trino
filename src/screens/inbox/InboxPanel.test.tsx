@@ -239,6 +239,13 @@ describe('InboxPanel: the chats', () => {
     expect(screen.getByText('Ningún chat coincide con «zzz».')).toBeTruthy();
   });
 
+  it('lists the chat the shell keeps under a chip it no longer matches', () => {
+    renderEs(<InboxPanel {...props({ filter: 'unread', keepKey: 'Carlos', selectedKey: 'Carlos' })} />);
+    const list = screen.getByRole('list', { name: 'Chats' });
+    expect(within(list).getAllByRole('button')).toHaveLength(3);
+    expect(within(list).getByRole('button', { name: /^Carlos/ }).getAttribute('aria-current')).toBe('true');
+  });
+
   it('searches through a labelled field', () => {
     const onSearchChange = vi.fn();
     renderEs(<InboxPanel {...props({ onSearchChange })} />);

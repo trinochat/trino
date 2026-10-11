@@ -240,6 +240,117 @@ describe('ShellScreen: layout', () => {
   });
 });
 
+/**
+ * One pane swaps the list and the conversation, so the control that had the
+ * focus leaves the page with its pane, and the focus falls to the body: a
+ * screen reader says nothing, and the next Tab starts at the top. These
+ * press the way a keyboard does, with the focus on the control first.
+ */
+describe('ShellScreen: where the focus goes', () => {
+  const press = (element: HTMLElement) => {
+    element.focus();
+    fireEvent.click(element);
+  };
+
+  it('puts the focus in the conversation that one pane opens, named for it, and back on its row with Atrás', async () => {
+    setup({ width: 759 });
+    press(await row('Ana'));
+    const main = screen.getByRole('main', { name: 'Ana' });
+    expect(main.getAttribute('tabindex')).toBe('-1');
+    expect(document.activeElement).toBe(main);
+
+    press(screen.getByRole('button', { name: 'Atrás' }));
+    expect(document.activeElement).toBe(await row('Ana'));
+  });
+
+  it('gives the focus back to the call when the chat was opened from the log', async () => {
+    const answered: CallLogWire = {
+      peer: 'Bea',
+      ts: NOW - 300,
+      call: { id: 'b2b2b2b2b2b2b2b2', direction: 'incoming', video: false, outcome: 'answered', duration_sec: 60 },
+    };
+    setup({ width: 759 }, { calls: [answered] });
+    await row('Ana');
+    fireEvent.click(screen.getByRole('tab', { name: 'Llamadas' }));
+    const log = await screen.findByRole('list', { name: 'Historial de llamadas' });
+    press(within(log).getByRole('button', { name: /^Bea/ }));
+    expect(document.activeElement).toBe(screen.getByRole('main', { name: 'Bea' }));
+
+    press(screen.getByRole('button', { name: 'Atrás' }));
+    const back = within(screen.getByRole('list', { name: 'Historial de llamadas' })).getByRole('button', { name: /^Bea/ });
+    expect(document.activeElement).toBe(back);
+  });
+
+  it('takes the focus into Settings on one pane, and back to Ajustes when it closes', async () => {
+    const { slots } = setup({ width: 759 });
+    await row('Ana');
+    press(screen.getByRole('button', { name: 'Ajustes' }));
+    expect(document.activeElement).toBe(screen.getByRole('main', { name: 'Ajustes' }));
+    act(() => lastProps(slots.settings).onClose());
+    expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Ajustes' }));
+  });
+
+  it('gives the focus to the chat when the details beside it close', async () => {
+    const slots = {
+      ...fakeSlots(),
+      contactDetails: vi.fn((p: ContactDetailsSlotProps) => (
+        <button type="button" onClick={p.onClose}>
+          Cerrar detalles
+        </button>
+      )),
+    };
+    setup({ width: 1120, slots });
+    press(await row('Ana'));
+    fireEvent.click(screen.getByRole('button', { name: 'Detalles' }));
+    press(screen.getByRole('button', { name: 'Cerrar detalles' }));
+    expect(screen.queryByRole('complementary', { name: 'Detalles del chat' })).toBeNull();
+    expect(document.activeElement).toBe(screen.getByRole('main', { name: 'Ana' }));
+  });
+
+  it('leaves the focus on the sidebar when the open contact is removed', async () => {
+    const { slots } = setup({ width: 759 });
+    press(await row('Ana'));
+    fireEvent.click(screen.getByRole('button', { name: 'Detalles' }));
+    act(() => lastProps(slots.contactDetails).onRemoved());
+    expect(document.activeElement).toBe(sidebar());
+  });
+
+  it('leaves the focus on the row it was on when both panes show', async () => {
+    setup({ width: 1024 });
+    const ana = await row('Ana');
+    press(ana);
+    expect(screen.getByRole('main', { name: 'Ana' })).toBeTruthy();
+    expect(document.activeElement).toBe(ana);
+  });
+
+  it('keeps the open chat listed under "No leídos" until the chip or the chat changes', async () => {
+    const { emit } = setup({ width: 1024 });
+    await row('Ana');
+    act(() => emit.messageReceived({ from_handle: 'Ana', text: 'hola', timestamp: NOW }));
+    act(() => emit.messageReceived({ from_handle: 'Bea', text: '¿y tú?', timestamp: NOW + 1 }));
+    fireEvent.click(screen.getByRole('button', { name: 'No leídos' }));
+    const unread = () => within(screen.getByRole('list', { name: 'Chats' }));
+
+    const ana = unread().getByRole('button', { name: /^Ana/ });
+    press(ana);
+    // Read now, and still there, with the focus.
+    expect(ana.textContent).not.toContain('Sin leer');
+    expect(ana.isConnected).toBe(true);
+    expect(document.activeElement).toBe(ana);
+
+    // Another chat: Ana goes, Bea stays while open.
+    press(unread().getByRole('button', { name: /^Bea/ }));
+    expect(unread().queryByRole('button', { name: /^Ana/ })).toBeNull();
+    expect(unread().getByRole('button', { name: /^Bea/ })).toBe(document.activeElement);
+
+    // Another chip, and back: the read chat is no longer kept.
+    fireEvent.click(screen.getByRole('button', { name: 'Todos' }));
+    fireEvent.click(screen.getByRole('button', { name: 'No leídos' }));
+    expect(screen.queryByRole('list', { name: 'Chats' })).toBeNull();
+    expect(screen.getByText('No hay chats en este filtro.')).toBeTruthy();
+  });
+});
+
 describe('ShellScreen: keyboard', () => {
   it('goes back to Chats and to the search with Ctrl+K', async () => {
     setup({ width: 759 });

@@ -10,6 +10,9 @@
  * "Grupo" first, since Terminal squares every avatar, draft or not, and a
  * muted chat says "Silenciado" last, where a long line hides it from view
  * but never from the name. The icon is then decoration.
+ *
+ * Each item carries its chat's key (data-row-key), for the shell to give
+ * the focus back to the row when one pane returns to the list.
  */
 import { BellOff } from 'lucide-react';
 import { rowTime } from '../../lib/dates';
@@ -57,7 +60,7 @@ export function InboxList({ items, selectedKey, onSelect, now, emptyText, ...nam
       className="-mx-1 flex min-h-[8rem] grow basis-0 flex-col gap-0.5 overflow-y-auto px-1"
     >
       {items.map(item => (
-        <li key={item.key} className="relative">
+        <li key={item.key} data-row-key={item.key} className="relative">
           <ChatRow
             name={item.name}
             avatar={{ initials: item.avatar.initials, src: item.avatar.src, kind: item.avatar.kind }}
