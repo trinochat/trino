@@ -39,6 +39,26 @@ const PROFILE = [
 /** "Tu código QR" (ProfileQrView.tsx). */
 const QR = ['settings2.qr.title', 'settings2.qr.back'];
 
+/** The navigation and the profile card (SettingsNav.tsx, ProfileCard.tsx). */
+const NAV = [
+  'settings2.nav.title',
+  'settings2.nav.label',
+  'settings2.nav.close',
+  'settings2.nav.back',
+  'settings2.nav.groupAccount',
+  'settings2.nav.groupUse',
+  'settings2.nav.groupMore',
+  'settings2.nav.profile',
+  'settings2.nav.profileQr',
+  'settings2.nav.security',
+  'settings2.nav.privacy',
+  'settings2.nav.notifications',
+  'settings2.nav.appearance',
+  'settings2.nav.accessibility',
+  'settings2.nav.language',
+  'settings2.nav.advanced',
+];
+
 /** Settings > Privacidad and its blocked contacts (PrivacySection.tsx, BlockedContactsView.tsx). */
 const PRIVACY = [
   'settings2.privacy.title',
@@ -246,6 +266,7 @@ const KEYS: string[] = [
   ...NOTIFICATION_CONTENT,
   ...PROFILE,
   ...QR,
+  ...NAV,
   ...PRIVACY,
   ...NOTIFICATIONS,
   ...SECURITY,
