@@ -53,6 +53,25 @@ const codeBox = () => screen.getByRole('textbox', { name: 'Pega el código de la
 const paste = (text: string) => fireEvent.change(codeBox(), { target: { value: text } });
 
 describe('AddContactPanel', () => {
+  // The shell may hand the same API over in a new object on every render.
+  it('checks a code once, even when its parent passes the API in a new object each render', async () => {
+    let answer!: (p: ContactPreview) => void;
+    const previewContact = vi.fn(() => new Promise<ContactPreview>(resolve => (answer = resolve)));
+    const probeNode = vi.fn();
+    const view = () => (
+      <I18nContext.Provider value={makeT('es')}>
+        <AddContactPanel api={{ previewContact, probeNode }} onContactAdded={vi.fn()} />
+      </I18nContext.Provider>
+    );
+    const { rerender } = render(view());
+    paste(CODE);
+    rerender(view());
+    rerender(view());
+    answer(preview());
+    expect(await screen.findByText('Código válido')).toBeTruthy();
+    expect(previewContact).toHaveBeenCalledTimes(1);
+  });
+
   it('shows the card of a pasted code: the name, "Código válido" and the key in groups', async () => {
     const { api } = mount();
     paste(CODE);

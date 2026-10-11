@@ -6,7 +6,7 @@
  * other keys is replaced only after an explicit yes. There is no camera
  * button (plan §1.3: no QR scanning on the desktop in this batch).
  */
-import { useEffect, useId, useReducer, useState } from 'react';
+import { useEffect, useId, useLayoutEffect, useReducer, useRef, useState } from 'react';
 import { CircleAlert } from 'lucide-react';
 import { Avatar, Banner, Button, Checkbox, Field, Input, Textarea, iconSize } from '../../ui';
 import { isCommandError } from '../../lib/api';
@@ -38,11 +38,16 @@ export function AddContactPanel({ api, onContactAdded }: AddContactPanelProps) {
   const [text, setText] = useState('');
   const [state, dispatch] = useReducer(addContactReducer, ADD_CONTACT_IDLE);
 
+  const apiRef = useRef(api);
+  useLayoutEffect(() => {
+    apiRef.current = api;
+  });
+
   // Check the pasted code once per bundle; a late answer for another one is dropped by the reducer.
   const checking = state.kind === 'checking' ? state.bundleJson : null;
   useEffect(() => {
     if (checking === null) return;
-    api.previewContact(checking).then(
+    apiRef.current.previewContact(checking).then(
       preview => dispatch({ type: 'previewed', bundleJson: checking, preview }),
       (error: unknown) =>
         dispatch({
@@ -51,7 +56,7 @@ export function AddContactPanel({ api, onContactAdded }: AddContactPanelProps) {
           invalid: isCommandError(error) && error.code === 'invalid_code',
         }),
     );
-  }, [checking, api]);
+  }, [checking]);
 
   const onText = (value: string) => {
     setText(value);

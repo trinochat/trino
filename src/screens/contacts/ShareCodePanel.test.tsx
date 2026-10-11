@@ -61,6 +61,26 @@ function mount(props: Partial<ShareCodePanelProps> = {}, failing: { bundle?: boo
 }
 
 describe('ShareCodePanel', () => {
+  // The shell may hand the same API over in a new object on every render.
+  it('loads once, even when its parent passes the API in a new object each render', async () => {
+    const shareBundle = vi.fn(async () => BUNDLE);
+    const getProfile = vi.fn(async () => PROFILE);
+    const view = (
+      <I18nContext.Provider value={makeT('es')}>
+        <ShareCodePanel api={{ shareBundle, getProfile }} download={vi.fn()} />
+      </I18nContext.Provider>
+    );
+    const { rerender } = render(view);
+    await screen.findByRole('img', { name: 'Tu código QR' });
+    rerender(
+      <I18nContext.Provider value={makeT('es')}>
+        <ShareCodePanel api={{ shareBundle, getProfile }} download={vi.fn()} />
+      </I18nContext.Provider>,
+    );
+    await screen.findByRole('img', { name: 'Tu código QR' });
+    expect(shareBundle).toHaveBeenCalledTimes(1);
+  });
+
   it('shows your trino2 code as a QR code in the QR frame, black on white from the tokens', async () => {
     mount();
     const qr = await screen.findByRole('img', { name: 'Tu código QR' });

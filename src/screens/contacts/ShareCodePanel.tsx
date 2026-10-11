@@ -9,7 +9,7 @@
  * it its size in rem, and the PNG of "Guardar QR" comes from a QRCodeCanvas
  * drawn off screen at file resolution, in the QR tokens' colours.
  */
-import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 import { QRCodeCanvas, QRCodeSVG } from 'qrcode.react';
 import { CircleAlert, Copy, Download } from 'lucide-react';
 import { Button, QR_FRAME, cx, iconSize } from '../../ui';
@@ -53,11 +53,18 @@ export function ShareCodePanel({ api, download, extraActions }: ShareCodePanelPr
   const [loaded, setLoaded] = useState<Loaded>({ status: 'loading' });
   const [notice, setNotice] = useState<Notice>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  // Loaded once, and again on Reintentar: not because the parent passed the
+  // same API in a new object.
+  const apiRef = useRef(api);
+  useLayoutEffect(() => {
+    apiRef.current = api;
+  });
 
   useEffect(() => {
     let live = true;
     setLoaded({ status: 'loading' });
-    void Promise.allSettled([api.shareBundle(), api.getProfile()]).then(([bundle, profile]) => {
+    const current = apiRef.current;
+    void Promise.allSettled([current.shareBundle(), current.getProfile()]).then(([bundle, profile]) => {
       if (!live) return;
       const code = bundle.status === 'fulfilled' ? toShareCode(bundle.value) : '';
       if (bundle.status !== 'fulfilled' || code === '') {
@@ -74,7 +81,7 @@ export function ShareCodePanel({ api, download, extraActions }: ShareCodePanelPr
     return () => {
       live = false;
     };
-  }, [api, attempt]);
+  }, [attempt]);
 
   if (loaded.status === 'loading') {
     return (
