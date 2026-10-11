@@ -63,6 +63,24 @@ const es: Dict = {
   'onb.goChats': 'Ir a mis chats',
   'onb.back': 'Atrás',
   'onb.next': 'Continuar',
+  // With the shared profile (K12): what really reaches the contacts.
+  'onb.nameBodySync': 'Tu nombre va en tu código de contacto. Tu nombre y tu foto también les llegan cifrados a tus contactos.',
+  'onb.changePhoto': 'Cambiar foto',
+  'onb.removePhoto': 'Quitar foto',
+  'onb.errPhoto': 'No se pudo usar esa imagen. Prueba con otra.',
+  'onb.errPhotoSave': 'Tu identidad está lista, pero no se pudo guardar tu foto. Puedes agregarla después en Ajustes.',
+  'onb.errNameTooLong': 'Usa {max} caracteres como máximo.',
+  'onb.checking': 'Comprobando…',
+  // The two boxes of the first step, both required and unticked.
+  'onb.ageLabel': 'Tengo 18 años o más',
+  'onb.privacyLabel': 'Leí y acepto cómo Trino trata mis datos',
+  'onb.privacyLink': 'Leer cómo Trino trata tus datos',
+  'onb.errConsent': 'Para empezar, confirma que tienes 18 años o más y acepta cómo Trino trata tus datos.',
+  'onb.errTotpBegin': 'No se pudo preparar la verificación en dos pasos. Inténtalo de nuevo.',
+  'onb.errCodeLength': 'Escribe los 6 dígitos del código.',
+  'onb.errTotpCheck': 'No se pudo comprobar el código. Inténtalo de nuevo.',
+  'onb.errTotpNotVerified': 'Comprueba otra vez el código de tu app autenticadora.',
+  'onb.qrTitle': 'Tu código QR',
 
   // Redesigned unlock (R3). Sentence case; replaces unseal.*.
   'unlock2.title': 'Hola de nuevo, {name}',
@@ -91,6 +109,18 @@ const es: Dict = {
   'unlock2.wipeCancel': 'Cancelar',
   'unlock2.wiping': 'Borrando…',
   'unlock2.errWipe': 'No se pudo borrar la identidad. Inténtalo de nuevo.',
+  'unlock2.errUnsupported': 'Esta identidad se creó con una versión más nueva de Trino. Actualiza Trino para abrirla.',
+  'unlock2.titleNoName': 'Hola de nuevo',
+  'unlock2.errEmpty': 'Escribe tu contraseña.',
+
+  // Start-up and the window bar.
+  'start.loading': 'Abriendo Trino…',
+  'start.error': 'No se pudo abrir Trino. Inténtalo de nuevo.',
+  'start.retry': 'Reintentar',
+  'titlebar.minimize': 'Minimizar',
+  'titlebar.maximize': 'Maximizar',
+  'titlebar.restore': 'Restaurar',
+  'titlebar.close': 'Cerrar',
 };
 
 const en: Dict = {
@@ -150,6 +180,22 @@ const en: Dict = {
   'onb.goChats': 'Go to my chats',
   'onb.back': 'Back',
   'onb.next': 'Continue',
+  'onb.nameBodySync': 'Your name goes in your contact code. Your name and your photo also reach your contacts, encrypted.',
+  'onb.changePhoto': 'Change photo',
+  'onb.removePhoto': 'Remove photo',
+  'onb.errPhoto': 'That picture could not be used. Try another one.',
+  'onb.errPhotoSave': 'Your identity is ready, but your photo could not be saved. You can add it later in Settings.',
+  'onb.errNameTooLong': 'Use {max} characters at most.',
+  'onb.checking': 'Checking…',
+  'onb.ageLabel': 'I am 18 or older',
+  'onb.privacyLabel': 'I have read and accept how Trino handles my data',
+  'onb.privacyLink': 'Read how Trino handles your data',
+  'onb.errConsent': 'To get started, confirm that you are 18 or older and accept how Trino handles your data.',
+  'onb.errTotpBegin': 'Two-step verification could not be set up. Try again.',
+  'onb.errCodeLength': 'Enter the 6 digits of the code.',
+  'onb.errTotpCheck': 'The code could not be checked. Try again.',
+  'onb.errTotpNotVerified': 'Check the code from your authenticator app again.',
+  'onb.qrTitle': 'Your QR code',
 
   // Redesigned unlock (R3). Sentence case; replaces unseal.*.
   'unlock2.title': 'Welcome back, {name}',
@@ -178,6 +224,17 @@ const en: Dict = {
   'unlock2.wipeCancel': 'Cancel',
   'unlock2.wiping': 'Deleting…',
   'unlock2.errWipe': 'The identity could not be deleted. Try again.',
+  'unlock2.errUnsupported': 'This identity was created with a newer version of Trino. Update Trino to open it.',
+  'unlock2.titleNoName': 'Welcome back',
+  'unlock2.errEmpty': 'Enter your password.',
+
+  'start.loading': 'Opening Trino…',
+  'start.error': 'Trino could not open. Try again.',
+  'start.retry': 'Try again',
+  'titlebar.minimize': 'Minimize',
+  'titlebar.maximize': 'Maximize',
+  'titlebar.restore': 'Restore',
+  'titlebar.close': 'Close',
 };
 
 const pt: Dict = {
@@ -237,6 +294,22 @@ const pt: Dict = {
   'onb.goChats': 'Ir para minhas conversas',
   'onb.back': 'Voltar',
   'onb.next': 'Continuar',
+  'onb.nameBodySync': 'Seu nome vai no seu código de contato. Seu nome e sua foto também chegam criptografados aos seus contatos.',
+  'onb.changePhoto': 'Trocar foto',
+  'onb.removePhoto': 'Remover foto',
+  'onb.errPhoto': 'Não foi possível usar essa imagem. Tente outra.',
+  'onb.errPhotoSave': 'Sua identidade está pronta, mas não foi possível salvar sua foto. Você pode adicioná-la depois em Configurações.',
+  'onb.errNameTooLong': 'Use no máximo {max} caracteres.',
+  'onb.checking': 'Conferindo…',
+  'onb.ageLabel': 'Tenho 18 anos ou mais',
+  'onb.privacyLabel': 'Li e aceito como o Trino trata meus dados',
+  'onb.privacyLink': 'Ler como o Trino trata seus dados',
+  'onb.errConsent': 'Para começar, confirme que você tem 18 anos ou mais e aceite como o Trino trata seus dados.',
+  'onb.errTotpBegin': 'Não foi possível preparar a verificação em duas etapas. Tente novamente.',
+  'onb.errCodeLength': 'Digite os 6 dígitos do código.',
+  'onb.errTotpCheck': 'Não foi possível conferir o código. Tente novamente.',
+  'onb.errTotpNotVerified': 'Confira de novo o código do seu app autenticador.',
+  'onb.qrTitle': 'Seu código QR',
 
   // Redesigned unlock (R3). Sentence case; replaces unseal.*.
   'unlock2.title': 'Olá de novo, {name}',
@@ -265,6 +338,17 @@ const pt: Dict = {
   'unlock2.wipeCancel': 'Cancelar',
   'unlock2.wiping': 'Apagando…',
   'unlock2.errWipe': 'Não foi possível apagar a identidade. Tente novamente.',
+  'unlock2.errUnsupported': 'Esta identidade foi criada com uma versão mais nova do Trino. Atualize o Trino para abri-la.',
+  'unlock2.titleNoName': 'Olá de novo',
+  'unlock2.errEmpty': 'Digite sua senha.',
+
+  'start.loading': 'Abrindo o Trino…',
+  'start.error': 'Não foi possível abrir o Trino. Tente novamente.',
+  'start.retry': 'Tentar novamente',
+  'titlebar.minimize': 'Minimizar',
+  'titlebar.maximize': 'Maximizar',
+  'titlebar.restore': 'Restaurar',
+  'titlebar.close': 'Fechar',
 };
 
 export const auth: AreaStrings = { es, en, pt };
