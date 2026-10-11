@@ -13,6 +13,15 @@ const KEYS: string[] = [
   'call2.mode.protected', 'call2.mode.direct', 'call2.mode.protectedHelp', 'call2.mode.directHelp',
   // An incoming call: in its dialog, and in the notification while the window is hidden.
   'call2.incoming.voice', 'call2.incoming.video',
+  'call2.incoming.verified', 'call2.incoming.answer', 'call2.incoming.answerVideo', 'call2.incoming.answerAudio',
+  'call2.incoming.decline',
+  // The end card (Call:166-177), with why the call ended.
+  'call2.end.title', 'call2.end.rejected', 'call2.end.noAnswer', 'call2.end.connection', 'call2.end.microphone',
+  'call2.end.permission', 'call2.end.permissionHelp', 'call2.end.signal', 'call2.end.securityTitle',
+  'call2.end.security', 'call2.end.logged', 'call2.end.mediaOff', 'call2.end.callAgain',
+  // Before locking or closing the window during a call.
+  'call2.endConfirm.title', 'call2.endConfirm.lock', 'call2.endConfirm.close',
+  'call2.endConfirm.lockConfirm', 'call2.endConfirm.closeConfirm',
 ];
 
 const PLACEHOLDERS = {
@@ -37,6 +46,14 @@ describe('call strings', () => {
       'Tu contacto no ve tu IP. La llamada pasa por un servidor de Cloudflare, que sí la ve.',
     );
     for (const lang of LANG_CODES) expect(call[lang]['call2.mode.protectedHelp']).toContain('Cloudflare');
+  });
+
+  // plan-cambios-11oct §4 (W6): the end card after the key of the connection changed.
+  it('tell in Spanish why a call ended when the key of the connection changed', () => {
+    expect(call.es['call2.end.security']).toBe(
+      'La llamada terminó porque cambió la clave de la conexión. Vuelve a llamar y comparen los símbolos otra vez.',
+    );
+    expect(call.es['call2.end.logged']).toBe('Queda registrada en el chat.');
   });
 
   it.each(LANG_CODES)('promise nothing that is not built yet in %s', lang => {
