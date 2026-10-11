@@ -85,7 +85,67 @@ const NOTIFICATIONS = [
   'settings2.notif.errAutostart',
 ];
 
-const KEYS: string[] = [...NOTIFICATION_CONTENT, ...PROFILE, ...QR, ...PRIVACY, ...NOTIFICATIONS];
+/** Settings > Cuenta y seguridad and its dialogs (SecuritySection.tsx, TotpDialog.tsx, ChangePassphraseDialog.tsx, WipeDialog.tsx). */
+const SECURITY = [
+  'settings2.security.title',
+  'settings2.security.passphrase',
+  'settings2.security.passphraseBody',
+  'settings2.security.changePassphrase',
+  'settings2.security.passphraseChanged',
+  'settings2.security.showPassphrase',
+  'settings2.security.totp',
+  'settings2.security.totpOn',
+  'settings2.security.totpOff',
+  'settings2.security.totpUnknown',
+  'settings2.security.enable',
+  'settings2.security.disable',
+  'settings2.security.autolock',
+  'settings2.security.autolockBody',
+  'settings2.security.autolockNever',
+  'settings2.security.autolockMinute',
+  'settings2.security.autolockMinutes',
+  'settings2.security.autolockHour',
+  'settings2.security.lockNow',
+  'settings2.security.lockNowBody',
+  'settings2.security.lock',
+  'settings2.security.wipeTitle',
+  'settings2.security.wipeBody',
+  'settings2.security.wipe',
+  'settings2.totp.enableTitle',
+  'settings2.totp.disableTitle',
+  'settings2.totp.starting',
+  'settings2.totp.scan',
+  'settings2.totp.qrA11y',
+  'settings2.totp.secret',
+  'settings2.totp.code',
+  'settings2.totp.verify',
+  'settings2.totp.confirmBody',
+  'settings2.totp.disableBody',
+  'settings2.totp.passphrase',
+  'settings2.totp.errStart',
+  'settings2.totp.errCodeFormat',
+  'settings2.totp.errCode',
+  'settings2.totp.errPassphrase',
+  'settings2.totp.errGeneric',
+  'settings2.passphrase.title',
+  'settings2.passphrase.current',
+  'settings2.passphrase.next',
+  'settings2.passphrase.nextHint',
+  'settings2.passphrase.repeat',
+  'settings2.passphrase.code',
+  'settings2.passphrase.errMismatch',
+  'settings2.passphrase.errShort',
+  'settings2.passphrase.errCommon',
+  'settings2.passphrase.errWrong',
+  'settings2.passphrase.errCode',
+  'settings2.passphrase.errGeneric',
+  'settings2.wipe.title',
+  'settings2.wipe.body',
+  'settings2.wipe.confirm',
+  'settings2.wipe.error',
+];
+
+const KEYS: string[] = [...NOTIFICATION_CONTENT, ...PROFILE, ...QR, ...PRIVACY, ...NOTIFICATIONS, ...SECURITY];
 
 const PLACEHOLDERS: Record<string, string[]> = {
   'settings2.profile.aboutCount': ['n'],
@@ -93,6 +153,8 @@ const PLACEHOLDERS: Record<string, string[]> = {
   'settings2.privacy.unblockA11y': ['name'],
   'settings2.privacy.errUnblock': ['name'],
   'settings2.notif.volumeValue': ['n'],
+  'settings2.security.autolockMinutes': ['n'],
+  'settings2.passphrase.errShort': ['min'],
 };
 
 describe('settings strings', () => {
@@ -117,6 +179,13 @@ describe('settings strings', () => {
     expect(settings.es['settings2.profile.local']).toBe(
       'Tu foto y tu nombre se quedan en este equipo. Tus contactos te ven con el nombre que tenía tu código cuando te agregaron.',
     );
+  });
+
+  // plan §1.5: wipe asks no relay to delete anything.
+  it('say in Spanish that what contacts got stays with them when you erase everything', () => {
+    for (const key of ['settings2.security.wipeBody', 'settings2.wipe.body']) {
+      expect(settings.es[key], key).toContain('Lo que tus contactos ya recibieron se queda en sus equipos.');
+    }
   });
 
   // plan-cambios-11oct §4 W5 and §6.4: Privacidad names Cloudflare, which sees your IP.
