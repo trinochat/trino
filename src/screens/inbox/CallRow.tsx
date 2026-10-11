@@ -30,7 +30,8 @@ export interface CallRowProps {
   /** Epoch seconds, for the time of the call. */
   now: number;
   onCall(handle: string): void;
-  onOpenChat(handle: string): void;
+  /** Opens the contact's chat from this call, named by its key. */
+  onOpenChat(handle: string, key: string): void;
 }
 
 export function CallRow({ row, selected, now, onCall, onOpenChat }: CallRowProps) {
@@ -44,7 +45,7 @@ export function CallRow({ row, selected, now, onCall, onOpenChat }: CallRowProps
       <button
         type="button"
         aria-current={selected ? 'true' : undefined}
-        onClick={() => onOpenChat(entry.peer)}
+        onClick={() => onOpenChat(entry.peer, entry.key)}
         className={cx(
           'flex min-h-16 min-w-0 flex-1 items-center gap-3 rounded-ui p-2.5 text-start text-ui-ink',
           !selected && 'hover:bg-ui-raised',

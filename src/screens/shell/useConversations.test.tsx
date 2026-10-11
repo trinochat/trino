@@ -76,7 +76,10 @@ describe('useConversations: loading', () => {
       ],
     };
     const { hook } = setup({}, { history });
+    // Until the contacts are read, nobody can tell that there are none.
+    expect(hook.result.current.nodesLoaded).toBe(false);
     await waitFor(() => expect(hook.result.current.messages.Ana).toHaveLength(2));
+    expect(hook.result.current.nodesLoaded).toBe(true);
     expect(hook.result.current.groups.map(g => g.name)).toEqual(['Familia']);
     expect(hook.result.current.messages.Ana?.[1]).toMatchObject({ key: 'call:c0c0c0c0c0c0c0c0', side: 'them' });
     expect(hook.result.current.historyFailed).toBe(false);

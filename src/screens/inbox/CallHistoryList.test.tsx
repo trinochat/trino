@@ -102,7 +102,8 @@ describe('CallHistoryList', () => {
     const onOpenChat = vi.fn();
     renderEs(<CallHistoryList {...props({ onOpenChat, selectedKey: 'call:o1' })} />);
     fireEvent.click(openRow('Ana'));
-    expect(onOpenChat).toHaveBeenCalledWith('Ana');
+    // The call too, so the shell can keep this row marked.
+    expect(onOpenChat).toHaveBeenCalledWith('Ana', 'call:m1');
     expect(openRow('Bea').getAttribute('aria-current')).toBe('true');
     expect(openRow('Ana').getAttribute('aria-current')).toBeNull();
   });

@@ -1,0 +1,569 @@
+/**
+ * The main screen of the redesign (W2): the sidebar and the conversation, and
+ * the screens of the other units mounted through their slots (types.ts). The
+ * call bar goes above both panes and the call layer over everything; the
+ * chat is mounted with its conversation's key, so nothing of one chat (its
+ * reply, its composer) shows in the next. Settings opens in the main pane;
+ * the details of a contact or a group sit beside the chat from 70 rem and in
+ * a dialog below. Under 47.5 rem there is one pane, with Atrás.
+ *
+ * Ctrl+K goes back to Chats and to the search; Ctrl+L locks.
+ */
+import { Fragment, useEffect, useRef, useState, type ReactNode } from 'react';
+import { THEMES } from '../../design/tokens';
+import { useAppearance } from '../../design/useAppearance';
+import { loadAnnouncementFeed, type AnnouncementFeed } from '../../lib/announcements';
+import { convoKey } from '../../lib/convo';
+import { useT } from '../../lib/i18n';
+import { prefs as devicePrefs } from '../../lib/prefs';
+import { Banner, Button, cx } from '../../ui';
+import { buildInboxItems } from '../inbox/inbox-model';
+import type { CallFilter } from '../inbox/call-history-model';
+import type { CallRowView } from '../inbox/CallRow';
+import { InboxPanel } from '../inbox/InboxPanel';
+import type { InboxTab } from '../inbox/InboxTabs';
+import type {
+  CallSlot,
+  ChatHeaderInfo,
+  ChatPaneProps,
+  ContactsTab,
+  ConvoRef,
+  InboxFilter,
+  NewChatPurpose,
+  Notifier,
+  OnboardingIntent,
+  PanelLayout,
+  SettingsSectionId,
+  SettingsSlotProps,
+  ShellSlots,
+} from '../types';
+import { useDrafts } from './drafts';
+import { ForwardDialog } from './ForwardDialog';
+import { useShellLayout } from './layout';
+import { nowSeconds } from './listen';
+import type { ShellApi, ShellCapabilities, ShellEvents, ShellPrefs } from './shell-api';
+import { stickerApi } from './stickers';
+import { useAnnouncements } from './useAnnouncements';
+import { useCallLog } from './useCallLog';
+import { useConnection } from './useConnection';
+import { useConversations, type ShellError } from './useConversations';
+import { useInvites } from './useInvites';
+import { useStrangerAttempts } from './useStrangerAttempts';
+
+/**
+ * The longest text the composer sends, as it counts. The relays drop events
+ * over 64 KB without a word, and the text grows on its way: the `trm1:`
+ * envelope, then the encrypted payload. This keeps even text of 3 bytes per
+ * character under that; the backend's `message_too_long` (K4) has the last word.
+ */
+export const MAX_TEXT_LENGTH = 6_000;
+
+export interface ShellScreenProps {
+  me: { handle: string; avatar: string | null; fingerprint: string; identityDigest: string | null };
+  api: ShellApi;
+  events: ShellEvents;
+  slots: ShellSlots;
+  call: CallSlot;
+  notifier: Notifier;
+  capabilities: ShellCapabilities;
+  onLock(): void;
+  initialIntent: OnboardingIntent;
+  openLink(url: string): void;
+  isWindowFocused(): boolean;
+  /** What only the app does for Settings: after a wipe or a profile change, the auto-lock, and the QR panel of W4. */
+  settings: Pick<SettingsSlotProps, 'onIdentityWiped' | 'onProfileChanged' | 'onAutolockChanged' | 'renderShareCode'>;
+  /** The preferences of this device; lib/prefs by default. */
+  prefs?: ShellPrefs;
+  /** The announcements feed; lib/announcements by default. */
+  loadFeed?(): Promise<AnnouncementFeed>;
+  /** For tests: the shell's width in px, measured otherwise. */
+  width?: number;
+  /** For tests: the root size in px, 16 times the text size otherwise. */
+  rootPx?: number;
+}
+
+type Overlay =
+  | { kind: 'contacts'; tab: ContactsTab }
+  | { kind: 'newGroup' }
+  | { kind: 'newChat'; purpose: NewChatPurpose }
+  | { kind: 'verify'; handle: string }
+  | { kind: 'forward'; from: ConvoRef; key: string };
+
+export function ShellScreen(props: ShellScreenProps) {
+  const { api, events, slots, call, capabilities } = props;
+  const prefs = props.prefs ?? devicePrefs;
+  const t = useT();
+  const { appearance } = useAppearance();
+  const rootRef = useRef<HTMLDivElement>(null);
+  const layout = useShellLayout(rootRef, props.width, props.rootPx);
+  const single = layout === 'single';
+  const latest = useRef(props);
+  latest.current = props;
+
+  const [open, setOpen] = useState<ConvoRef | null>(null);
+  const [main, setMain] = useState<'convo' | 'settings'>('convo');
+  const [section, setSection] = useState<SettingsSectionId>('profile');
+  const [pane, setPane] = useState<'list' | 'main'>('list');
+  const [details, setDetails] = useState(false);
+  const [overlay, setOverlay] = useState<Overlay | null>(() =>
+    props.initialIntent === 'add-contact' ? { kind: 'contacts', tab: 'add' } : null,
+  );
+  const [tab, setTab] = useState<InboxTab>('chats');
+  const [filter, setFilter] = useState<InboxFilter>('all');
+  const [search, setSearch] = useState('');
+  const [callFilter, setCallFilter] = useState<CallFilter>('all');
+  /** The call whose chat was opened from the log, to keep its row marked. */
+  const [fromCall, setFromCall] = useState<{ key: string; peer: string } | null>(null);
+  const [error, setError] = useState<ShellError | null>(null);
+  const [strangersSeen, setStrangersSeen] = useState(0);
+  const [searchFocus, setSearchFocus] = useState(0);
+  const searchRef = useRef<HTMLInputElement>(null);
+
+  const openKey = open ? convoKey(open) : null;
+  const listShown = !single || pane === 'list';
+  const mainShown = !single || pane === 'main';
+  /** The conversation on screen: what arrives there is read as it comes. */
+  const shownKey = mainShown && main === 'convo' ? openKey : null;
+  const logShown = capabilities.callLog && listShown && tab === 'calls';
+  const logShownRef = useRef(logShown);
+  logShownRef.current = logShown;
+  const shownKeyRef = useRef(shownKey);
+  shownKeyRef.current = shownKey;
+
+  const conv = useConversations({
+    api,
+    events,
+    prefs,
+    notifier: props.notifier,
+    capabilities,
+    isWindowFocused: props.isWindowFocused,
+    openKey: shownKey,
+    t,
+    onError: setError,
+  });
+  const { drafts, setDraft, moveDraft } = useDrafts();
+  const connection = useConnection(api, events, capabilities.connection);
+  const channel = useAnnouncements(props.loadFeed ?? loadAnnouncementFeed, prefs);
+  const strangers = useStrangerAttempts(events);
+  const invites = useInvites(api, events);
+  const callLog = useCallLog({
+    api,
+    events,
+    prefs,
+    enabled: capabilities.callLog,
+    watching: () => logShownRef.current && latest.current.isWindowFocused(),
+  });
+
+  // What is on screen is read: the chat that opens, and the call log.
+  const { markRead } = conv;
+  const { opened: channelOpened } = channel;
+  useEffect(() => {
+    if (!shownKey) return;
+    markRead(shownKey);
+    if (shownKey === 'channel') channelOpened();
+    // Once each time a conversation comes on screen: channelOpened is new on
+    // every render, and reading the channel must not run this again.
+  }, [shownKey, markRead]);
+  const { markSeen } = callLog;
+  useEffect(() => {
+    if (logShown) markSeen(nowSeconds());
+  }, [logShown, markSeen]);
+  // Back to the window: what waited on screen is read now.
+  useEffect(() => {
+    const onFocus = () => {
+      if (shownKeyRef.current) markRead(shownKeyRef.current);
+      if (logShownRef.current) markSeen(nowSeconds());
+    };
+    window.addEventListener('focus', onFocus);
+    return () => window.removeEventListener('focus', onFocus);
+  }, [markRead, markSeen]);
+
+  // Ctrl+K and Ctrl+L, from anywhere. Ctrl+K leaves an open dialog alone,
+  // which keeps the keyboard; locking always goes.
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (!(event.ctrlKey || event.metaKey) || event.altKey || event.isComposing) return;
+      const key = event.key.toLowerCase();
+      if (key === 'l') {
+        event.preventDefault();
+        latest.current.onLock();
+      } else if (key === 'k' && !document.querySelector('[aria-modal="true"]')) {
+        event.preventDefault();
+        setTab('chats');
+        setPane('list');
+        setSearchFocus(count => count + 1);
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, []);
+  useEffect(() => {
+    if (searchFocus > 0) searchRef.current?.focus();
+  }, [searchFocus]);
+
+  const nodeOf = (handle: string) => conv.nodes.find(node => node.handle === handle);
+  const groupOf = (gid: string) => conv.groups.find(group => group.gid === gid);
+  const callable = (handle: string) => {
+    const node = nodeOf(handle);
+    return node !== undefined && !node.blocked;
+  };
+
+  const closeOverlay = () => setOverlay(null);
+  const openConvo = (ref: ConvoRef) => {
+    setOpen(ref);
+    setMain('convo');
+    setPane('main');
+    setDetails(false);
+    setFromCall(null);
+  };
+  const back = () => setPane('list');
+  const forgetOpen = () => {
+    setOpen(null);
+    setDetails(false);
+    setPane('list');
+  };
+
+  const renameContact = (from: string, to: string) => {
+    conv.renamed(from, to);
+    moveDraft(from, to);
+    callLog.renamed(from, to);
+    if (open?.kind === 'contact' && open.handle === from) setOpen({ kind: 'contact', handle: to });
+  };
+  const removeContact = (handle: string) => {
+    conv.removed(handle);
+    setDraft(handle, '');
+    prefs.forgetContact(handle);
+    if (open?.kind === 'contact' && open.handle === handle) forgetOpen();
+  };
+  const leaveGroup = (gid: string) => {
+    const key = convoKey({ kind: 'group', gid });
+    conv.removed(key);
+    setDraft(key, '');
+    if (open?.kind === 'group' && open.gid === gid) forgetOpen();
+  };
+
+  const mutedGroups = new Set(conv.groups.filter(group => prefs.getGroupMuted(group.gid)).map(group => group.gid));
+  const items = buildInboxItems({
+    nodes: conv.nodes,
+    groups: conv.groups,
+    channel: { latest: channel.latest, unread: channel.unread, muted: channel.muted },
+    messages: conv.messages,
+    unread: conv.unread,
+    drafts,
+    trust: conv.trust,
+    mutedGroups,
+    t,
+  });
+  const callRows: CallRowView[] | null = capabilities.callLog
+    ? callLog.entries.map(entry => {
+        const node = nodeOf(entry.peer);
+        return {
+          entry,
+          name: entry.peer,
+          ...(node?.avatar && { avatarSrc: node.avatar }),
+          callable: node !== undefined && !node.blocked,
+        };
+      })
+    : null;
+  const notice =
+    invites.invites.length > 0
+      ? { text: t('inbox.invites.notice'), onAction: () => setOverlay({ kind: 'contacts', tab: 'invites' }) }
+      : strangers > strangersSeen
+        ? {
+            text: t('inbox.stranger.notice'),
+            onAction: () => {
+              setStrangersSeen(strangers);
+              setOverlay({ kind: 'contacts', tab: 'invites' });
+            },
+          }
+        : null;
+
+  let chat: ReactNode = null;
+  if (open && open.kind !== 'channel') {
+    const ref = open;
+    const key = convoKey(ref);
+    const contact = ref.kind === 'contact' ? nodeOf(ref.handle) : undefined;
+    const group = ref.kind === 'group' ? groupOf(ref.gid) : undefined;
+    const header: ChatHeaderInfo =
+      ref.kind === 'contact'
+        ? {
+            kind: 'contact',
+            name: ref.handle,
+            ...(contact?.avatar && { avatarSrc: contact.avatar }),
+            trust: conv.trust[ref.handle] ?? 'unverified',
+            ttlSeconds: prefs.getTtl(key),
+            blocked: contact?.blocked ?? false,
+          }
+        : {
+            kind: 'group',
+            name: group?.name ?? '',
+            memberCount: group?.member_count ?? 0,
+            ended: group?.ended ?? false,
+            ttlSeconds: prefs.getTtl(key),
+          };
+    const chatProps: ChatPaneProps = {
+      convo: ref,
+      header,
+      messages: conv.messages[key] ?? [],
+      now: conv.now,
+      maxTextLength: MAX_TEXT_LENGTH,
+      draft: drafts.get(key) ?? '',
+      onDraftChange: text => setDraft(key, text),
+      onSendText: (text, reply) => {
+        conv.sendText(ref, text, reply);
+        setDraft(key, '');
+      },
+      onRetry: msgKey => conv.retry(ref, msgKey),
+      onSendFiles: files => conv.sendFiles(ref, files),
+      onSendSticker: sticker => conv.sendSticker(ref, sticker),
+      ...(capabilities.deleteForMe && { onDeleteForMe: (msgKey: string) => conv.deleteForMe(ref, msgKey) }),
+      onForward: msgKey => setOverlay({ kind: 'forward', from: ref, key: msgKey }),
+      onOpenLink: props.openLink,
+      ...(ref.kind === 'contact' &&
+        callable(ref.handle) && { onCall: (video: boolean) => call.start(ref.handle, video) }),
+      onOpenDetails: () => setDetails(true),
+      ...(ref.kind === 'contact' && { onVerify: () => setOverlay({ kind: 'verify', handle: ref.handle }) }),
+      ...(ref.kind === 'contact' &&
+        header.kind === 'contact' &&
+        header.trust === 'keyChanged' && { onAcknowledgeKeyChange: () => void conv.acknowledgeKeyChange(ref.handle) }),
+      ...(single && { onBack: back }),
+      fetchFile: file => api.fetchFile(file.url, file.key, file.sha256, file.mime),
+      stickers: stickerApi(api),
+    };
+    chat = <Fragment key={key}>{slots.chat(chatProps)}</Fragment>;
+  }
+
+  const empty = <p className="m-auto max-w-[20rem] px-4 text-center text-ui-md text-ui-muted">{t('shell.empty')}</p>;
+  const mainContent =
+    main === 'settings'
+      ? slots.settings({
+          section,
+          onSectionChange: setSection,
+          onClose: () => {
+            setMain('convo');
+            if (single) setPane('list');
+          },
+          onLockNow: props.onLock,
+          ...props.settings,
+        })
+      : open?.kind === 'channel'
+        ? slots.channel({
+            announcements: channel.announcements,
+            source: channel.source,
+            lastReadId: channel.lastReadId,
+            muted: channel.muted,
+            onToggleMuted: channel.toggleMuted,
+            onOpenLink: props.openLink,
+            ...(single && { onBack: back }),
+            now: conv.now,
+          })
+        : (chat ?? empty);
+
+  const detailsLayout: PanelLayout = layout === 'double-aside' ? 'aside' : 'dialog';
+  let detailsPanel: ReactNode = null;
+  if (details && open && main === 'convo' && mainShown) {
+    if (open.kind === 'contact') {
+      const node = nodeOf(open.handle);
+      if (node) {
+        detailsPanel = slots.contactDetails({
+          node,
+          trust: conv.trust[node.handle] ?? 'unverified',
+          layout: detailsLayout,
+          onClose: () => setDetails(false),
+          onVerify: () => setOverlay({ kind: 'verify', handle: node.handle }),
+          onRenamed: to => renameContact(node.handle, to),
+          onRemoved: () => removeContact(node.handle),
+          onChanged: () => void conv.refreshNodes(),
+        });
+      }
+    } else if (open.kind === 'group') {
+      const group = groupOf(open.gid);
+      if (group) {
+        detailsPanel = slots.groupPanel({
+          group,
+          contacts: conv.nodes,
+          layout: detailsLayout,
+          onClose: () => setDetails(false),
+          onChanged: () => {
+            void conv.refreshGroups();
+            void conv.refreshNodes();
+          },
+          onOpenContact: handle => openConvo({ kind: 'contact', handle }),
+          onLeft: () => leaveGroup(group.gid),
+        });
+      }
+    }
+  }
+
+  let overlayContent: ReactNode = null;
+  if (overlay?.kind === 'contacts') {
+    overlayContent = slots.contacts({
+      tab: overlay.tab,
+      onTabChange: next => setOverlay({ kind: 'contacts', tab: next }),
+      onClose: closeOverlay,
+      onContactAdded: handle => {
+        closeOverlay();
+        void conv.refreshNodes();
+        openConvo({ kind: 'contact', handle });
+      },
+      onGroupJoined: gid => {
+        closeOverlay();
+        void conv.refreshGroups();
+        void conv.refreshNodes();
+        void invites.refresh();
+        openConvo({ kind: 'group', gid });
+      },
+      invites: invites.invites,
+      onInvitesChanged: () => {
+        void invites.refresh();
+        void conv.refreshGroups();
+      },
+      strangerAttempts: strangers,
+    });
+  } else if (overlay?.kind === 'newGroup') {
+    overlayContent = slots.newGroup({
+      contacts: conv.nodes,
+      onClose: closeOverlay,
+      onCreated: gid => {
+        closeOverlay();
+        void conv.refreshGroups();
+        openConvo({ kind: 'group', gid });
+      },
+    });
+  } else if (overlay?.kind === 'newChat') {
+    overlayContent = slots.newChat({
+      purpose: overlay.purpose,
+      contacts: conv.nodes,
+      trust: conv.trust,
+      onClose: closeOverlay,
+      onOpenChat: handle => {
+        closeOverlay();
+        openConvo({ kind: 'contact', handle });
+      },
+      onCall: (handle, video) => {
+        closeOverlay();
+        call.start(handle, video);
+      },
+      onNewGroup: () => setOverlay({ kind: 'newGroup' }),
+      onAddWithCode: () => setOverlay({ kind: 'contacts', tab: 'add' }),
+    });
+  } else if (overlay?.kind === 'verify') {
+    const peer = nodeOf(overlay.handle);
+    if (peer) {
+      overlayContent = slots.verifyContact({
+        peer,
+        // Without K7 there is no full fingerprint: the dialog shows no symbols then.
+        myIdentityDigest: props.me.identityDigest ?? '',
+        onClose: closeOverlay,
+        ...(callable(peer.handle) && {
+          onCall: () => {
+            closeOverlay();
+            call.start(peer.handle, false);
+          },
+        }),
+      });
+    }
+  } else if (overlay?.kind === 'forward') {
+    const { from, key } = overlay;
+    overlayContent = (
+      <ForwardDialog
+        open
+        targets={items.filter(item =>
+          item.ref.kind === 'contact'
+            ? callable(item.ref.handle)
+            : item.ref.kind === 'group' && !groupOf(item.ref.gid)?.ended,
+        )}
+        onPick={to => {
+          closeOverlay();
+          void conv.forward(from, key, to);
+        }}
+        onClose={closeOverlay}
+      />
+    );
+  }
+
+  return (
+    <div ref={rootRef} className="flex h-full min-h-0 flex-col bg-ui-bg font-ui text-ui-ink [background-image:var(--t-scan)]">
+      {call.bar}
+      {(conv.historyFailed || error) && (
+        <div className="flex flex-col gap-2 px-3 pt-3">
+          {conv.historyFailed && (
+            <Banner tone="danger" action={<Button onClick={() => void conv.reloadHistory()}>{t('common2.retry')}</Button>}>
+              {t('shell.error.history')}
+            </Banner>
+          )}
+          {error && (
+            <Banner
+              tone="danger"
+              action={
+                <Button variant="ghost" onClick={() => setError(null)}>
+                  {t('common2.close')}
+                </Button>
+              }
+            >
+              {error.kind === 'reconnect' ? t('shell.error.reconnect', { name: error.handle }) : t('shell.error.forward')}
+            </Banner>
+          )}
+        </div>
+      )}
+      <div className="flex min-h-0 flex-1">
+        {listShown && (
+          <nav
+            aria-label={t('shell.nav')}
+            className={cx('flex min-h-0 flex-col border-e border-ui-line', single ? 'min-w-0 flex-1' : 'w-[20rem] shrink-0')}
+          >
+            <InboxPanel
+              wordmark={THEMES[`${appearance.style}-light`].wordmark}
+              items={items}
+              selectedKey={openKey}
+              onSelect={openConvo}
+              filter={filter}
+              onFilterChange={setFilter}
+              search={search}
+              onSearchChange={setSearch}
+              searchRef={searchRef}
+              connection={connection}
+              me={{ handle: props.me.handle, ...(props.me.avatar && { avatarSrc: props.me.avatar }) }}
+              onNewChat={() => setOverlay({ kind: 'newChat', purpose: 'chat' })}
+              onNewCall={() => setOverlay({ kind: 'newChat', purpose: 'call' })}
+              tab={tab}
+              onTabChange={setTab}
+              calls={callRows}
+              callFilter={callFilter}
+              onCallFilterChange={setCallFilter}
+              missedUnseen={callLog.missedUnseen}
+              selectedCallKey={fromCall && open?.kind === 'contact' && open.handle === fromCall.peer ? fromCall.key : null}
+              onCallBack={handle => call.start(handle, false)}
+              onOpenCallChat={(handle, key) => {
+                openConvo({ kind: 'contact', handle });
+                setFromCall({ key, peer: handle });
+              }}
+              onShareCode={() => setOverlay({ kind: 'contacts', tab: 'share' })}
+              onOpenSettings={() => {
+                setMain('settings');
+                setPane('main');
+                setDetails(false);
+              }}
+              hasContacts={!conv.nodesLoaded || conv.nodes.length > 0 || conv.groups.length > 0}
+              onAddContact={() => setOverlay({ kind: 'contacts', tab: 'add' })}
+              notice={notice}
+              now={conv.now}
+            />
+          </nav>
+        )}
+        {mainShown && <main className="flex min-h-0 min-w-0 flex-1 flex-col bg-ui-surface">{mainContent}</main>}
+        {detailsLayout === 'aside' && detailsPanel && (
+          <aside
+            aria-label={t('shell.details')}
+            className="flex min-h-0 w-[21.25rem] shrink-0 flex-col border-s border-ui-line bg-ui-surface"
+          >
+            {detailsPanel}
+          </aside>
+        )}
+      </div>
+      {detailsLayout === 'dialog' && detailsPanel}
+      {overlayContent}
+      {call.layer}
+    </div>
+  );
+}

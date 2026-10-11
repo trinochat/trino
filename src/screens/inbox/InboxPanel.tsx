@@ -50,7 +50,8 @@ export interface InboxPanelProps {
   selectedCallKey: string | null;
   /** "Llamar a {name}" in the log: a voice call. */
   onCallBack(handle: string): void;
-  onOpenCallChat(handle: string): void;
+  /** Opens the chat of a call in the log; the tab stays on Calls. */
+  onOpenCallChat(handle: string, key: string): void;
   onShareCode(): void;
   onOpenSettings(): void;
   /** No contact and no group yet: the chats offer to add someone. */

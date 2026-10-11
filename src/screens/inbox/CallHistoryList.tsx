@@ -18,7 +18,7 @@ export interface CallHistoryListProps {
   selectedKey: string | null;
   /** Calls the contact back with voice. */
   onCall(handle: string): void;
-  onOpenChat(handle: string): void;
+  onOpenChat(handle: string, key: string): void;
   /** Epoch seconds. */
   now: number;
 }

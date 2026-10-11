@@ -69,6 +69,8 @@ export interface ConversationsOptions {
 
 export interface ConversationsState {
   nodes: readonly NodeInfo[];
+  /** The contacts were read once: before that, an empty list says nothing. */
+  nodesLoaded: boolean;
   groups: readonly GroupInfo[];
   /** By conversation key, in order of `ts`. */
   messages: Readonly<Record<string, readonly Msg[]>>;
@@ -142,6 +144,7 @@ export function useConversations(options: ConversationsOptions): ConversationsSt
   }, []);
 
   const [nodes, setNodes] = useState<readonly NodeInfo[]>([]);
+  const [nodesLoaded, setNodesLoaded] = useState(false);
   const [groups, setGroups] = useState<readonly GroupInfo[]>([]);
   const nodesRef = useRef(nodes);
   nodesRef.current = nodes;
@@ -159,6 +162,7 @@ export function useConversations(options: ConversationsOptions): ConversationsSt
   const refreshNodes = useCallback(async () => {
     try {
       setNodes(await latest.current.api.listNodes());
+      setNodesLoaded(true);
     } catch (error) {
       console.error('listNodes failed', error);
     }
@@ -537,6 +541,7 @@ export function useConversations(options: ConversationsOptions): ConversationsSt
 
   return {
     nodes,
+    nodesLoaded,
     groups,
     messages,
     unread,

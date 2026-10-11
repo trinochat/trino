@@ -53,6 +53,17 @@ const KEYS: string[] = [
   'inbox.profile.caption',
   'inbox.profile.share',
   'inbox.profile.settings',
+  // The shell around the panes.
+  'shell.nav',
+  'shell.details',
+  'shell.empty',
+  'shell.error.history',
+  'shell.error.reconnect',
+  'shell.error.forward',
+  // Forwarding a message.
+  'forward.title',
+  'forward.search',
+  'forward.noMatch',
 ];
 
 const PLACEHOLDERS: Record<string, string[]> = {
@@ -63,6 +74,8 @@ const PLACEHOLDERS: Record<string, string[]> = {
   'inbox.tabs.callsMissed': ['n'],
   'inbox.tabs.callsMissedA11y': ['n'],
   'inbox.calls.callTo': ['name'],
+  'shell.error.reconnect': ['name'],
+  'forward.noMatch': ['q'],
 };
 
 describe('shell strings', () => {

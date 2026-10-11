@@ -18,7 +18,35 @@ import type {
   ProfileUpdatedEvent,
 } from '../../lib/api';
 import { createPrefs, type PrefsStorage } from '../../lib/prefs';
+import type { AppearanceHost } from '../../design/apply';
+import { SYSTEM_TEXT_SCALE_STORAGE_KEY } from '../../design/accessibility';
 import type { ShellApi, ShellEvents } from './shell-api';
+
+/**
+ * A window for the AppearanceProvider whose system text size is `textScale`
+ * (1.25 for Windows at 125 %), with every other setting at its default.
+ */
+export function appearanceHost(textScale = 1): AppearanceHost {
+  const data = new Map([[SYSTEM_TEXT_SCALE_STORAGE_KEY, String(textScale)]]);
+  const quiet = {
+    matches: false,
+    media: '',
+    addEventListener() {},
+    removeEventListener() {},
+    addListener() {},
+    removeListener() {},
+  };
+  return {
+    document,
+    localStorage: {
+      getItem: key => data.get(key) ?? null,
+      setItem: (key, value) => {
+        data.set(key, value);
+      },
+    },
+    matchMedia: () => quiet as unknown as MediaQueryList,
+  };
+}
 
 type Unlisten = () => void;
 
