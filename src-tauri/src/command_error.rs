@@ -51,6 +51,9 @@ pub enum ErrorCode {
     NotFound,
     /// Only the group's admin can do that (K10).
     NotAdmin,
+    /// A name, an "about" or a photo over the limits of the shared profile
+    /// (K12).
+    ProfileInvalid,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
@@ -329,6 +332,7 @@ mod tests {
             ErrorCode::AlreadyContact,
             ErrorCode::NotFound,
             ErrorCode::NotAdmin,
+            ErrorCode::ProfileInvalid,
         ]
         .iter()
         .map(|code| serde_json::to_value(code).unwrap())
@@ -340,7 +344,8 @@ mod tests {
                 "name_taken",
                 "already_contact",
                 "not_found",
-                "not_admin"
+                "not_admin",
+                "profile_invalid"
             ]
         );
     }

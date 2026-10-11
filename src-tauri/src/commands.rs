@@ -3710,35 +3710,59 @@ pub async fn get_profile(state: State<'_, AppState>) -> Result<ProfileResponse, 
     profile_of(&*state.inner.lock().await)
 }
 
+/// Save this identity's name, photo and, when given, "about" (K12). A blank
+/// name keeps the current one, no photo removes it, and no `about` keeps the
+/// current one, as callers from before K12 expect. A name over 64 scalars,
+/// an "about" over 140 or a photo a profile cannot carry is
+/// `profile_invalid`.
+///
+/// When something changed, the profile's revision grows, and the profile
+/// goes in the background to every contact that announced it reads
+/// profiles: a failed send never fails this.
 #[tauri::command]
 pub async fn update_profile(
+    app: AppHandle,
     state: State<'_, AppState>,
     handle: String,
     avatar: Option<String>,
-) -> Result<(), String> {
-    let avatar = checked_inline_raster(avatar)?;
-    let mut inner = state.inner.lock().await;
-    if inner.identity.is_none() {
-        return Err("vault sealed".to_string());
-    }
-    let trimmed = handle.trim();
-    let new_handle = if trimmed.is_empty() {
-        inner.handle.clone().unwrap_or_else(|| "anon".to_string())
-    } else {
-        trimmed.to_string()
-    };
-    inner.handle = Some(new_handle.clone());
-    inner.avatar = avatar.clone();
+    about: Option<String>,
+) -> Result<(), CommandError> {
+    let name = profile::check_name(&handle)?;
+    let avatar = profile::check_photo(avatar)?;
+    let about = about.as_deref().map(profile::check_about).transpose()?;
+    let targets = {
+        let mut inner = state.inner.lock().await;
+        if inner.identity.is_none() {
+            return Err(contacts_cmds::sealed());
+        }
+        let now = chrono::Utc::now().timestamp();
+        let changed = profile::apply_update(&mut inner, name, avatar, about, now);
+        if changed {
+            // Saved before anything goes out: a revision sent but never
+            // saved would come back older after a restart, and contacts
+            // holding the newer one would look up to date.
+            profile::try_save(&inner).map_err(|e| CommandError::io(&e))?;
+        }
 
-    // Persist to config.json (keep nostr_pub / relays / created_at).
-    let cfg_bytes = std::fs::read(config_path()).map_err(|e| e.to_string())?;
-    let mut cfg: ConfigFile = serde_json::from_slice(&cfg_bytes).map_err(|e| e.to_string())?;
-    cfg.handle = new_handle;
-    cfg.avatar = avatar;
-    let cfg_json = serde_json::to_string_pretty(&cfg).map_err(|e| e.to_string())?;
-    fsutil::atomic_write(&config_path(), cfg_json.as_bytes()).map_err(|e| e.to_string())?;
-    // friends.json also stores our own handle at the top level.
-    persist_friends(&inner)?;
+        // Persist to config.json (keep nostr_pub / relays / created_at).
+        let cfg_bytes = std::fs::read(config_path()).map_err(|e| CommandError::io(&e))?;
+        let mut cfg: ConfigFile = serde_json::from_slice(&cfg_bytes)
+            .map_err(|e| CommandError::internal(format!("config.json: {e}")))?;
+        cfg.handle = inner.handle.clone().unwrap_or_default();
+        cfg.avatar = inner.avatar.clone();
+        let cfg_json = serde_json::to_string_pretty(&cfg)
+            .map_err(|e| CommandError::internal(e.to_string()))?;
+        fsutil::atomic_write(&config_path(), cfg_json.as_bytes())
+            .map_err(|e| CommandError::io(&e))?;
+        // friends.json also stores our own handle at the top level.
+        persist_friends(&inner).map_err(|e| CommandError::new(ErrorCode::Io, e))?;
+        if changed {
+            profile::targets(&mut inner)
+        } else {
+            Vec::new()
+        }
+    };
+    profile::send_in_background(&app, targets);
     Ok(())
 }
 

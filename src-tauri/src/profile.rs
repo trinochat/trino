@@ -2,36 +2,43 @@
 //! side shares, end to end encrypted over the usual double ratchet.
 //! docs/perfil-v1.md fixes the bytes.
 //!
-//! This part keeps what contacts share and what they announced:
+//! 0.1.0 shows any envelope type it does not know as raw JSON, so a profile
+//! message only ever goes to a contact whose Trino announced it reads them:
 //!
-//! - a profile message (`{"ty":"profile",…}`) from a contact is applied when
-//!   its revision is newer than the one kept, and never goes further: no
-//!   history, no `message-received`. One that breaks a rule is dropped in
-//!   silence;
-//! - every text, group or file message records whether its sender reads
-//!   profile messages (`prof`), and which revision of ours it holds. One
-//!   without `prof` clears that: an older version sent it, or someone went
-//!   back to one;
+//! - every outgoing text, group or file message announces it
+//!   (`"prof":{"v":1,"have":N}`, `with_caps`), with the revision of that
+//!   contact's profile held here. 0.1.0 ignores the extra field;
+//! - every incoming one records what its sender announced. One without
+//!   `prof` clears it: an older version sent it, or someone went back to
+//!   one. Only the newest message counts;
+//! - a profile message (`{"ty":"profile",…}`) goes only to contacts that
+//!   announced, after each change and again, once per session and
+//!   revision, to one that announces an older revision than ours;
+//! - one received is kept when its revision is newer than the one kept, and
+//!   never goes further: no history, no `message-received`. One that breaks
+//!   a rule is dropped in silence;
 //! - all of it lives in profiles.bin, encrypted with a key of its own.
 //!
 //! Profiles live here, not in trino-core: changing the core takes a push and
 //! a new pin. A child module of `commands`.
 
-use super::dbg_log;
+use super::{dbg_log, ensure_session_inner, send_cipher_inner};
+use crate::command_error::{CommandError, ErrorCode};
 use crate::identity::Identity;
-use crate::state::{profiles_path, InnerState};
+use crate::state::{profiles_path, AppState, InnerState};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::Path;
+use tauri::State;
 use zeroize::{Zeroize, Zeroizing};
 
-/// The version of the profile messages this backend reads.
+/// The version of the profile messages this backend reads and sends.
 pub(crate) const PROFILE_V: u64 = 1;
 /// Limits of a profile, in Unicode scalar values and decoded bytes.
 pub(crate) const NAME_MAX_CHARS: usize = 64;
 pub(crate) const ABOUT_MAX_CHARS: usize = 140;
-pub(crate) const PHOTO_MAX_BYTES: usize = 24 * 1024;
+pub(crate) const PHOTO_MAX_BYTES: usize = 20 * 1024;
 pub(crate) const PROFILES_FILE: &str = "profiles.bin";
 /// HKDF info of the profiles.bin key, apart from the history key's.
 const PROFILES_KEY_INFO: &[u8] = b"trino-profiles-key-v1";
@@ -49,6 +56,10 @@ pub(crate) struct Profiles {
     /// What each contact shares and announced, by the contact's name here.
     #[serde(default)]
     pub contacts: HashMap<String, ContactProfile>,
+    /// (contact, revision) this session already sent this identity's
+    /// profile to. Memory only: a new session sends again where needed.
+    #[serde(skip)]
+    pub sent: HashSet<(String, u64)>,
 }
 
 /// What one contact shares, and what its Trino announced.
@@ -120,6 +131,237 @@ pub(crate) struct Received {
     pub save: bool,
     /// The UI must read the contacts again (`profile-updated`).
     pub notify: bool,
+    /// The sender reads profiles but holds an older revision of ours: send
+    /// it again (once per session and revision).
+    pub resend: bool,
+}
+
+/// Unicode scalar values, as the limits count them: an emoji made of one
+/// code point counts 1.
+fn scalars(text: &str) -> usize {
+    text.chars().count()
+}
+
+fn profile_invalid(message: &str) -> CommandError {
+    CommandError::new(ErrorCode::ProfileInvalid, message)
+}
+
+/// A name for this identity's profile: trimmed, `None` when blank (the
+/// current one stays), `profile_invalid` over `NAME_MAX_CHARS`.
+pub(crate) fn check_name(name: &str) -> Result<Option<String>, CommandError> {
+    let name = name.trim();
+    if scalars(name) > NAME_MAX_CHARS {
+        return Err(profile_invalid("the name is longer than 64 characters"));
+    }
+    Ok((!name.is_empty()).then(|| name.to_string()))
+}
+
+/// An "about" for this identity's profile: trimmed, `profile_invalid` over
+/// `ABOUT_MAX_CHARS`.
+pub(crate) fn check_about(about: &str) -> Result<String, CommandError> {
+    let about = about.trim();
+    if scalars(about) > ABOUT_MAX_CHARS {
+        return Err(profile_invalid("the about is longer than 140 characters"));
+    }
+    Ok(about.to_string())
+}
+
+/// A photo for this identity's profile: none, or one `valid_photo` takes.
+pub(crate) fn check_photo(photo: Option<String>) -> Result<Option<String>, CommandError> {
+    match photo {
+        Some(url) if !valid_photo(&url) => Err(profile_invalid(
+            "the photo is not a jpeg, png or webp image of at most 20 KiB",
+        )),
+        photo => Ok(photo),
+    }
+}
+
+/// The next revision: the larger of the previous one + 1 and the clock.
+pub(crate) fn next_rev(previous: u64, now: i64) -> u64 {
+    previous.saturating_add(1).max(now.max(0) as u64)
+}
+
+/// A profile message as it goes out, in this field order.
+#[derive(Serialize)]
+struct WireProfile<'a> {
+    ty: &'static str,
+    v: u64,
+    rev: u64,
+    name: &'a str,
+    about: &'a str,
+    /// Left out: unchanged. `null`: removed.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    photo: Option<Option<&'a str>>,
+}
+
+/// A profile message, as it goes out: compact UTF-8 JSON with the keys in
+/// this order. `photo` is left out with `Unchanged`.
+pub(crate) fn profile_message(rev: u64, name: &str, about: &str, photo: &PhotoField) -> Vec<u8> {
+    let wire = WireProfile {
+        ty: "profile",
+        v: PROFILE_V,
+        rev,
+        name,
+        about,
+        photo: match photo {
+            PhotoField::Unchanged => None,
+            PhotoField::Removed => Some(None),
+            PhotoField::Set(url) => Some(Some(url)),
+        },
+    };
+    serde_json::to_vec(&wire).unwrap_or_default()
+}
+
+/// What `send_cipher_inner` encrypts for `handle`: `plaintext` itself or,
+/// for a text, group or file envelope, the same envelope announcing that
+/// this Trino reads profile messages and which revision of `handle`'s
+/// profile it holds. Calls, rosters, handshakes and profile messages go out
+/// unchanged.
+///
+/// The integration step (I0) calls it from `send_cipher_inner`, which is
+/// W7's; until then nothing announces support, so no profile message goes
+/// to anyone.
+#[cfg_attr(not(test), allow(dead_code))]
+pub(crate) fn with_caps(profiles: &Profiles, handle: &str, plaintext: &[u8]) -> Vec<u8> {
+    let announces = matches!(
+        serde_json::from_slice::<Value>(plaintext),
+        Ok(Value::Object(fields))
+            if matches!(fields.get("ty").and_then(Value::as_str), Some("text" | "grp" | "file"))
+                && !fields.contains_key("prof")
+    );
+    // The envelope is compact JSON ending in `}`: the announcement goes in
+    // as its last field, and the bytes before it stay as they were.
+    match plaintext.strip_suffix(b"}") {
+        Some(open) if announces => {
+            let have = profiles.contacts.get(handle).map_or(0, |kept| kept.rev);
+            let mut out = open.to_vec();
+            out.extend_from_slice(
+                format!(r#","prof":{{"v":{PROFILE_V},"have":{have}}}}}"#).as_bytes(),
+            );
+            out
+        }
+        _ => plaintext.to_vec(),
+    }
+}
+
+/// Apply an edit of this identity's profile. `name`: `None` keeps the
+/// current one. `photo`: `None` removes it, as before K12. `about`: `None`
+/// keeps the current one, as callers from before K12 expect. Returns
+/// whether anything changed; then the revision grows.
+pub(crate) fn apply_update(
+    inner: &mut InnerState,
+    name: Option<String>,
+    photo: Option<String>,
+    about: Option<String>,
+    now: i64,
+) -> bool {
+    let name = name
+        .or_else(|| inner.handle.clone())
+        .unwrap_or_else(|| "anon".to_string());
+    let changed = inner.handle.as_deref() != Some(name.as_str())
+        || inner.avatar != photo
+        || about
+            .as_ref()
+            .is_some_and(|about| *about != inner.profiles.about);
+    inner.handle = Some(name);
+    inner.avatar = photo;
+    if let Some(about) = about {
+        inner.profiles.about.zeroize();
+        inner.profiles.about = about;
+    }
+    if changed {
+        inner.profiles.rev = next_rev(inner.profiles.rev, now);
+    }
+    changed
+}
+
+/// The contacts this identity's profile goes to: every contact whose Trino
+/// reads profile messages, those a group brought included, but not blocked
+/// ones. Each is marked as sent at this revision.
+pub(crate) fn targets(inner: &mut InnerState) -> Vec<String> {
+    let rev = inner.profiles.rev;
+    let mut handles: Vec<String> = inner
+        .friends
+        .values()
+        .filter(|friend| !inner.blocked.contains(&friend.bundle.nostr_pub))
+        .filter(|friend| {
+            inner
+                .profiles
+                .contacts
+                .get(&friend.handle)
+                .is_some_and(|kept| kept.caps >= PROFILE_V)
+        })
+        .map(|friend| friend.handle.clone())
+        .collect();
+    handles.sort();
+    for handle in &handles {
+        inner.profiles.sent.insert((handle.clone(), rev));
+    }
+    handles
+}
+
+/// This identity's profile message as it stands. A name from before K12
+/// longer than the limit is cut to it; a photo from before K12 that a
+/// profile cannot carry is left out, so contacts keep the one in its code.
+fn current_message(inner: &InnerState) -> Vec<u8> {
+    let name: String = inner
+        .handle
+        .as_deref()
+        .map(str::trim)
+        .filter(|name| !name.is_empty())
+        .unwrap_or("anon")
+        .chars()
+        .take(NAME_MAX_CHARS)
+        .collect();
+    let photo = match inner.avatar.as_deref() {
+        None => PhotoField::Removed,
+        Some(url) if valid_photo(url) => PhotoField::Set(url.to_string()),
+        Some(_) => PhotoField::Unchanged,
+    };
+    profile_message(inner.profiles.rev, &name, &inner.profiles.about, &photo)
+}
+
+/// Send this identity's profile to `targets`, one at a time. A failure is
+/// only logged, and that contact's mark is taken back, so its next
+/// announcement tries again.
+pub(crate) async fn send_profile(state: &State<'_, AppState>, targets: Vec<String>) {
+    let (message, rev) = {
+        let inner = state.inner.lock().await;
+        if inner.identity.is_none() {
+            return;
+        }
+        (current_message(&inner), inner.profiles.rev)
+    };
+    for handle in targets {
+        let sent: Result<(), String> = async {
+            ensure_session_inner(state, &handle).await?;
+            send_cipher_inner(state, &handle, &message, None).await
+        }
+        .await;
+        if sent.is_err() {
+            dbg_log("  profile not sent to a contact");
+            state
+                .inner
+                .lock()
+                .await
+                .profiles
+                .sent
+                .remove(&(handle, rev));
+        }
+    }
+}
+
+/// `send_profile` without waiting for it.
+pub(crate) fn send_in_background(app: &tauri::AppHandle, targets: Vec<String>) {
+    if targets.is_empty() {
+        return;
+    }
+    let app = app.clone();
+    tauri::async_runtime::spawn(async move {
+        use tauri::Manager;
+        let state = app.state::<AppState>();
+        send_profile(&state, targets).await;
+    });
 }
 
 /// A profile photo: `data:image/(jpeg|png|webp);base64,` and standard base64
@@ -252,10 +494,18 @@ impl Profiles {
         let notify = (kept.caps >= 1) != (caps >= 1);
         kept.caps = caps;
         kept.have = have;
+        // Anti-entropy: a contact that reads profiles but holds an older
+        // revision of ours lost it (24 h catch-up window, a relay down) or
+        // never had it. Once per session and revision, so a contact that
+        // cannot take it does not get it again with every message.
+        let resend = caps >= PROFILE_V
+            && have < self.rev
+            && self.sent.insert((handle.to_string(), self.rev));
         Received {
             consumed: false,
             save,
             notify,
+            resend,
         }
     }
 
@@ -289,6 +539,7 @@ impl Profiles {
             kept.forget();
         }
         self.contacts.clear();
+        self.sent.clear();
     }
 }
 
@@ -320,6 +571,7 @@ pub(crate) fn receive(
                 consumed: true,
                 save: applied,
                 notify: applied,
+                resend: false,
             }
         }
         Some("text" | "grp" | "file") => {
@@ -395,13 +647,18 @@ pub(crate) fn load_into(inner: &mut InnerState, path: &Path, now: i64) {
     }
 }
 
-/// Write profiles.bin for the open session. A failure is only logged: the
-/// next change writes everything again.
-pub(crate) fn save(inner: &InnerState) {
+/// Write profiles.bin for the open session.
+pub(crate) fn try_save(inner: &InnerState) -> std::io::Result<()> {
     let Some(identity) = inner.identity.as_ref() else {
-        return;
+        return Ok(());
     };
-    if save_at(&inner.profiles, identity, &profiles_path()).is_err() {
+    save_at(&inner.profiles, identity, &profiles_path())
+}
+
+/// `try_save`, where a failure is only logged: the next change writes
+/// everything again.
+pub(crate) fn save(inner: &InnerState) {
+    if try_save(inner).is_err() {
         dbg_log("profiles.bin could not be saved");
     }
 }
@@ -427,6 +684,9 @@ pub(crate) fn on_message(
                 handle: handle.to_string(),
             },
         );
+    }
+    if received.resend {
+        send_in_background(app, vec![handle.to_string()]);
     }
     received.consumed
 }
@@ -584,7 +844,8 @@ mod tests {
             Received {
                 consumed: true,
                 save: true,
-                notify: true
+                notify: true,
+                resend: false
             }
         );
         let ana = &profiles.contacts["ana"];
@@ -665,7 +926,8 @@ mod tests {
             Received {
                 consumed: false,
                 save: true,
-                notify: true
+                notify: true,
+                resend: false
             }
         );
         let ana = &profiles.contacts["ana"];
@@ -694,7 +956,8 @@ mod tests {
             Received {
                 consumed: false,
                 save: true,
-                notify: true
+                notify: true,
+                resend: false
             }
         );
         assert_eq!(profiles.contacts["ana"].caps, 0);
@@ -859,5 +1122,598 @@ mod tests {
             wipe.contains("profiles_path(),"),
             "wipe leaves profiles.bin behind"
         );
+    }
+
+    // ---- Sending: the announcement in every text, group and file message ----
+
+    use crate::envelope::{decode_envelope, encode_envelope, Envelope};
+    use crate::group::FileRef;
+    use crate::identity::public_bundle_for;
+    use crate::state::FriendRecord;
+
+    /// The envelope decoder of 0.1.0: a frozen copy of trino-core's
+    /// `envelope.rs` at 1bac851, the core of that version. It reads what
+    /// `with_caps` sends exactly as a 0.1.0 client will.
+    mod compat_v010 {
+        use serde::Deserialize;
+
+        #[derive(Debug, PartialEq, Deserialize)]
+        pub struct FileRef {
+            pub url: String,
+            pub key: String,
+            pub sha256: String,
+            pub mime: String,
+            pub name: String,
+            pub size: u64,
+            #[serde(default)]
+            pub thumb: Option<String>,
+        }
+
+        #[derive(Debug, PartialEq, Deserialize)]
+        #[serde(tag = "ty")]
+        pub enum Envelope {
+            #[serde(rename = "text")]
+            Text {
+                body: String,
+                #[serde(default)]
+                id: String,
+            },
+            #[serde(rename = "grp")]
+            Group { gid: String, ep: u64, body: String },
+            #[serde(rename = "roster")]
+            Roster { roster: serde_json::Value },
+            #[serde(rename = "file")]
+            File {
+                file: FileRef,
+                #[serde(default)]
+                gid: Option<String>,
+                #[serde(default)]
+                body: Option<String>,
+            },
+            #[serde(rename = "call")]
+            Call { call: String },
+        }
+
+        pub fn decode_envelope(plaintext: &[u8]) -> Envelope {
+            let raw = String::from_utf8_lossy(plaintext).to_string();
+            if let Ok(val) = serde_json::from_str::<serde_json::Value>(&raw) {
+                if let Some(ty) = val.get("ty").and_then(|v| v.as_str()) {
+                    if matches!(ty, "text" | "grp" | "roster" | "file" | "call") {
+                        if let Ok(env) = serde_json::from_value::<Envelope>(val) {
+                            return env;
+                        }
+                    }
+                }
+            }
+            Envelope::Text {
+                body: raw,
+                id: String::new(),
+            }
+        }
+    }
+
+    fn file_ref() -> FileRef {
+        FileRef {
+            url: "https://blossom.example/abc".into(),
+            key: "11".repeat(32),
+            sha256: "22".repeat(32),
+            mime: "image/jpeg".into(),
+            name: "foto.jpg".into(),
+            size: 1234,
+            thumb: None,
+        }
+    }
+
+    /// Profiles holding revision `rev` of `handle`'s profile.
+    fn holding(handle: &str, rev: u64) -> Profiles {
+        let mut profiles = Profiles::default();
+        profiles.contacts.insert(
+            handle.to_string(),
+            ContactProfile {
+                rev,
+                ..ContactProfile::default()
+            },
+        );
+        profiles
+    }
+
+    #[test]
+    fn text_group_and_file_messages_announce_support_and_what_is_held() {
+        let text = encode_envelope(&Envelope::Text {
+            body: "hola".into(),
+            id: "m1".into(),
+        });
+
+        let announced = with_caps(&holding("ana", 7), "ana", &text);
+
+        assert_eq!(
+            String::from_utf8(announced).unwrap(),
+            r#"{"ty":"text","body":"hola","id":"m1","prof":{"v":1,"have":7}}"#
+        );
+        let unknown = with_caps(&holding("ana", 7), "bob", &text);
+        assert!(String::from_utf8(unknown)
+            .unwrap()
+            .ends_with(r#","prof":{"v":1,"have":0}}"#));
+    }
+
+    #[test]
+    fn version_0_1_0_reads_announced_messages_as_the_same_messages() {
+        let profiles = holding("ana", 3);
+        let cases = [
+            Envelope::Text {
+                body: "hola \"ana\" ñ 🙂 }".into(),
+                id: "m1".into(),
+            },
+            Envelope::Text {
+                body: "sin id".into(),
+                id: String::new(),
+            },
+            Envelope::Group {
+                gid: "g1".into(),
+                ep: 4,
+                body: "hola grupo".into(),
+            },
+            Envelope::File {
+                file: file_ref(),
+                gid: None,
+                body: None,
+            },
+            Envelope::File {
+                file: file_ref(),
+                gid: Some("g1".into()),
+                body: Some("pie".into()),
+            },
+        ];
+        for envelope in cases {
+            let plain = encode_envelope(&envelope);
+            let announced = with_caps(&profiles, "ana", &plain);
+            assert_ne!(announced, plain, "{envelope:?} announces nothing");
+            // 0.1.0 sees exactly what it saw before: never raw JSON.
+            let old = compat_v010::decode_envelope(&announced);
+            assert_eq!(old, compat_v010::decode_envelope(&plain), "{envelope:?}");
+            assert!(
+                !matches!(&old, compat_v010::Envelope::Text { body, .. } if body.contains("\"prof\"")),
+                "{envelope:?} shows as JSON on 0.1.0"
+            );
+            // This version too, and it records the announcement.
+            assert_eq!(decode_envelope(&announced), envelope);
+            let mut receiver = Profiles::default();
+            receive(&mut receiver, "me", &announced, NOW);
+            assert_eq!(receiver.contacts["me"].caps, PROFILE_V);
+            assert_eq!(receiver.contacts["me"].have, 3);
+        }
+    }
+
+    #[test]
+    fn calls_rosters_handshakes_and_profiles_go_out_unchanged() {
+        let profiles = holding("ana", 3);
+        let call = encode_envelope(&Envelope::Call {
+            call: r#"{"type":"bye"}"#.into(),
+        });
+        for plain in [
+            call,
+            br#"{"ty":"roster","roster":{"groupId":"g1"}}"#.to_vec(),
+            b"__trino_handshake__".to_vec(),
+            profile_message(5, "Ana", "", &PhotoField::Removed),
+            b"texto viejo sin sobre".to_vec(),
+            text_with(r#","prof":{"v":1,"have":1}"#),
+        ] {
+            assert_eq!(with_caps(&profiles, "ana", &plain), plain);
+        }
+    }
+
+    // ---- Sending: the profile message ----
+
+    #[test]
+    fn the_profile_message_has_fixed_bytes() {
+        let full = profile_message(1_760_000_000, "Ana", "Hola", &PhotoField::Set(PNG.into()));
+        assert_eq!(
+            String::from_utf8(full).unwrap(),
+            format!(
+                r#"{{"ty":"profile","v":1,"rev":1760000000,"name":"Ana","about":"Hola","photo":"{PNG}"}}"#
+            )
+        );
+        assert_eq!(
+            String::from_utf8(profile_message(2, "Ana", "", &PhotoField::Removed)).unwrap(),
+            r#"{"ty":"profile","v":1,"rev":2,"name":"Ana","about":"","photo":null}"#
+        );
+        assert_eq!(
+            String::from_utf8(profile_message(
+                3,
+                "Ñandú \"A\"",
+                "🙂",
+                &PhotoField::Unchanged
+            ))
+            .unwrap(),
+            r#"{"ty":"profile","v":1,"rev":3,"name":"Ñandú \"A\"","about":"🙂"}"#
+        );
+    }
+
+    #[test]
+    fn a_profile_message_reads_back_as_itself() {
+        for photo in [
+            PhotoField::Set(PNG.into()),
+            PhotoField::Removed,
+            PhotoField::Unchanged,
+        ] {
+            let sent = profile_message(8, "Ana", "Sobre mí", &photo);
+            assert_eq!(
+                parse_profile(&sent),
+                Some(Ok(ProfileMessage {
+                    rev: 8,
+                    name: "Ana".into(),
+                    about: "Sobre mí".into(),
+                    photo,
+                }))
+            );
+        }
+    }
+
+    // ---- Sending: who gets it, and when ----
+
+    fn friend(handle: &str) -> FriendRecord {
+        FriendRecord {
+            handle: handle.to_string(),
+            bundle: public_bundle_for(&create_identity()),
+            added_at: 0,
+            avatar: None,
+            previous_fingerprint: None,
+            key_changed_at: None,
+            via_group: None,
+        }
+    }
+
+    #[test]
+    fn the_profile_goes_to_every_contact_that_reads_it_and_to_nobody_else() {
+        let mut inner = InnerState::default();
+        let mut carol = friend("carol");
+        carol.via_group = Some("g1".into());
+        let dan = friend("dan");
+        inner.blocked.insert(dan.bundle.nostr_pub.clone());
+        for contact in [friend("ana"), friend("bob"), carol, dan, friend("eva")] {
+            inner.friends.insert(contact.handle.clone(), contact);
+        }
+        for (handle, caps) in [("ana", 1), ("bob", 0), ("carol", 1), ("dan", 1)] {
+            inner.profiles.contacts.insert(
+                handle.into(),
+                ContactProfile {
+                    caps,
+                    ..ContactProfile::default()
+                },
+            );
+        }
+        inner.profiles.rev = 4;
+
+        let targets = targets(&mut inner);
+
+        // Not bob nor eva (older versions: they would see JSON), not dan
+        // (blocked); carol came with a group and gets it too.
+        assert_eq!(targets, ["ana", "carol"]);
+        assert!(inner.profiles.sent.contains(&("ana".to_string(), 4)));
+        assert!(inner.profiles.sent.contains(&("carol".to_string(), 4)));
+    }
+
+    #[test]
+    fn a_contact_behind_on_this_profile_gets_it_again_once_per_revision() {
+        let mut profiles = Profiles {
+            rev: 10,
+            ..Profiles::default()
+        };
+        let behind = |have: u64| text_with(&format!(r#","prof":{{"v":1,"have":{have}}}"#));
+
+        assert!(receive(&mut profiles, "ana", &behind(3), NOW).resend);
+        assert!(
+            !receive(&mut profiles, "ana", &behind(3), NOW + 1).resend,
+            "once per session and revision"
+        );
+        assert!(
+            !receive(&mut profiles, "ana", &behind(10), NOW + 2).resend,
+            "up to date"
+        );
+        assert!(
+            receive(&mut profiles, "bob", &behind(0), NOW).resend,
+            "per contact"
+        );
+        assert!(
+            !receive(&mut profiles, "eva", &text_with(""), NOW).resend,
+            "never to an older version"
+        );
+
+        profiles.rev = 11;
+        assert!(
+            receive(&mut profiles, "ana", &behind(10), NOW + 3).resend,
+            "a new revision"
+        );
+    }
+
+    #[test]
+    fn a_contact_the_profile_just_went_to_is_not_sent_it_again() {
+        let mut inner = InnerState::default();
+        inner.friends.insert("ana".into(), friend("ana"));
+        inner.profiles.rev = 4;
+        receive(
+            &mut inner.profiles,
+            "ana",
+            &text_with(r#","prof":{"v":1,"have":4}"#),
+            NOW,
+        );
+        inner.profiles.rev = 5;
+
+        assert_eq!(targets(&mut inner), ["ana"]);
+
+        // Sent before ours arrived: still behind, but already on its way.
+        let behind = text_with(r#","prof":{"v":1,"have":4}"#);
+        assert!(!receive(&mut inner.profiles, "ana", &behind, NOW + 1).resend);
+        // Had that send failed, the mark is taken back and this one sends.
+        inner.profiles.sent.remove(&("ana".to_string(), 5));
+        assert!(receive(&mut inner.profiles, "ana", &behind, NOW + 2).resend);
+    }
+
+    #[test]
+    fn this_profile_message_cuts_an_old_name_and_leaves_out_a_photo_it_cannot_carry() {
+        let long = "n".repeat(NAME_MAX_CHARS + 10);
+        let mut inner = InnerState {
+            handle: Some(format!("  {long}  ")),
+            avatar: Some("data:image/gif;base64,R0lGODlh".into()),
+            ..InnerState::default()
+        };
+        inner.profiles.rev = 6;
+        inner.profiles.about = "Hola".into();
+
+        let message = parse_profile(&current_message(&inner)).unwrap().unwrap();
+
+        assert_eq!(message.name, "n".repeat(NAME_MAX_CHARS));
+        assert_eq!(
+            message.photo,
+            PhotoField::Unchanged,
+            "they keep the photo of the code"
+        );
+        assert_eq!((message.rev, message.about.as_str()), (6, "Hola"));
+
+        inner.avatar = Some(PNG.into());
+        let with_photo = parse_profile(&current_message(&inner)).unwrap().unwrap();
+        assert_eq!(with_photo.photo, PhotoField::Set(PNG.into()));
+        inner.avatar = None;
+        let without = parse_profile(&current_message(&inner)).unwrap().unwrap();
+        assert_eq!(without.photo, PhotoField::Removed);
+    }
+
+    // ---- Editing this identity's profile ----
+
+    #[test]
+    fn the_revision_only_grows_and_only_when_something_changed() {
+        let mut inner = InnerState {
+            handle: Some("Ana".into()),
+            ..InnerState::default()
+        };
+        inner.profiles.rev = NOW as u64 + 50;
+
+        assert!(!apply_update(
+            &mut inner,
+            Some("Ana".into()),
+            None,
+            None,
+            NOW
+        ));
+        assert_eq!(inner.profiles.rev, NOW as u64 + 50);
+
+        assert!(apply_update(
+            &mut inner,
+            Some("Ana M".into()),
+            None,
+            None,
+            NOW
+        ));
+        assert_eq!(
+            inner.profiles.rev,
+            NOW as u64 + 51,
+            "the previous + 1, when the clock is behind"
+        );
+        assert_eq!(inner.handle.as_deref(), Some("Ana M"));
+
+        assert!(apply_update(
+            &mut inner,
+            None,
+            Some(PNG.into()),
+            None,
+            NOW + 500
+        ));
+        assert_eq!(inner.profiles.rev, NOW as u64 + 500, "or the clock");
+        assert_eq!(inner.avatar.as_deref(), Some(PNG));
+
+        let about = Some("Hola".to_string());
+        assert!(apply_update(
+            &mut inner,
+            None,
+            Some(PNG.into()),
+            about.clone(),
+            NOW + 500
+        ));
+        assert_eq!(inner.profiles.about, "Hola");
+        assert_eq!(inner.profiles.rev, NOW as u64 + 501);
+        assert!(!apply_update(
+            &mut inner,
+            None,
+            Some(PNG.into()),
+            about,
+            NOW + 900
+        ));
+        assert_eq!(next_rev(u64::MAX, NOW), u64::MAX, "never wraps around");
+    }
+
+    #[test]
+    fn without_about_the_update_works_as_before() {
+        let mut inner = InnerState {
+            handle: Some("Ana".into()),
+            ..InnerState::default()
+        };
+        inner.profiles.about = "Se queda".into();
+
+        // A blank name keeps the current one, and no `about` keeps it too.
+        apply_update(&mut inner, None, Some(PNG.into()), None, NOW);
+        assert_eq!(inner.handle.as_deref(), Some("Ana"));
+        assert_eq!(inner.avatar.as_deref(), Some(PNG));
+        assert_eq!(inner.profiles.about, "Se queda");
+
+        // No photo removes it, as before.
+        apply_update(&mut inner, None, None, None, NOW);
+        assert_eq!(inner.avatar, None);
+        // An empty "about" clears it.
+        apply_update(&mut inner, None, None, Some(String::new()), NOW);
+        assert_eq!(inner.profiles.about, "");
+    }
+
+    #[test]
+    fn an_edit_over_the_limits_is_profile_invalid() {
+        let long_name = "a".repeat(NAME_MAX_CHARS + 1);
+        let long_about = "🙂".repeat(ABOUT_MAX_CHARS + 1);
+        let big_photo = jpeg_of(PHOTO_MAX_BYTES + 1);
+        let gif = "data:image/gif;base64,R0lGODlh".to_string();
+        for error in [
+            check_name(&long_name).unwrap_err(),
+            check_about(&long_about).unwrap_err(),
+            check_photo(Some(big_photo)).unwrap_err(),
+            check_photo(Some(gif)).unwrap_err(),
+        ] {
+            assert_eq!(error.code, ErrorCode::ProfileInvalid);
+        }
+        assert_eq!(check_name("  Ana  ").unwrap().as_deref(), Some("Ana"));
+        assert_eq!(
+            check_name(&"ñ".repeat(NAME_MAX_CHARS))
+                .unwrap()
+                .unwrap()
+                .chars()
+                .count(),
+            NAME_MAX_CHARS
+        );
+        assert_eq!(check_name("   ").unwrap(), None);
+        assert_eq!(check_about("  Hola \n").unwrap(), "Hola");
+        assert_eq!(
+            check_about(&"🙂".repeat(ABOUT_MAX_CHARS))
+                .unwrap()
+                .chars()
+                .count(),
+            ABOUT_MAX_CHARS
+        );
+        assert_eq!(check_photo(None).unwrap(), None);
+        assert_eq!(check_photo(Some(PNG.into())).unwrap().as_deref(), Some(PNG));
+    }
+
+    #[test]
+    fn locking_also_forgets_what_was_sent_this_session() {
+        let mut profiles = Profiles::default();
+        profiles.sent.insert(("ana".into(), 3));
+        profiles.forget();
+        assert!(profiles.sent.is_empty());
+    }
+
+    /// Relays drop events over 64 KB without a word (trino-rediseno.md, on
+    /// stickers). This leaves 4 KB for relays that count otherwise.
+    const RELAY_FRAME_BUDGET: usize = 60 * 1024;
+
+    #[test]
+    fn the_largest_profile_message_fits_in_a_relay_event() {
+        // The worst case: a name and an "about" of characters JSON escapes
+        // to six bytes each, the largest photo and the largest revision.
+        let name = "\u{1}".repeat(NAME_MAX_CHARS);
+        let about = "\u{1}".repeat(ABOUT_MAX_CHARS);
+        let photo = PhotoField::Set(jpeg_of(PHOTO_MAX_BYTES));
+        let plain = profile_message(u64::MAX, &name, &about, &photo);
+        assert!(parse_profile(&plain).unwrap().is_ok());
+
+        // Encrypted and wrapped as send_cipher_inner does. The ratchet
+        // writes the ciphertext in hex, so every byte of the message counts
+        // twice on the wire.
+        let (me, peer) = (create_identity(), create_identity());
+        let bundle = public_bundle_for(&peer);
+        let init = crate::x3dh::initiate(&me, &bundle).unwrap();
+        let spk = crate::identity::decode_array_32(&bundle.spk_pub).unwrap();
+        let mut ratchet = crate::ratchet::init_initiator(init.master_secret, spk).unwrap();
+        let ct =
+            crate::ratchet::ratchet_encrypt(&mut ratchet, &plain, &init.associated_data).unwrap();
+        let payload = crate::commands::WirePayload {
+            header: crate::commands::WireHeader {
+                dh_pub: ct.header.dh_pub,
+                pn: u32::MAX,
+                n: u32::MAX,
+            },
+            nonce: ct.nonce,
+            ciphertext: ct.ciphertext,
+            handshake: None,
+        };
+        let event = crate::nostr::build_and_sign_event(
+            &me.nostr.priv_bytes,
+            &me.nostr.pub_bytes,
+            crate::nostr::TRINO_KIND,
+            &serde_json::to_string(&payload).unwrap(),
+            vec![vec!["p".to_string(), hex::encode(peer.nostr.pub_bytes)]],
+            None,
+        )
+        .unwrap();
+        let frame = serde_json::json!(["EVENT", event]).to_string();
+
+        assert!(
+            frame.len() <= RELAY_FRAME_BUDGET,
+            "{} bytes on the wire",
+            frame.len()
+        );
+    }
+
+    /// The JSON object on a line of the doc: from its first `{` to its last `}`.
+    fn json_on(line: &str) -> Option<String> {
+        let start = line.find('{')?;
+        let end = line.rfind('}')?;
+        Some(line[start..=end].to_string())
+    }
+
+    #[test]
+    fn the_vectors_in_the_doc_hold() {
+        let doc = include_str!("../../docs/perfil-v1.md");
+
+        // The announcement: each `in` line becomes the `out` line below it.
+        let lines: Vec<&str> = doc.lines().collect();
+        let mut pairs = 0;
+        for pair in lines.windows(2) {
+            let (Some(input), Some(output)) =
+                (pair[0].strip_prefix("in "), pair[1].strip_prefix("out "))
+            else {
+                continue;
+            };
+            let have: u64 = input
+                .rsplit("have = ")
+                .next()
+                .and_then(|rest| rest.trim().trim_end_matches(')').parse().ok())
+                .unwrap();
+            let announced = with_caps(
+                &holding("ana", have),
+                "ana",
+                json_on(input).unwrap().as_bytes(),
+            );
+            assert_eq!(
+                String::from_utf8(announced).unwrap(),
+                json_on(output).unwrap()
+            );
+            pairs += 1;
+        }
+        assert_eq!(pairs, 2);
+
+        // The vectors: the first block reads and encodes back byte for byte,
+        // and nothing in the second one is ever taken.
+        let vectors = doc.split("## Vectors").nth(1).unwrap();
+        let blocks: Vec<&str> = vectors.split("```").skip(1).step_by(2).collect();
+        let valid: Vec<String> = blocks[0].lines().filter_map(json_on).collect();
+        let invalid: Vec<String> = blocks[1].lines().filter_map(json_on).collect();
+        assert_eq!((valid.len(), invalid.len()), (3, 8));
+        for line in &valid {
+            let message = parse_profile(line.as_bytes()).unwrap().unwrap();
+            let again = profile_message(message.rev, &message.name, &message.about, &message.photo);
+            assert_eq!(String::from_utf8(again).unwrap(), *line);
+        }
+        for line in &invalid {
+            assert!(
+                matches!(parse_profile(line.as_bytes()), Some(Err(_))),
+                "{line}"
+            );
+        }
     }
 }
