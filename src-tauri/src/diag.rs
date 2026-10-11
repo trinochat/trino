@@ -228,12 +228,20 @@ mod tests {
         rest
     }
 
+    /// The files that log: the commands module with its child modules (the
+    /// contacts, groups, history and profile commands) and the relay client.
+    const LOGGING_SOURCES: [(&str, &str); 6] = [
+        ("commands.rs", include_str!("commands.rs")),
+        ("contacts_cmds.rs", include_str!("contacts_cmds.rs")),
+        ("groups_cmds.rs", include_str!("groups_cmds.rs")),
+        ("history_cmds.rs", include_str!("history_cmds.rs")),
+        ("profile.rs", include_str!("profile.rs")),
+        ("nostr.rs", include_str!("nostr.rs")),
+    ];
+
     #[test]
     fn log_lines_are_never_built_from_runtime_values() {
-        for (file, source) in [
-            ("commands.rs", include_str!("commands.rs")),
-            ("nostr.rs", include_str!("nostr.rs")),
-        ] {
+        for (file, source) in LOGGING_SOURCES {
             let found = runtime_text_in_log_calls(source);
             assert!(
                 found.is_empty(),
@@ -264,10 +272,7 @@ mod tests {
     #[test]
     fn only_this_module_opens_the_log() {
         // A second writer could put in the log what this one keeps out.
-        for (file, source) in [
-            ("commands.rs", include_str!("commands.rs")),
-            ("nostr.rs", include_str!("nostr.rs")),
-        ] {
+        for (file, source) in LOGGING_SOURCES {
             assert!(!source.contains("OpenOptions"), "{file} opens files itself");
         }
     }
