@@ -21,6 +21,7 @@ import type { Msg, ReplyRef, SendFailure, SendState } from '../types';
 import { Attachment, fileKind } from './attachments/Attachment';
 import { remainingDuration } from './durations';
 import { Linkify } from './Linkify';
+import { nameList } from './lists';
 import { MessageMenu } from './MessageMenu';
 import { ReplyQuote } from './ReplyQuote';
 
@@ -87,20 +88,6 @@ export function replyPreview(msg: Msg, t: TFunction): string {
     case 'file':
       return t('msg2.file', { name: msg.file.name });
   }
-}
-
-/**
- * `Intl.ListFormat` is ES2021: every webview Trino runs on has it (Chromium
- * 72, WebKit 14.1), but the project's TypeScript library stops at ES2020.
- */
-type ListFormatConstructor = new (lang: string, options: { type: 'conjunction' }) => {
-  format(list: readonly string[]): string;
-};
-const ListFormat = (Intl as unknown as { ListFormat?: ListFormatConstructor }).ListFormat;
-
-/** "Ana y Luis", "Ana, Luis y Marta": names as a list in the language of the app. */
-function nameList(names: readonly string[], lang: Lang): string {
-  return ListFormat ? new ListFormat(lang, { type: 'conjunction' }).format(names) : names.join(', ');
 }
 
 /** Why a message was not sent, and for a group, who it did not reach. */
