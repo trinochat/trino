@@ -2,6 +2,7 @@ import postcss from 'postcss';
 import tailwindcss, { type Config } from 'tailwindcss';
 import { describe, expect, it } from 'vitest';
 import tailwindConfig from '../../tailwind.config.js?raw';
+import { FOCUS_RING } from '../ui/focus';
 import { cssVariables, resolveTokens } from './appearance';
 import { ICON_SIZE, TYPE_SCALE, type IconSizeName } from './type';
 
@@ -64,6 +65,24 @@ describe('Tailwind variants for the accessibility settings', () => {
     expect(css).toContain(
       String.raw`:root[data-contrast="more"] .more-contrast\:focus-visible\:outline-\[3px\]:focus-visible {`,
     );
+  });
+});
+
+// Under forced colours, an element that keeps its own colours keeps its focus
+// ring's too (focus.ts). The ring's CanvasText has to reach the page, and to
+// win over the accent colour: same specificity, so it has to come later.
+describe('the focus ring under forced colours', () => {
+  it('takes CanvasText in the forced-colors query, after the accent colour', async () => {
+    const css = (await compile(FOCUS_RING)).replace(/\s+/g, ' ');
+    const accent = css.indexOf(
+      String.raw`.focus-visible\:outline-ui-accent-text:focus-visible { outline-color: var(--t-accent-text) }`,
+    );
+    const forced = css.indexOf(
+      String.raw`.forced-colors\:focus-visible\:outline-\[color\:CanvasText\]:focus-visible { outline-color: CanvasText }`,
+    );
+    expect(accent).toBeGreaterThan(-1);
+    expect(forced).toBeGreaterThan(accent);
+    expect(css.lastIndexOf('@media (forced-colors: active) {', forced)).toBeGreaterThan(accent);
   });
 });
 

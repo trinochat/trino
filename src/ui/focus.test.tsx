@@ -40,10 +40,43 @@ const RING = [
   'focus-visible:shadow-none',
 ];
 
+/** The ring's colour under forced colours: the contrast theme's own text colour. */
+const FORCED_RING = 'forced-colors:focus-visible:outline-[color:CanvasText]';
+
 const CHOICES = [
   { value: 'a', label: 'A' },
   { value: 'b', label: 'B' },
 ];
+
+/** Every control of the library that can take the focus, the first choice of each group selected. */
+function Controls() {
+  return (
+    <>
+      <Button>Botón</Button>
+      <IconButton aria-label="Icono" icon={null} />
+      <Field label="Campo">
+        <Input />
+      </Field>
+      <PasswordInput aria-label="Contraseña" toggleLabel="Mostrar contraseña" />
+      <Textarea aria-label="Texto" />
+      <Select aria-label="Lista">
+        <option>Uno</option>
+      </Select>
+      <Switch aria-label="Interruptor" checked={false} onCheckedChange={() => {}} />
+      <Checkbox label="Casilla" />
+      <RadioCardGroup aria-label="Opciones" options={CHOICES} value="a" onValueChange={() => {}} />
+      <Segmented aria-label="Segmentos" options={CHOICES} value="a" onValueChange={() => {}} />
+      <Tabs
+        aria-label="Pestañas"
+        items={CHOICES.map(choice => ({ ...choice, panel: choice.label }))}
+        value="a"
+        onValueChange={() => {}}
+      />
+    </>
+  );
+}
+
+const FOCUSABLE = 'button, input, select, textarea, [tabindex]';
 
 function ShowErrorToast() {
   const toast = useToast();
@@ -103,32 +136,28 @@ describe('focus ring (WCAG 2.4.7)', () => {
     );
   });
 
-  it('is on every element of every control that can take the focus', () => {
-    const { container } = render(
-      <>
-        <Button>Botón</Button>
-        <IconButton aria-label="Icono" icon={null} />
-        <Field label="Campo">
-          <Input />
-        </Field>
-        <PasswordInput aria-label="Contraseña" toggleLabel="Mostrar contraseña" />
-        <Textarea aria-label="Texto" />
-        <Select aria-label="Lista">
-          <option>Uno</option>
-        </Select>
-        <Switch aria-label="Interruptor" checked={false} onCheckedChange={() => {}} />
-        <Checkbox label="Casilla" />
-        <RadioCardGroup aria-label="Opciones" options={CHOICES} value="a" onValueChange={() => {}} />
-        <Segmented aria-label="Segmentos" options={CHOICES} value="a" onValueChange={() => {}} />
-        <Tabs
-          aria-label="Pestañas"
-          items={CHOICES.map(choice => ({ ...choice, panel: choice.label }))}
-          value="a"
-          onValueChange={() => {}}
-        />
-      </>,
+  // A contrast theme of Windows gives the ring a system colour, except on an
+  // element that keeps its own colours (`forced-color-adjust: none`), such
+  // as the selected segment: there it would stay in the accent text colour,
+  // about 2:1 on a dark contrast theme. The ring is drawn outside the
+  // element, on the theme's Canvas, so it takes CanvasText.
+  it("takes the contrast theme's text colour under forced colours", () => {
+    expect(FOCUS_RING.split(' ')).toContain(FORCED_RING);
+  });
+
+  it('keeps that colour on every element that keeps its own colours under forced colours', () => {
+    const { container } = render(<Controls />);
+    const keeping = Array.from(container.querySelectorAll(FOCUSABLE)).filter(element =>
+      element.closest('[class*="forced-color-adjust:none"]'),
     );
-    const focusable = Array.from(container.querySelectorAll('button, input, select, textarea, [tabindex]'));
+    // The selected segment, at least.
+    expect(keeping.length).toBeGreaterThan(0);
+    expect(missingClasses(keeping, [FORCED_RING])).toEqual([]);
+  });
+
+  it('is on every element of every control that can take the focus', () => {
+    const { container } = render(<Controls />);
+    const focusable = Array.from(container.querySelectorAll(FOCUSABLE));
     // 2 buttons, input, password and its toggle, textarea, select, switch, checkbox,
     // 2 radio cards, 2 segments, 2 tabs and 2 panels.
     expect(focusable).toHaveLength(17);

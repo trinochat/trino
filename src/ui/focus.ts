@@ -10,11 +10,22 @@
  * and 3 px with more contrast. `shadow-none` drops the glow the legacy
  * stylesheet adds to every focused element. An outline, so forced colours
  * keep it.
+ *
+ * Forced colours repaint the ring in a system colour, except on an element
+ * that keeps its own colours (`forced-color-adjust: none`, such as the
+ * selected segment), where the accent would stay, at about 2:1 on a dark
+ * contrast theme. So the ring takes CanvasText there: the theme's text
+ * colour, on the theme's Canvas around the element.
  */
 export const FOCUS_RING =
-  'focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ui-accent-text focus-visible:shadow-none more-contrast:focus-visible:outline-[3px]';
+  'focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ui-accent-text focus-visible:shadow-none more-contrast:focus-visible:outline-[3px] forced-colors:focus-visible:outline-[color:CanvasText]';
 
-/** The same ring drawn just inside the element, for full-width rows and menu items that would clip it. */
+/**
+ * The same ring drawn just inside the element, for full-width rows and menu
+ * items that would clip it. It sits on the element's own background, so an
+ * element that keeps its own colours under forced colours takes FOCUS_RING
+ * instead (focus.test.tsx checks the library's).
+ */
 export const FOCUS_RING_INSET =
   'focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-ui-accent-text focus-visible:shadow-none more-contrast:focus-visible:outline-[3px] more-contrast:focus-visible:outline-offset-[-3px]';
 
