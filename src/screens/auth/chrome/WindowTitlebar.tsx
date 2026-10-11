@@ -13,6 +13,7 @@ import { Copy, Minus, Square, X } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { useT } from '../../../lib/i18n';
 import { FOCUS_RING_INSET, TrinoLogo, cx, iconSize } from '../../../ui';
+import { attempt } from '../common/attempt';
 
 /** What the bar needs from the window: `getCurrentWindow()` in the app. */
 export interface WindowApi {
@@ -46,7 +47,7 @@ export function WindowTitlebar({ api }: WindowTitlebarProps) {
     let live = true;
     let pause: ReturnType<typeof setTimeout> | undefined;
     const read = () => {
-      api.isMaximized().then(
+      attempt(() => api.isMaximized()).then(
         value => {
           if (live) setMaximized(value);
         },

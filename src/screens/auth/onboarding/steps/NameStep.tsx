@@ -10,6 +10,7 @@ import { useRef, type ChangeEvent, type Ref } from 'react';
 import { useT } from '../../../../lib/i18n';
 import { identityInitials } from '../../../../lib/initials';
 import { Avatar, Button, Field, Input } from '../../../../ui';
+import { attempt } from '../../common/attempt';
 import { InlineError } from '../../common/InlineError';
 import type { OnboardingEvent, OnboardingState } from '../onboarding-machine';
 import { StepHeader } from './StepHeader';
@@ -34,7 +35,7 @@ export function NameStep({ state, send, headingId, headingRef, nameRef, profileS
     // So the same picture can be chosen again after removing it.
     input.value = '';
     if (!file) return;
-    makeAvatar(file).then(
+    attempt(() => makeAvatar(file)).then(
       dataUrl => send({ type: 'photoChosen', dataUrl }),
       () => send({ type: 'photoFailed' }),
     );

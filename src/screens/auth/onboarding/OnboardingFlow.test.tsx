@@ -404,6 +404,19 @@ describe('when creating the identity fails', () => {
     expect(onVaultExists).toHaveBeenCalledTimes(1);
   });
 
+  // A command that throws before it answers must not leave the flow waiting.
+  it('treats a command that throws at once as a failed one', async () => {
+    const createIdentity = vi.fn(() => {
+      throw new Error('no backend');
+    });
+    setup({ api: fakeApi({ createIdentity }) });
+    await toTwofa();
+    click('Ahora no');
+    await settle();
+    expect(alertText()).toBe('No se pudo crear tu identidad. Inténtalo de nuevo.');
+    expect((button('Ahora no') as HTMLButtonElement).disabled).toBe(false);
+  });
+
   it('lets the person try again right there', async () => {
     const api = fakeApi({ createIdentity: vi.fn().mockRejectedValueOnce(failure('io')).mockResolvedValueOnce(CREATED) });
     setup({ api });

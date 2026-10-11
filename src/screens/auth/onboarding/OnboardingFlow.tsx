@@ -20,6 +20,7 @@ import { useT } from '../../../lib/i18n';
 import { useLang } from '../../../lib/i18n-context';
 import { Button } from '../../../ui';
 import type { OnboardingFlowProps } from '../../types';
+import { attempt } from '../common/attempt';
 import { AuthFrame } from '../common/AuthFrame';
 import { LABEL_TEXT } from '../common/styles';
 import { consentRecord, saveConsentRecord, type ConsentStorage } from './consent';
@@ -112,7 +113,7 @@ export function OnboardingFlow({
   const run = (effect: OnboardingEffect) => {
     switch (effect.type) {
       case 'checkPassphrase':
-        api.checkPassphrase(effect.passphrase).then(
+        attempt(() => api.checkPassphrase(effect.passphrase)).then(
           () => send({ type: 'checked' }),
           (error: unknown) => {
             console.warn('check_passphrase failed:', codeOf(error));
@@ -121,7 +122,7 @@ export function OnboardingFlow({
         );
         return;
       case 'totpBegin':
-        api.totpBegin(effect.label).then(
+        attempt(() => api.totpBegin(effect.label)).then(
           enrollment => send({ type: 'enrolled', enrollment }),
           (error: unknown) => {
             console.warn('totp_begin failed:', codeOf(error));
@@ -130,7 +131,7 @@ export function OnboardingFlow({
         );
         return;
       case 'totpVerify':
-        api.totpVerify(effect.code).then(
+        attempt(() => api.totpVerify(effect.code)).then(
           ok => send({ type: 'verified', ok }),
           (error: unknown) => {
             console.warn('totp_verify failed:', codeOf(error));
@@ -139,7 +140,7 @@ export function OnboardingFlow({
         );
         return;
       case 'createIdentity':
-        api.createIdentity(effect.handle, effect.passphrase, effect.useTotp).then(
+        attempt(() => api.createIdentity(effect.handle, effect.passphrase, effect.useTotp)).then(
           response => send({ type: 'created', response }),
           (error: unknown) => {
             console.warn('forge failed:', codeOf(error));
@@ -155,7 +156,7 @@ export function OnboardingFlow({
         return;
       }
       case 'saveProfile':
-        api.updateProfile(effect.handle, effect.avatar).then(
+        attempt(() => api.updateProfile(effect.handle, effect.avatar)).then(
           () => send({ type: 'photoSaved' }),
           () => send({ type: 'photoSaveFailed' }),
         );

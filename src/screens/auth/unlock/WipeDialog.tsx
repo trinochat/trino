@@ -9,6 +9,7 @@ import { Trash2 } from 'lucide-react';
 import { useRef, useState } from 'react';
 import { useT } from '../../../lib/i18n';
 import { Banner, Button, Dialog, iconSize } from '../../../ui';
+import { attempt } from '../common/attempt';
 
 export interface WipeDialogProps {
   onClose(): void;
@@ -27,7 +28,7 @@ export function WipeDialog({ onClose, wipe, onWiped }: WipeDialogProps) {
     if (wiping) return;
     setWiping(true);
     setFailed(false);
-    wipe().then(onWiped, () => {
+    attempt(wipe).then(onWiped, () => {
       // The backend's message names files on this device: not for the console.
       console.warn('wipe failed');
       setWiping(false);

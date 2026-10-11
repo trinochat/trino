@@ -192,6 +192,17 @@ describe('UnlockScreen', () => {
     }
   });
 
+  // A command that throws before it answers must not leave the screen busy.
+  it('treats an unseal that throws at once as a failed one', async () => {
+    const unseal = vi.fn((): Promise<UnsealResponse> => {
+      throw new Error('no backend');
+    });
+    setup({ api: { unseal, wipe: vi.fn() } });
+    await unlockWith(PASS);
+    expect(alertText()).toBe('No se pudo desbloquear Trino. Inténtalo de nuevo.');
+    expect((screen.getByRole('button', { name: 'Desbloquear' }) as HTMLButtonElement).disabled).toBe(false);
+  });
+
   it('never writes the password to the console', async () => {
     const spies = (['log', 'info', 'warn', 'error', 'debug'] as const).map(method =>
       vi.spyOn(console, method).mockImplementation(() => {}),

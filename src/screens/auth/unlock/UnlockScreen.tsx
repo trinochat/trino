@@ -13,6 +13,7 @@ import { useT } from '../../../lib/i18n';
 import { identityInitials } from '../../../lib/initials';
 import { Avatar, Banner, Button, FOCUS_RING, Field, Input, PasswordInput, cx } from '../../../ui';
 import type { UnlockScreenProps } from '../../types';
+import { attempt } from '../common/attempt';
 import { AuthFrame } from '../common/AuthFrame';
 import { ForgotPanel } from './ForgotPanel';
 import { lockReasonText } from './lock-reason';
@@ -83,7 +84,7 @@ export function UnlockScreen({ handle, totpEnabled, reason, api, onUnlocked, onN
     busyRef.current = true;
     setBusy(true);
     setError(null);
-    api.unseal(pass, askCode ? digits : null).then(
+    attempt(() => api.unseal(pass, askCode ? digits : null)).then(
       response => {
         busyRef.current = false;
         if (!mounted.current) return;
