@@ -7,6 +7,7 @@ import type { CallCallbacks, CallState } from '../../lib/call';
 import { I18nContext, makeT } from '../../lib/i18n';
 import { LangCtx } from '../../lib/i18n-context';
 import { callSas } from '../../lib/sas';
+import { markVerifies, verifiedMark } from '../verify/verification-marks';
 import { countingStorage } from './test-support';
 import {
   useCallController,
@@ -449,6 +450,32 @@ describe('useCallController', () => {
       act(() => s.result.current.reportMismatch());
       act(() => s.result.current.confirmMatch());
       expect(s.deps.onVerified.mock.calls).toEqual([[PEER]]);
+      expect(s.result.current.sas?.verified).toBe(true);
+    });
+
+    // The marks as the contract says to keep them (CallPeer.verified, onVerified, onVerificationRevoked),
+    // with src/screens/verify/verification-marks.ts: the way I5 wires prefs.ts.
+    it('works with the marks kept as its contract says, where a mark of 0.1.0 does not count', async () => {
+      const FP = 'ab12.cd34.ef56.7890';
+      const marks = new Map<string, string>([[PEER, FP]]);
+      const s = setup({
+        peer: handle =>
+          handle === PEER
+            ? { name: 'Ana Torres', avatar: null, verified: markVerifies(marks.get(handle), FP), identityDigest: ANA }
+            : null,
+        onVerified: handle => marks.set(handle, verifiedMark(FP, 'call')),
+        onVerificationRevoked: handle => marks.delete(handle),
+      });
+      const first = newId();
+      await withSymbols(s, first);
+      expect(s.result.current.sas?.verified).toBe(false);
+      act(() => s.result.current.confirmMatch());
+      expect(marks.get(PEER)).toBe('call:ab12.cd34.ef56.7890');
+      act(() => s.result.current.reportMismatch());
+      expect(marks.has(PEER)).toBe(false);
+      act(() => s.result.current.confirmMatch());
+      s.state('ended', first);
+      await withSymbols(s, newId());
       expect(s.result.current.sas?.verified).toBe(true);
     });
 

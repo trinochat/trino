@@ -16,13 +16,15 @@ import { Button, Dialog, TrustBadge, iconSize } from '../../ui';
 
 export interface VerifyContactDialogProps extends VerifyContactSlotProps {
   /**
-   * Verified on this device. The slot's props do not carry it yet: the
-   * integration passes the contact's trust, as the shell knows it.
+   * Verified on this device: "Verificaste a {name} en una llamada." instead
+   * of the way to verify. Required, because VerifyContactSlotProps does not
+   * carry the contact's trust yet: the integration passes it
+   * (`trust[peer.handle] === 'verified'`) until the slot's props do.
    */
-  verified?: boolean;
+  verified: boolean;
 }
 
-export function VerifyContactDialog({ peer, myIdentityDigest, onClose, onCall, verified = false }: VerifyContactDialogProps) {
+export function VerifyContactDialog({ peer, myIdentityDigest, onClose, onCall, verified }: VerifyContactDialogProps) {
   const t = useT();
   const quickId = useId();
   const [symbols, setSymbols] = useState<readonly number[] | null>(null);

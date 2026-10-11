@@ -21,11 +21,21 @@ const ANA: NodeInfo = {
 function show(props: Partial<VerifyContactDialogProps> = {}) {
   const onClose = vi.fn();
   const onCall = vi.fn();
-  const view = renderIn(<VerifyContactDialog peer={ANA} myIdentityDigest={ME} onClose={onClose} onCall={onCall} {...props} />);
+  const view = renderIn(
+    <VerifyContactDialog peer={ANA} myIdentityDigest={ME} onClose={onClose} onCall={onCall} verified={false} {...props} />,
+  );
   return { ...view, onClose, onCall };
 }
 
 describe('VerifyContactDialog', () => {
+  // VerifyContactSlotProps carries no trust (types.ts). Left out, `verified` would ask every verified
+  // contact to verify again, so it is required and the integration has to pass it (review of W6).
+  it('has to be told whether the contact is verified', () => {
+    // @ts-expect-error `verified` is required: the slot's props alone do not say it.
+    const dialog = <VerifyContactDialog peer={ANA} myIdentityDigest={ME} onClose={() => {}} />;
+    expect(dialog.props).not.toHaveProperty('verified');
+  });
+
   it('is titled "Verificar a {name}"', () => {
     show();
     expect(screen.getByRole('dialog', { name: 'Verificar a Ana Torres' })).toBeTruthy();

@@ -10,6 +10,13 @@
  * question "call directly?" reads or writes a preference: it is asked on
  * every call and never remembered (docs/llamadas-turn.md).
  *
+ * The marks keep the format of src/screens/verify/verification-marks.ts:
+ * `verified:<handle>` holds `verifiedMark(fingerprint, 'call')`, and only
+ * `markVerifies` reads it as verified; a bare fingerprint is a mark of 0.1.0
+ * and no longer counts (docs/sas-v2.md, "Marks made before v2"). Today
+ * prefs.ts writes and compares the bare fingerprint, so I5 moves
+ * `setVerified` and `isVerified` to those two functions.
+ *
  * It also applies the DTLS fingerprint rule (docs/sas-v2.md): if the remote
  * fingerprint changes during a call, the call ends, and a "Coinciden" given
  * in it is undone unless the contact was verified before the call.
@@ -60,7 +67,13 @@ export type CallSounds = Pick<typeof sfx, 'startRingback' | 'startRingtone' | 's
 export interface CallPeer {
   name: string;
   avatar: string | null;
-  /** Verified on this device: "Coinciden" on a call's SAS, or a QR scanned in person. */
+  /**
+   * Verified on this device: "Coinciden" on a call's SAS, or a QR scanned in
+   * person. Read from the contact's mark and its fingerprint now:
+   * `markVerifies(<value of verified:<handle>>, node.fingerprint)`
+   * (src/screens/verify/verification-marks.ts). A bare fingerprint, as 0.1.0
+   * stored it, does not count; neither does a mark of an older fingerprint.
+   */
   verified: boolean;
   /** The identity digest saved for the contact (K7); null until the backend gives it. */
   identityDigest: string | null;
@@ -92,9 +105,19 @@ export interface CallControllerDeps {
   peer(handle: string): CallPeer | null;
   me: { identityDigest: string | null };
   isWindowVisible(): boolean;
-  /** "Coinciden" on the call's SAS: mark the contact as verified with its current fingerprint. */
+  /**
+   * "Coinciden" on the call's SAS: store `verifiedMark(node.fingerprint, 'call')`
+   * (src/screens/verify/verification-marks.ts) as the contact's
+   * `verified:<handle>`, with the fingerprint it has now. Never the bare
+   * fingerprint: that is a mark of 0.1.0, which no longer counts, and the
+   * one-time notice about those marks would name the contact and delete it.
+   */
   onVerified(handle: string): void;
-  /** The remote DTLS fingerprint changed after a "Coinciden" of this call: clear that mark. */
+  /**
+   * Clear the contact's `verified:<handle>`: a "Coinciden" of this call is
+   * undone, because the remote DTLS fingerprint changed or "No coinciden"
+   * came after it, and the contact was not verified when the call started.
+   */
   onVerificationRevoked(handle: string): void;
   /** Seconds until a message of that chat disappears, 0 for never: the call's record goes with them. */
   ttlFor(handle: string): number;
