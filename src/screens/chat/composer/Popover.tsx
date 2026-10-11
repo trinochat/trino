@@ -3,6 +3,9 @@
  * dialog that opens above its button. On open the focus goes inside, unless
  * its content already took it. Escape closes it, and so does a press
  * outside; a press on its own button is the button's, which toggles it.
+ * The focus leaving for anything but the panel and its button closes it
+ * too, so it never hides the control that has the focus (WCAG 2.4.11); a
+ * focus that goes nowhere, as when the window loses it, leaves it open.
  */
 import { useEffect, useLayoutEffect, useRef, type ReactNode, type RefObject } from 'react';
 import { focusableWithin } from '../../../ui';
@@ -51,6 +54,11 @@ export function Popover({ label, anchor, onClose, children }: PopoverProps) {
         event.preventDefault();
         event.stopPropagation();
         close.current('escape');
+      }}
+      onBlur={event => {
+        const next = event.relatedTarget;
+        if (!(next instanceof Node) || ref.current?.contains(next) || anchor.current?.contains(next)) return;
+        close.current('outside');
       }}
       className="absolute bottom-full start-0 z-30 mb-2 flex max-h-[min(24rem,60vh)] w-[19.5rem] max-w-full flex-col overflow-hidden rounded-ui-lg border border-ui-line bg-ui-surface font-ui text-ui-ink [box-shadow:var(--t-shadow)]"
     >

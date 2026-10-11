@@ -90,7 +90,12 @@ export function MessageList({ messages, now, peer, actions, onCall }: MessageLis
           aria-label={t('chat2.toLatest')}
           variant="secondary"
           icon={<ArrowDown {...iconSize('lg')} />}
-          onClick={scroll.toEnd}
+          onClick={event => {
+            // The button goes once you are at the newest message: its focus goes to the log.
+            const focused = event.currentTarget === document.activeElement;
+            scroll.toEnd();
+            if (focused) scroll.ref.current?.focus({ preventScroll: true });
+          }}
           className="absolute bottom-3 end-4 [box-shadow:var(--t-shadow)]"
         />
       )}

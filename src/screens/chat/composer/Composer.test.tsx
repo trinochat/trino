@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { act, cleanup, fireEvent, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, screen, waitFor, within } from '@testing-library/react';
 import { useState } from 'react';
 import type { StickerInfo } from '../../../lib/api';
 import type { ProcessedFile } from '../../../lib/media';
@@ -140,6 +140,74 @@ describe('Composer', () => {
     fireEvent.keyDown(box(), { key: 'Escape' });
     expect(screen.queryByText('Respondiendo a Ana Torres')).toBeNull();
     expect(onClearReply).toHaveBeenCalledTimes(2);
+  });
+
+  it('puts the focus in the box when its button takes the reply back', () => {
+    renderIn(<Harness initialReply={REPLY} />);
+    const cancel = screen.getByRole('button', { name: 'Cancelar respuesta' });
+    cancel.focus();
+    fireEvent.click(cancel);
+    expect(screen.queryByText('Respondiendo a Ana Torres')).toBeNull();
+    expect(document.activeElement).toBe(box());
+  });
+
+  it('gives the focus to the next file when one is taken out, and to the box when none follows', async () => {
+    renderIn(<Harness />);
+    chooseFiles(['a.pdf', 'b.pdf', 'c.pdf'].map(name => fileOf(name, 'application/pdf')));
+    await allPrepared();
+    const remove = (name: string) => {
+      const button = screen.getByRole('button', { name: `Quitar ${name}` });
+      button.focus();
+      fireEvent.click(button);
+    };
+    remove('b.pdf');
+    expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Quitar c.pdf' }));
+    remove('c.pdf');
+    expect(document.activeElement).toBe(box());
+    expect(screen.getAllByRole('button', { name: /^Quitar/ }).map(button => button.getAttribute('aria-label'))).toEqual(['Quitar a.pdf']);
+  });
+
+  it('keeps the focus in the sticker picker when Editar takes a sticker out, so Escape still closes it', async () => {
+    let left: StickerInfo[] = [GATO, { id: 'perro', mime: 'image/webp', data_url: 'data:image/webp;base64,cGVycm8=' }];
+    const library: StickerApi = {
+      list: vi.fn(async () => [...left]),
+      importFile: vi.fn(),
+      remove: vi.fn(async (id: string) => {
+        left = left.filter(sticker => sticker.id !== id);
+      }),
+    };
+    renderIn(<Harness stickers={library} />);
+    const stickerButton = screen.getByRole('button', { name: 'Stickers' });
+    fireEvent.click(stickerButton);
+    await screen.findByRole('button', { name: 'Enviar sticker 1' });
+    fireEvent.click(screen.getByRole('button', { name: 'Editar' }));
+    const first = screen.getByRole('button', { name: 'Quitar sticker 1' });
+    first.focus();
+    fireEvent.click(first);
+    await waitFor(() => expect(screen.getAllByRole('button', { name: /^Quitar sticker/ })).toHaveLength(1));
+    await waitFor(() => expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Quitar sticker 1' })));
+    fireEvent.keyDown(document.activeElement!, { key: 'Escape' });
+    expect(screen.queryByRole('dialog', { name: 'Stickers' })).toBeNull();
+    expect(document.activeElement).toBe(stickerButton);
+  });
+
+  it('closes a picker once the focus leaves it and its button, and leaves the focus where it went', () => {
+    renderIn(<Harness />);
+    const emojiButton = screen.getByRole('button', { name: 'Emojis' });
+    fireEvent.click(emojiButton);
+    const panel = screen.getByRole('dialog', { name: 'Emojis' });
+    const firstEmoji = within(panel).getAllByRole('button')[0]!;
+    expect(document.activeElement).toBe(firstEmoji);
+    // Back on its own button, which toggles it, and away from the window: it stays open.
+    act(() => emojiButton.focus());
+    fireEvent.focusOut(firstEmoji, { relatedTarget: null });
+    expect(screen.getByRole('dialog', { name: 'Emojis' })).toBeTruthy();
+    // Out of the panel, as Tab and Shift+Tab take it: it closes.
+    act(() => firstEmoji.focus());
+    act(() => box().focus());
+    expect(screen.queryByRole('dialog', { name: 'Emojis' })).toBeNull();
+    expect(emojiButton.getAttribute('aria-expanded')).toBe('false');
+    expect(document.activeElement).toBe(box());
   });
 
   it('adds the files you choose to the tray, and takes them out', async () => {

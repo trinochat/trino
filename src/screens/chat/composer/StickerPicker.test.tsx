@@ -103,6 +103,28 @@ describe('StickerPicker', () => {
     await waitFor(() => expect(screen.getAllByRole('button', { name: /^Quitar sticker/ })).toHaveLength(2));
   });
 
+  it('gives the focus a removed sticker held to the next one, else to Editar, else to Agregar stickers', async () => {
+    renderIn(<StickerPicker api={library()} onPick={() => {}} recents={recents()} />);
+    await screen.findByRole('button', { name: 'Enviar sticker 1' });
+    fireEvent.click(screen.getByRole('button', { name: 'Editar' }));
+    const removeFromKeyboard = async (n: number, left: number) => {
+      const button = screen.getByRole('button', { name: `Quitar sticker ${n}` });
+      button.focus();
+      fireEvent.click(button);
+      await waitFor(() => expect(screen.queryAllByRole('button', { name: /^Quitar sticker/ })).toHaveLength(left));
+    };
+    // gato goes, and perro takes its place and the focus.
+    await removeFromKeyboard(1, 2);
+    await waitFor(() => expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Quitar sticker 1' })));
+    // loro, the last, goes: no sticker follows it.
+    await removeFromKeyboard(2, 1);
+    await waitFor(() => expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Editar' })));
+    // perro, the only one, goes: there is nothing left to edit.
+    await removeFromKeyboard(1, 0);
+    await waitFor(() => expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Agregar stickers' })));
+    expect(screen.getByRole('button', { name: 'Editar' }).getAttribute('aria-pressed')).toBe('false');
+  });
+
   it('is one Tab stop, and the arrows move through the stickers', async () => {
     renderIn(<StickerPicker api={library()} onPick={() => {}} recents={recents()} />);
     const first = await screen.findByRole('button', { name: 'Enviar sticker 1' });

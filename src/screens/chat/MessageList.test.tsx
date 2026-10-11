@@ -164,6 +164,18 @@ describe('MessageList', () => {
       expect(scrollTo).toHaveBeenCalledTimes(1);
     });
 
+    it('gives the focus to the log when "Ir al mensaje más reciente" takes you there and goes away', () => {
+      const { rerender } = list(first);
+      layOut(log(), { scrollHeight: 2000, clientHeight: 400, scrollTop: 100 });
+      fireEvent.scroll(log());
+      rerender([...first, message('c', at(2026, 10, 11, 12))]);
+      const toLatest = screen.getByRole('button', { name: 'Ir al mensaje más reciente' });
+      toLatest.focus();
+      fireEvent.click(toLatest);
+      expect(screen.queryByRole('button', { name: 'Ir al mensaje más reciente' })).toBeNull();
+      expect(document.activeElement).toBe(log());
+    });
+
     it('follows your own new message even when you were reading above', () => {
       const { rerender } = list(first);
       layOut(log(), { scrollHeight: 2000, clientHeight: 400, scrollTop: 100 });

@@ -275,6 +275,9 @@ export function Composer({
 
   const toggle = (which: Picker) => setPicker(open => (open === which ? null : which));
 
+  /** Where the focus of a control that goes with its row lands: the text box. */
+  const focusBox = () => box.current?.focus();
+
   return (
     <div className="flex flex-col gap-1.5 border-t border-ui-line px-4 py-3">
       {problem && (
@@ -283,9 +286,14 @@ export function Composer({
           {problem}
         </p>
       )}
-      {reply && <ReplyBar reply={reply} onCancel={onClearReply} />}
+      {reply && <ReplyBar reply={reply} onCancel={onClearReply} focusBox={focusBox} />}
       {tray.length > 0 && (
-        <FileTray items={tray} busy={sendingFiles} onRemove={id => setTray(items => items.filter(item => item.id !== id))} />
+        <FileTray
+          items={tray}
+          busy={sendingFiles}
+          onRemove={id => setTray(items => items.filter(item => item.id !== id))}
+          focusBox={focusBox}
+        />
       )}
       {sendingFiles && (
         <p role="status" className="text-ui-sm text-ui-muted">

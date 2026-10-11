@@ -12,6 +12,7 @@
  * (Main:200) doubled the height of the log once the received ones had it too.
  */
 import { Timer } from 'lucide-react';
+import { useRef } from 'react';
 import type { FileRef } from '../../lib/api';
 import { clockTime } from '../../lib/dates';
 import { DICTS, useT, type Lang, type TFunction } from '../../lib/i18n';
@@ -109,6 +110,7 @@ function secondsLeft(msg: Msg, now: number): number | undefined {
 export function MessageItem({ msg, now, sender, authorName, actions }: MessageItemProps) {
   const t = useT();
   const { lang } = useLang();
+  const row = useRef<HTMLDivElement>(null);
   const mine = msg.side === 'me';
   const text = msg.text ?? '';
   const left = secondsLeft(msg, now);
@@ -118,7 +120,7 @@ export function MessageItem({ msg, now, sender, authorName, actions }: MessageIt
     msg.reply && !mine && YOU.has(msg.reply.author.trim().toLocaleLowerCase()) ? authorName : msg.reply?.author;
 
   return (
-    <div data-message={msg.key} className="flex flex-col gap-1">
+    <div ref={row} data-message={msg.key} className="flex flex-col gap-1">
       <div className={cx('group/msg flex items-center gap-1', mine ? 'flex-row-reverse' : 'flex-row')}>
         <MessageBubble
           className="contents"
@@ -159,7 +161,16 @@ export function MessageItem({ msg, now, sender, authorName, actions }: MessageIt
         <div className="flex flex-wrap items-center justify-end gap-2 text-ui-md">
           <span className="font-semibold text-ui-danger">{failureText(msg.failure, t, lang)}</span>
           {msg.failure?.kind !== 'too_long' && (
-            <Button onClick={() => actions.onRetry(msg.key)}>{t('common2.retry')}</Button>
+            <Button
+              onClick={event => {
+                // The line goes once the message is on its way again: the focus stays with the message.
+                const focused = event.currentTarget === document.activeElement;
+                actions.onRetry(msg.key);
+                if (focused) row.current?.querySelector<HTMLElement>('[aria-haspopup="menu"]')?.focus();
+              }}
+            >
+              {t('common2.retry')}
+            </Button>
           )}
         </div>
       )}

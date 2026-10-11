@@ -55,5 +55,9 @@ export function useGridFocus(count: number, columns: number) {
     focusCurrent() {
       items.current[current]?.focus();
     },
+    /** Puts the focus on the item at `index`, which takes the Tab stop. */
+    focusAt(index: number) {
+      items.current[index]?.focus();
+    },
   };
 }

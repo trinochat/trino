@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, screen, within } from '@testing-library/react';
+import { useState } from 'react';
 import type { Msg } from '../types';
 import { MessageItem, type MessageActions } from './MessageItem';
 import { BUBBLE_ME_COLOUR, at, classesOf, colourClassesWithin, message, renderIn } from './test-utils';
@@ -147,6 +148,20 @@ describe('MessageItem', () => {
     cleanup();
     show(mine('k3', { state: 'failed' }));
     expect(screen.getByText('No se envió.')).toBeTruthy();
+  });
+
+  it('keeps the focus with the message, on its options, when Reintentar goes away', () => {
+    function Retrying() {
+      const [msg, setMsg] = useState(mine('k2', { state: 'failed', failure: { kind: 'offline' } }));
+      const retry = () => setMsg(current => ({ ...current, state: 'sending', failure: undefined }));
+      return <MessageItem msg={msg} now={NOW} authorName="Ana Torres" actions={actions({ onRetry: retry })} />;
+    }
+    renderIn(<Retrying />);
+    const retry = screen.getByRole('button', { name: 'Reintentar' });
+    retry.focus();
+    fireEvent.click(retry);
+    expect(screen.queryByRole('button', { name: 'Reintentar' })).toBeNull();
+    expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Opciones del mensaje' }));
   });
 
   it('names who a group message did not reach', () => {

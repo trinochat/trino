@@ -4,9 +4,14 @@
  * pictures of up to 5 MB to the library; "Editar" turns each sticker into a
  * button that takes it out. The stickers are one Tab stop, and the arrows
  * move through them. Only safe inline pictures are shown (safe-media.ts).
+ *
+ * A sticker taken out leaves its focus to the one that takes its place,
+ * else to Editar, so the focus stays in the panel and Escape still closes
+ * it. With no sticker left there is nothing to edit: Editar ends, and the
+ * focus goes to Agregar stickers.
  */
 import { CircleAlert, ImageOff, ImagePlus, Trash2 } from 'lucide-react';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import type { StickerInfo } from '../../../lib/api';
 import { useT } from '../../../lib/i18n';
 import { prefs, type Prefs } from '../../../lib/prefs';
@@ -39,7 +44,11 @@ export function StickerPicker({ api, onPick, recents = prefs }: StickerPickerPro
   const [editing, setEditing] = useState(false);
   const [adding, setAdding] = useState(false);
   const [problem, setProblem] = useState<string | null>(null);
+  /** Where a sticker was taken out: whatever is there now takes the focus it held. */
+  const [refocusAt, setRefocusAt] = useState<number | null>(null);
   const fileInput = useRef<HTMLInputElement>(null);
+  const addButton = useRef<HTMLButtonElement>(null);
+  const editButton = useRef<HTMLButtonElement>(null);
 
   const load = useCallback(async () => {
     try {
@@ -64,7 +73,7 @@ export function StickerPicker({ api, onPick, recents = prefs }: StickerPickerPro
     onPick(sticker);
   };
 
-  const remove = async (sticker: StickerInfo) => {
+  const remove = async (sticker: StickerInfo, position: number) => {
     setProblem(null);
     try {
       await api.remove(sticker.id);
@@ -72,7 +81,20 @@ export function StickerPicker({ api, onPick, recents = prefs }: StickerPickerPro
       setProblem(t('sticker2.removeFailed'));
     }
     await load();
+    setRefocusAt(position);
   };
+
+  // Once the list is read again. A focus you already moved elsewhere stays.
+  useLayoutEffect(() => {
+    if (refocusAt === null) return;
+    setRefocusAt(null);
+    const none = stickers?.length === 0;
+    if (none) setEditing(false);
+    const active = document.activeElement;
+    if (active && active !== document.body) return;
+    if (refocusAt < shown.length) grid.focusAt(refocusAt);
+    else (none ? addButton : editButton).current?.focus();
+  }, [refocusAt]);
 
   const add = async (files: readonly File[]) => {
     setAdding(true);
@@ -113,7 +135,7 @@ export function StickerPicker({ api, onPick, recents = prefs }: StickerPickerPro
               type="button"
               {...grid.itemProps(position)}
               aria-label={t(editing ? 'sticker2.remove' : 'sticker2.send', { n: position + 1 })}
-              onClick={() => (editing ? void remove(sticker) : pick(sticker))}
+              onClick={() => (editing ? void remove(sticker, position) : pick(sticker))}
               className={cx(
                 'relative flex aspect-square min-h-11 min-w-0 items-center justify-center rounded-ui p-1 hover:bg-ui-raised',
                 FOCUS_RING,
@@ -172,6 +194,7 @@ export function StickerPicker({ api, onPick, recents = prefs }: StickerPickerPro
       )}
       <div className="flex flex-wrap items-center justify-between gap-2 border-t border-ui-line p-2">
         <Button
+          ref={addButton}
           variant="ghost"
           loading={adding}
           leadingIcon={<ImagePlus {...iconSize('md')} aria-hidden="true" />}
@@ -179,7 +202,13 @@ export function StickerPicker({ api, onPick, recents = prefs }: StickerPickerPro
         >
           {adding ? t('sticker2.adding') : t('sticker2.add')}
         </Button>
-        <Button variant="ghost" aria-pressed={editing} disabled={!stickers?.length} onClick={() => setEditing(on => !on)}>
+        <Button
+          ref={editButton}
+          variant="ghost"
+          aria-pressed={editing}
+          disabled={!stickers?.length}
+          onClick={() => setEditing(on => !on)}
+        >
           {t('sticker2.edit')}
         </Button>
       </div>
