@@ -13,6 +13,8 @@
  * It also applies the DTLS fingerprint rule (docs/sas-v2.md): if the remote
  * fingerprint changes during a call, the call ends, and a "Coinciden" given
  * in it is undone unless the contact was verified before the call.
+ * "No coinciden" undoes such a "Coinciden" the same way, and the call goes
+ * on, no longer verified.
  */
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { CallDirection, CallEventWire, CallLogWire, CallSignalEvent } from '../../lib/api';
@@ -110,7 +112,11 @@ export interface CallControllerDeps {
 /** The SAS v2 of the call in progress: 7 indices into the symbol table. */
 export interface CallSas {
   indices: readonly number[];
-  /** "Coinciden" in this call, or the contact was verified before it. */
+  /**
+   * "Coinciden" in this call, or the contact was verified before it. After
+   * "No coinciden", false until a later "Coinciden": the symbols did not
+   * match, whatever an earlier call verified.
+   */
   verified: boolean;
 }
 
@@ -156,6 +162,12 @@ export interface CallController {
   sas: CallSas | null;
   /** "Coinciden". */
   confirmMatch(): void;
+  /**
+   * "No coinciden": the call is no longer verified, and a "Coinciden" given
+   * in it is undone, its mark included unless the contact was verified
+   * before the call (as the DTLS fingerprint rule does). The call goes on.
+   */
+  reportMismatch(): void;
   /** A problem during the call that did not end it. */
   notice: 'camera' | null;
   ended: CallEndCard | null;
@@ -518,6 +530,14 @@ export function useCallController(deps: CallControllerDeps): CallController {
         setSas({ indices: call.indices, verified: true });
         d().onVerified(call.peer);
       },
+      reportMismatch() {
+        const call = live.call;
+        if (!call || call.finished || call.security || !call.indices) return;
+        const undo = call.matched && !call.verifiedAtStart;
+        call.matched = false;
+        setSas({ indices: call.indices, verified: false });
+        if (undo) d().onVerificationRevoked(call.peer);
+      },
       dismissEnded() {
         showEnded(null);
       },
@@ -638,6 +658,7 @@ export function useCallController(deps: CallControllerDeps): CallController {
     remoteStream,
     sas,
     confirmMatch: actions.confirmMatch,
+    reportMismatch: actions.reportMismatch,
     notice,
     ended,
     dismissEnded: actions.dismissEnded,

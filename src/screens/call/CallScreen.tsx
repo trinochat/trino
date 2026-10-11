@@ -126,7 +126,7 @@ export function CallScreen({ controller: call, outputs, sinkId, onSinkChange }: 
             />
           )}
           {call.sas ? (
-            <SasKey sas={call.sas} peerName={name} onMatch={call.confirmMatch}>
+            <SasKey sas={call.sas} peerName={name} onMatch={call.confirmMatch} onMismatch={call.reportMismatch}>
               {portrait}
             </SasKey>
           ) : (

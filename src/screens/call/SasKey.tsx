@@ -7,8 +7,9 @@
  *   the 7 words in order. A verified call shows "Llamada verificada".
  * - The comparison shows them bigger (28 px, `size="2xl"`). "Coinciden"
  *   closes it and gives the focus back to the key; "No coinciden" asks both
- *   people to update and call again (plan §6, mitigation 1). Escape closes
- *   it too, and keeps that key from the screen around it.
+ *   people to update and call again (plan §6, mitigation 1), and tells the
+ *   call, which undoes a "Coinciden" given in it. The last answer counts.
+ *   Escape closes it too, and keeps that key from the screen around it.
  * - New symbols start over, closed.
  *
  * `children` is what the stage shows while the comparison is closed, such as
@@ -26,7 +27,10 @@ import type { CallSas } from './useCallController';
 export interface SasKeyProps {
   sas: CallSas;
   peerName: string;
+  /** "Coinciden". */
   onMatch(): void;
+  /** "No coinciden": the call is not verified, and a "Coinciden" given in it is undone. */
+  onMismatch(): void;
   children?: ReactNode;
 }
 
@@ -34,7 +38,7 @@ export function SasKey(props: SasKeyProps) {
   return <OneKey key={props.sas.indices.join('.')} {...props} />;
 }
 
-function OneKey({ sas, peerName, onMatch, children }: SasKeyProps) {
+function OneKey({ sas, peerName, onMatch, onMismatch, children }: SasKeyProps) {
   const t = useT();
   const { lang } = useLang();
   const [open, setOpen] = useState(false);
@@ -116,13 +120,21 @@ function OneKey({ sas, peerName, onMatch, children }: SasKeyProps) {
               variant="primary"
               className="flex-[1_1_8.75rem]"
               onClick={() => {
+                setMismatch(false);
                 onMatch();
                 close();
               }}
             >
               {t('call2.sas.match')}
             </Button>
-            <Button variant="danger" className="flex-[1_1_8.75rem]" onClick={() => setMismatch(true)}>
+            <Button
+              variant="danger"
+              className="flex-[1_1_8.75rem]"
+              onClick={() => {
+                setMismatch(true);
+                onMismatch();
+              }}
+            >
               {t('call2.sas.mismatch')}
             </Button>
           </div>

@@ -72,6 +72,7 @@ export function fakeController(over: Partial<CallController> = {}): CallControll
     remoteStream: null,
     sas: null,
     confirmMatch: vi.fn(),
+    reportMismatch: vi.fn(),
     notice: null,
     ended: null,
     dismissEnded: vi.fn(),

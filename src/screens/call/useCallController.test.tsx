@@ -409,6 +409,49 @@ describe('useCallController', () => {
       expect(s.result.current.sas?.verified).toBe(true);
     });
 
+    // A "Coinciden" pressed by mistake: the other side reads out other symbols (review of W6).
+    it('undoes a "Coinciden" of this call on "No coinciden", the mark included', async () => {
+      const s = setup();
+      const id = newId();
+      await withSymbols(s, id);
+      act(() => s.result.current.confirmMatch());
+      act(() => s.result.current.reportMismatch());
+      expect(s.deps.onVerificationRevoked.mock.calls).toEqual([[PEER]]);
+      expect(s.result.current.sas?.verified).toBe(false);
+      // The call goes on; a new fingerprint later on has no match of this call left to undo.
+      expect(s.engine.hangup).not.toHaveBeenCalled();
+      act(() => s.cb().onSasInputs!({ callId: id, localDtls: LOCAL, remoteDtls: OTHER }));
+      expect(s.deps.onVerificationRevoked).toHaveBeenCalledTimes(1);
+    });
+
+    it('keeps the mark of a contact verified before the call on "No coinciden", but no longer calls the call verified', async () => {
+      const s = setup({}, { verified: true });
+      await withSymbols(s, newId());
+      expect(s.result.current.sas?.verified).toBe(true);
+      act(() => s.result.current.confirmMatch());
+      act(() => s.result.current.reportMismatch());
+      expect(s.deps.onVerificationRevoked).not.toHaveBeenCalled();
+      expect(s.result.current.sas?.verified).toBe(false);
+    });
+
+    it('revokes nothing on "No coinciden" without a "Coinciden" before it', async () => {
+      const s = setup();
+      await withSymbols(s, newId());
+      act(() => s.result.current.reportMismatch());
+      act(() => s.result.current.reportMismatch());
+      expect(s.deps.onVerificationRevoked).not.toHaveBeenCalled();
+      expect(s.result.current.sas?.verified).toBe(false);
+    });
+
+    it('verifies again on a "Coinciden" after "No coinciden"', async () => {
+      const s = setup();
+      await withSymbols(s, newId());
+      act(() => s.result.current.reportMismatch());
+      act(() => s.result.current.confirmMatch());
+      expect(s.deps.onVerified.mock.calls).toEqual([[PEER]]);
+      expect(s.result.current.sas?.verified).toBe(true);
+    });
+
     it('shows a contact verified before the call as verified', async () => {
       const s = setup({}, { verified: true });
       const id = newId();

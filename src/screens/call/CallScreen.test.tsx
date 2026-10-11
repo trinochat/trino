@@ -97,6 +97,14 @@ describe('CallScreen', () => {
     expect(clipping).toEqual([]);
   });
 
+  it('tells the controller when the symbols do not match', () => {
+    const { controller } = show({ sas: { indices: INDICES, verified: false } });
+    fireEvent.click(screen.getByRole('button', { name: /^Símbolos de la llamada/ }));
+    fireEvent.click(screen.getByRole('button', { name: 'No coinciden' }));
+    expect(controller.reportMismatch).toHaveBeenCalledTimes(1);
+    expect(controller.confirmMatch).not.toHaveBeenCalled();
+  });
+
   it('mutes and switches the camera with toggles whose icon shows the state', () => {
     const { controller, unmount } = show();
     const mute = screen.getByRole('button', { name: 'Silenciar micrófono' });

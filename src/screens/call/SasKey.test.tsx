@@ -11,15 +11,15 @@ afterEach(cleanup);
 const INDICES = [0, 44, 12, 43, 27, 37, 42];
 const WORDS = sasWords(INDICES, 'es');
 
-function show(sas: CallSas = { indices: INDICES, verified: false }, onMatch = vi.fn()) {
+function show(sas: CallSas = { indices: INDICES, verified: false }, onMatch = vi.fn(), onMismatch = vi.fn()) {
   const view = renderIn(
     <div data-testid="stage" onKeyDown={event => (event.target as HTMLElement).setAttribute('data-escaped', event.key)}>
-      <SasKey sas={sas} peerName="Ana Torres" onMatch={onMatch}>
+      <SasKey sas={sas} peerName="Ana Torres" onMatch={onMatch} onMismatch={onMismatch}>
         <span>Avatar</span>
       </SasKey>
     </div>,
   );
-  return { ...view, onMatch };
+  return { ...view, onMatch, onMismatch };
 }
 
 const pill = () => screen.getByRole('button', { name: /^(Símbolos de la llamada|Llamada verificada)/ });
@@ -72,6 +72,19 @@ describe('SasKey', () => {
     expect(onMatch).not.toHaveBeenCalled();
   });
 
+  // "Coinciden" pressed by mistake is undone by "No coinciden" (review of W6): the call has to hear it.
+  it('tells the call when the symbols do not match, and takes the alert away on a later match', () => {
+    const { onMatch, onMismatch } = show();
+    fireEvent.click(pill());
+    fireEvent.click(screen.getByRole('button', { name: 'No coinciden' }));
+    expect(onMismatch).toHaveBeenCalledTimes(1);
+    fireEvent.click(screen.getByRole('button', { name: 'Coinciden' }));
+    expect(onMatch).toHaveBeenCalledTimes(1);
+    fireEvent.click(pill());
+    expect(screen.queryByRole('alert')).toBeNull();
+    expect(screen.getByRole('group').textContent).toContain('nadie está escuchando en medio');
+  });
+
   it('closes with Escape, keeping the key for itself and the focus on the key', () => {
     show();
     fireEvent.click(pill());
@@ -101,7 +114,7 @@ describe('SasKey', () => {
     fireEvent.click(screen.getByRole('button', { name: 'No coinciden' }));
     rerender(
       <div>
-        <SasKey sas={{ indices: [1, 2, 3, 4, 5, 6, 7], verified: false }} peerName="Ana Torres" onMatch={onMatch} />
+        <SasKey sas={{ indices: [1, 2, 3, 4, 5, 6, 7], verified: false }} peerName="Ana Torres" onMatch={onMatch} onMismatch={() => {}} />
       </div>,
     );
     expect(pill().getAttribute('aria-expanded')).toBe('false');
