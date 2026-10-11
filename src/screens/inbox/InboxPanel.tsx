@@ -1,0 +1,184 @@
+/**
+ * The sidebar of the shell (Main:68-121, PropLlamadas:41-103): the wordmark
+ * and one button, "Nuevo chat" in Chats or "Nueva llamada" in Calls (it
+ * replaces the old "+" menu); the connection chip, only with real data; a
+ * notice of invitations or of a stranger; the tabs "Chats | Llamadas · N";
+ * and your profile at the foot. Chats has the search, the chips and the
+ * chats; Calls has its chips, the log and its note. Without the call log
+ * (K13) there are no tabs, only the chats. Each list scrolls on its own.
+ */
+import { PhoneOutgoing, Plus, Search } from 'lucide-react';
+import { useId, type Ref } from 'react';
+import { useT, type TFunction } from '../../lib/i18n';
+import { Banner, Button, ConnectionChip, IconButton, Input, iconSize } from '../../ui';
+import type { Connection, ConvoRef, InboxFilter, InboxItem } from '../types';
+import type { CallFilter } from './call-history-model';
+import { CallHistoryList } from './CallHistoryList';
+import type { CallRowView } from './CallRow';
+import { FilterChips } from './FilterChips';
+import { filterItems } from './inbox-model';
+import { InboxList } from './InboxList';
+import { InboxTabs, type InboxTab } from './InboxTabs';
+import { ProfileFooter } from './ProfileFooter';
+
+export interface InboxPanelProps {
+  /** "Trino" in Calma, "trino" in Terminal: the wordmark is part of the theme. */
+  wordmark: string;
+  /** Every chat; the panel applies the chip and the search. */
+  items: readonly InboxItem[];
+  selectedKey: string | null;
+  onSelect(ref: ConvoRef): void;
+  filter: InboxFilter;
+  onFilterChange(filter: InboxFilter): void;
+  search: string;
+  onSearchChange(query: string): void;
+  searchRef?: Ref<HTMLInputElement>;
+  /** Null hides the chip. */
+  connection: Connection | null;
+  me: { handle: string; avatarSrc?: string };
+  onNewChat(): void;
+  onNewCall(): void;
+  tab: InboxTab;
+  onTabChange(tab: InboxTab): void;
+  /** The call log, the newest first; null without it (K13): no tabs, only the chats. */
+  calls: readonly CallRowView[] | null;
+  callFilter: CallFilter;
+  onCallFilterChange(filter: CallFilter): void;
+  /** The missed calls not seen yet: the N of "Llamadas · N". */
+  missedUnseen: number;
+  /** The call whose chat was opened from the log. */
+  selectedCallKey: string | null;
+  /** "Llamar a {name}" in the log: a voice call. */
+  onCallBack(handle: string): void;
+  onOpenCallChat(handle: string): void;
+  onShareCode(): void;
+  onOpenSettings(): void;
+  /** No contact and no group yet: the chats offer to add someone. */
+  hasContacts: boolean;
+  onAddContact(): void;
+  /** A notice above the tabs, such as pending invitations, with "Ver". */
+  notice?: { text: string; onAction(): void } | null;
+  /** Epoch seconds. */
+  now: number;
+}
+
+/** The chips of the inbox, in order; "Solicitudes" joins them with message requests (R6b). */
+const FILTERS: readonly InboxFilter[] = ['all', 'unread', 'groups'];
+const FILTER_LABELS: Readonly<Record<InboxFilter, string>> = {
+  all: 'inbox.filter.all',
+  unread: 'inbox.filter.unread',
+  groups: 'inbox.filter.groups',
+};
+
+function connectionLabel(connection: Connection, t: TFunction): string {
+  if (connection.status === 'connected') {
+    return t('inbox.connection.connected', { up: connection.up, total: connection.total });
+  }
+  return t(connection.status === 'connecting' ? 'inbox.connection.connecting' : 'inbox.connection.offline');
+}
+
+export function InboxPanel(props: InboxPanelProps) {
+  const t = useT();
+  const searchId = useId();
+  const { connection, calls, tab, notice } = props;
+  const onCalls = calls !== null && tab === 'calls';
+
+  const visible = filterItems(props.items, props.filter, props.search);
+  const chats = (
+    <>
+      <div className="relative flex items-center">
+        <label htmlFor={searchId} className="sr-only">
+          {t('inbox.search.label')}
+        </label>
+        <Search
+          {...iconSize('md', 'pointer-events-none absolute start-3 top-1/2 -translate-y-1/2 text-ui-muted')}
+          aria-hidden="true"
+        />
+        <Input
+          ref={props.searchRef}
+          id={searchId}
+          type="search"
+          placeholder={t('inbox.search.placeholder')}
+          value={props.search}
+          onChange={event => props.onSearchChange(event.target.value)}
+          className="ps-9"
+        />
+      </div>
+      <FilterChips
+        aria-label={t('inbox.filter.label')}
+        chips={FILTERS.map(value => ({ value, label: t(FILTER_LABELS[value]) }))}
+        value={props.filter}
+        onValueChange={props.onFilterChange}
+      />
+      <InboxList
+        aria-label={t('inbox.tabs.chats')}
+        items={visible}
+        selectedKey={props.selectedKey}
+        onSelect={props.onSelect}
+        now={props.now}
+        emptyText={props.search.trim() ? t('inbox.noMatch', { q: props.search.trim() }) : t('inbox.empty')}
+      />
+      {!props.hasContacts && (
+        <div className="flex flex-col items-start gap-2 px-1">
+          <p className="m-0 text-ui-md text-ui-muted">{t('inbox.firstContact')}</p>
+          <Button onClick={props.onAddContact}>{t('inbox.addWithCode')}</Button>
+        </div>
+      )}
+    </>
+  );
+
+  return (
+    <div className="flex h-full min-h-0 flex-col gap-3 bg-ui-side px-3 py-4 text-ui-ink">
+      <div className="flex items-center justify-between gap-2 px-1">
+        <span className="font-ui-display text-ui-title font-bold">{props.wordmark}</span>
+        {onCalls ? (
+          <IconButton
+            variant="secondary"
+            aria-label={t('inbox.newCall')}
+            icon={<PhoneOutgoing {...iconSize('lg')} />}
+            onClick={props.onNewCall}
+          />
+        ) : (
+          <IconButton variant="secondary" aria-label={t('inbox.newChat')} icon={<Plus {...iconSize('lg')} />} onClick={props.onNewChat} />
+        )}
+      </div>
+      {connection && (
+        <ConnectionChip status={connection.status} label={connectionLabel(connection, t)} className="mx-1 self-start" />
+      )}
+      {notice && (
+        <Banner
+          tone="info"
+          action={
+            <Button variant="ghost" onClick={notice.onAction}>
+              {t('inbox.notice.view')}
+            </Button>
+          }
+        >
+          {notice.text}
+        </Banner>
+      )}
+      {calls === null ? (
+        <div className="flex min-h-0 flex-1 flex-col gap-3">{chats}</div>
+      ) : (
+        <InboxTabs
+          tab={tab}
+          onTabChange={props.onTabChange}
+          missedUnseen={props.missedUnseen}
+          chats={chats}
+          calls={
+            <CallHistoryList
+              rows={calls}
+              filter={props.callFilter}
+              onFilterChange={props.onCallFilterChange}
+              selectedKey={props.selectedCallKey}
+              onCall={props.onCallBack}
+              onOpenChat={props.onOpenCallChat}
+              now={props.now}
+            />
+          }
+        />
+      )}
+      <ProfileFooter me={props.me} onShareCode={props.onShareCode} onOpenSettings={props.onOpenSettings} />
+    </div>
+  );
+}
