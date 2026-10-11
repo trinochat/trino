@@ -3,12 +3,13 @@
  * Privacidad: each blocked contact with "Desbloquear". Unblocking goes
  * through `onUnblock`, which the section turns into `blockNode(h, false)`.
  */
-import { ArrowLeft, CircleAlert } from 'lucide-react';
+import { ArrowLeft } from 'lucide-react';
 import { useState } from 'react';
 import type { NodeInfo } from '../../lib/api';
 import { useT } from '../../lib/i18n';
 import { identityInitials } from '../../lib/initials';
 import { Avatar, Button, iconSize, IconButton } from '../../ui';
+import { ErrorLine } from './ErrorLine';
 import { SettingsSection } from './SettingsSection';
 
 export interface BlockedContactsViewProps {
@@ -41,12 +42,7 @@ export function BlockedContactsView({ blocked, onUnblock, onBack, autoFocus }: B
       title={t('settings2.privacy.blocked')}
       before={<IconButton aria-label={t('settings2.privacy.back')} icon={<ArrowLeft {...iconSize('lg')} />} onClick={onBack} />}
     >
-      {failed ? (
-        <p role="alert" className="m-0 flex items-start gap-1.5 font-ui text-ui-md font-semibold text-ui-danger">
-          <CircleAlert {...iconSize('md', 'mt-0.5 shrink-0')} aria-hidden="true" />
-          <span>{t('settings2.privacy.errUnblock', { name: failed })}</span>
-        </p>
-      ) : null}
+      {failed ? <ErrorLine>{t('settings2.privacy.errUnblock', { name: failed })}</ErrorLine> : null}
       {blocked.length === 0 ? (
         <p className="m-0 text-ui-base text-ui-muted">{t('settings2.privacy.blockedEmpty')}</p>
       ) : (

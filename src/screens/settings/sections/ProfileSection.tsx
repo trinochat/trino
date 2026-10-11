@@ -13,12 +13,13 @@
  * nothing is saved until "Guardar". "Cómo te encuentran" lists the ways
  * people find you; this batch has only your QR code.
  */
-import { Camera, CircleAlert, QrCode } from 'lucide-react';
+import { Camera, QrCode } from 'lucide-react';
 import { useEffect, useId, useMemo, useRef, useState } from 'react';
 import { isCommandError, type ProfileResponse } from '../../../lib/api';
 import { useT } from '../../../lib/i18n';
 import { identityInitials } from '../../../lib/initials';
 import { Avatar, Button, cx, Field, FOCUS_RING, iconSize, Input, Textarea } from '../../../ui';
+import { ErrorLine } from '../ErrorLine';
 import { capScalars, countScalars } from '../scalars';
 import { SettingsRows, type SettingsRowItem } from '../SettingsRows';
 import { SettingsSection } from '../SettingsSection';
@@ -215,12 +216,7 @@ export function ProfileSection({ api, profile, profileSync, makeAvatar, onOpenQr
 
       <SettingsRows label={t('settings2.profile.findYou')} items={findYou} />
 
-      {error ? (
-        <p role="alert" className="m-0 flex items-start gap-1.5 font-ui text-ui-md font-semibold text-ui-danger">
-          <CircleAlert {...iconSize('md', 'mt-0.5 shrink-0')} aria-hidden="true" />
-          <span>{t(ERROR_KEYS[error])}</span>
-        </p>
-      ) : null}
+      {error ? <ErrorLine>{t(ERROR_KEYS[error])}</ErrorLine> : null}
 
       <div className="flex flex-wrap items-center gap-3">
         <Button variant="primary" loading={busy} onClick={() => void save()}>

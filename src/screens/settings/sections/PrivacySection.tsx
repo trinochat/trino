@@ -11,12 +11,11 @@
  * (the parent's addendum). The rows come from an array, so the invitations
  * unit adds "Que me encuentren por @nombre" and its links there (§8).
  */
-import { CircleAlert } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { NodeInfo } from '../../../lib/api';
 import { useT } from '../../../lib/i18n';
-import { iconSize } from '../../../ui';
 import { BlockedContactsView } from '../BlockedContactsView';
+import { ErrorLine } from '../ErrorLine';
 import { SettingsRows, type SettingsRowItem } from '../SettingsRows';
 import { SettingsSection } from '../SettingsSection';
 import type { SettingsApi } from '../types';
@@ -85,12 +84,7 @@ export function PrivacySection({ api, onContactsChanged, autoFocus }: PrivacySec
 
   return (
     <SettingsSection title={t('settings2.privacy.title')} autoFocus={autoFocus || moved}>
-      {loadFailed ? (
-        <p role="alert" className="m-0 flex items-start gap-1.5 font-ui text-ui-md font-semibold text-ui-danger">
-          <CircleAlert {...iconSize('md', 'mt-0.5 shrink-0')} aria-hidden="true" />
-          <span>{t('settings2.privacy.errLoad')}</span>
-        </p>
-      ) : null}
+      {loadFailed ? <ErrorLine>{t('settings2.privacy.errLoad')}</ErrorLine> : null}
       <SettingsRows label={t('settings2.privacy.title')} items={rows} />
       <p className="m-0 text-ui-md leading-normal text-ui-muted">{t('settings2.privacy.callsLine')}</p>
     </SettingsSection>

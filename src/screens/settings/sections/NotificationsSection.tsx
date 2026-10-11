@@ -9,11 +9,11 @@
  * The preview has no avatar: the picture of a Windows notification is not
  * verified, so a real one never shows it (notification-content.ts).
  */
-import { CircleAlert } from 'lucide-react';
 import { useEffect, useId, useState } from 'react';
 import { useT } from '../../../lib/i18n';
 import { NOTIF_PREVIEWS, RINGTONES, type NotifPreview, type Prefs, type Ringtone } from '../../../lib/prefs';
-import { Button, cx, iconSize, RadioCardGroup, Select, Switch } from '../../../ui';
+import { Button, cx, RadioCardGroup, Select, Switch } from '../../../ui';
+import { ErrorLine } from '../ErrorLine';
 import { notificationContent } from '../notification-content';
 import { SettingsSection } from '../SettingsSection';
 import type { SettingsApi, SettingsPlatform } from '../types';
@@ -209,12 +209,7 @@ export function NotificationsSection({ api, prefs, platform, autoFocus }: Notifi
           />
         ) : null}
       </div>
-      {autostartFailed ? (
-        <p role="alert" className="m-0 flex items-start gap-1.5 font-ui text-ui-md font-semibold text-ui-danger">
-          <CircleAlert {...iconSize('md', 'mt-0.5 shrink-0')} aria-hidden="true" />
-          <span>{t('settings2.notif.errAutostart')}</span>
-        </p>
-      ) : null}
+      {autostartFailed ? <ErrorLine>{t('settings2.notif.errAutostart')}</ErrorLine> : null}
     </SettingsSection>
   );
 }
