@@ -1,13 +1,17 @@
 use crate::crypto::sha256;
+use futures_util::future::BoxFuture;
 use futures_util::{SinkExt, StreamExt};
 use secp256k1::{schnorr::Signature, Keypair, Message as SecpMessage, Secp256k1, XOnlyPublicKey};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::{HashMap, HashSet};
-use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex as StdMutex};
+use std::time::Duration;
 use thiserror::Error;
-use tokio::sync::{mpsc, oneshot, RwLock};
-use tokio_tungstenite::{connect_async, tungstenite::Message};
+use tokio::net::TcpStream;
+use tokio::sync::{mpsc, oneshot, watch, RwLock};
+use tokio_tungstenite::{connect_async, tungstenite::Message, MaybeTlsStream, WebSocketStream};
 
 pub const TRINO_KIND: u32 = 4848;
 
@@ -250,10 +254,90 @@ fn unix_now() -> i64 {
     chrono::Utc::now().timestamp()
 }
 
+/// A relay's WebSocket.
+pub type WsStream = WebSocketStream<MaybeTlsStream<TcpStream>>;
+
+/// Opens the WebSocket of a relay. Production uses `websocket_connector`;
+/// tests inject one that fails.
+pub type Connector =
+    Arc<dyn Fn(String) -> BoxFuture<'static, Result<WsStream, String>> + Send + Sync>;
+
+/// Told `true` when a client's socket comes up and `false` when it goes down.
+pub type StateHandler = Arc<dyn Fn(bool) + Send + Sync>;
+
+/// The pauses between attempts to connect: `first`, then twice as long each
+/// time, up to `max`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Backoff {
+    pub first: Duration,
+    pub max: Duration,
+}
+
+impl Backoff {
+    /// The pause after one of `previous`.
+    pub fn after(self, previous: Duration) -> Duration {
+        (previous * 2).min(self.max)
+    }
+}
+
+/// A messaging client's first connection (K3). A relay that is down at
+/// unlock used to be given up for the whole session.
+pub const FIRST_CONNECTION: Backoff = Backoff {
+    first: Duration::from_secs(2),
+    max: Duration::from_secs(60),
+};
+
+/// A connection that dropped, as before K3.
+pub const RECONNECTION: Backoff = Backoff {
+    first: Duration::from_secs(1),
+    max: Duration::from_secs(30),
+};
+
+/// How a client connects, and whom it tells.
+#[derive(Clone)]
+pub struct ClientOptions {
+    pub connector: Connector,
+    pub first_connection: Backoff,
+    pub reconnection: Backoff,
+    pub on_state: Option<StateHandler>,
+}
+
+impl ClientOptions {
+    /// The real WebSocket and the pauses above.
+    pub fn new(on_state: Option<StateHandler>) -> Self {
+        ClientOptions {
+            connector: websocket_connector(),
+            first_connection: FIRST_CONNECTION,
+            reconnection: RECONNECTION,
+            on_state,
+        }
+    }
+}
+
+/// `connect_async`, as a `Connector`.
+pub fn websocket_connector() -> Connector {
+    Arc::new(|url: String| {
+        Box::pin(async move {
+            connect_async(url.as_str())
+                .await
+                .map(|(ws, _)| ws)
+                .map_err(|e| e.to_string())
+        })
+    })
+}
+
+/// Events waiting for this relay's OK (NIP-01), by event id.
+type PendingOks = Arc<StdMutex<HashMap<String, OkCallback>>>;
+
 pub struct NostrClient {
     url: String,
     sender: mpsc::UnboundedSender<ClientCommand>,
     sub_counter: Arc<RwLock<u64>>,
+    /// Whether the socket is up right now. Only the connection task sets it.
+    connected: Arc<AtomicBool>,
+    /// Set by `close`: it stops a client that is waiting to connect, which
+    /// reads no commands until it has a socket.
+    closed: watch::Sender<bool>,
 }
 
 enum ClientCommand {
@@ -263,116 +347,58 @@ enum ClientCommand {
 }
 
 impl NostrClient {
+    /// A client whose first connection must succeed, so the caller learns
+    /// the relay is up: the network inspector's. A drop later is retried.
     pub async fn connect(url: &str, on_event: EventHandler) -> Result<Arc<Self>, NostrError> {
-        let (sender, receiver) = mpsc::unbounded_channel::<ClientCommand>();
-        let pending_ok: Arc<RwLock<HashMap<String, OkCallback>>> =
-            Arc::new(RwLock::new(HashMap::new()));
-
-        // The first connection must succeed so the caller learns the relay is up.
         let (ws, _) = connect_async(url)
             .await
             .map_err(|e| NostrError::Connect(e.to_string()))?;
+        Ok(Self::spawn(
+            url,
+            on_event,
+            Some(ws),
+            ClientOptions::new(None),
+        ))
+    }
 
-        let on_event_clone = on_event.clone();
-        let pending_clone = pending_ok.clone();
-        let url_log = url.to_string();
-        // A single task owns the connection: it drives read + write + keepalive
-        // via select!, and RECONNECTS with backoff when the socket drops (mobile
-        // networks kill idle sockets when the screen turns off). Subscriptions
-        // are re-sent on every (re)connection so we keep receiving, catch-up
-        // ones with a `since` recomputed for that moment (see SubscriptionBook);
-        // outgoing commands queue in the channel during a reconnect and flush
-        // once we're back.
-        tokio::spawn(async move {
-            let mut receiver = receiver;
-            let mut next_ws = Some(ws);
-            let mut backoff = 1u64;
-            let mut book = SubscriptionBook::default();
-            'session: loop {
-                let ws = match next_ws.take() {
-                    Some(w) => w,
-                    None => loop {
-                        tokio::time::sleep(std::time::Duration::from_secs(backoff)).await;
-                        match connect_async(&url_log).await {
-                            Ok((w, _)) => {
-                                dlog("WS reconnected");
-                                backoff = 1;
-                                break w;
-                            }
-                            Err(_) => {
-                                crate::diag::note_with(
-                                    "WS reconnect failed",
-                                    &[("retry_s", &backoff)],
-                                );
-                                backoff = (backoff * 2).min(30);
-                            }
-                        }
-                    },
-                };
-                let (mut write, mut read) = ws.split();
-                // Re-send the subscriptions so the fresh socket delivers events.
-                for req in book.on_connected(unix_now()) {
-                    let _ = write.send(Message::Text(req)).await;
-                }
-                let mut ping = tokio::time::interval(std::time::Duration::from_secs(25));
-                ping.tick().await; // discard the immediate first tick
-                loop {
-                    tokio::select! {
-                        incoming = read.next() => match incoming {
-                            Some(Ok(Message::Text(text))) => {
-                                book.on_frame(Some(&text), unix_now());
-                                let _ = handle_relay_message(&text, &on_event_clone, &pending_clone).await;
-                            }
-                            Some(Ok(Message::Ping(payload))) => {
-                                book.on_frame(None, unix_now());
-                                let _ = write.send(Message::Pong(payload)).await;
-                            }
-                            Some(Ok(Message::Close(_))) | None => {
-                                dlog("WS dropped, reconnecting");
-                                break;
-                            }
-                            // Pong / Binary / Frame: nothing to do, but the
-                            // relay is evidently still there.
-                            Some(Ok(_)) => book.on_frame(None, unix_now()),
-                            Some(Err(_)) => {
-                                dlog("WS read error, reconnecting");
-                                break;
-                            }
-                        },
-                        cmd = receiver.recv() => match cmd {
-                            Some(ClientCommand::Send(text)) => {
-                                if write.send(Message::Text(text)).await.is_err() {
-                                    break; // socket dead → reconnect
-                                }
-                            }
-                            Some(ClientCommand::Subscribe(sub)) => {
-                                // Kept in the book even if this send fails, so
-                                // the reconnect re-sends it.
-                                let req = book.add(sub, unix_now());
-                                if write.send(Message::Text(req)).await.is_err() {
-                                    break; // socket dead → reconnect
-                                }
-                            }
-                            Some(ClientCommand::Close) | None => {
-                                let _ = write.close().await;
-                                break 'session; // shut down for good
-                            }
-                        },
-                        _ = ping.tick() => {
-                            if write.send(Message::Ping(Vec::new())).await.is_err() {
-                                break; // socket dead → reconnect
-                            }
-                        }
-                    }
-                }
-            }
-        });
+    /// A messaging client (K3). It never fails: it keeps trying to connect,
+    /// the first time as well, until it is closed, and what is published or
+    /// subscribed meanwhile goes out once it is up. `options.on_state` hears
+    /// the socket come and go.
+    pub fn start(url: &str, on_event: EventHandler, options: ClientOptions) -> Arc<Self> {
+        Self::spawn(url, on_event, None, options)
+    }
 
-        Ok(Arc::new(NostrClient {
+    fn spawn(
+        url: &str,
+        on_event: EventHandler,
+        first: Option<WsStream>,
+        options: ClientOptions,
+    ) -> Arc<Self> {
+        let (sender, receiver) = mpsc::unbounded_channel::<ClientCommand>();
+        let (closed, closed_rx) = watch::channel(false);
+        let connected = Arc::new(AtomicBool::new(false));
+        let pending_ok = PendingOks::default();
+        let connection = Connection {
+            url: url.to_string(),
+            on_event,
+            pending_ok,
+            connected: Arc::clone(&connected),
+            options,
+        };
+        tokio::spawn(connection.run(first, receiver, closed_rx));
+        Arc::new(NostrClient {
             url: url.to_string(),
             sender,
             sub_counter: Arc::new(RwLock::new(0)),
-        }))
+            connected,
+            closed,
+        })
+    }
+
+    /// Whether the socket is up right now (K3).
+    pub fn is_connected(&self) -> bool {
+        self.connected.load(Ordering::SeqCst)
     }
 
     pub fn url(&self) -> &str {
@@ -425,9 +451,178 @@ impl NostrClient {
         Ok(sub_id)
     }
 
+    /// Shut the client down for good. A client waiting to connect stops at
+    /// once (it reads no commands until it has a socket); a connected one
+    /// first sends what is queued before the close.
     pub fn close(&self) {
+        let _ = self.closed.send(true);
         let _ = self.sender.send(ClientCommand::Close);
     }
+}
+
+/// What a client's connection task works with.
+struct Connection {
+    url: String,
+    on_event: EventHandler,
+    pending_ok: PendingOks,
+    connected: Arc<AtomicBool>,
+    options: ClientOptions,
+}
+
+impl Connection {
+    /// A single task owns the connection: it drives read + write + keepalive
+    /// via select!, and RECONNECTS with backoff when the socket drops (mobile
+    /// networks kill idle sockets when the screen turns off). A messaging
+    /// client retries its first connection as well (K3). Subscriptions are
+    /// re-sent on every (re)connection so we keep receiving, catch-up ones
+    /// with a `since` recomputed for that moment (see SubscriptionBook);
+    /// outgoing commands queue in the channel while there is no socket and
+    /// flush once we're back.
+    async fn run(
+        self,
+        first: Option<WsStream>,
+        mut receiver: mpsc::UnboundedReceiver<ClientCommand>,
+        mut closed: watch::Receiver<bool>,
+    ) {
+        let mut book = SubscriptionBook::default();
+        let mut next = first;
+        // The first connection is tried at once; after a drop, a pause first.
+        let (mut backoff, mut at_once) = (self.options.first_connection, true);
+        loop {
+            let ws = match next.take() {
+                Some(ws) => ws,
+                None => match self
+                    .connect_with_retries(backoff, at_once, &mut closed)
+                    .await
+                {
+                    Some(ws) => ws,
+                    None => break, // closed while waiting
+                },
+            };
+            (backoff, at_once) = (self.options.reconnection, false);
+            self.set_connected(true);
+            let closing = self.serve(ws, &mut book, &mut receiver).await;
+            self.set_connected(false);
+            if closing {
+                break;
+            }
+        }
+    }
+
+    /// Keep `connected` and tell `on_state`, on changes only.
+    fn set_connected(&self, up: bool) {
+        if self.connected.swap(up, Ordering::SeqCst) != up {
+            if let Some(on_state) = &self.options.on_state {
+                on_state(up);
+            }
+        }
+    }
+
+    /// Connect, pausing between attempts as `backoff` says, until it works;
+    /// `None` once the client is closed.
+    async fn connect_with_retries(
+        &self,
+        backoff: Backoff,
+        at_once: bool,
+        closed: &mut watch::Receiver<bool>,
+    ) -> Option<WsStream> {
+        let mut pause = backoff.first;
+        let mut wait = !at_once;
+        loop {
+            if wait {
+                tokio::select! {
+                    () = tokio::time::sleep(pause) => {}
+                    () = until_closed(closed) => return None,
+                }
+                pause = backoff.after(pause);
+            }
+            wait = true;
+            let attempt = tokio::select! {
+                attempt = (self.options.connector)(self.url.clone()) => attempt,
+                () = until_closed(closed) => return None,
+            };
+            match attempt {
+                Ok(ws) => {
+                    dlog("WS connected");
+                    return Some(ws);
+                }
+                Err(_) => {
+                    crate::diag::note_with("WS connection failed", &[("retry_s", &pause.as_secs())])
+                }
+            }
+        }
+    }
+
+    /// Serve one socket until it drops (`false`) or the client is closed
+    /// (`true`).
+    async fn serve(
+        &self,
+        ws: WsStream,
+        book: &mut SubscriptionBook,
+        receiver: &mut mpsc::UnboundedReceiver<ClientCommand>,
+    ) -> bool {
+        let (mut write, mut read) = ws.split();
+        // Re-send the subscriptions so the fresh socket delivers events.
+        for req in book.on_connected(unix_now()) {
+            let _ = write.send(Message::Text(req)).await;
+        }
+        let mut ping = tokio::time::interval(Duration::from_secs(25));
+        ping.tick().await; // discard the immediate first tick
+        loop {
+            tokio::select! {
+                incoming = read.next() => match incoming {
+                    Some(Ok(Message::Text(text))) => {
+                        book.on_frame(Some(&text), unix_now());
+                        handle_relay_message(&text, &self.on_event, &self.pending_ok);
+                    }
+                    Some(Ok(Message::Ping(payload))) => {
+                        book.on_frame(None, unix_now());
+                        let _ = write.send(Message::Pong(payload)).await;
+                    }
+                    Some(Ok(Message::Close(_))) | None => {
+                        dlog("WS dropped, reconnecting");
+                        return false;
+                    }
+                    // Pong / Binary / Frame: nothing to do, but the relay is
+                    // evidently still there.
+                    Some(Ok(_)) => book.on_frame(None, unix_now()),
+                    Some(Err(_)) => {
+                        dlog("WS read error, reconnecting");
+                        return false;
+                    }
+                },
+                cmd = receiver.recv() => match cmd {
+                    Some(ClientCommand::Send(text)) => {
+                        if write.send(Message::Text(text)).await.is_err() {
+                            return false; // socket dead → reconnect
+                        }
+                    }
+                    Some(ClientCommand::Subscribe(sub)) => {
+                        // Kept in the book even if this send fails, so the
+                        // reconnect re-sends it.
+                        let req = book.add(sub, unix_now());
+                        if write.send(Message::Text(req)).await.is_err() {
+                            return false; // socket dead → reconnect
+                        }
+                    }
+                    Some(ClientCommand::Close) | None => {
+                        let _ = write.close().await;
+                        return true; // shut down for good
+                    }
+                },
+                _ = ping.tick() => {
+                    if write.send(Message::Ping(Vec::new())).await.is_err() {
+                        return false; // socket dead → reconnect
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// Resolves once the client is closed, or dropped.
+async fn until_closed(closed: &mut watch::Receiver<bool>) {
+    let _ = closed.wait_for(|closed| *closed).await;
 }
 
 /// A line for the diagnostic log: fixed text only, and only debug builds
@@ -449,20 +644,16 @@ fn relay_message_note(msg_type: &str) -> &'static str {
     }
 }
 
-async fn handle_relay_message(
-    text: &str,
-    on_event: &EventHandler,
-    _pending: &Arc<RwLock<HashMap<String, OkCallback>>>,
-) -> Result<(), NostrError> {
+fn handle_relay_message(text: &str, on_event: &EventHandler, _pending: &PendingOks) {
     let Ok(msg) = serde_json::from_str::<Vec<Value>>(text) else {
         dlog("WS recv: a message that is not an array");
-        return Ok(());
+        return;
     };
     if msg.is_empty() {
-        return Ok(());
+        return;
     }
     let Some(msg_type) = msg[0].as_str() else {
-        return Ok(());
+        return;
     };
 
     if msg_type == "EVENT" && msg.len() >= 3 {
@@ -481,7 +672,163 @@ async fn handle_relay_message(
     } else {
         dlog(relay_message_note(msg_type));
     }
-    Ok(())
+}
+
+/// A relay for tests: NIP-01 over a real WebSocket on 127.0.0.1, enough for
+/// the clients here and the sends in commands.rs.
+#[cfg(test)]
+pub(crate) mod test_relay {
+    use super::*;
+    use std::sync::atomic::AtomicUsize;
+    use std::sync::Mutex as StdMutex;
+    use std::time::Duration;
+    use tokio::net::{TcpListener, TcpStream};
+    use tokio::sync::Notify;
+
+    /// How the relay answers an EVENT.
+    #[derive(Clone, Debug)]
+    pub(crate) enum Answer {
+        /// `["OK", id, true, ""]`.
+        Accept,
+    }
+
+    pub(crate) struct TestRelay {
+        pub(crate) url: String,
+        events: Arc<StdMutex<Vec<NostrEvent>>>,
+        kicks: Arc<Notify>,
+    }
+
+    impl TestRelay {
+        pub(crate) async fn start(answer: Answer) -> Self {
+            let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let url = format!("ws://{}", listener.local_addr().unwrap());
+            let events = Arc::new(StdMutex::new(Vec::new()));
+            let kicks = Arc::new(Notify::new());
+            let (log, kicked) = (Arc::clone(&events), Arc::clone(&kicks));
+            tokio::spawn(async move {
+                while let Ok((tcp, _)) = listener.accept().await {
+                    let (log, kicked) = (Arc::clone(&log), Arc::clone(&kicked));
+                    tokio::spawn(serve(tcp, answer.clone(), log, kicked));
+                }
+            });
+            TestRelay { url, events, kicks }
+        }
+
+        /// The events it received, in order.
+        pub(crate) fn events(&self) -> Vec<NostrEvent> {
+            self.events.lock().unwrap().clone()
+        }
+
+        /// Close every connection it has, as a relay restarting would.
+        pub(crate) fn kick(&self) {
+            self.kicks.notify_waiters();
+        }
+
+        /// A messaging client of this relay, once its socket is up.
+        pub(crate) async fn client(&self) -> Arc<NostrClient> {
+            let client = NostrClient::start(&self.url, Arc::new(|_| {}), quick_options(None));
+            wait_until("the client to connect", || client.is_connected()).await;
+            client
+        }
+    }
+
+    async fn serve(
+        tcp: TcpStream,
+        answer: Answer,
+        events: Arc<StdMutex<Vec<NostrEvent>>>,
+        kicks: Arc<Notify>,
+    ) {
+        let Ok(ws) = tokio_tungstenite::accept_async(tcp).await else {
+            return;
+        };
+        let (mut write, mut read) = ws.split();
+        loop {
+            let message = tokio::select! {
+                message = read.next() => message,
+                () = kicks.notified() => {
+                    let _ = write.close().await;
+                    return;
+                }
+            };
+            let Some(Ok(message)) = message else {
+                return;
+            };
+            let Message::Text(text) = message else {
+                continue;
+            };
+            let Ok(frame) = serde_json::from_str::<Vec<Value>>(&text) else {
+                continue;
+            };
+            let reply = match frame.first().and_then(Value::as_str) {
+                Some("EVENT") => {
+                    let Some(event) = frame
+                        .get(1)
+                        .and_then(|e| serde_json::from_value::<NostrEvent>(e.clone()).ok())
+                    else {
+                        continue;
+                    };
+                    events.lock().unwrap().push(event.clone());
+                    let accepted = match &answer {
+                        Answer::Accept => Some(true),
+                    };
+                    accepted.map(|ok| {
+                        let message = if ok { "" } else { "blocked: test" };
+                        serde_json::json!(["OK", event.id, ok, message])
+                    })
+                }
+                Some("REQ") => frame.get(1).map(|id| serde_json::json!(["EOSE", id])),
+                _ => None,
+            };
+            if let Some(reply) = reply {
+                if write.send(Message::Text(reply.to_string())).await.is_err() {
+                    return;
+                }
+            }
+        }
+    }
+
+    /// Pauses short enough for retries to happen within a test.
+    pub(crate) const QUICK: Backoff = Backoff {
+        first: Duration::from_millis(10),
+        max: Duration::from_millis(40),
+    };
+
+    pub(crate) fn quick_options(on_state: Option<StateHandler>) -> ClientOptions {
+        ClientOptions {
+            connector: websocket_connector(),
+            first_connection: QUICK,
+            reconnection: QUICK,
+            on_state,
+        }
+    }
+
+    /// A connector that never connects, counting its attempts.
+    pub(crate) fn refusing_connector(attempts: Arc<AtomicUsize>) -> Connector {
+        Arc::new(move |_url| {
+            attempts.fetch_add(1, Ordering::SeqCst);
+            Box::pin(async { Err("refused".to_string()) })
+        })
+    }
+
+    /// A client that keeps failing to connect, with its attempts counted.
+    pub(crate) fn unreachable_client(attempts: Arc<AtomicUsize>) -> Arc<NostrClient> {
+        let options = ClientOptions {
+            connector: refusing_connector(attempts),
+            ..quick_options(None)
+        };
+        NostrClient::start("ws://127.0.0.1:9", Arc::new(|_| {}), options)
+    }
+
+    /// Wait until `done`, or fail the test after 5 s.
+    pub(crate) async fn wait_until(what: &str, mut done: impl FnMut() -> bool) {
+        for _ in 0..500 {
+            if done() {
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        panic!("timed out waiting for {what}");
+    }
 }
 
 #[cfg(test)]
@@ -720,5 +1067,155 @@ mod tests {
         .unwrap();
         event.sig = "0".repeat(128);
         assert!(!verify_event(&event));
+    }
+
+    // ---- K3: the first connection is retried, and the state is known ----
+
+    use super::test_relay::{quick_options, unreachable_client, wait_until, Answer, TestRelay};
+    use std::sync::atomic::AtomicUsize;
+    use std::sync::Mutex as StdMutex;
+    use std::time::Duration;
+
+    fn ignore_events() -> EventHandler {
+        Arc::new(|_| {})
+    }
+
+    /// A state handler, and what it heard.
+    fn recorder() -> (StateHandler, Arc<StdMutex<Vec<bool>>>) {
+        let heard = Arc::new(StdMutex::new(Vec::new()));
+        let log = Arc::clone(&heard);
+        let handler: StateHandler = Arc::new(move |up| log.lock().unwrap().push(up));
+        (handler, heard)
+    }
+
+    #[tokio::test]
+    async fn a_first_connection_that_fails_is_tried_again() {
+        let relay = TestRelay::start(Answer::Accept).await;
+        let attempts = Arc::new(AtomicUsize::new(0));
+        let counted = Arc::clone(&attempts);
+        let real = websocket_connector();
+        // Refused once, like a relay that is down at unlock and back later.
+        let connector: Connector = Arc::new(move |url| {
+            if counted.fetch_add(1, Ordering::SeqCst) == 0 {
+                Box::pin(async { Err("refused".to_string()) })
+            } else {
+                real(url)
+            }
+        });
+        let (handler, heard) = recorder();
+        let options = ClientOptions {
+            connector,
+            ..quick_options(Some(handler))
+        };
+
+        let client = NostrClient::start(&relay.url, ignore_events(), options);
+
+        wait_until("the second attempt to connect", || client.is_connected()).await;
+        assert_eq!(attempts.load(Ordering::SeqCst), 2);
+        assert_eq!(*heard.lock().unwrap(), [true]);
+        assert_eq!(client.url(), relay.url);
+        client.close();
+    }
+
+    #[test]
+    fn the_pause_between_first_attempts_doubles_from_2_s_to_60_s() {
+        let mut pause = FIRST_CONNECTION.first;
+        let mut pauses = vec![pause.as_secs()];
+        for _ in 0..6 {
+            pause = FIRST_CONNECTION.after(pause);
+            pauses.push(pause.as_secs());
+        }
+        assert_eq!(pauses, [2, 4, 8, 16, 32, 60, 60]);
+        // A dropped connection keeps the pace it always had.
+        assert_eq!(
+            RECONNECTION,
+            Backoff {
+                first: Duration::from_secs(1),
+                max: Duration::from_secs(30)
+            }
+        );
+    }
+
+    #[tokio::test]
+    async fn closing_a_client_stops_its_attempts() {
+        let attempts = Arc::new(AtomicUsize::new(0));
+        let client = unreachable_client(Arc::clone(&attempts));
+        wait_until("a few attempts", || attempts.load(Ordering::SeqCst) >= 3).await;
+
+        client.close();
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        let after_close = attempts.load(Ordering::SeqCst);
+        tokio::time::sleep(Duration::from_millis(250)).await;
+
+        assert_eq!(
+            attempts.load(Ordering::SeqCst),
+            after_close,
+            "it kept trying after close"
+        );
+        assert!(!client.is_connected());
+    }
+
+    #[tokio::test]
+    async fn the_state_handler_hears_the_socket_come_back_after_a_drop() {
+        let relay = TestRelay::start(Answer::Accept).await;
+        let (handler, heard) = recorder();
+        let client = NostrClient::start(&relay.url, ignore_events(), quick_options(Some(handler)));
+        wait_until("the first connection", || client.is_connected()).await;
+
+        relay.kick();
+
+        wait_until("the drop and the reconnection", || {
+            heard.lock().unwrap().len() >= 3
+        })
+        .await;
+        assert_eq!(heard.lock().unwrap()[..3], [true, false, true]);
+        assert!(client.is_connected());
+
+        client.close();
+        wait_until("the close", || !client.is_connected()).await;
+        wait_until("the handler to hear it", || {
+            heard.lock().unwrap().len() == 4
+        })
+        .await;
+        assert_eq!(*heard.lock().unwrap(), [true, false, true, false]);
+    }
+
+    #[tokio::test]
+    async fn what_is_sent_before_the_first_connection_goes_out_once_it_is_up() {
+        let relay = TestRelay::start(Answer::Accept).await;
+        let attempts = Arc::new(AtomicUsize::new(0));
+        let counted = Arc::clone(&attempts);
+        let real = websocket_connector();
+        let connector: Connector = Arc::new(move |url| {
+            if counted.fetch_add(1, Ordering::SeqCst) < 2 {
+                Box::pin(async { Err("refused".to_string()) })
+            } else {
+                real(url)
+            }
+        });
+        let options = ClientOptions {
+            connector,
+            ..quick_options(None)
+        };
+        let client = NostrClient::start(&relay.url, ignore_events(), options);
+
+        // Asked for while it cannot connect yet: kept, and sent later.
+        client
+            .subscribe(&NostrFilter {
+                kinds: Some(vec![TRINO_KIND]),
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+        let event = {
+            let kp = generate_nostr_keypair();
+            build_and_sign_event(&kp.priv_bytes, &kp.pub_bytes, TRINO_KIND, "x", vec![], None)
+                .unwrap()
+        };
+        client.publish(&event).await.unwrap();
+
+        wait_until("the queued event to arrive", || relay.events().len() == 1).await;
+        assert_eq!(relay.events()[0].id, event.id);
+        client.close();
     }
 }

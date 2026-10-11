@@ -1,6 +1,7 @@
 use crate::blossom;
 use crate::call_signal::validate_call_signal;
 use crate::command_error::{CommandError, ErrorCode};
+use crate::connection::{ConnectionStatus, Debouncer, CONNECTION_CHANGED_EVENT, DEBOUNCE};
 use crate::envelope::{decode_envelope, encode_envelope, Envelope};
 use crate::fsutil;
 use crate::group::{self, FileRef, GroupRoster, MemberBundle, RosterDecision};
@@ -9,7 +10,8 @@ use crate::identity::{
     PublicBundle,
 };
 use crate::nostr::{
-    build_and_sign_event, CatchUp, NostrClient, NostrEvent, NostrFilter, TRINO_KIND,
+    build_and_sign_event, CatchUp, ClientOptions, NostrClient, NostrEvent, NostrFilter,
+    StateHandler, TRINO_KIND,
 };
 use crate::passphrase::validate_passphrase;
 use crate::ratchet::{
@@ -922,6 +924,13 @@ async fn forge_identity(
     })
 }
 
+/// Start the relay connections of a session `open_session` just opened.
+///
+/// Every relay gets its client at once (K3). One that is down keeps being
+/// tried while the session is open, instead of being given up until the next
+/// unlock, and counts as down in `connection_status` meanwhile. Whenever a
+/// socket comes up or goes down, the UI gets a debounced
+/// `connection-changed`.
 fn start_relay_connections(
     app: AppHandle,
     state_inner: Arc<tokio::sync::Mutex<InnerState>>,
@@ -929,67 +938,90 @@ fn start_relay_connections(
     expected_nostr_pub: String,
     expected_handle: String,
 ) {
-    let mut seen = std::collections::HashSet::new();
-    for relay_url in relays {
-        if !seen.insert(relay_url.clone()) {
-            continue;
-        }
-        let app_for_task = app.clone();
-        let state_for_task = state_inner.clone();
-        let expected_pub_for_task = expected_nostr_pub.clone();
-        let expected_handle_for_task = expected_handle.clone();
-        tauri::async_runtime::spawn(async move {
-            let app_for_events = app_for_task.clone();
-            let state_for_events = state_for_task.clone();
-            let on_event: Arc<dyn Fn(NostrEvent) + Send + Sync> =
-                Arc::new(move |event: NostrEvent| {
-                    let app = app_for_events.clone();
-                    let inner = state_for_events.clone();
-                    tokio::spawn(async move {
-                        handle_incoming_event(app, inner, event).await;
-                    });
-                });
-
-            match NostrClient::connect(&relay_url, on_event).await {
-                Ok(client) => {
-                    // Catch up on messages sent while this device was offline:
-                    // the whole window on the first connection, and on every
-                    // reconnect only what this relay may not have delivered yet
-                    // (so the window does not grow with uptime). Duplicate event
-                    // ids and ratchet state are checked before anything reaches
-                    // the UI.
-                    let _ = client
-                        .subscribe_catching_up(
-                            &NostrFilter {
-                                kinds: Some(vec![TRINO_KIND]),
-                                p_tag: Some(vec![expected_pub_for_task.clone()]),
-                                ..Default::default()
-                            },
-                            CatchUp {
-                                max_window_secs: CATCH_UP_WINDOW_SECS,
-                                overlap_secs: CLOCK_SKEW_SECS,
-                            },
-                        )
-                        .await;
-
-                    let mut inner = state_for_task.lock().await;
-                    let same_identity = inner.identity.as_ref().is_some_and(|identity| {
-                        hex::encode(identity.nostr.pub_bytes) == expected_pub_for_task
-                    }) && inner.handle.as_deref()
-                        == Some(expected_handle_for_task.as_str());
-                    if same_identity {
-                        inner.relays.push(client);
-                        dbg_log("  relay connected");
-                    } else {
-                        client.close();
-                    }
-                }
-                Err(_) => {
-                    dbg_log("  relay connection failed");
-                }
+    tauri::async_runtime::spawn(async move {
+        let changes = Arc::new(connection_changes(app.clone(), state_inner.clone()));
+        let mut clients = Vec::new();
+        let mut seen = std::collections::HashSet::new();
+        for relay_url in relays {
+            if !seen.insert(relay_url.clone()) {
+                continue;
             }
+            let on_event = incoming_events(app.clone(), state_inner.clone());
+            let on_state: StateHandler = {
+                let changes = Arc::clone(&changes);
+                Arc::new(move |_up| changes.poke())
+            };
+            let client =
+                NostrClient::start(&relay_url, on_event, ClientOptions::new(Some(on_state)));
+            // Catch up on messages sent while this device was offline: the
+            // whole window on the first connection, and on every reconnect
+            // only what this relay may not have delivered yet (so the window
+            // does not grow with uptime). Duplicate event ids and ratchet
+            // state are checked before anything reaches the UI. Sent once the
+            // socket is up.
+            let _ = client
+                .subscribe_catching_up(
+                    &NostrFilter {
+                        kinds: Some(vec![TRINO_KIND]),
+                        p_tag: Some(vec![expected_nostr_pub.clone()]),
+                        ..Default::default()
+                    },
+                    CatchUp {
+                        max_window_secs: CATCH_UP_WINDOW_SECS,
+                        overlap_secs: CLOCK_SKEW_SECS,
+                    },
+                )
+                .await;
+            clients.push(client);
+        }
+
+        let mut inner = state_inner.lock().await;
+        let same_identity =
+            inner.identity.as_ref().is_some_and(|identity| {
+                hex::encode(identity.nostr.pub_bytes) == expected_nostr_pub
+            }) && inner.handle.as_deref() == Some(expected_handle.as_str());
+        if same_identity {
+            inner.relays.extend(clients);
+            drop(inner);
+            // The UI learns how many relays there are before any is up.
+            changes.poke();
+        } else {
+            drop(inner);
+            for client in clients {
+                client.close();
+            }
+        }
+    });
+}
+
+/// What a relay of the session delivers goes to `handle_incoming_event`.
+fn incoming_events(
+    app: AppHandle,
+    state_inner: Arc<tokio::sync::Mutex<InnerState>>,
+) -> Arc<dyn Fn(NostrEvent) + Send + Sync> {
+    Arc::new(move |event: NostrEvent| {
+        let app = app.clone();
+        let inner = state_inner.clone();
+        tokio::spawn(async move {
+            handle_incoming_event(app, inner, event).await;
         });
-    }
+    })
+}
+
+/// Emits `connection-changed` with the status of the session's relays at
+/// most once per `DEBOUNCE` (K3).
+fn connection_changes(
+    app: AppHandle,
+    state_inner: Arc<tokio::sync::Mutex<InnerState>>,
+) -> Debouncer {
+    Debouncer::spawn(DEBOUNCE, move || {
+        let app = app.clone();
+        let inner = state_inner.clone();
+        async move {
+            let status = ConnectionStatus::of(&inner.lock().await.relays);
+            let _ = app.emit(CONNECTION_CHANGED_EVENT, status);
+        }
+    })
 }
 
 /// Open the vault with `passphrase` and, if it has TOTP, `totp_code` (empty
@@ -4476,5 +4508,29 @@ mod tests {
             Err(TurnError::Locked)
         );
         assert_ne!(turn.session(), session);
+    }
+
+    #[tokio::test]
+    async fn locking_stops_the_relays_still_trying_to_connect() {
+        // K3: a relay that was down at unlock is tried again and again while
+        // the session is open, and never after.
+        use crate::nostr::test_relay::{unreachable_client, wait_until};
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let attempts = Arc::new(AtomicUsize::new(0));
+        let mut inner = InnerState::default();
+        inner.relays.push(unreachable_client(Arc::clone(&attempts)));
+        wait_until("a second attempt", || attempts.load(Ordering::SeqCst) >= 2).await;
+
+        forget_session(&mut inner, &TurnCache::default());
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        let after_lock = attempts.load(Ordering::SeqCst);
+        tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+
+        assert!(inner.relays.is_empty());
+        assert_eq!(
+            attempts.load(Ordering::SeqCst),
+            after_lock,
+            "it kept trying after the lock"
+        );
     }
 }

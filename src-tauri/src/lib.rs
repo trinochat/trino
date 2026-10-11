@@ -15,6 +15,7 @@ mod state;
 mod totp_enrollment;
 mod turn;
 // -- W7 --
+mod connection;
 mod diag;
 mod net;
 mod security_cmds;
@@ -238,6 +239,7 @@ pub fn run() {
             // -- W7 --
             commands::get_autostart,
             security_cmds::check_passphrase,
+            connection::connection_status,
             // -- W8 --
         ])
         .run(tauri::generate_context!())
