@@ -1,4 +1,50 @@
 /** The texts of contacts and groups. W4 owns this area; its contract is contacts.test.ts. */
 import type { AreaStrings } from './types';
 
-export const contacts: AreaStrings = { es: {}, en: {}, pt: {} };
+export const contacts: AreaStrings = {
+  es: {
+    'contacts.newChat.title': 'Nuevo chat',
+    'contacts.newChat.titleCall': 'Nueva llamada',
+    'contacts.newChat.search': 'Buscar en tus contactos',
+    'contacts.newChat.placeholder': 'Nombre',
+    'contacts.newChat.shortcuts': 'Atajos',
+    'contacts.newChat.newGroup': 'Nuevo grupo',
+    'contacts.newChat.addWithCode': 'Agregar con código o QR',
+    'contacts.newChat.letterList': 'Contactos con {letter}',
+    'contacts.newChat.noMatch': 'Nadie en tus contactos coincide con «{q}».',
+    'contacts.newChat.addCode': 'Agregar con código',
+    'contacts.newChat.callTo': 'Llamar a {name}',
+    'contacts.newChat.verified': 'Verificado',
+    'contacts.newChat.empty': 'Todavía no tienes contactos.',
+  },
+  en: {
+    'contacts.newChat.title': 'New chat',
+    'contacts.newChat.titleCall': 'New call',
+    'contacts.newChat.search': 'Search your contacts',
+    'contacts.newChat.placeholder': 'Name',
+    'contacts.newChat.shortcuts': 'Shortcuts',
+    'contacts.newChat.newGroup': 'New group',
+    'contacts.newChat.addWithCode': 'Add with a code or QR',
+    'contacts.newChat.letterList': 'Contacts under {letter}',
+    'contacts.newChat.noMatch': 'Nobody in your contacts matches “{q}”.',
+    'contacts.newChat.addCode': 'Add with a code',
+    'contacts.newChat.callTo': 'Call {name}',
+    'contacts.newChat.verified': 'Verified',
+    'contacts.newChat.empty': 'You have no contacts yet.',
+  },
+  pt: {
+    'contacts.newChat.title': 'Nova conversa',
+    'contacts.newChat.titleCall': 'Nova chamada',
+    'contacts.newChat.search': 'Buscar nos seus contatos',
+    'contacts.newChat.placeholder': 'Nome',
+    'contacts.newChat.shortcuts': 'Atalhos',
+    'contacts.newChat.newGroup': 'Novo grupo',
+    'contacts.newChat.addWithCode': 'Adicionar com código ou QR',
+    'contacts.newChat.letterList': 'Contatos com {letter}',
+    'contacts.newChat.noMatch': 'Ninguém nos seus contatos corresponde a “{q}”.',
+    'contacts.newChat.addCode': 'Adicionar com código',
+    'contacts.newChat.callTo': 'Ligar para {name}',
+    'contacts.newChat.verified': 'Verificado',
+    'contacts.newChat.empty': 'Você ainda não tem contatos.',
+  },
+};
