@@ -5,11 +5,11 @@
 //! - gives up connecting, and the whole exchange, at a deadline;
 //! - never follows a redirect, so a server cannot send a request on to a
 //!   host nobody chose;
-//! - is read with `read_capped`, which refuses an answer past a size.
+//! - is read with a cap: `read_capped`, which refuses an answer past a
+//!   size, or turn.rs's own, which also wipes the credential it reads.
 //!
-//! Blossom (K2) uses it. Tor will change the transport here, for every
-//! client at once; turn.rs still builds its own (same rules), and the
-//! integration moves it here.
+//! Blossom (K2) and the TURN credentials use it. Tor will change the
+//! transport here, for every client at once.
 
 use std::time::Duration;
 use thiserror::Error;
@@ -290,11 +290,11 @@ mod tests {
 
     #[test]
     fn nothing_but_this_module_builds_an_http_client() {
-        // §8: Tor swaps the transport in one place. turn.rs still builds its
-        // own; the integration moves it here.
+        // §8: Tor swaps the transport in one place.
         for (file, source) in [
             ("blossom.rs", include_str!("blossom.rs")),
             ("commands.rs", include_str!("commands.rs")),
+            ("turn.rs", include_str!("turn.rs")),
         ] {
             for builder in ["Client::new", "Client::builder", "reqwest::get"] {
                 assert!(!source.contains(builder), "{file} uses {builder}");

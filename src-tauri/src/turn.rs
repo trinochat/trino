@@ -393,13 +393,14 @@ impl TurnClient {
     }
 
     /// POST the request; redirects are not followed and the answer is capped.
-    /// `now` is the local clock when the request was signed.
+    /// `now` is the local clock when the request was signed. The client is
+    /// net.rs's, like every HTTP client of the app.
     async fn request(&self, authorization: &str, now: i64) -> Result<TurnServers, TurnError> {
-        let client = reqwest::Client::builder()
-            .timeout(self.timeout)
-            .redirect(reqwest::redirect::Policy::none())
-            .build()
-            .map_err(network)?;
+        let client = crate::net::client(crate::net::Deadlines {
+            connect: self.timeout,
+            total: self.timeout,
+        })
+        .map_err(|error| TurnError::Network(error.to_string()))?;
         let mut response = client
             .post(&self.url)
             .header(reqwest::header::AUTHORIZATION, authorization)
