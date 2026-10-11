@@ -1198,9 +1198,13 @@ pub async fn probe_node(
     let replace = replace_existing.unwrap_or(false);
     let (handle, added) = contacts_cmds::add_contact(&mut inner, code, &handle, replace, now)?;
     persist_friends(&inner).map_err(|e| CommandError::new(ErrorCode::Io, e))?;
-    if added == contacts_cmds::Added::Replaced {
-        save_ratchets(&inner); // the old session is gone
-        profile::save(&inner); // and what the old keys shared
+    if added != contacts_cmds::Added::Refreshed {
+        // The old session is gone, and what the old keys shared: the
+        // replaced contact's, or what a contact removed before left under
+        // this name.
+        save_ratchets(&inner);
+        save_history(&inner);
+        profile::save(&inner);
     }
     let friend = inner
         .friends
@@ -1867,68 +1871,39 @@ pub async fn forward_file(
     Ok(())
 }
 
-/// Remove a contact and all its local state (session, associated data, history).
+/// Remove a contact and all its local state (contacts_cmds::remove_contact).
 #[tauri::command]
 pub async fn remove_node(state: State<'_, AppState>, handle: String) -> Result<(), String> {
     let mut inner = state.inner.lock().await;
-    inner.friends.remove(&handle);
-    inner.ratchets.remove(&handle);
-    inner.associated_data.remove(&handle);
-    inner.history.remove(&handle);
-    if inner.current_peer.as_deref() == Some(handle.as_str()) {
-        inner.current_peer = None;
-    }
+    let profile_gone = contacts_cmds::remove_contact(&mut inner, &handle);
     persist_friends(&inner)?;
     save_history(&inner);
     save_ratchets(&inner);
     // -- W8 (K12) --
-    if inner.profiles.remove(&handle) {
+    if profile_gone {
         profile::save(&inner);
     }
     Ok(())
 }
 
-/// Rename a contact's local handle, migrating session/history/AD keyed by it.
+/// Rename a contact's local handle, with all its local state
+/// (contacts_cmds::rename_contact).
 #[tauri::command]
 pub async fn rename_node(
     state: State<'_, AppState>,
     old_handle: String,
     new_handle: String,
 ) -> Result<(), String> {
-    let new = new_handle.trim().to_string();
-    if new.is_empty() {
-        return Err("nombre vacío".into());
-    }
     let mut inner = state.inner.lock().await;
-    if old_handle == new {
+    let Some(profile_moved) = contacts_cmds::rename_contact(&mut inner, &old_handle, &new_handle)?
+    else {
         return Ok(());
-    }
-    if inner.friends.contains_key(&new) {
-        return Err("ya existe un contacto con ese nombre".into());
-    }
-    let mut rec = inner
-        .friends
-        .remove(&old_handle)
-        .ok_or("contacto no encontrado")?;
-    rec.handle = new.clone();
-    inner.friends.insert(new.clone(), rec);
-    if let Some(r) = inner.ratchets.remove(&old_handle) {
-        inner.ratchets.insert(new.clone(), r);
-    }
-    if let Some(ad) = inner.associated_data.remove(&old_handle) {
-        inner.associated_data.insert(new.clone(), ad);
-    }
-    if let Some(h) = inner.history.remove(&old_handle) {
-        inner.history.insert(new.clone(), h);
-    }
-    if inner.current_peer.as_deref() == Some(old_handle.as_str()) {
-        inner.current_peer = Some(new.clone());
-    }
+    };
     persist_friends(&inner)?;
     save_history(&inner);
     save_ratchets(&inner);
     // -- W8 (K12) --
-    if inner.profiles.rename(&old_handle, &new) {
+    if profile_moved {
         profile::save(&inner);
     }
     Ok(())
@@ -3599,22 +3574,28 @@ fn remember_outgoing(inner: &mut InnerState, handle: &str, id: String, env: Vec<
 /// recovers messages lost to a session desync without creating doubles.
 #[tauri::command]
 pub async fn resend_outbox(state: State<'_, AppState>, handle: String) -> Result<(), String> {
+    resend_buffered(&state, &handle).await;
+    Ok(())
+}
+
+/// `resend_outbox`: how many buffered messages it sent again.
+async fn resend_buffered(state: &AppState, handle: &str) -> usize {
     let items: Vec<Vec<u8>> = {
         let inner = state.inner.lock().await;
         inner
             .outbox
-            .get(&handle)
+            .get(handle)
             .map(|v| v.iter().map(|(_, e, _)| e.clone()).collect())
             .unwrap_or_default()
     };
     if items.is_empty() {
-        return Ok(());
+        return 0;
     }
     crate::diag::note_with("RESEND buffered messages", &[("count", &items.len())]);
-    for env in items {
-        let _ = send_cipher_inner(&state, &handle, &env, None).await;
+    for env in &items {
+        let _ = send_cipher_inner(state, handle, env, None).await;
     }
-    Ok(())
+    items.len()
 }
 
 fn record_history(inner: &mut InnerState, convo: String, item: HistItem) {
@@ -5248,6 +5229,109 @@ mod tests {
         assert_eq!(
             SendError::NoSession.to_string(),
             "no session — run connect first"
+        );
+    }
+
+    // ---- B1: what is kept under a contact's name stays with that contact ----
+
+    /// The contact code of `id`, named `handle`, as `probe_node` reads it.
+    fn contact_code(id: &Identity, handle: &str) -> contacts_cmds::ContactCode {
+        let mut bundle = serde_json::to_value(public_bundle_for(id)).unwrap();
+        bundle["handle"] = serde_json::Value::String(handle.to_string());
+        contacts_cmds::parse_contact_code(&bundle.to_string()).unwrap()
+    }
+
+    #[tokio::test]
+    async fn a_contact_added_under_a_removed_contacts_name_gets_none_of_her_messages() {
+        let relay = TestRelay::start(Answer::Accept).await;
+        let (me, ana, newcomer) = (create_identity(), create_identity(), create_identity());
+        let state = sending_state(&me, vec![relay.client().await]).await;
+        add_session(&mut *state.inner.lock().await, &me, &ana, "ana");
+        send_text(&state, "ana", "solo para Ana".to_string(), SHORT_WAIT)
+            .await
+            .unwrap();
+        {
+            let mut inner = state.inner.lock().await;
+            assert_eq!(
+                inner.outbox.get("ana").map(Vec::len),
+                Some(1),
+                "kept to replay"
+            );
+            inner.resync_at.insert("ana".to_string(), NOW);
+
+            contacts_cmds::remove_contact(&mut inner, "ana");
+            let (_, added) = contacts_cmds::add_contact(
+                &mut inner,
+                contact_code(&newcomer, "ana"),
+                "ana",
+                false,
+                NOW,
+            )
+            .unwrap();
+
+            assert_eq!(added, contacts_cmds::Added::New);
+            assert_eq!(
+                inner.outbox.get("ana").map(Vec::len),
+                None,
+                "Ana's messages"
+            );
+            assert_eq!(inner.resync_at.get("ana"), None);
+            // The newcomer's handshake opens a session, and the UI asks for
+            // what was kept to be sent again (session-established).
+            add_session(&mut inner, &me, &newcomer, "ana");
+        }
+        let before = relay.events().len();
+
+        assert_eq!(
+            resend_buffered(&state, "ana").await,
+            0,
+            "sent to the newcomer"
+        );
+        assert_eq!(relay.events().len(), before);
+    }
+
+    #[tokio::test]
+    async fn the_messages_kept_for_a_contact_follow_it_when_it_is_renamed() {
+        let relay = TestRelay::start(Answer::Accept).await;
+        let (me, ana, newcomer) = (create_identity(), create_identity(), create_identity());
+        let state = sending_state(&me, vec![relay.client().await]).await;
+        add_session(&mut *state.inner.lock().await, &me, &ana, "ana");
+        send_text(&state, "ana", "para Ana".to_string(), SHORT_WAIT)
+            .await
+            .unwrap();
+        {
+            let mut inner = state.inner.lock().await;
+            inner.resync_at.insert("ana".to_string(), NOW);
+
+            contacts_cmds::rename_contact(&mut inner, "ana", "Ana trabajo").unwrap();
+
+            assert_eq!(inner.outbox.get("Ana trabajo").map(Vec::len), Some(1));
+            assert_eq!(inner.resync_at.get("Ana trabajo"), Some(&NOW));
+            assert_eq!(inner.outbox.get("ana").map(Vec::len), None);
+            assert_eq!(inner.resync_at.get("ana"), None);
+            // Someone else under the name she had.
+            contacts_cmds::add_contact(
+                &mut inner,
+                contact_code(&newcomer, "ana"),
+                "ana",
+                false,
+                NOW,
+            )
+            .unwrap();
+            add_session(&mut inner, &me, &newcomer, "ana");
+        }
+
+        assert_eq!(
+            resend_buffered(&state, "ana").await,
+            0,
+            "sent to the newcomer"
+        );
+        assert_eq!(resend_buffered(&state, "Ana trabajo").await, 1);
+        crate::nostr::test_relay::wait_until("the replay", || relay.events().len() == 2).await;
+        assert_eq!(
+            relay.events()[1].recipient(),
+            Some(pub_hex(&ana).as_str()),
+            "the replay goes to Ana"
         );
     }
 

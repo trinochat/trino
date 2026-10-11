@@ -509,8 +509,19 @@ impl Profiles {
         }
     }
 
-    /// Move the profile of a contact renamed here.
+    /// Move the profile of a contact renamed here, and what this session
+    /// sent it. Returns whether profiles.bin changed.
     pub(crate) fn rename(&mut self, old: &str, new: &str) -> bool {
+        let revisions: Vec<u64> = self
+            .sent
+            .iter()
+            .filter(|(to, _)| to == old)
+            .map(|(_, rev)| *rev)
+            .collect();
+        for rev in revisions {
+            self.sent.remove(&(old.to_string(), rev));
+            self.sent.insert((new.to_string(), rev));
+        }
         match self.contacts.remove(old) {
             Some(kept) => {
                 self.contacts.insert(new.to_string(), kept);
@@ -520,8 +531,10 @@ impl Profiles {
         }
     }
 
-    /// Drop the profile of a contact removed here.
+    /// Drop the profile of a contact removed here, and what this session
+    /// sent it. Returns whether profiles.bin changed.
     pub(crate) fn remove(&mut self, handle: &str) -> bool {
+        self.sent.retain(|(to, _)| to != handle);
         match self.contacts.remove(handle) {
             Some(mut kept) => {
                 kept.forget();
@@ -1082,6 +1095,25 @@ mod tests {
         assert!(profiles.remove("Anita"));
         assert!(profiles.contacts.is_empty());
         assert!(!profiles.remove("Anita"));
+    }
+
+    #[test]
+    fn what_this_profile_sent_follows_a_renamed_contact_and_goes_with_a_removed_one() {
+        let mut profiles = Profiles::default();
+        receive(&mut profiles, "ana", &msg(5, "Ana", "", None), NOW);
+        profiles.sent.insert(("ana".into(), 4));
+        profiles.sent.insert(("bob".into(), 4));
+
+        profiles.rename("ana", "Anita");
+        assert!(profiles.sent.contains(&("Anita".to_string(), 4)));
+        assert!(!profiles.sent.contains(&("ana".to_string(), 4)));
+
+        profiles.remove("Anita");
+        assert!(!profiles.sent.iter().any(|(to, _)| to == "Anita"));
+        assert!(
+            profiles.sent.contains(&("bob".to_string(), 4)),
+            "others stay"
+        );
     }
 
     #[test]

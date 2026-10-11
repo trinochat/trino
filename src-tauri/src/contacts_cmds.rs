@@ -119,6 +119,14 @@ fn holder_of_keys<'a>(
 /// the handshake mark of `old_nostr_pub`. Used when the user replaced the
 /// contact's keys: none of it may ever reach the new keys.
 fn forget_session_with(inner: &mut InnerState, handle: &str, old_nostr_pub: &str) {
+    forget_session_state(inner, handle);
+    inner.handshake_marks.remove(old_nostr_pub);
+}
+
+/// Drop the session kept under `handle`: its ratchet, its associated data,
+/// the recent messages kept to replay after a desync (`resend_outbox`) and
+/// when it last healed. What holds secrets or text is wiped.
+fn forget_session_state(inner: &mut InnerState, handle: &str) {
     use zeroize::Zeroize;
     if let Some(mut ratchet) = inner.ratchets.remove(handle) {
         ratchet.zeroize_secrets();
@@ -133,7 +141,39 @@ fn forget_session_with(inner: &mut InnerState, handle: &str, old_nostr_pub: &str
         }
     }
     inner.resync_at.remove(handle);
-    inner.handshake_marks.remove(old_nostr_pub);
+}
+
+/// Drop everything kept under `handle` but the contact itself: its session,
+/// its chat, when it last raised a key mismatch and the profile it shares.
+/// Returns whether a profile went, so profiles.bin must be written again.
+///
+/// A name no contact has can still hold some of it: a contact removed while
+/// its files could not be written gets it back at the next unlock. Whoever
+/// is added or renamed to that name must never inherit it: a session kept
+/// there would encrypt to the old keys, and the messages kept to replay
+/// would be sent to the newcomer.
+fn forget_kept_under(inner: &mut InnerState, handle: &str) -> bool {
+    use zeroize::Zeroize;
+    forget_session_state(inner, handle);
+    if let Some(mut items) = inner.history.remove(handle) {
+        for item in &mut items {
+            if let Some(text) = item.text.as_mut() {
+                text.zeroize();
+            }
+            if let Some(file) = item.file.as_mut() {
+                super::zeroize_file_ref(file);
+            }
+        }
+    }
+    inner.key_mismatch_at.remove(handle);
+    inner.profiles.remove(handle)
+}
+
+/// Move what `map` keeps under `old` to `new`.
+fn move_entry<V>(map: &mut HashMap<String, V>, old: &str, new: &str) {
+    if let Some(value) = map.remove(old) {
+        map.insert(new.to_string(), value);
+    }
 }
 
 /// Read a contact code: valid JSON, a bundle, and keys its identity key
@@ -223,6 +263,8 @@ pub(crate) fn add_contact(
         return Err(CommandError::already_contact(&other.handle));
     }
     let Some(friend) = inner.friends.get_mut(&handle) else {
+        // A newcomer: nothing kept under this name is theirs.
+        forget_kept_under(inner, &handle);
         inner.friends.insert(
             handle.clone(),
             FriendRecord {
@@ -262,6 +304,54 @@ pub(crate) fn add_contact(
     // What the old keys shared (K12) is not what the new ones share.
     inner.profiles.remove(&handle);
     Ok((handle, Added::Replaced))
+}
+
+/// Remove the contact `handle` and everything kept here under its name
+/// (`remove_node`). Returns whether a profile it shared went with it, so
+/// profiles.bin must be written again.
+pub(crate) fn remove_contact(inner: &mut InnerState, handle: &str) -> bool {
+    inner.friends.remove(handle);
+    if inner.current_peer.as_deref() == Some(handle) {
+        inner.current_peer = None;
+    }
+    forget_kept_under(inner, handle)
+}
+
+/// Give the contact `old` the name `new`, trimmed (`rename_node`), with
+/// everything kept here under its name: its session, the messages kept to
+/// replay, its chat and the profile it shares. `None` when the name stays
+/// the same; otherwise whether profiles.bin must be written again.
+pub(crate) fn rename_contact(
+    inner: &mut InnerState,
+    old: &str,
+    new: &str,
+) -> Result<Option<bool>, String> {
+    let new = new.trim();
+    if new.is_empty() {
+        return Err("nombre vacío".into());
+    }
+    if old == new {
+        return Ok(None);
+    }
+    if inner.friends.contains_key(new) {
+        return Err("ya existe un contacto con ese nombre".into());
+    }
+    let mut record = inner.friends.remove(old).ok_or("contacto no encontrado")?;
+    // No contact has the new name: nothing kept under it is this one's.
+    let dropped_profile = forget_kept_under(inner, new);
+    record.handle = new.to_string();
+    inner.friends.insert(new.to_string(), record);
+    move_entry(&mut inner.ratchets, old, new);
+    move_entry(&mut inner.associated_data, old, new);
+    move_entry(&mut inner.history, old, new);
+    move_entry(&mut inner.outbox, old, new);
+    move_entry(&mut inner.resync_at, old, new);
+    move_entry(&mut inner.key_mismatch_at, old, new);
+    if inner.current_peer.as_deref() == Some(old) {
+        inner.current_peer = Some(new.to_string());
+    }
+    let moved_profile = inner.profiles.rename(old, new);
+    Ok(Some(dropped_profile || moved_profile))
 }
 
 /// The user saw that the keys of `handle` changed. Returns whether there was
@@ -748,6 +838,137 @@ mod tests {
         assert_eq!(node.key_changed_at, Some(NOW));
         assert!(!node.has_session);
         assert_eq!(node.profile_name, None);
+    }
+
+    /// `id` as the contact `handle`, with everything kept here under that
+    /// name: a session, a chat, messages kept to replay, when it last healed
+    /// and raised a key mismatch, the profile it shares and the revision of
+    /// this profile sent to it.
+    fn kept_under(inner: &mut InnerState, me: &Identity, id: &Identity, handle: &str) {
+        inner.friends.insert(handle.into(), friend(id, handle));
+        let (ratchet, ad) = session_with(me, id);
+        inner.ratchets.insert(handle.into(), ratchet);
+        inner.associated_data.insert(handle.into(), ad);
+        inner.history.insert(
+            handle.into(),
+            vec![serde_json::from_value(
+                serde_json::json!({ "side": "me", "text": "hola", "ts": NOW }),
+            )
+            .unwrap()],
+        );
+        inner
+            .outbox
+            .insert(handle.into(), vec![("m1".into(), b"hola".to_vec(), NOW)]);
+        inner.resync_at.insert(handle.into(), NOW);
+        inner.key_mismatch_at.insert(handle.into(), NOW);
+        shared(
+            inner,
+            handle,
+            r#"{"ty":"profile","v":1,"rev":3,"name":"Ana","about":""}"#,
+        );
+        inner.profiles.sent.insert((handle.into(), 9));
+    }
+
+    /// What is kept here under `handle`, by kind.
+    fn kinds_under(inner: &InnerState, handle: &str) -> Vec<&'static str> {
+        [
+            ("contact", inner.friends.contains_key(handle)),
+            ("ratchet", inner.ratchets.contains_key(handle)),
+            (
+                "associated data",
+                inner.associated_data.contains_key(handle),
+            ),
+            ("chat", inner.history.contains_key(handle)),
+            ("outbox", inner.outbox.contains_key(handle)),
+            ("resync", inner.resync_at.contains_key(handle)),
+            ("key mismatch", inner.key_mismatch_at.contains_key(handle)),
+            ("profile", inner.profiles.contacts.contains_key(handle)),
+            (
+                "profile sent",
+                inner.profiles.sent.iter().any(|(to, _)| to == handle),
+            ),
+        ]
+        .into_iter()
+        .filter_map(|(kind, kept)| kept.then_some(kind))
+        .collect()
+    }
+
+    const EVERYTHING: [&str; 9] = [
+        "contact",
+        "ratchet",
+        "associated data",
+        "chat",
+        "outbox",
+        "resync",
+        "key mismatch",
+        "profile",
+        "profile sent",
+    ];
+
+    #[test]
+    fn removing_a_contact_forgets_everything_kept_under_its_name() {
+        let (me, ana, bob) = (create_identity(), create_identity(), create_identity());
+        let mut inner = InnerState::default();
+        kept_under(&mut inner, &me, &ana, "ana");
+        kept_under(&mut inner, &me, &bob, "bob");
+        inner.current_peer = Some("ana".into());
+
+        assert!(remove_contact(&mut inner, "ana"), "profiles.bin changed");
+
+        assert_eq!(kinds_under(&inner, "ana"), Vec::<&str>::new());
+        assert_eq!(inner.current_peer, None);
+        assert_eq!(
+            kinds_under(&inner, "bob"),
+            EVERYTHING,
+            "other contacts stay"
+        );
+    }
+
+    #[test]
+    fn renaming_a_contact_moves_everything_kept_under_its_name() {
+        let (me, ana, bob) = (create_identity(), create_identity(), create_identity());
+        let mut inner = InnerState::default();
+        kept_under(&mut inner, &me, &ana, "ana");
+        kept_under(&mut inner, &me, &bob, "bob");
+        inner.current_peer = Some("ana".into());
+
+        let moved = rename_contact(&mut inner, "ana", "  Ana trabajo ").unwrap();
+
+        assert_eq!(moved, Some(true), "profiles.bin changed");
+        assert_eq!(kinds_under(&inner, "ana"), Vec::<&str>::new());
+        assert_eq!(kinds_under(&inner, "Ana trabajo"), EVERYTHING);
+        assert_eq!(inner.friends["Ana trabajo"].handle, "Ana trabajo");
+        assert_eq!(inner.current_peer.as_deref(), Some("Ana trabajo"));
+        assert_eq!(
+            kinds_under(&inner, "bob"),
+            EVERYTHING,
+            "other contacts stay"
+        );
+    }
+
+    #[test]
+    fn a_contact_never_inherits_what_another_left_under_its_name() {
+        // What a removed contact leaves behind when its files could not be
+        // written: it comes back at the next unlock, with nobody by that name.
+        let (me, gone, ana, bob) = (
+            create_identity(),
+            create_identity(),
+            create_identity(),
+            create_identity(),
+        );
+        let mut inner = InnerState::default();
+        kept_under(&mut inner, &me, &gone, "ana");
+        kept_under(&mut inner, &me, &gone, "Ana trabajo");
+        inner.friends.clear();
+        inner.friends.insert("bob".into(), friend(&bob, "bob"));
+
+        // A new contact by that name,
+        let added = add_contact(&mut inner, code_of(&ana, "ana"), "ana", false, NOW).unwrap();
+        assert_eq!(added, ("ana".to_string(), Added::New));
+        assert_eq!(kinds_under(&inner, "ana"), ["contact"]);
+        // and a contact renamed to it.
+        rename_contact(&mut inner, "bob", "Ana trabajo").unwrap();
+        assert_eq!(kinds_under(&inner, "Ana trabajo"), ["contact"]);
     }
 
     #[test]
