@@ -1,13 +1,18 @@
 /**
  * Your profile photo, made small enough to travel to your contacts (K12): a
- * JPEG data URL of at most 24 KiB once decoded, which is what the backend
+ * JPEG data URL of at most 20 KiB once decoded, which is what the backend
  * takes. Redrawing it through a canvas also drops its metadata (EXIF: where,
  * when, which camera), as media.ts does for the pictures you send. The first
  * run (W1) and Settings (W5) use this instead of `processFile(…).thumb`.
  */
 
-/** At most this many bytes once the base64 is decoded (K12). */
-export const AVATAR_MAX_BYTES = 24 * 1024;
+/**
+ * At most this many bytes once the base64 is decoded: the backend's
+ * `PHOTO_MAX_BYTES` (src-tauri/src/profile.rs). The ratchet writes its
+ * ciphertext in hex, so a photo of 24 KiB would make a relay frame over the
+ * 64 KB the relays accept (docs/perfil-v1.md, "Size").
+ */
+export const AVATAR_MAX_BYTES = 20 * 1024;
 /** The longest side in px, from the first step to the last. */
 export const AVATAR_SIZES = [240, 192, 160] as const;
 /** The JPEG qualities tried at each size, from the first step to the last. */

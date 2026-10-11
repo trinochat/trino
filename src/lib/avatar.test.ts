@@ -37,10 +37,15 @@ function picture(width: number, height: number, weigh: (side: number, quality: n
 
 const photo = (type = 'image/png') => new File([new Uint8Array([137, 80, 78, 71])], 'foto.png', { type });
 
+// What the backend takes (`PHOTO_MAX_BYTES` in src-tauri/src/profile.rs). The
+// ratchet writes its ciphertext in hex, so a photo of 24 KiB makes a relay
+// frame of about 66 KB, over the 64 KB the relays accept (docs/perfil-v1.md).
+const BACKEND_PHOTO_MAX_BYTES = 20 * 1024;
+
 describe('the steps of an avatar', () => {
-  it('are 240, 192 and 160 px, with qualities that only go down, under 24 KiB decoded', () => {
+  it('are 240, 192 and 160 px, with qualities that only go down, under 20 KiB decoded', () => {
     expect(AVATAR_SIZES).toEqual([240, 192, 160]);
-    expect(AVATAR_MAX_BYTES).toBe(24 * 1024);
+    expect(AVATAR_MAX_BYTES).toBe(BACKEND_PHOTO_MAX_BYTES);
     expect(AVATAR_QUALITIES.length).toBeGreaterThan(1);
     expect(AVATAR_QUALITIES.every((q, i) => q > 0 && q <= 1 && (i === 0 || q < AVATAR_QUALITIES[i - 1]!))).toBe(true);
   });
@@ -66,9 +71,11 @@ describe('makeAvatar', () => {
     ]);
   });
 
-  it('takes exactly 24 KiB decoded and refuses one byte more', async () => {
-    const { deps, encoded } = picture(1000, 800, (_side, q) => (q === AVATAR_QUALITIES[0] ? AVATAR_MAX_BYTES + 1 : AVATAR_MAX_BYTES));
-    await expect(makeAvatar(photo(), deps)).resolves.toBe(jpegOf(AVATAR_MAX_BYTES));
+  it('takes exactly 20 KiB decoded and refuses one byte more', async () => {
+    const { deps, encoded } = picture(1000, 800, (_side, q) =>
+      q === AVATAR_QUALITIES[0] ? BACKEND_PHOTO_MAX_BYTES + 1 : BACKEND_PHOTO_MAX_BYTES,
+    );
+    await expect(makeAvatar(photo(), deps)).resolves.toBe(jpegOf(BACKEND_PHOTO_MAX_BYTES));
     expect(encoded).toHaveLength(2);
   });
 
