@@ -7,6 +7,10 @@ import type { AreaStrings } from './types';
 
 export const chat: AreaStrings = {
   es: {
+    'chat2.log': 'Mensajes',
+    'chat2.empty': 'Todavía no hay mensajes.',
+    'chat2.toLatest': 'Ir al mensaje más reciente',
+
     'msg2.options': 'Opciones del mensaje',
     'msg2.reply': 'Responder',
     'msg2.forward': 'Reenviar',
@@ -42,6 +46,10 @@ export const chat: AreaStrings = {
     'media.loading': 'Cargando…',
   },
   en: {
+    'chat2.log': 'Messages',
+    'chat2.empty': 'No messages yet.',
+    'chat2.toLatest': 'Go to the newest message',
+
     'msg2.options': 'Message options',
     'msg2.reply': 'Reply',
     'msg2.forward': 'Forward',
@@ -77,6 +85,10 @@ export const chat: AreaStrings = {
     'media.loading': 'Loading…',
   },
   pt: {
+    'chat2.log': 'Mensagens',
+    'chat2.empty': 'Ainda não há mensagens.',
+    'chat2.toLatest': 'Ir para a mensagem mais recente',
+
     'msg2.options': 'Opções da mensagem',
     'msg2.reply': 'Responder',
     'msg2.forward': 'Encaminhar',

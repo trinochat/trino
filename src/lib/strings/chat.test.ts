@@ -6,6 +6,10 @@ import { expectAreaContract } from './contract-test-utils';
 // composer2, msg2, channel, media, emoji and sticker2. A call in the chat
 // takes its words from callEvent.* (common.ts), not from here.
 const KEYS: string[] = [
+  // The log of a conversation.
+  'chat2.log',
+  'chat2.empty',
+  'chat2.toLatest',
   // A message: its menu, its states and what it quotes.
   'msg2.options',
   'msg2.reply',
