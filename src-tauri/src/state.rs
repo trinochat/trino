@@ -85,6 +85,10 @@ pub struct InnerState {
     /// a newer one started. Persisted in ratchets.bin. Only contacts'
     /// handshakes are recorded, so strangers cannot grow or evict it.
     pub handshake_marks: HashMap<String, HandshakeMark>,
+    // -- W8 --
+    /// When `contact-key-mismatch` last fired for each contact (unix secs),
+    /// so it fires at most once every 10 minutes per contact. Memory only.
+    pub key_mismatch_at: HashMap<String, i64>,
 }
 
 /// The newest handshake accepted from one contact.
@@ -170,6 +174,13 @@ pub struct FriendRecord {
     pub added_at: i64,
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub avatar: Option<String>, // small profile thumbnail (data: URL) from their bundle
+    /// The fingerprint the contact had before the user replaced its keys
+    /// (K8), until the user says they saw the change.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub previous_fingerprint: Option<String>,
+    /// When the keys were replaced, in unix seconds (K8).
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub key_changed_at: Option<i64>,
 }
 
 /// A signed roster for a group we are not in yet, held until the user accepts

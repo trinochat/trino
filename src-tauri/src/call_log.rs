@@ -304,6 +304,8 @@ mod tests {
                     bundle: public_bundle_for(&create_identity()),
                     added_at: 0,
                     avatar: None,
+                    previous_fingerprint: None,
+                    key_changed_at: None,
                 },
             );
         }

@@ -39,6 +39,16 @@ pub enum ErrorCode {
     NoSession,
     /// Every file server failed to take an upload; `servers` says why (K2).
     UploadFailed,
+    // -- W8 --
+    /// A contact code that does not parse, or whose keys its identity key
+    /// did not sign (K8).
+    InvalidCode,
+    /// Another contact, with other keys, has that name (K8).
+    NameTaken,
+    /// These keys are a contact already, under the name in `handle` (K8).
+    AlreadyContact,
+    /// No such contact, group, member or message.
+    NotFound,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
@@ -51,6 +61,9 @@ pub struct CommandError {
     /// Why each file server failed, with `UploadFailed` only (K2).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub servers: Option<Vec<ServerFailure>>,
+    /// The name the contact already has, with `AlreadyContact` only (K8).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub handle: Option<String>,
 }
 
 impl CommandError {
@@ -60,6 +73,7 @@ impl CommandError {
             message: message.into(),
             min: None,
             servers: None,
+            handle: None,
         }
     }
 
@@ -68,6 +82,17 @@ impl CommandError {
         CommandError {
             servers: Some(servers),
             ..CommandError::new(ErrorCode::UploadFailed, "every file server failed")
+        }
+    }
+
+    /// The keys of a code are the contact named `handle` already (K8).
+    pub fn already_contact(handle: &str) -> Self {
+        CommandError {
+            handle: Some(handle.to_string()),
+            ..CommandError::new(
+                ErrorCode::AlreadyContact,
+                "these keys are a contact already",
+            )
         }
     }
 
@@ -291,5 +316,38 @@ mod tests {
             .unwrap()
             .get("servers")
             .is_none());
+    }
+
+    #[test]
+    fn the_codes_of_the_contacts_groups_and_history_have_the_names_the_ui_maps() {
+        // W8: also listed in `COMMAND_ERROR_CODES` (src/lib/api.ts).
+        let names: Vec<serde_json::Value> = [
+            ErrorCode::InvalidCode,
+            ErrorCode::NameTaken,
+            ErrorCode::AlreadyContact,
+            ErrorCode::NotFound,
+        ]
+        .iter()
+        .map(|code| serde_json::to_value(code).unwrap())
+        .collect();
+        assert_eq!(
+            names,
+            ["invalid_code", "name_taken", "already_contact", "not_found"]
+        );
+    }
+
+    #[test]
+    fn already_contact_says_which_contact_has_the_keys() {
+        assert_eq!(
+            serde_json::to_value(CommandError::already_contact("ana")).unwrap(),
+            json!({
+                "code": "already_contact",
+                "message": "these keys are a contact already",
+                "handle": "ana",
+            })
+        );
+        // No other error carries a name.
+        let other = serde_json::to_value(CommandError::internal("x")).unwrap();
+        assert!(other.get("handle").is_none());
     }
 }

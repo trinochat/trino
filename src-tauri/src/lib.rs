@@ -247,6 +247,8 @@ pub fn run() {
             call_log::record_call,
             call_log::list_call_history,
             // -- W8 --
+            commands::contacts_cmds::preview_contact,
+            commands::contacts_cmds::acknowledge_key_change,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

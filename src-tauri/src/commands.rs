@@ -7,7 +7,6 @@ use crate::fsutil;
 use crate::group::{self, FileRef, GroupRoster, MemberBundle, RosterDecision};
 use crate::identity::{
     create_identity, decode_array_32, public_bundle_for, verify_bundle_binding, Identity,
-    PublicBundle,
 };
 use crate::nostr::{
     build_and_sign_event, CatchUp, ClientOptions, NostrClient, NostrEvent, NostrFilter,
@@ -133,6 +132,10 @@ pub struct NodeInfo {
     pub blocked: bool,
     /// SHA-256 of the identity keys in full (K7); `None` if they do not decode.
     pub identity_digest: Option<String>,
+    /// The fingerprint before the user replaced this contact's keys, and
+    /// when, until the user acknowledges it (K8).
+    pub previous_fingerprint: Option<String>,
+    pub key_changed_at: Option<i64>,
 }
 
 #[derive(Serialize, Clone)]
@@ -392,6 +395,8 @@ fn clear_sensitive_state(inner: &mut InnerState) {
     inner.resync_at.clear();
     inner.handshake_marks.clear();
     inner.clear_seen_ids();
+    // -- W8 --
+    inner.key_mismatch_at.clear();
 }
 
 fn remove_file_for_wipe(path: &std::path::Path, failures: &mut Vec<String>) {
@@ -1187,52 +1192,34 @@ pub async fn share_bundle(state: State<'_, AppState>) -> Result<String, String> 
     )
 }
 
+/// Add the contact of a code as `handle` (K8). A name another key holds is
+/// `name_taken` unless `replace_existing`, which the UI passes only after
+/// the user confirmed; the same keys under another name are
+/// `already_contact`. Callers from before K8 leave `replace_existing` out.
 #[tauri::command]
 pub async fn probe_node(
     state: State<'_, AppState>,
     bundle_json: String,
     handle: String,
-) -> Result<NodeInfo, String> {
-    let v: serde_json::Value = serde_json::from_str(&bundle_json).map_err(|e| e.to_string())?;
-    let avatar = v
-        .get("avatar")
-        .and_then(|a| a.as_str())
-        .map(|s| s.to_string());
-    let avatar = sanitized_inline_raster(avatar);
-    let bundle: PublicBundle = serde_json::from_value(v).map_err(|e| e.to_string())?;
-    if !verify_bundle_binding(&bundle) {
-        return Err("bundle signature invalid (identity keys not bound)".to_string());
-    }
-    let trimmed = handle.trim().to_string();
-    if trimmed.is_empty() {
-        return Err("handle required".to_string());
-    }
-    let ik_pub = decode_array_32(&bundle.ik_sign_pub).map_err(|e| e.to_string())?;
-    let ik_dh_pub = decode_array_32(&bundle.ik_dh_pub).map_err(|e| e.to_string())?;
-    let nostr_pub = decode_array_32(&bundle.nostr_pub).map_err(|e| e.to_string())?;
-    let fingerprint = fp(&ik_pub, &ik_dh_pub, &nostr_pub);
-
+    replace_existing: Option<bool>,
+) -> Result<NodeInfo, CommandError> {
+    let code = contacts_cmds::parse_contact_code(&bundle_json)?;
     let mut inner = state.inner.lock().await;
-    let record = FriendRecord {
-        handle: trimmed.clone(),
-        bundle: bundle.clone(),
-        added_at: chrono::Utc::now().timestamp(),
-        avatar: avatar.clone(),
-    };
-    inner.friends.insert(trimmed.clone(), record.clone());
-    persist_friends(&inner)?;
-
-    Ok(NodeInfo {
-        handle: trimmed,
-        fingerprint,
-        has_session: false,
-        added_at: record.added_at,
-        avatar,
-        blocked: false,
-        identity_digest: Some(contacts_cmds::identity_digest(
-            &ik_pub, &ik_dh_pub, &nostr_pub,
-        )),
-    })
+    if inner.identity.is_none() {
+        return Err(contacts_cmds::sealed());
+    }
+    let now = chrono::Utc::now().timestamp();
+    let replace = replace_existing.unwrap_or(false);
+    let (handle, added) = contacts_cmds::add_contact(&mut inner, code, &handle, replace, now)?;
+    persist_friends(&inner).map_err(|e| CommandError::new(ErrorCode::Io, e))?;
+    if added == contacts_cmds::Added::Replaced {
+        save_ratchets(&inner); // the old session is gone
+    }
+    let friend = inner
+        .friends
+        .get(&handle)
+        .ok_or_else(|| CommandError::internal("the contact was not stored"))?;
+    Ok(contacts_cmds::node_info(&inner, friend))
 }
 
 #[tauri::command]
@@ -2784,6 +2771,21 @@ async fn handle_incoming_event(
             dbg_log(
                 "  DROP: handshake ik_dh_pub does not match the pinned bundle (impersonation?)",
             );
+            // K8: the UI says so, at most once every 10 minutes per contact.
+            // The handshake is still dropped.
+            let now = chrono::Utc::now().timestamp();
+            if contacts_cmds::should_report_key_mismatch(
+                &mut inner.key_mismatch_at,
+                &friend.handle,
+                now,
+            ) {
+                let _ = app.emit(
+                    "contact-key-mismatch",
+                    contacts_cmds::ContactKeyMismatchEvent {
+                        handle: friend.handle.clone(),
+                    },
+                );
+            }
             return;
         }
         // REPLAY GATE: relay traffic is public and the dedup cache is bounded,
@@ -3299,6 +3301,8 @@ fn merge_group_members(
                 bundle,
                 added_at: now,
                 avatar: None,
+                previous_fingerprint: None,
+                key_changed_at: None,
             },
         );
     }
@@ -3715,6 +3719,8 @@ mod tests {
             bundle: public_bundle_for(id),
             added_at: 0,
             avatar: None,
+            previous_fingerprint: None,
+            key_changed_at: None,
         }
     }
 
