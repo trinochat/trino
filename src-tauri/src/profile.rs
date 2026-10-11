@@ -166,10 +166,16 @@ pub(crate) fn check_about(about: &str) -> Result<String, CommandError> {
     Ok(about.to_string())
 }
 
-/// A photo for this identity's profile: none, or one `valid_photo` takes.
-pub(crate) fn check_photo(photo: Option<String>) -> Result<Option<String>, CommandError> {
+/// A photo for this identity's profile: none, one `valid_photo` takes, or
+/// `current`, the one saved already. Before profiles a photo could be a GIF
+/// or up to 128 KiB: saving the name or the "about" sends it back, and it
+/// stays, but contacts never get it (`current_message`).
+pub(crate) fn check_photo(
+    photo: Option<String>,
+    current: Option<&str>,
+) -> Result<Option<String>, CommandError> {
     match photo {
-        Some(url) if !valid_photo(&url) => Err(profile_invalid(
+        Some(url) if Some(url.as_str()) != current && !valid_photo(&url) => Err(profile_invalid(
             "the photo is not a jpeg, png or webp image of at most 20 KiB",
         )),
         photo => Ok(photo),
@@ -1572,8 +1578,8 @@ mod tests {
         for error in [
             check_name(&long_name).unwrap_err(),
             check_about(&long_about).unwrap_err(),
-            check_photo(Some(big_photo)).unwrap_err(),
-            check_photo(Some(gif)).unwrap_err(),
+            check_photo(Some(big_photo), None).unwrap_err(),
+            check_photo(Some(gif), None).unwrap_err(),
         ] {
             assert_eq!(error.code, ErrorCode::ProfileInvalid);
         }
@@ -1595,8 +1601,29 @@ mod tests {
                 .count(),
             ABOUT_MAX_CHARS
         );
-        assert_eq!(check_photo(None).unwrap(), None);
-        assert_eq!(check_photo(Some(PNG.into())).unwrap().as_deref(), Some(PNG));
+        assert_eq!(check_photo(None, Some(PNG)).unwrap(), None);
+        assert_eq!(
+            check_photo(Some(PNG.into()), None).unwrap().as_deref(),
+            Some(PNG)
+        );
+    }
+
+    #[test]
+    fn a_photo_saved_before_profiles_can_stay_while_the_rest_changes() {
+        // Before profiles a photo could be a GIF or up to 128 KiB. Saving the
+        // name or the "about" sends the same photo back: it stays here, and
+        // `current_message` leaves it out of what contacts get.
+        let old = jpeg_of(PHOTO_MAX_BYTES + 1);
+        let kept = check_photo(Some(old.clone()), Some(&old)).unwrap();
+        assert_eq!(kept.as_deref(), Some(old.as_str()));
+        let gif = "data:image/gif;base64,R0lGODlh".to_string();
+        assert_eq!(
+            check_photo(Some(gif.clone()), Some(&gif)).unwrap(),
+            Some(gif)
+        );
+        // A new photo over the limits is still refused.
+        let error = check_photo(Some(jpeg_of(PHOTO_MAX_BYTES + 2)), Some(&old)).unwrap_err();
+        assert_eq!(error.code, ErrorCode::ProfileInvalid);
     }
 
     #[test]

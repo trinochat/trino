@@ -138,7 +138,7 @@ locking clears it from memory and wiping deletes the file.
 
 | | |
 |---|---|
-| `update_profile(handle, avatar, about?)` | `about` left out keeps the current one, as callers from before profiles expect. `profile_invalid` over the limits above. |
+| `update_profile(handle, avatar, about?)` | `about` left out keeps the current one, as callers from before profiles expect. `profile_invalid` over the limits above, except for the photo already saved, which may come back as it is: one from before profiles stays here, and contacts keep the one in the contact code. |
 | `get_profile()` | adds `about` and `sync: 1`. |
 | `list_nodes()` | the photo the contact's profile decided becomes `avatar` (if none decided, the one in its contact code), plus `profile_name`, `about` and `profile_sync`. |
 | `profile-updated {handle}` | a contact's profile, or whether it reads profiles, changed. |
