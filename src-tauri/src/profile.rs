@@ -145,22 +145,128 @@ fn profile_invalid(message: &str) -> CommandError {
     CommandError::new(ErrorCode::ProfileInvalid, message)
 }
 
+/// The format characters, general category Cf in Unicode 15.1. They show
+/// nothing, and the bidi controls among them (U+202A to U+202E, U+2066 to
+/// U+2069) reorder the text around them, so a name can pass for another.
+const FORMAT_CHARS: [(char, char); 21] = [
+    ('\u{00AD}', '\u{00AD}'),
+    ('\u{0600}', '\u{0605}'),
+    ('\u{061C}', '\u{061C}'),
+    ('\u{06DD}', '\u{06DD}'),
+    ('\u{070F}', '\u{070F}'),
+    ('\u{0890}', '\u{0891}'),
+    ('\u{08E2}', '\u{08E2}'),
+    ('\u{180E}', '\u{180E}'),
+    ('\u{200B}', '\u{200F}'),
+    ('\u{202A}', '\u{202E}'),
+    ('\u{2060}', '\u{2064}'),
+    ('\u{2066}', '\u{206F}'),
+    ('\u{FEFF}', '\u{FEFF}'),
+    ('\u{FFF9}', '\u{FFFB}'),
+    ('\u{110BD}', '\u{110BD}'),
+    ('\u{110CD}', '\u{110CD}'),
+    ('\u{13430}', '\u{1343F}'),
+    ('\u{1BCA0}', '\u{1BCA3}'),
+    ('\u{1D173}', '\u{1D17A}'),
+    ('\u{E0001}', '\u{E0001}'),
+    ('\u{E0020}', '\u{E007F}'),
+];
+
+fn is_format(c: char) -> bool {
+    FORMAT_CHARS
+        .iter()
+        .any(|&(first, last)| (first..=last).contains(&c))
+}
+
+/// Whether `c` may be part of a name, or of an "about" with `line_breaks`:
+/// no control character but the line break of an "about", no line or
+/// paragraph separator, and no format character but the two joiners
+/// (U+200C, U+200D), which emoji such as 👩‍💻 and scripts such as Persian
+/// need.
+fn allowed_char(c: char, line_breaks: bool) -> bool {
+    match c {
+        '\n' => line_breaks,
+        '\u{200C}' | '\u{200D}' => true,
+        '\u{2028}' | '\u{2029}' => false,
+        c => !c.is_control() && !is_format(c),
+    }
+}
+
+/// Whether `c` shows nothing by itself: white space, a control or format
+/// character, a variation selector, the grapheme joiner, the Hangul fillers,
+/// the inherent Khmer vowels, the Mongolian variation selectors and the
+/// blank Braille pattern.
+fn shows_nothing(c: char) -> bool {
+    c.is_whitespace()
+        || c.is_control()
+        || is_format(c)
+        || matches!(
+            c,
+            '\u{034F}'
+                | '\u{115F}'
+                | '\u{1160}'
+                | '\u{17B4}'
+                | '\u{17B5}'
+                | '\u{180B}'..='\u{180D}'
+                | '\u{180F}'
+                | '\u{2800}'
+                | '\u{3164}'
+                | '\u{FE00}'..='\u{FE0F}'
+                | '\u{FFA0}'
+                | '\u{E0100}'..='\u{E01EF}'
+        )
+}
+
+/// A name a profile can carry: only allowed characters, and at least one
+/// that shows.
+pub(crate) fn readable_name(name: &str) -> bool {
+    name.chars().all(|c| allowed_char(c, false)) && !name.chars().all(shows_nothing)
+}
+
+/// An "about" a profile can carry: only allowed characters, line breaks
+/// included.
+fn readable_about(about: &str) -> bool {
+    about.chars().all(|c| allowed_char(c, true))
+}
+
 /// A name for this identity's profile: trimmed, `None` when blank (the
-/// current one stays), `profile_invalid` over `NAME_MAX_CHARS`.
-pub(crate) fn check_name(name: &str) -> Result<Option<String>, CommandError> {
+/// current one stays). `current`, the name saved already, comes back as it
+/// is: before profiles a name had no limit, and `current_message` gives
+/// contacts what they take of it. Any other name over `NAME_MAX_CHARS`, or
+/// that is not `readable_name`, is `profile_invalid`.
+pub(crate) fn check_name(
+    name: &str,
+    current: Option<&str>,
+) -> Result<Option<String>, CommandError> {
     let name = name.trim();
+    if name.is_empty() {
+        return Ok(None);
+    }
+    if current.map(str::trim) == Some(name) {
+        return Ok(Some(name.to_string()));
+    }
     if scalars(name) > NAME_MAX_CHARS {
         return Err(profile_invalid("the name is longer than 64 characters"));
     }
-    Ok((!name.is_empty()).then(|| name.to_string()))
+    if !readable_name(name) {
+        return Err(profile_invalid(
+            "the name holds a control, format or bidi character, or nothing that shows",
+        ));
+    }
+    Ok(Some(name.to_string()))
 }
 
 /// An "about" for this identity's profile: trimmed, `profile_invalid` over
-/// `ABOUT_MAX_CHARS`.
+/// `ABOUT_MAX_CHARS` or when it is not `readable_about`.
 pub(crate) fn check_about(about: &str) -> Result<String, CommandError> {
     let about = about.trim();
     if scalars(about) > ABOUT_MAX_CHARS {
         return Err(profile_invalid("the about is longer than 140 characters"));
+    }
+    if !readable_about(about) {
+        return Err(profile_invalid(
+            "the about holds a control, format or bidi character",
+        ));
     }
     Ok(about.to_string())
 }
@@ -300,25 +406,41 @@ pub(crate) fn targets(inner: &mut InnerState) -> Vec<String> {
     handles
 }
 
-/// This identity's profile message as it stands. A name from before K12
-/// longer than the limit is cut to it; a photo from before K12 that a
-/// profile cannot carry is left out, so contacts keep the one in its code.
-fn current_message(inner: &InnerState) -> Vec<u8> {
-    let name: String = inner
-        .handle
-        .as_deref()
-        .map(str::trim)
-        .filter(|name| !name.is_empty())
-        .unwrap_or("anon")
+/// What a receiver takes of `text`: the characters it allows (`allowed_char`),
+/// trimmed and cut to `max` scalar values.
+fn shareable(text: &str, line_breaks: bool, max: usize) -> String {
+    let allowed: String = text
         .chars()
-        .take(NAME_MAX_CHARS)
+        .filter(|&c| allowed_char(c, line_breaks))
         .collect();
+    let cut: String = allowed.trim().chars().take(max).collect();
+    cut.trim_end().to_string()
+}
+
+/// This identity's profile message as it stands, as receivers take it. A
+/// name from before K12 longer than the limit is cut to it, and a name or
+/// an "about" saved before the rules on characters goes without what
+/// receivers refuse ("anon" when nothing that shows is left); a photo from
+/// before K12 that a profile cannot carry is left out, so contacts keep the
+/// one in its code.
+fn current_message(inner: &InnerState) -> Vec<u8> {
+    let name = shareable(
+        inner.handle.as_deref().unwrap_or_default(),
+        false,
+        NAME_MAX_CHARS,
+    );
+    let name = if readable_name(&name) {
+        name
+    } else {
+        "anon".to_string()
+    };
+    let about = shareable(&inner.profiles.about, true, ABOUT_MAX_CHARS);
     let photo = match inner.avatar.as_deref() {
         None => PhotoField::Removed,
         Some(url) if valid_photo(url) => PhotoField::Set(url.to_string()),
         Some(_) => PhotoField::Unchanged,
     };
-    profile_message(inner.profiles.rev, &name, &inner.profiles.about, &photo)
+    profile_message(inner.profiles.rev, &name, &about, &photo)
 }
 
 /// Send this identity's profile to `targets`, one at a time. A failure is
@@ -413,8 +535,12 @@ fn read_profile(fields: &Map<String, Value>) -> Result<ProfileMessage, Refused> 
         .and_then(Value::as_u64)
         .filter(|rev| *rev > 0)
         .ok_or(Refused::Rev)?;
-    let name = bounded_text(fields.get("name"), NAME_MAX_CHARS, true).ok_or(Refused::Name)?;
-    let about = bounded_text(fields.get("about"), ABOUT_MAX_CHARS, false).ok_or(Refused::About)?;
+    let name = bounded_text(fields.get("name"), NAME_MAX_CHARS, true)
+        .filter(|name| readable_name(name))
+        .ok_or(Refused::Name)?;
+    let about = bounded_text(fields.get("about"), ABOUT_MAX_CHARS, false)
+        .filter(|about| readable_about(about))
+        .ok_or(Refused::About)?;
     let photo = match fields.get("photo") {
         None => PhotoField::Unchanged,
         Some(Value::Null) => PhotoField::Removed,
@@ -838,6 +964,85 @@ mod tests {
             let text: String = String::from_utf8_lossy(&bad).chars().take(80).collect();
             assert_eq!(parse_profile(&bad), Some(Err(why)), "{text}");
         }
+    }
+
+    /// What a name or an "about" may not hold: control characters (Cc),
+    /// format characters (Cf) such as the bidi controls, zero-width spaces
+    /// and tags, and the line and paragraph separators.
+    const REFUSED_CHARS: [char; 17] = [
+        '\u{0000}',
+        '\u{0007}',
+        '\t',
+        '\r',
+        '\u{0085}',
+        '\u{00AD}',
+        '\u{061C}',
+        '\u{200B}',
+        '\u{200E}',
+        '\u{202A}',
+        '\u{202E}',
+        '\u{2066}',
+        '\u{2069}',
+        '\u{2028}',
+        '\u{2029}',
+        '\u{FEFF}',
+        '\u{E0041}',
+    ];
+
+    /// Names with nothing that shows: a joiner, a Hangul filler, the blank
+    /// Braille pattern, a variation selector, a grapheme joiner.
+    const BLANK_NAMES: [&str; 6] = [
+        "\u{200D}",
+        "\u{3164}",
+        "\u{2800}",
+        "\u{FE0F}",
+        "\u{115F}\u{1160}",
+        "\u{034F}",
+    ];
+
+    #[test]
+    fn a_name_or_about_with_control_format_or_bidi_characters_is_refused() {
+        for c in REFUSED_CHARS {
+            let code = c as u32;
+            let name = format!("An{c}a");
+            assert_eq!(
+                parse_profile(&msg(1, &name, "", None)),
+                Some(Err(Refused::Name)),
+                "U+{code:04X} in a name"
+            );
+            let about = format!("Sobre{c}mí");
+            assert_eq!(
+                parse_profile(&msg(1, "Ana", &about, None)),
+                Some(Err(Refused::About)),
+                "U+{code:04X} in an about"
+            );
+        }
+        // A line break is fine in an "about", which has three lines in
+        // Settings, and nowhere else.
+        let lines = parse_profile(&msg(1, "Ana", "Línea 1\nLínea 2", None));
+        assert_eq!(lines.unwrap().unwrap().about, "Línea 1\nLínea 2");
+        assert_eq!(
+            parse_profile(&msg(1, "Ana\nLópez", "", None)),
+            Some(Err(Refused::Name))
+        );
+        // The joiners stay: emoji such as 👩‍💻 and scripts such as Persian
+        // need them.
+        let joined = parse_profile(&msg(1, "Ana 👩\u{200D}💻", "می\u{200C}خواهم", None));
+        assert_eq!(joined.unwrap().unwrap().name, "Ana 👩\u{200D}💻");
+    }
+
+    #[test]
+    fn a_name_with_nothing_that_shows_is_refused() {
+        for blank in BLANK_NAMES {
+            assert_eq!(
+                parse_profile(&msg(1, blank, "", None)),
+                Some(Err(Refused::Name)),
+                "{blank:?}"
+            );
+        }
+        // Next to something that shows, they are fine.
+        let filler = parse_profile(&msg(1, "Ana\u{3164}", "", None));
+        assert_eq!(filler.unwrap().unwrap().name, "Ana\u{3164}");
     }
 
     // ---- Receiving ----
@@ -1602,23 +1807,23 @@ mod tests {
         let big_photo = jpeg_of(PHOTO_MAX_BYTES + 1);
         let gif = "data:image/gif;base64,R0lGODlh".to_string();
         for error in [
-            check_name(&long_name).unwrap_err(),
+            check_name(&long_name, None).unwrap_err(),
             check_about(&long_about).unwrap_err(),
             check_photo(Some(big_photo), None).unwrap_err(),
             check_photo(Some(gif), None).unwrap_err(),
         ] {
             assert_eq!(error.code, ErrorCode::ProfileInvalid);
         }
-        assert_eq!(check_name("  Ana  ").unwrap().as_deref(), Some("Ana"));
+        assert_eq!(check_name("  Ana  ", None).unwrap().as_deref(), Some("Ana"));
         assert_eq!(
-            check_name(&"ñ".repeat(NAME_MAX_CHARS))
+            check_name(&"ñ".repeat(NAME_MAX_CHARS), None)
                 .unwrap()
                 .unwrap()
                 .chars()
                 .count(),
             NAME_MAX_CHARS
         );
-        assert_eq!(check_name("   ").unwrap(), None);
+        assert_eq!(check_name("   ", None).unwrap(), None);
         assert_eq!(check_about("  Hola \n").unwrap(), "Hola");
         assert_eq!(
             check_about(&"🙂".repeat(ABOUT_MAX_CHARS))
@@ -1653,6 +1858,77 @@ mod tests {
     }
 
     #[test]
+    fn the_name_already_saved_can_stay_while_the_rest_changes() {
+        // Names from before profiles had no limit. Saving the photo or the
+        // "about" sends the same name back: it stays here, and
+        // `current_message` gives contacts what they take of it.
+        let old = "n".repeat(NAME_MAX_CHARS + 6);
+        for sent in [old.clone(), format!("  {old} ")] {
+            let kept = check_name(&sent, Some(&old)).unwrap();
+            assert_eq!(kept.as_deref(), Some(old.as_str()));
+        }
+        let bidi = "Ana\u{202E}zepóL";
+        assert_eq!(check_name(bidi, Some(bidi)).unwrap().as_deref(), Some(bidi));
+        // A new name over the limits is still refused.
+        for new in ["m".repeat(NAME_MAX_CHARS + 6), format!("{old}x")] {
+            let error = check_name(&new, Some(&old)).unwrap_err();
+            assert_eq!(error.code, ErrorCode::ProfileInvalid);
+        }
+    }
+
+    #[test]
+    fn an_edit_with_control_format_or_bidi_characters_is_profile_invalid() {
+        for c in REFUSED_CHARS {
+            let code = c as u32;
+            let name = check_name(&format!("An{c}a"), Some("Ana"));
+            assert_eq!(
+                name.unwrap_err().code,
+                ErrorCode::ProfileInvalid,
+                "U+{code:04X} in a name"
+            );
+            let about = check_about(&format!("Sobre{c}mí"));
+            assert_eq!(
+                about.unwrap_err().code,
+                ErrorCode::ProfileInvalid,
+                "U+{code:04X} in an about"
+            );
+        }
+        for blank in BLANK_NAMES {
+            let error = check_name(blank, Some("Ana")).unwrap_err();
+            assert_eq!(error.code, ErrorCode::ProfileInvalid, "{blank:?}");
+        }
+        assert!(check_name("Ana\nLópez", None).is_err());
+        assert_eq!(
+            check_about(" Línea 1\nLínea 2 ").unwrap(),
+            "Línea 1\nLínea 2"
+        );
+        assert_eq!(
+            check_name("Ana 👩\u{200D}💻", None).unwrap().as_deref(),
+            Some("Ana 👩\u{200D}💻")
+        );
+    }
+
+    #[test]
+    fn this_profile_message_leaves_out_what_receivers_refuse() {
+        // A name from before profiles, and an "about" saved before these
+        // rules, may hold what receivers refuse: the message never does.
+        let mut inner = InnerState {
+            handle: Some("Ana\u{202E} Ló\u{7}pez".into()),
+            ..InnerState::default()
+        };
+        inner.profiles.rev = 6;
+        inner.profiles.about = "Hola\u{2066} mundo\t\nfin".into();
+
+        let message = parse_profile(&current_message(&inner)).unwrap().unwrap();
+
+        assert_eq!(message.name, "Ana López");
+        assert_eq!(message.about, "Hola mundo\nfin");
+        inner.handle = Some("\u{3164}\u{200B}".into());
+        let blank = parse_profile(&current_message(&inner)).unwrap().unwrap();
+        assert_eq!(blank.name, "anon");
+    }
+
+    #[test]
     fn locking_also_forgets_what_was_sent_this_session() {
         let mut profiles = Profiles::default();
         profiles.sent.insert(("ana".into(), 3));
@@ -1666,24 +1942,44 @@ mod tests {
 
     #[test]
     fn the_largest_profile_message_fits_in_a_relay_event() {
-        // The worst case: a name and an "about" of characters JSON escapes
-        // to six bytes each, the largest photo and the largest revision.
-        let name = "\u{1}".repeat(NAME_MAX_CHARS);
-        let about = "\u{1}".repeat(ABOUT_MAX_CHARS);
+        // The worst case a receiver takes: a name and an "about" of
+        // characters four bytes long in UTF-8, the largest photo and the
+        // largest revision. JSON writes nothing longer, but for the control
+        // characters it escapes to six bytes, which names and "about"s may
+        // not hold. A message made of those still fits: it bounds them all.
         let photo = PhotoField::Set(jpeg_of(PHOTO_MAX_BYTES));
-        let plain = profile_message(u64::MAX, &name, &about, &photo);
-        assert!(parse_profile(&plain).unwrap().is_ok());
+        let largest = profile_message(
+            u64::MAX,
+            &"🙂".repeat(NAME_MAX_CHARS),
+            &"🙂".repeat(ABOUT_MAX_CHARS),
+            &photo,
+        );
+        assert!(parse_profile(&largest).unwrap().is_ok());
+        let escaped = profile_message(
+            u64::MAX,
+            &"\u{1}".repeat(NAME_MAX_CHARS),
+            &"\u{1}".repeat(ABOUT_MAX_CHARS),
+            &photo,
+        );
+        assert_eq!(parse_profile(&escaped), Some(Err(Refused::Name)));
 
-        // Encrypted and wrapped as send_cipher_inner does. The ratchet
-        // writes the ciphertext in hex, so every byte of the message counts
-        // twice on the wire.
+        for plain in [largest, escaped] {
+            let frame = relay_frame_bytes(&plain);
+            assert!(frame <= RELAY_FRAME_BUDGET, "{frame} bytes on the wire");
+        }
+    }
+
+    /// `plain` encrypted and wrapped as send_cipher_inner does, as a relay
+    /// receives it. The ratchet writes the ciphertext in hex, so every byte
+    /// of the message counts twice on the wire.
+    fn relay_frame_bytes(plain: &[u8]) -> usize {
         let (me, peer) = (create_identity(), create_identity());
         let bundle = public_bundle_for(&peer);
         let init = crate::x3dh::initiate(&me, &bundle).unwrap();
         let spk = crate::identity::decode_array_32(&bundle.spk_pub).unwrap();
         let mut ratchet = crate::ratchet::init_initiator(init.master_secret, spk).unwrap();
         let ct =
-            crate::ratchet::ratchet_encrypt(&mut ratchet, &plain, &init.associated_data).unwrap();
+            crate::ratchet::ratchet_encrypt(&mut ratchet, plain, &init.associated_data).unwrap();
         let payload = crate::commands::WirePayload {
             header: crate::commands::WireHeader {
                 dh_pub: ct.header.dh_pub,
@@ -1703,13 +1999,7 @@ mod tests {
             None,
         )
         .unwrap();
-        let frame = serde_json::json!(["EVENT", event]).to_string();
-
-        assert!(
-            frame.len() <= RELAY_FRAME_BUDGET,
-            "{} bytes on the wire",
-            frame.len()
-        );
+        serde_json::json!(["EVENT", event]).to_string().len()
     }
 
     /// The JSON object on a line of the doc: from its first `{` to its last `}`.
@@ -1756,7 +2046,7 @@ mod tests {
         let blocks: Vec<&str> = vectors.split("```").skip(1).step_by(2).collect();
         let valid: Vec<String> = blocks[0].lines().filter_map(json_on).collect();
         let invalid: Vec<String> = blocks[1].lines().filter_map(json_on).collect();
-        assert_eq!((valid.len(), invalid.len()), (3, 8));
+        assert_eq!((valid.len(), invalid.len()), (4, 15));
         for line in &valid {
             let message = parse_profile(line.as_bytes()).unwrap().unwrap();
             let again = profile_message(message.rev, &message.name, &message.about, &message.photo);

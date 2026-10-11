@@ -76,9 +76,21 @@ Sent as compact UTF-8 JSON, keys in this order, non-ASCII as UTF-8 (not
 | `ty` | `"profile"` |
 | `v` | `1` exactly |
 | `rev` | integer ≥ 1. It only grows: each change takes the larger of the previous revision + 1 and the unix time in seconds. A Trino gives its profile a first revision (the unix time) the first time it opens with profiles, so contacts get it without waiting for an edit. |
-| `name` | string; trimmed, 1 to 64 Unicode scalar values |
-| `about` | string; trimmed, 0 to 140 Unicode scalar values |
+| `name` | string; trimmed, 1 to 64 Unicode scalar values, of the characters below, at least one of them one that shows |
+| `about` | string; trimmed, 0 to 140 Unicode scalar values, of the characters below; line breaks (U+000A) are allowed |
 | `photo` | left out: the photo does not change. `null`: the photo is removed. Otherwise a `data:image/jpeg;base64,`, `data:image/png;base64,` or `data:image/webp;base64,` URL whose payload is standard, padded base64 of at most 20 480 bytes (20 KiB). |
+
+A name or an "about" holds no control character (general category Cc; the
+"about" may break lines with U+000A), no line or paragraph separator
+(U+2028, U+2029) and no format character (Cf, as of Unicode 15.1) other than
+U+200C ZERO WIDTH NON-JOINER and U+200D ZERO WIDTH JOINER, which emoji such as
+👩‍💻 and scripts such as Persian need. The bidi controls (U+202A to U+202E,
+U+2066 to U+2069) and the zero-width spaces are format characters: they could
+make a name read as another, or as nothing. A character that shows is any
+other than white space, a control or format character, a variation selector
+(U+FE00 to U+FE0F, U+E0100 to U+E01EF), U+034F, the Hangul fillers (U+115F,
+U+1160, U+3164, U+FFA0), U+17B4, U+17B5, the Mongolian variation selectors
+(U+180B to U+180D, U+180F) and the blank Braille pattern (U+2800).
 
 **Any other field, or any other `v`, makes the message invalid**: a new field
 takes a new version. An invalid message is dropped in silence.
@@ -102,8 +114,11 @@ gave that contact; the app shows it next to it.
   relay was down): once per session and revision, so a contact that cannot
   take it does not get it again with every message.
 - A name kept from before profiles longer than 64 scalar values goes out cut
-  to 64; a photo from before that a profile cannot carry (a GIF, or over
-  20 KiB) is left out, so contacts keep the photo of the contact code.
+  to 64, and a name or an "about" kept from before the rules on characters
+  goes out without the characters receivers refuse (a name with nothing left
+  that shows goes as `anon`); a photo from before that a profile cannot carry
+  (a GIF, or over 20 KiB) is left out, so contacts keep the photo of the
+  contact code.
 
 ### Size
 
@@ -111,8 +126,11 @@ Relays drop events over 64 KB without a word, and the ratchet writes its
 ciphertext in hex, so every byte of a message takes two on the wire. With the
 largest photo (20 KiB, which base64 turns into 27 308 characters) the message
 is about 27 KB of JSON, and the relay frame that carries it about 55 KB, or
-57 918 bytes with a name and an "about" made entirely of characters JSON
-escapes to six bytes each. A test builds that frame and keeps it under 60 KiB.
+57 102 bytes with a name and an "about" made entirely of characters four
+bytes long in UTF-8, the longest JSON writes of any character they may hold.
+Characters JSON escapes to six bytes are control characters, which they may
+not hold; made of those, the frame would take 57 918 bytes. A test builds
+both frames and keeps them under 60 KiB.
 
 A photo of 24 KiB would not fit: its frame takes about 66 KB, 68 838 bytes in
 the worst case.
@@ -141,7 +159,7 @@ locking clears it from memory and wiping deletes the file.
 
 | | |
 |---|---|
-| `update_profile(handle, avatar, about?)` | `about` left out keeps the current one, as callers from before profiles expect. `profile_invalid` over the limits above, except for the photo already saved, which may come back as it is: one from before profiles stays here, and contacts keep the one in the contact code. |
+| `update_profile(handle, avatar, about?)` | `about` left out keeps the current one, as callers from before profiles expect. `profile_invalid` over the limits above, except for the name and the photo already saved, which may come back as they are: a name from before profiles stays here and goes out as "Who gets it" says, and a photo from before profiles stays here while contacts keep the one in the contact code. |
 | `get_profile()` | adds `about` and `sync: 1`. |
 | `list_nodes()` | the photo the contact's profile decided becomes `avatar` (if none decided, the one in its contact code), plus `profile_name`, `about` and `profile_sync`. |
 | `profile-updated {handle}` | a contact's profile, or whether it reads profiles, changed. |
@@ -162,6 +180,7 @@ Profile messages, byte for byte:
 {"ty":"profile","v":1,"rev":2,"name":"Ana","about":"","photo":null}
 {"ty":"profile","v":1,"rev":3,"name":"Ñandú \"A\"","about":"🙂"}
 {"ty":"profile","v":1,"rev":1760000000,"name":"Ana","about":"Hola","photo":"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="}
+{"ty":"profile","v":1,"rev":4,"name":"Ana","about":"Línea 1\nLínea 2"}
 ```
 
 Invalid, and dropped:
@@ -175,6 +194,13 @@ Invalid, and dropped:
 {"ty":"profile","v":1,"rev":3,"name":"Ana"}                      no about
 {"ty":"profile","v":1,"rev":3,"name":"   ","about":""}           empty name
 {"ty":"profile","v":1,"rev":3,"name":7,"about":""}               name not a string
+{"ty":"profile","v":1,"rev":3,"name":"Ana‮","about":""}     a bidi control in the name
+{"ty":"profile","v":1,"rev":3,"name":"An\u0007a","about":""}     a control character in the name
+{"ty":"profile","v":1,"rev":3,"name":"Ana\nLópez","about":""}    a line break in the name
+{"ty":"profile","v":1,"rev":3,"name":"​","about":""}        a name with nothing that shows
+{"ty":"profile","v":1,"rev":3,"name":"ㅤ","about":""}        the same, with a Hangul filler
+{"ty":"profile","v":1,"rev":3,"name":"Ana","about":"⁦x⁩"}  bidi isolates in the about
+{"ty":"profile","v":1,"rev":3,"name":"Ana","about":"a\tb"}       a tab in the about
 ```
 
 as well as a name of 65 scalar values, an "about" of 141, a `data:image/gif`

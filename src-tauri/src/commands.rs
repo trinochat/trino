@@ -3660,9 +3660,11 @@ pub async fn get_profile(state: State<'_, AppState>) -> Result<ProfileResponse, 
 
 /// Save this identity's name, photo and, when given, "about" (K12). A blank
 /// name keeps the current one, no photo removes it, and no `about` keeps the
-/// current one, as callers from before K12 expect. A name over 64 scalars,
-/// an "about" over 140 or a new photo a profile cannot carry is
-/// `profile_invalid`; the photo already saved may stay as it is.
+/// current one, as callers from before K12 expect. A name or an "about" a
+/// profile cannot carry (over 64 or 140 scalars, with a control, format or
+/// bidi character, a name with nothing that shows) or such a new photo is
+/// `profile_invalid`; the name and the photo already saved may stay as
+/// they are.
 ///
 /// When something changed, the profile's revision grows, and the profile
 /// goes in the background to every contact that announced it reads
@@ -3675,13 +3677,13 @@ pub async fn update_profile(
     avatar: Option<String>,
     about: Option<String>,
 ) -> Result<(), CommandError> {
-    let name = profile::check_name(&handle)?;
     let about = about.as_deref().map(profile::check_about).transpose()?;
     let targets = {
         let mut inner = state.inner.lock().await;
         if inner.identity.is_none() {
             return Err(contacts_cmds::sealed());
         }
+        let name = profile::check_name(&handle, inner.handle.as_deref())?;
         let avatar = profile::check_photo(avatar, inner.avatar.as_deref())?;
         let now = chrono::Utc::now().timestamp();
         let changed = profile::apply_update(&mut inner, name, avatar, about, now);
