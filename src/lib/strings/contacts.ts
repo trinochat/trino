@@ -123,7 +123,7 @@ export const contacts: AreaStrings = {
     'groupPanel.deleteFailed': 'No se pudo eliminar el grupo. Inténtalo de nuevo.',
     'groupPanel.removeTitle': '¿Quitar a {name} del grupo?',
     'groupPanel.removeBody':
-      'Le llega el cambio firmado. Si usa una versión anterior de Trino, el grupo le puede seguir apareciendo.',
+      'Se le envía el cambio firmado. Si usa una versión anterior de Trino, o lleva más de un día sin conectarse, el grupo le puede seguir apareciendo.',
     'groupPanel.removeConfirm': 'Quitar del grupo',
     'groupPanel.removeFailed': 'No se pudo quitar a {name} del grupo. Inténtalo de nuevo.',
     'groupPanel.name': 'Nombre del grupo',
@@ -265,7 +265,7 @@ export const contacts: AreaStrings = {
     'groupPanel.deleteFailed': 'The group could not be deleted. Try again.',
     'groupPanel.removeTitle': 'Remove {name} from the group?',
     'groupPanel.removeBody':
-      'They get the signed change. If they use an older version of Trino, the group may still show for them.',
+      'The signed change is sent to them. If they use an older version of Trino, or have been offline for more than a day, the group may still show for them.',
     'groupPanel.removeConfirm': 'Remove from the group',
     'groupPanel.removeFailed': '{name} could not be removed from the group. Try again.',
     'groupPanel.name': 'Group name',
@@ -408,7 +408,7 @@ export const contacts: AreaStrings = {
     'groupPanel.deleteFailed': 'Não foi possível excluir o grupo. Tente de novo.',
     'groupPanel.removeTitle': 'Remover {name} do grupo?',
     'groupPanel.removeBody':
-      'A mudança assinada chega a essa pessoa. Se ela usar uma versão anterior do Trino, o grupo pode continuar aparecendo.',
+      'A mudança assinada é enviada a essa pessoa. Se ela usar uma versão anterior do Trino, ou ficar mais de um dia sem se conectar, o grupo pode continuar aparecendo para ela.',
     'groupPanel.removeConfirm': 'Remover do grupo',
     'groupPanel.removeFailed': 'Não foi possível remover {name} do grupo. Tente de novo.',
     'groupPanel.name': 'Nome do grupo',

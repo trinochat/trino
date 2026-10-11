@@ -42,11 +42,13 @@ describe('ConfirmGroupExitDialog', () => {
     expect(confirm.querySelector('svg')).not.toBeNull();
   });
 
-  it('says what removing someone does not reach', () => {
+  // The removal roster is a relay event like any other: one older than the
+  // catch-up window (CATCH_UP_WINDOW_SECS, a day) never reaches its member.
+  it('says what removing someone does not reach, as deleting does', () => {
     mount({ kind: 'remove', memberName: 'Papá' });
     const dialog = screen.getByRole('alertdialog', { name: '¿Quitar a Papá del grupo?' });
     expect(description(dialog)).toBe(
-      'Le llega el cambio firmado. Si usa una versión anterior de Trino, el grupo le puede seguir apareciendo.',
+      'Se le envía el cambio firmado. Si usa una versión anterior de Trino, o lleva más de un día sin conectarse, el grupo le puede seguir apareciendo.',
     );
     expect(screen.getByRole('button', { name: 'Quitar del grupo' })).toBeTruthy();
   });

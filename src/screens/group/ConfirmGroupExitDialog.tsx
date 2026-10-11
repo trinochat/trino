@@ -3,7 +3,8 @@
  * (Group:105-114): an alertdialog with "Cancelar" focused, since none of the
  * three can be undone from here. The texts say what the change does not
  * reach (plan §1.4 and §8.6): an older Trino keeps showing the group, and a
- * deletion misses whoever was offline for more than a day.
+ * deletion or a removal misses whoever was offline for more than a day (the
+ * relays' catch-up window).
  */
 import { useRef, useState } from 'react';
 import { CircleAlert, LogOut, Trash2, UserMinus } from 'lucide-react';

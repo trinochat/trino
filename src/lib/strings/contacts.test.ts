@@ -249,6 +249,17 @@ describe('contacts strings', () => {
     expect(contacts.es['groupPanel.inviteHint']).toBe('Solo le llega a contactos que también te tengan agregado.');
   });
 
+  // A roster change is a relay event: whoever was offline for more than the
+  // catch-up window (a day) never gets it, whether it deletes or removes.
+  it('say that a deletion and a removal can miss whoever was offline for more than a day', () => {
+    const offlineForADay = { es: /más de un día sin conectarse/, en: /offline for more than a day/, pt: /mais de um dia sem se conectar/ };
+    for (const lang of ['es', 'en', 'pt'] as const) {
+      for (const key of ['groupPanel.deleteBody', 'groupPanel.removeBody']) {
+        expect(contacts[lang][key], `${lang} ${key}`).toMatch(offlineForADay[lang]);
+      }
+    }
+  });
+
   // accept_group_invite and decline_group_invite take the invitation out
   // before anything else, and keep it out when they fail: no retry to promise.
   it('promise no retry for an invitation the backend already took out', () => {
