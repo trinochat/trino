@@ -236,7 +236,8 @@ export function useCallController(deps: CallControllerDeps): CallController {
   const [connectedAt, setConnectedAt] = useState<number | null>(null);
   const [endConfirm, setEndConfirm] = useState<EndConfirmReason | null>(null);
 
-  const live = useRef({
+  // What the callbacks of call.ts and the actions share, built once.
+  const [live] = useState(() => ({
     call: null as LiveCall | null,
     consent: null as DirectConsentRequest | null,
     ended: null as CallEndCard | null,
@@ -244,7 +245,7 @@ export function useCallController(deps: CallControllerDeps): CallController {
     records: new Set<Promise<void>>(),
     recorded: new RecentIds(RECORDED_REMEMBERED),
     noticeTimer: null as ReturnType<typeof setTimeout> | null,
-  });
+  }));
 
   const actions = useMemo(() => {
     const d = () => latest.current.deps;
@@ -255,12 +256,12 @@ export function useCallController(deps: CallControllerDeps): CallController {
     const nameOf = (handle: string) => d().peer(handle)?.name || handle;
 
     const showEnded = (card: CallEndCard | null) => {
-      live.current.ended = card;
+      live.ended = card;
       setEnded(card);
     };
     /** What this side did to end the call; the first one counts. */
     const markLocal = (kind: LocalEnd) => {
-      const call = live.current.call;
+      const call = live.call;
       if (call && !call.finished && call.local === null) call.local = kind;
     };
 
@@ -304,7 +305,7 @@ export function useCallController(deps: CallControllerDeps): CallController {
     }
 
     function record(call: LiveCall, outcome: CallRecord) {
-      live.current.recorded.add(call.callId);
+      live.recorded.add(call.callId);
       const { api, ttlFor } = d();
       const wire: CallEventWire = {
         id: call.callId,
@@ -317,12 +318,12 @@ export function useCallController(deps: CallControllerDeps): CallController {
       const done: Promise<void> = api
         .recordCall(call.peer, wire, Math.floor(call.startedAt / 1000))
         .then(() => {
-          const card = live.current.ended;
+          const card = live.ended;
           if (card && card.callId === call.callId) showEnded({ ...card, logged: true });
         })
         .catch(error => console.error('call not recorded', error))
-        .finally(() => live.current.records.delete(done));
-      live.current.records.add(done);
+        .finally(() => live.records.delete(done));
+      live.records.add(done);
     }
 
     function finish(call: LiveCall, at: number) {
@@ -349,11 +350,11 @@ export function useCallController(deps: CallControllerDeps): CallController {
             }
           : null,
       );
-      if (d().capabilities.callLog && outcome && !live.current.recorded.has(call.callId)) record(call, outcome);
+      if (d().capabilities.callLog && outcome && !live.recorded.has(call.callId)) record(call, outcome);
       // Asked to lock or close and the call ended by itself: nothing is left to hang up.
-      const confirm = live.current.confirm;
+      const confirm = live.confirm;
       if (confirm) {
-        live.current.confirm = null;
+        live.confirm = null;
         setEndConfirm(null);
         confirm.resolve(true);
       }
@@ -361,7 +362,7 @@ export function useCallController(deps: CallControllerDeps): CallController {
 
     function onState(s: CallState, info: { peer: string | null; video: boolean; callId: string | null }) {
       const at = now();
-      let call = live.current.call;
+      let call = live.call;
       if (info.callId && info.peer && call?.callId !== info.callId) {
         if (call && !call.finished) finish(call, at);
         call = {
@@ -383,7 +384,7 @@ export function useCallController(deps: CallControllerDeps): CallController {
           indices: null,
           finished: false,
         };
-        live.current.call = call;
+        live.call = call;
         setSas(null);
         setNotice(null);
         setConnectedAt(null);
@@ -407,12 +408,12 @@ export function useCallController(deps: CallControllerDeps): CallController {
     }
 
     function onError(code: CallErrorCode) {
-      const call = live.current.call;
+      const call = live.call;
       if (call && !call.finished) call.errors.push(code);
       if (code !== 'camera') return;
       setNotice('camera');
-      if (live.current.noticeTimer) clearTimeout(live.current.noticeTimer);
-      live.current.noticeTimer = setTimeout(() => setNotice(null), NOTICE_MS);
+      if (live.noticeTimer) clearTimeout(live.noticeTimer);
+      live.noticeTimer = setTimeout(() => setNotice(null), NOTICE_MS);
     }
 
     /** The 7 symbols, from the call id, both identity digests and both fingerprints. */
@@ -423,7 +424,7 @@ export function useCallController(deps: CallControllerDeps): CallController {
       if (!mine || !theirs) return;
       callSas({ callId: inputs.callId, idA: mine, idB: theirs, dtlsA: inputs.localDtls, dtlsB: inputs.remoteDtls })
         .then(indices => {
-          if (live.current.call !== call || call.finished || call.security) return;
+          if (live.call !== call || call.finished || call.security) return;
           call.indices = indices;
           setSas({ indices, verified: call.verifiedAtStart || call.matched });
         })
@@ -431,7 +432,7 @@ export function useCallController(deps: CallControllerDeps): CallController {
     }
 
     function onSasInputs(inputs: SasInputs) {
-      const call = live.current.call;
+      const call = live.call;
       if (!call || call.finished || inputs.callId !== call.callId) return;
       if (call.remoteDtls === null) {
         call.remoteDtls = inputs.remoteDtls;
@@ -450,12 +451,12 @@ export function useCallController(deps: CallControllerDeps): CallController {
     }
 
     function consentAsked(request: DirectConsentRequest | null) {
-      live.current.consent = request;
+      live.consent = request;
       setConsent(request);
     }
 
     async function settleRecords() {
-      const pending = [...live.current.records];
+      const pending = [...live.records];
       if (pending.length === 0) return;
       await Promise.race([Promise.allSettled(pending), new Promise(resolve => setTimeout(resolve, RECORD_WAIT_MS))]);
     }
@@ -498,7 +499,7 @@ export function useCallController(deps: CallControllerDeps): CallController {
         engine().hangup();
       },
       answerConsent(allow: boolean) {
-        const request = live.current.consent;
+        const request = live.consent;
         if (allow !== true && request) markLocal(request.outgoing ? 'hangup' : 'decline');
         engine().answerDirectConsent(allow === true);
       },
@@ -511,7 +512,7 @@ export function useCallController(deps: CallControllerDeps): CallController {
           .catch(error => console.error('camera switch failed', error));
       },
       confirmMatch() {
-        const call = live.current.call;
+        const call = live.call;
         if (!call || call.finished || call.security || !call.indices) return;
         call.matched = true;
         setSas({ indices: call.indices, verified: true });
@@ -521,7 +522,7 @@ export function useCallController(deps: CallControllerDeps): CallController {
         showEnded(null);
       },
       callAgain() {
-        const card = live.current.ended;
+        const card = live.ended;
         if (!card) return;
         showEnded(null);
         start(card.peer, card.video);
@@ -534,16 +535,16 @@ export function useCallController(deps: CallControllerDeps): CallController {
         const calls = engine();
         const during = reason === 'lock' ? calls.isCallBusy() : calls.callHoldsMedia();
         if (!during) return true;
-        live.current.confirm?.resolve(false);
+        live.confirm?.resolve(false);
         return new Promise<boolean>(resolve => {
-          live.current.confirm = { reason, resolve };
+          live.confirm = { reason, resolve };
           setEndConfirm(reason);
         });
       },
       answerEndConfirm(ok: boolean) {
-        const pending = live.current.confirm;
+        const pending = live.confirm;
         if (!pending) return;
-        live.current.confirm = null;
+        live.confirm = null;
         setEndConfirm(null);
         if (!ok) {
           pending.resolve(false);
@@ -552,10 +553,10 @@ export function useCallController(deps: CallControllerDeps): CallController {
         void hangupAndWait().finally(() => pending.resolve(true));
       },
       dispose() {
-        const pending = live.current.confirm;
-        live.current.confirm = null;
+        const pending = live.confirm;
+        live.confirm = null;
         pending?.resolve(false);
-        if (live.current.noticeTimer) clearTimeout(live.current.noticeTimer);
+        if (live.noticeTimer) clearTimeout(live.noticeTimer);
       },
     };
   }, []);
@@ -624,7 +625,7 @@ export function useCallController(deps: CallControllerDeps): CallController {
           identityDigest: peerInfo?.identityDigest ?? null,
         }
       : null,
-    direction: live.current.call?.direction ?? null,
+    direction: live.call?.direction ?? null,
     video: video || media.hasVideo,
     minimized,
     setMinimized,
