@@ -5,7 +5,8 @@
  * The machine decides; this runs the commands it asks for, from the event
  * that caused them, never from an effect, so React's double effects in
  * development never call the backend twice. Each new step moves the focus
- * to its heading; an error moves it to the field it is about.
+ * to its heading; an error moves it to the field it is about, or to the
+ * message when it is about the whole step.
  *
  * Beyond the contract of types.ts it takes optional stand-ins, for the tests
  * and for the integration: `makeAvatar`, the storage of the consent record,
@@ -93,6 +94,7 @@ export function OnboardingFlow({
   const passRef = useRef<HTMLInputElement>(null);
   const pass2Ref = useRef<HTMLInputElement>(null);
   const codeRef = useRef<HTMLInputElement>(null);
+  const stepErrorRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     mounted.current = true;
@@ -167,18 +169,19 @@ export function OnboardingFlow({
     }
   };
 
-  // A new step takes the focus to its heading; an error, to its field.
+  // A new step takes the focus to its heading; an error, to its field, or to
+  // the message itself when it is about the whole step.
   const view = `${state.step}:${state.twofa}`;
   const lastView = useRef<string | null>(null);
   useEffect(() => {
     const changed = lastView.current !== view;
     lastView.current = view;
-    const target = state.error ? fieldOf(state.error.field) : null;
+    const target = state.error ? focusTargetOf(state.error.field) : null;
     if (target) target.focus();
     else if (changed) headingRef.current?.focus();
   }, [view, state.error]);
 
-  function fieldOf(field: ErrorField): HTMLElement | null {
+  function focusTargetOf(field: ErrorField): HTMLElement | null {
     switch (field) {
       case 'consent':
         return current.current.ageConfirmed ? privacyRef.current : ageRef.current;
@@ -190,7 +193,13 @@ export function OnboardingFlow({
         return pass2Ref.current;
       case 'code':
         return codeRef.current;
-      default:
+      // The flow disabled the button or the code field that had the focus
+      // while it waited, and WebView2 moves the focus off a disabled control
+      // to the page, where the next Tab starts again at the window bar.
+      case 'step':
+        return stepErrorRef.current;
+      // Choosing a picture disables nothing: the button that chose it keeps the focus.
+      case 'photo':
         return null;
     }
   }
@@ -238,7 +247,9 @@ export function OnboardingFlow({
           <PasswordStep state={state} send={send} {...heading} passRef={passRef} pass2Ref={pass2Ref} />
         ) : null}
         {state.step === 'style' ? <StyleStep {...heading} /> : null}
-        {state.step === 'twofa' ? <TwofaStep state={state} send={send} {...heading} codeRef={codeRef} /> : null}
+        {state.step === 'twofa' ? (
+          <TwofaStep state={state} send={send} {...heading} codeRef={codeRef} stepErrorRef={stepErrorRef} />
+        ) : null}
         {created ? <DoneStep state={state} {...heading} onFinish={intent => onCreated(created, intent)} /> : null}
 
         {withBack ? (

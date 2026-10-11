@@ -434,6 +434,74 @@ describe('when creating the identity fails', () => {
   });
 });
 
+/**
+ * Presses a button from the keyboard and leaves the focus where WebView2
+ * does: the flow disables the button while it waits for the backend, and
+ * Chromium then moves the focus off it to the page. jsdom keeps the focus on
+ * a disabled control and cannot blur one, so the button is blurred just
+ * before it is pressed.
+ */
+function pressAndLoseFocus(name: string) {
+  const control = button(name) as HTMLButtonElement;
+  control.focus();
+  control.blur();
+  fireEvent.click(control);
+  expect(control.disabled).toBe(true);
+  expect(document.activeElement).toBe(document.body);
+}
+
+/** The focus is on the message itself: an element that holds the alert and nothing else. */
+function expectFocusOnMessage(message: string) {
+  const alert = screen.getByRole('alert');
+  expect(alert.textContent).toBe(message);
+  const focused = document.activeElement;
+  expect(focused).not.toBe(document.body);
+  expect(focused?.contains(alert)).toBe(true);
+  expect(focused?.textContent).toBe(message);
+  expect(focused?.getAttribute('tabindex')).toBe('-1');
+}
+
+describe('after a failure about the whole step', () => {
+  it('takes the focus to the message when "Ahora no" cannot create the identity', async () => {
+    setup({ api: fakeApi({ createIdentity: vi.fn(() => Promise.reject(failure('io'))) }) });
+    await toTwofa();
+    pressAndLoseFocus('Ahora no');
+    await settle();
+    expectFocusOnMessage('No se pudo crear tu identidad. Inténtalo de nuevo.');
+  });
+
+  it('takes the focus to the message when "Activar" cannot set up two-step verification', async () => {
+    setup({ api: fakeApi({ totpBegin: vi.fn(() => Promise.reject(failure('internal'))) }) });
+    await toTwofa();
+    pressAndLoseFocus('Activar');
+    await settle();
+    expectFocusOnMessage('No se pudo preparar la verificación en dos pasos. Inténtalo de nuevo.');
+  });
+
+  it('takes the focus to the message when the identity cannot be created after "Comprobar"', async () => {
+    const { api } = setup({ api: fakeApi({ createIdentity: vi.fn(() => Promise.reject(failure('io'))) }) });
+    await toTwofa();
+    click('Activar');
+    await settle();
+    type('Código de 6 dígitos', '482913');
+    pressAndLoseFocus('Comprobar');
+    await settle();
+    expect(api.createIdentity).toHaveBeenCalledWith('Rechita', PASS, true);
+    expectFocusOnMessage('No se pudo crear tu identidad. Inténtalo de nuevo.');
+  });
+
+  // Choosing a picture disables nothing: the button that chose it keeps the focus.
+  it('leaves the focus on the photo button when a picture cannot be used', async () => {
+    const { container } = setup({ makeAvatar: vi.fn(() => Promise.reject(new Error('avatar: not a picture'))) });
+    passWelcome();
+    button('Agregar foto').focus();
+    fireEvent.change(container.querySelector('input[type="file"]')!, { target: { files: [new File(['x'], 'a.gif', { type: 'image/gif' })] } });
+    await settle();
+    expect(alertText()).toBe('No se pudo usar esa imagen. Prueba con otra.');
+    expect(document.activeElement).toBe(button('Agregar foto'));
+  });
+});
+
 describe('"Todo listo"', () => {
   async function done() {
     setup();

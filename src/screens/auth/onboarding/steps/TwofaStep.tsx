@@ -20,12 +20,20 @@ export interface TwofaStepProps {
   headingId: string;
   headingRef: Ref<HTMLHeadingElement>;
   codeRef: Ref<HTMLInputElement>;
+  /** The message of a failure about the whole step, which takes the focus (OnboardingFlow). */
+  stepErrorRef: Ref<HTMLDivElement>;
 }
 
-export function TwofaStep({ state, send, headingId, headingRef, codeRef }: TwofaStepProps) {
+export function TwofaStep({ state, send, headingId, headingRef, codeRef, stepErrorRef }: TwofaStepProps) {
   const t = useT();
   const busy = state.busy !== null;
-  const stepError = state.error?.field === 'step' ? <Banner tone="danger">{t(state.error.key)}</Banner> : null;
+  // It takes the focus, so it is read where the person is, but it is not a Tab stop.
+  const stepError =
+    state.error?.field === 'step' ? (
+      <div ref={stepErrorRef} tabIndex={-1} className="outline-none">
+        <Banner tone="danger">{t(state.error.key)}</Banner>
+      </div>
+    ) : null;
   // There from the start, so "Creando tu identidad…" is announced when it appears.
   const creating = (
     <p role="status" className="m-0 text-ui-md text-ui-muted">
