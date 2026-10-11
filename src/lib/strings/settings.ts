@@ -41,6 +41,19 @@ export const settings: AreaStrings = {
     // Tu código QR (PropAjustes:168-191).
     'settings2.qr.title': 'Tu código QR',
     'settings2.qr.back': 'Volver al perfil',
+
+    // Privacidad (plan-cambios-11oct §4 W5).
+    'settings2.privacy.title': 'Privacidad',
+    'settings2.privacy.blocked': 'Contactos bloqueados',
+    'settings2.privacy.blockedNone': 'Ninguno',
+    'settings2.privacy.blockedEmpty': 'No tienes contactos bloqueados.',
+    'settings2.privacy.unblock': 'Desbloquear',
+    'settings2.privacy.unblockA11y': 'Desbloquear a {name}',
+    'settings2.privacy.errUnblock': 'No se pudo desbloquear a {name}.',
+    'settings2.privacy.errLoad': 'No se pudo cargar la lista de contactos.',
+    'settings2.privacy.back': 'Volver a Privacidad',
+    'settings2.privacy.callsLine':
+      'Tus llamadas pasan por un servidor de Cloudflare: tu contacto no ve tu IP, pero Cloudflare sí. Si una llamada no se puede proteger, Trino te pregunta antes de llamar directo.',
   },
   en: {
     'settings2.notif.appName': 'Trino Chat',
@@ -74,6 +87,18 @@ export const settings: AreaStrings = {
 
     'settings2.qr.title': 'Your QR code',
     'settings2.qr.back': 'Back to profile',
+
+    'settings2.privacy.title': 'Privacy',
+    'settings2.privacy.blocked': 'Blocked contacts',
+    'settings2.privacy.blockedNone': 'None',
+    'settings2.privacy.blockedEmpty': 'You have no blocked contacts.',
+    'settings2.privacy.unblock': 'Unblock',
+    'settings2.privacy.unblockA11y': 'Unblock {name}',
+    'settings2.privacy.errUnblock': 'Couldn’t unblock {name}.',
+    'settings2.privacy.errLoad': 'The list of contacts couldn’t be loaded.',
+    'settings2.privacy.back': 'Back to Privacy',
+    'settings2.privacy.callsLine':
+      'Your calls go through a Cloudflare server: your contact doesn’t see your IP, but Cloudflare does. If a call can’t be protected, Trino asks you before calling directly.',
   },
   pt: {
     'settings2.notif.appName': 'Trino Chat',
@@ -107,5 +132,17 @@ export const settings: AreaStrings = {
 
     'settings2.qr.title': 'Seu código QR',
     'settings2.qr.back': 'Voltar ao perfil',
+
+    'settings2.privacy.title': 'Privacidade',
+    'settings2.privacy.blocked': 'Contatos bloqueados',
+    'settings2.privacy.blockedNone': 'Nenhum',
+    'settings2.privacy.blockedEmpty': 'Você não tem contatos bloqueados.',
+    'settings2.privacy.unblock': 'Desbloquear',
+    'settings2.privacy.unblockA11y': 'Desbloquear {name}',
+    'settings2.privacy.errUnblock': 'Não foi possível desbloquear {name}.',
+    'settings2.privacy.errLoad': 'Não foi possível carregar a lista de contatos.',
+    'settings2.privacy.back': 'Voltar para Privacidade',
+    'settings2.privacy.callsLine':
+      'Suas chamadas passam por um servidor da Cloudflare: seu contato não vê seu IP, mas a Cloudflare vê. Se uma chamada não puder ser protegida, o Trino pergunta antes de ligar diretamente.',
   },
 };

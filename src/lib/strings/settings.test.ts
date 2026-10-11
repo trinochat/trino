@@ -39,11 +39,27 @@ const PROFILE = [
 /** "Tu código QR" (ProfileQrView.tsx). */
 const QR = ['settings2.qr.title', 'settings2.qr.back'];
 
-const KEYS: string[] = [...NOTIFICATION_CONTENT, ...PROFILE, ...QR];
+/** Settings > Privacidad and its blocked contacts (PrivacySection.tsx, BlockedContactsView.tsx). */
+const PRIVACY = [
+  'settings2.privacy.title',
+  'settings2.privacy.blocked',
+  'settings2.privacy.blockedNone',
+  'settings2.privacy.blockedEmpty',
+  'settings2.privacy.unblock',
+  'settings2.privacy.unblockA11y',
+  'settings2.privacy.errUnblock',
+  'settings2.privacy.errLoad',
+  'settings2.privacy.back',
+  'settings2.privacy.callsLine',
+];
+
+const KEYS: string[] = [...NOTIFICATION_CONTENT, ...PROFILE, ...QR, ...PRIVACY];
 
 const PLACEHOLDERS: Record<string, string[]> = {
   'settings2.profile.aboutCount': ['n'],
   'settings2.profile.sharedPending': ['n'],
+  'settings2.privacy.unblockA11y': ['name'],
+  'settings2.privacy.errUnblock': ['name'],
 };
 
 describe('settings strings', () => {
@@ -67,6 +83,13 @@ describe('settings strings', () => {
     );
     expect(settings.es['settings2.profile.local']).toBe(
       'Tu foto y tu nombre se quedan en este equipo. Tus contactos te ven con el nombre que tenía tu código cuando te agregaron.',
+    );
+  });
+
+  // plan-cambios-11oct §4 W5 and §6.4: Privacidad names Cloudflare, which sees your IP.
+  it('say in Spanish how calls protect your IP, as the plan fixed', () => {
+    expect(settings.es['settings2.privacy.callsLine']).toBe(
+      'Tus llamadas pasan por un servidor de Cloudflare: tu contacto no ve tu IP, pero Cloudflare sí. Si una llamada no se puede proteger, Trino te pregunta antes de llamar directo.',
     );
   });
 });
