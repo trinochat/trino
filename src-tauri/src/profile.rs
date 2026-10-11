@@ -30,7 +30,6 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
-use tauri::State;
 use zeroize::{Zeroize, Zeroizing};
 
 /// The version of the profile messages this backend reads and sends.
@@ -218,16 +217,11 @@ pub(crate) fn profile_message(rev: u64, name: &str, about: &str, photo: &PhotoFi
     serde_json::to_vec(&wire).unwrap_or_default()
 }
 
-/// What `send_cipher_inner` encrypts for `handle`: `plaintext` itself or,
-/// for a text, group or file envelope, the same envelope announcing that
-/// this Trino reads profile messages and which revision of `handle`'s
-/// profile it holds. Calls, rosters, handshakes and profile messages go out
-/// unchanged.
-///
-/// The integration step (I0) calls it from `send_cipher_inner`, which is
-/// W7's; until then nothing announces support, so no profile message goes
-/// to anyone.
-#[cfg_attr(not(test), allow(dead_code))]
+/// What `seal_for` encrypts for `handle`, for every message to a contact:
+/// `plaintext` itself or, for a text, group or file envelope, the same
+/// envelope announcing that this Trino reads profile messages and which
+/// revision of `handle`'s profile it holds. Calls, rosters, handshakes and
+/// profile messages go out unchanged.
 pub(crate) fn with_caps(profiles: &Profiles, handle: &str, plaintext: &[u8]) -> Vec<u8> {
     let announces = matches!(
         serde_json::from_slice::<Value>(plaintext),
@@ -330,7 +324,7 @@ fn current_message(inner: &InnerState) -> Vec<u8> {
 /// Send this identity's profile to `targets`, one at a time. A failure is
 /// only logged, and that contact's mark is taken back, so its next
 /// announcement tries again.
-pub(crate) async fn send_profile(state: &State<'_, AppState>, targets: Vec<String>) {
+pub(crate) async fn send_profile(state: &AppState, targets: Vec<String>) {
     let (message, rev) = {
         let inner = state.inner.lock().await;
         if inner.identity.is_none() {

@@ -275,7 +275,7 @@ pub(crate) fn forget_group(inner: &mut InnerState, gid: &str) -> Result<(), Comm
 
 /// Send `roster` to each of `targets` over its pairwise session, going on
 /// past a failure, which is only logged.
-async fn send_roster(state: &State<'_, AppState>, roster: &GroupRoster, targets: &[String]) {
+async fn send_roster(state: &AppState, roster: &GroupRoster, targets: &[String]) {
     let envelope = encode_envelope(&Envelope::Roster {
         roster: roster.clone(),
     });

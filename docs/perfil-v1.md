@@ -44,7 +44,10 @@ in   {"ty":"grp","gid":"g1","ep":4,"body":"hola grupo"}  (have = 0)
 out  {"ty":"grp","gid":"g1","ep":4,"body":"hola grupo","prof":{"v":1,"have":0}}
 ```
 
-An envelope that already has `prof` goes out as it is.
+An envelope that already has `prof` goes out as it is. On the desktop, every
+message to a contact is encrypted in one place, `seal_for` in
+`src-tauri/src/commands.rs`, which adds the field there: no text, group or
+file message goes out without it.
 
 **Receiving** a `text`, `grp` or `file` envelope records what its sender
 announced:
@@ -150,9 +153,6 @@ locking clears it from memory and wiping deletes the file.
 - If someone goes back to 0.1.0 after their last announcement and before your
   next change, the first profile message shows to them once as JSON. Their
   first message without `prof` closes that window.
-- On the desktop, outgoing messages announce support once the integration step
-  (I0) calls `profile::with_caps` from `send_cipher_inner`. Until then no
-  contact is recorded as reading profiles, so no profile message is sent.
 
 ## Vectors
 

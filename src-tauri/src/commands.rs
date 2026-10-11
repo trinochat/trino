@@ -2392,10 +2392,12 @@ fn unix_now() -> i64 {
 /// Encrypt `plaintext` for `handle` into a signed event dated `created_at`
 /// (now when `None`), and return it with the relays to send it to.
 ///
-/// Every outgoing message of a contact passes here. The session moves on
-/// only when the event fits a relay (`MAX_EVENT_BYTES`), so a message
-/// refused for its size costs no ratchet step. With `need_relay_up`,
-/// nothing is encrypted while no relay is up.
+/// Every outgoing message of a contact passes here. A text, group or file
+/// message also says that this Trino reads profiles, and which revision of
+/// the contact's profile it holds (K12, `profile::with_caps`); the rest goes
+/// as it is. The session moves on only when the event fits a relay
+/// (`MAX_EVENT_BYTES`), so a message refused for its size costs no ratchet
+/// step. With `need_relay_up`, nothing is encrypted while no relay is up.
 async fn seal_for(
     state: &AppState,
     handle: &str,
@@ -2435,8 +2437,9 @@ async fn seal_for(
         return Err(SendError::Offline);
     }
 
+    let plaintext = profile::with_caps(&inner.profiles, handle, plaintext);
     let ct: EncryptedMessage =
-        ratchet_encrypt(&mut ratchet, plaintext, &ad).map_err(|e| failed(&e))?;
+        ratchet_encrypt(&mut ratchet, &plaintext, &ad).map_err(|e| failed(&e))?;
     let is_handshake = handshake.is_some();
     let payload = WirePayload {
         header: WireHeader {
@@ -5290,6 +5293,194 @@ mod tests {
         assert_eq!(
             SendError::NoSession.to_string(),
             "no session — run connect first"
+        );
+    }
+
+    // ---- I0: what goes out says that this Trino reads profiles (K12) ----
+
+    /// `add_session`, plus the contact's own side of that session, so a test
+    /// reads what was sent as the contact's Trino would.
+    fn add_session_read_by(
+        inner: &mut InnerState,
+        me: &Identity,
+        contact: &Identity,
+        handle: &str,
+    ) -> (RatchetState, Vec<u8>) {
+        inner
+            .friends
+            .insert(handle.to_string(), friend(contact, handle));
+        let bundle = public_bundle_for(contact);
+        let init = initiate(me, &bundle).unwrap();
+        let spk = decode_array_32(&bundle.spk_pub).unwrap();
+        inner.ratchets.insert(
+            handle.to_string(),
+            init_initiator(init.master_secret, spk).unwrap(),
+        );
+        inner
+            .associated_data
+            .insert(handle.to_string(), init.associated_data);
+        let handshake = WireHandshake {
+            ik_dh_pub: init.message.ik_dh_pub,
+            ek_pub: init.message.ek_pub,
+            spk_id: init.message.spk_id,
+            opk_id: init.message.opk_id,
+        };
+        let (_, ratchet, associated_data) = respond_to_handshake(contact, &handshake).unwrap();
+        (ratchet, associated_data)
+    }
+
+    /// What `event` carries, decrypted by its recipient's side of the session.
+    fn opened_by(event: &NostrEvent, ratchet: &mut RatchetState, ad: &[u8]) -> Vec<u8> {
+        let payload: WirePayload = serde_json::from_str(&event.content).unwrap();
+        let message = EncryptedMessage {
+            header: MessageHeader {
+                dh_pub: payload.header.dh_pub,
+                pn: payload.header.pn,
+                n: payload.header.n,
+            },
+            nonce: payload.nonce,
+            ciphertext: payload.ciphertext,
+        };
+        ratchet_decrypt(ratchet, &message, ad).unwrap()
+    }
+
+    #[tokio::test]
+    async fn text_group_and_file_messages_say_that_this_trino_reads_profiles() {
+        let relay = TestRelay::start(Answer::Accept).await;
+        let (me, bob) = (create_identity(), create_identity());
+        let state = sending_state(&me, vec![relay.client().await]).await;
+        let (mut bob_side, ad, gid) = {
+            let mut inner = state.inner.lock().await;
+            let (bob_side, ad) = add_session_read_by(&mut inner, &me, &bob, "bob");
+            // Revision 7 of bob's profile is the one kept here.
+            inner.profiles.contacts.insert(
+                "bob".to_string(),
+                profile::ContactProfile {
+                    rev: 7,
+                    ..Default::default()
+                },
+            );
+            let roster = roster_of(&me, &[(&bob, "bob")]);
+            let gid = roster.group_id.clone();
+            inner.groups.insert(gid.clone(), roster);
+            (bob_side, ad, gid)
+        };
+        let file = Envelope::File {
+            file: sample_file(),
+            gid: None,
+            body: None,
+        };
+
+        send_text(&state, "bob", "hola".to_string(), SHORT_WAIT)
+            .await
+            .unwrap();
+        send_group_text(&state, &gid, "hola grupo".to_string(), None, SHORT_WAIT)
+            .await
+            .unwrap();
+        send_acked(
+            &state,
+            "bob",
+            &encode_envelope(&file),
+            unix_now(),
+            SHORT_WAIT,
+        )
+        .await
+        .unwrap();
+
+        let events = relay.events();
+        assert_eq!(events.len(), 3);
+        let opened: Vec<Vec<u8>> = events
+            .iter()
+            .map(|event| opened_by(event, &mut bob_side, &ad))
+            .collect();
+        // Each is still the message sent,
+        assert!(
+            matches!(decode_envelope(&opened[0]), Envelope::Text { body, .. } if body == "hola")
+        );
+        assert!(matches!(
+            decode_envelope(&opened[1]),
+            Envelope::Group { gid: to, body, .. } if to == gid && body == "hola grupo"
+        ));
+        assert_eq!(decode_envelope(&opened[2]), file);
+        // and it says that this Trino reads profiles and which revision of
+        // bob's it holds, which bob's Trino records.
+        let mut bobs_profiles = profile::Profiles::default();
+        for (event, plain) in events.iter().zip(&opened) {
+            let fields: serde_json::Value = serde_json::from_slice(plain).unwrap();
+            assert_eq!(
+                fields["prof"],
+                serde_json::json!({ "v": 1, "have": 7 }),
+                "{fields}"
+            );
+            profile::receive(&mut bobs_profiles, "me", plain, event.created_at);
+            assert_eq!(bobs_profiles.contacts["me"].caps, profile::PROFILE_V);
+            assert_eq!(bobs_profiles.contacts["me"].have, 7);
+        }
+    }
+
+    #[tokio::test]
+    async fn calls_rosters_handshakes_and_profiles_go_out_as_they_are() {
+        use crate::nostr::test_relay::wait_until;
+        let relay = TestRelay::start(Answer::Accept).await;
+        let (me, bob, carol) = (create_identity(), create_identity(), create_identity());
+        let state = sending_state(&me, vec![relay.client().await]).await;
+        let (mut bob_side, ad, roster) = {
+            let mut inner = state.inner.lock().await;
+            let (bob_side, ad) = add_session_read_by(&mut inner, &me, &bob, "bob");
+            // bob reads profiles, and revision 3 is this identity's.
+            inner.profiles.contacts.insert(
+                "bob".to_string(),
+                profile::ContactProfile {
+                    rev: 7,
+                    caps: profile::PROFILE_V,
+                    ..Default::default()
+                },
+            );
+            inner.profiles.rev = 3;
+            // carol is a contact with no session yet.
+            inner
+                .friends
+                .insert("carol".to_string(), friend(&carol, "carol"));
+            (bob_side, ad, roster_of(&me, &[(&bob, "bob")]))
+        };
+        let call = encode_envelope(&Envelope::Call {
+            call: r#"{"type":"bye"}"#.to_string(),
+        });
+        let roster = encode_envelope(&Envelope::Roster { roster });
+
+        // A call signal and a roster, as send_call_signal and
+        // distribute_roster send them, this identity's profile,
+        send_cipher_inner(&state, "bob", &call, None).await.unwrap();
+        send_cipher_inner(&state, "bob", &roster, None)
+            .await
+            .unwrap();
+        profile::send_profile(&state, vec!["bob".to_string()]).await;
+        // and the handshake that opens a session with carol.
+        ensure_session(&state, "carol").await.unwrap();
+        wait_until("the four events", || relay.events().len() == 4).await;
+
+        let events = relay.events();
+        assert_eq!(opened_by(&events[0], &mut bob_side, &ad), call);
+        assert_eq!(opened_by(&events[1], &mut bob_side, &ad), roster);
+        // A profile message with anything more would be dropped as invalid.
+        let profile_message = opened_by(&events[2], &mut bob_side, &ad);
+        let mut bobs_profiles = profile::Profiles::default();
+        let received = profile::receive(
+            &mut bobs_profiles,
+            "me",
+            &profile_message,
+            events[2].created_at,
+        );
+        assert!(received.consumed && received.save, "bob's Trino refused it");
+        assert_eq!(bobs_profiles.contacts["me"].rev, 3);
+        assert_eq!(bobs_profiles.contacts["me"].name.as_deref(), Some("me"));
+        // carol reads the handshake as it was.
+        let payload: WirePayload = serde_json::from_str(&events[3].content).unwrap();
+        let (_, mut carol_side, carol_ad) =
+            respond_to_handshake(&carol, payload.handshake.as_ref().unwrap()).unwrap();
+        assert_eq!(
+            opened_by(&events[3], &mut carol_side, &carol_ad),
+            b"__trino_handshake__"
         );
     }
 
