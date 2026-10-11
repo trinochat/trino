@@ -1210,6 +1210,50 @@ mod tests {
         assert!(inner.history.is_empty());
     }
 
+    /// Whether, in the receive path `body`, the profile hook takes a message
+    /// and returns before anything decodes it as a chat envelope. Spaces and
+    /// line breaks do not count.
+    fn the_hook_comes_first(body: &str) -> bool {
+        let code: String = body.split_whitespace().collect();
+        let (Some(hook), Some(decoded)) = (
+            code.find("ifprofile::on_message("),
+            code.find("matchdecode_envelope(&plain)"),
+        ) else {
+            return false;
+        };
+        hook < decoded
+            && !code[..hook].contains("decode_envelope(")
+            && code[hook..decoded].contains("){return;}")
+    }
+
+    #[test]
+    fn handle_incoming_event_stops_at_a_profile_message_before_the_chat() {
+        // `receive` only sees the profiles: whether a message it consumed
+        // stays out of the history and of `message-received` depends on
+        // where handle_incoming_event calls the hook. Merges move code around
+        // there, and every other test would still pass with the hook below.
+        let commands = include_str!("commands.rs").replace("\r\n", "\n");
+        let start = commands
+            .find("async fn handle_incoming_event(")
+            .expect("the receive path");
+        let body = &commands[start..];
+        let body = &body[..body.find("\n}\n").expect("its end")];
+
+        assert!(the_hook_comes_first(body));
+        // The check sees the hook below the decoding, or one that does not
+        // return.
+        let hook = "if profile::on_message(&app, &mut inner, &h, &plain, at) {\n return;\n }";
+        let decode = "match decode_envelope(&plain) {\n Envelope::Text { body, id } => {}\n }";
+        assert!(the_hook_comes_first(&format!("{hook}\n{decode}")));
+        assert!(!the_hook_comes_first(&format!("{decode}\n{hook}")));
+        let ignored = hook
+            .replace("if ", "let _ = ")
+            .replace(" {\n return;\n }", ";");
+        assert!(!the_hook_comes_first(&format!("{ignored}\n{decode}")));
+        let early = format!("let early = decode_envelope(&plain);\n{hook}\n{decode}");
+        assert!(!the_hook_comes_first(&early));
+    }
+
     #[test]
     fn announcements_set_and_clear_what_a_contact_reads() {
         let mut profiles = Profiles::default();
@@ -2070,6 +2114,41 @@ mod tests {
         profiles.sent.insert(("ana".into(), 3));
         profiles.forget();
         assert!(profiles.sent.is_empty());
+    }
+
+    /// The value of `export const <name> = <integers multiplied>;` in the
+    /// TypeScript `source`, as src/lib writes its constants.
+    fn ts_constant(source: &str, name: &str) -> Option<usize> {
+        let declaration = format!("export const {name} = ");
+        let value = source
+            .lines()
+            .find_map(|line| line.trim().strip_prefix(declaration.as_str()))?;
+        value
+            .trim_end()
+            .strip_suffix(';')?
+            .split('*')
+            .map(|factor| factor.trim().replace('_', "").parse::<usize>().ok())
+            .product()
+    }
+
+    #[test]
+    fn the_photo_limit_is_the_one_the_app_makes_photos_for() {
+        // makeAvatar (src/lib/avatar.ts) shrinks a photo until it fits in
+        // AVATAR_MAX_BYTES. Above PHOTO_MAX_BYTES every larger photo it made
+        // would be profile_invalid; below it, photos would be smaller than
+        // they can be. The two must not drift.
+        let avatar = include_str!("../../src/lib/avatar.ts");
+        assert_eq!(
+            ts_constant(avatar, "AVATAR_MAX_BYTES"),
+            Some(PHOTO_MAX_BYTES)
+        );
+        // The reader tells other values, and no value, apart.
+        let drifted = "export const AVATAR_MAX_BYTES = 24 * 1024;";
+        assert_eq!(ts_constant(drifted, "AVATAR_MAX_BYTES"), Some(24 * 1024));
+        assert_eq!(
+            ts_constant("const AVATAR_MAX_BYTES = 1;", "AVATAR_MAX_BYTES"),
+            None
+        );
     }
 
     /// Relays drop events over 64 KB without a word (trino-rediseno.md, on
