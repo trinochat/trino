@@ -1,5 +1,6 @@
-import { describe, expect, it } from 'vitest';
-import { PREF_DEFAULTS, STICKER_RECENTS_MAX, createPrefs, type PrefsStorage } from './prefs';
+import { describe, expect, expectTypeOf, it } from 'vitest';
+import * as prefsModule from './prefs';
+import { PREF_DEFAULTS, STICKER_RECENTS_MAX, createPrefs, type Prefs, type PrefsStorage } from './prefs';
 
 /** A `localStorage` stand-in that keeps what is written, readable by key. */
 function memoryStorage(entries: Record<string, string> = {}) {
@@ -122,12 +123,11 @@ describe('preferences that already exist', () => {
 });
 
 describe('a contact renamed or removed', () => {
-  it('carries its note, ttl, verification and IP warning to the new name', () => {
+  it('carries its note, ttl and verification to the new name', () => {
     const { storage, data } = memoryStorage({
       'note:Ana': 'n',
       'ttl:Ana': '30',
       'verified:Ana': 'fp',
-      'trino.pref.ipWarned:Ana': '1',
       'note:Otro': 'o',
     });
     createPrefs(storage).renameContact('Ana', 'Ana T');
@@ -135,7 +135,6 @@ describe('a contact renamed or removed', () => {
       'note:Ana T': 'n',
       'ttl:Ana T': '30',
       'verified:Ana T': 'fp',
-      'trino.pref.ipWarned:Ana T': '1',
       'note:Otro': 'o',
     });
   });
@@ -145,11 +144,48 @@ describe('a contact renamed or removed', () => {
       'note:Ana': 'n',
       'ttl:Ana': '30',
       'verified:Ana': 'fp',
-      'trino.pref.ipWarned:Ana': '1',
       'note:Otro': 'o',
     });
     createPrefs(storage).forgetContact('Ana');
     expect(Object.fromEntries(data)).toEqual({ 'note:Otro': 'o' });
+  });
+});
+
+/** Every preference there is. Only the parent changes prefs.ts, and this list with it. */
+const MEMBERS = [
+  'getVerified', 'isVerified', 'setVerified', 'clearVerified',
+  'getNote', 'setNote', 'getTtl', 'setTtl',
+  'getAutolockMinutes', 'setAutolockMinutes',
+  'getUpdatesMuted', 'setUpdatesMuted', 'getUpdatesLastRead', 'setUpdatesLastRead',
+  'getStickerRecents', 'pushStickerRecent', 'renameContact', 'forgetContact',
+  'getNotifPreview', 'setNotifPreview', 'getMessageSound', 'setMessageSound',
+  'getCallNotifyHidden', 'setCallNotifyHidden', 'getCallsSeenAt', 'setCallsSeenAt',
+  'getRingtone', 'setRingtone', 'getRingVolume', 'setRingVolume',
+  'getMuteGroupsByDefault', 'setMuteGroupsByDefault', 'getGroupMuted', 'setGroupMuted',
+  'getScanLines', 'setScanLines',
+] as const;
+
+// With TURN the contact never sees your IP, so the warning "once per
+// contact" went away with its two settings (plan-cambios-11oct §1.2). The
+// question of calling directly is asked on every call and never remembered:
+// a preference that skipped or remembered it could let a call go direct
+// without consent. So the preferences are a closed set, and none is about it.
+describe('the preferences, a closed set since TURN retired the IP warning', () => {
+  it('are exactly these, in the type and at run time', () => {
+    expectTypeOf<keyof Prefs>().toEqualTypeOf<(typeof MEMBERS)[number]>();
+    expect(Object.keys(createPrefs(memoryStorage().storage)).sort()).toEqual([...MEMBERS].sort());
+  });
+
+  it('come with nothing but their option lists, defaults and limits', () => {
+    expect(Object.keys(prefsModule).sort()).toEqual([
+      'DEFAULT_AUTOLOCK_MINUTES',
+      'NOTIF_PREVIEWS',
+      'PREF_DEFAULTS',
+      'RINGTONES',
+      'STICKER_RECENTS_MAX',
+      'createPrefs',
+      'prefs',
+    ]);
   });
 });
 
@@ -159,18 +195,16 @@ describe('preferences of the redesign', () => {
     expect(prefs.getNotifPreview()).toBe('name');
     expect(prefs.getMessageSound()).toBe(true);
     expect(prefs.getCallNotifyHidden()).toBe(true);
-    expect(prefs.getCallIpWarn()).toBe('once');
-    expect(prefs.getIpWarned('Ana')).toBe(false);
     expect(prefs.getRingtone()).toBe('soft');
     expect(prefs.getRingVolume()).toBe(60);
     expect(prefs.getMuteGroupsByDefault()).toBe(false);
     expect(prefs.getGroupMuted('9f3a')).toBe(false);
     expect(prefs.getScanLines()).toBe(true);
+    expect(prefs.getCallsSeenAt()).toBe(0);
     expect(PREF_DEFAULTS).toEqual({
       notifPreview: 'name',
       messageSound: true,
       callNotifyHidden: true,
-      callIpWarn: 'once',
       ringtone: 'soft',
       ringVolume: 60,
       muteGroupsByDefault: false,
@@ -184,54 +218,68 @@ describe('preferences of the redesign', () => {
     prefs.setNotifPreview('full');
     prefs.setMessageSound(false);
     prefs.setCallNotifyHidden(false);
-    prefs.setCallIpWarn('always');
-    prefs.setIpWarned('Ana', true);
     prefs.setRingtone('silent');
     prefs.setRingVolume(35);
     prefs.setMuteGroupsByDefault(true);
     prefs.setGroupMuted('9f3a', true);
     prefs.setScanLines(false);
+    prefs.setCallsSeenAt(1760000000);
     expect(Object.fromEntries(data)).toEqual({
       'trino.pref.notifPreview': 'full',
       'trino.pref.messageSound': '0',
       'trino.pref.callNotifyHidden': '0',
-      'trino.pref.callIpWarn': 'always',
-      'trino.pref.ipWarned:Ana': '1',
       'trino.pref.ringtone': 'silent',
       'trino.pref.ringVolume': '35',
       'trino.pref.muteGroupsByDefault': '1',
       'trino.pref.groupMuted:9f3a': '1',
       'trino.pref.scanLines': '0',
+      'trino.pref.callsSeenAt': '1760000000',
     });
     expect(prefs.getNotifPreview()).toBe('full');
     expect(prefs.getMessageSound()).toBe(false);
     expect(prefs.getCallNotifyHidden()).toBe(false);
-    expect(prefs.getCallIpWarn()).toBe('always');
-    expect(prefs.getIpWarned('Ana')).toBe(true);
     expect(prefs.getRingtone()).toBe('silent');
     expect(prefs.getRingVolume()).toBe(35);
     expect(prefs.getMuteGroupsByDefault()).toBe(true);
     expect(prefs.getGroupMuted('9f3a')).toBe(true);
     expect(prefs.getScanLines()).toBe(false);
+    expect(prefs.getCallsSeenAt()).toBe(1760000000);
   });
 
   it('fall back to the default for a value they do not know', () => {
     const prefs = createPrefs(
       memoryStorage({
         'trino.pref.notifPreview': 'everything',
-        'trino.pref.callIpWarn': 'sometimes',
         'trino.pref.ringtone': 'bell',
         'trino.pref.ringVolume': 'loud',
         'trino.pref.scanLines': 'off',
         'trino.pref.messageSound': 'yes',
+        'trino.pref.callsSeenAt': 'later',
       }).storage,
     );
     expect(prefs.getNotifPreview()).toBe('name');
-    expect(prefs.getCallIpWarn()).toBe('once');
     expect(prefs.getRingtone()).toBe('soft');
     expect(prefs.getRingVolume()).toBe(60);
     expect(prefs.getScanLines()).toBe(true);
     expect(prefs.getMessageSound()).toBe(true);
+    expect(prefs.getCallsSeenAt()).toBe(0);
+  });
+
+  // W2 counts the missed calls after this moment ("Llamadas · N"); opening
+  // the Calls tab moves it to now. Epoch seconds, like `Msg.ts`.
+  it('keep when the call log was last seen, from 0, never negative', () => {
+    const { storage } = memoryStorage();
+    const prefs = createPrefs(storage);
+    expect(prefs.getCallsSeenAt()).toBe(0);
+    expect(prefs.setCallsSeenAt(1760000123.5)).toBe(true);
+    expect(prefs.getCallsSeenAt()).toBe(1760000123.5);
+    for (const ts of [-1, Number.NaN, Number.POSITIVE_INFINITY]) {
+      expect(prefs.setCallsSeenAt(ts), String(ts)).toBe(false);
+    }
+    expect(prefs.getCallsSeenAt()).toBe(1760000123.5);
+    for (const value of ['-5', '', 'NaN', 'Infinity']) {
+      expect(createPrefs(memoryStorage({ 'trino.pref.callsSeenAt': value }).storage).getCallsSeenAt(), value).toBe(0);
+    }
   });
 
   it('keep the ring volume a whole number from 0 to 100', () => {
@@ -255,6 +303,7 @@ describe('storage that fails', () => {
     expect(prefs.getStickerRecents()).toEqual([]);
     expect(prefs.getNotifPreview()).toBe('name');
     expect(prefs.isVerified('Ana', 'fp')).toBe(false);
+    expect(prefs.getCallsSeenAt()).toBe(0);
     expect(() => prefs.renameContact('Ana', 'B')).not.toThrow();
     expect(() => prefs.forgetContact('Ana')).not.toThrow();
     expect(() => prefs.pushStickerRecent('s1')).not.toThrow();
@@ -264,6 +313,7 @@ describe('storage that fails', () => {
     const prefs = createPrefs(brokenStorage);
     expect(prefs.setNote('Ana', 'x')).toBe(false);
     expect(prefs.setScanLines(false)).toBe(false);
+    expect(prefs.setCallsSeenAt(1760000000)).toBe(false);
     expect(createPrefs(memoryStorage().storage).setScanLines(false)).toBe(true);
   });
 

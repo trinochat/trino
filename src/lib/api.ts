@@ -105,6 +105,8 @@ export const COMMAND_ERROR_CODES = [
   // Groups and history (K10, K11).
   'not_admin',
   'not_found',
+  // The shared profile (K12): a name, an "about" or a photo over its limit.
+  'profile_invalid',
 ] as const;
 
 export type CommandErrorCode = (typeof COMMAND_ERROR_CODES)[number];
@@ -163,6 +165,13 @@ export interface NodeInfo {
   // The contact's keys changed: the old fingerprint, and when (epoch seconds).
   previous_fingerprint?: string | null;
   key_changed_at?: number | null;
+  // The profile the contact shares (W8, K12); optional until then. The name
+  // they gave themselves never replaces `handle`, the one given here; their
+  // photo arrives as `avatar`. `profile_sync`: their Trino announced that it
+  // takes profiles, so yours reaches them.
+  profile_name?: string | null;
+  about?: string | null;
+  profile_sync?: boolean;
 }
 
 export interface ProfileResponse {
@@ -172,6 +181,15 @@ export interface ProfileResponse {
   nostr_pub: string;
   // Arrives with W8 (K7); optional until then.
   identity_digest?: string | null;
+  // The shared profile (W8, K12); optional until then. `sync` is the version
+  // of the profile messages this backend sends, 1 with K12.
+  about?: string | null;
+  sync?: number;
+}
+
+// A contact's shared profile changed (K12): read the contacts again.
+export interface ProfileUpdatedEvent {
+  handle: string;
 }
 
 export interface IncomingMessageEvent {
@@ -237,7 +255,33 @@ export interface HistItem {
   from?: string | null;
   text?: string | null;
   file?: FileRef | null;
+  // A call with this contact (W7, K13); such an item has no text or file.
+  call?: CallEventWire | null;
   ts: number;
+}
+
+// The values of the Rust `CallEvent` (K13), as serde writes them.
+export type CallDirection = 'outgoing' | 'incoming';
+export type CallOutcome = 'answered' | 'missed' | 'declined' | 'unanswered' | 'cancelled' | 'failed';
+
+// A call as the backend stores it, in the history of its contact's chat
+// (K13). Tauri does not rename nested keys, so these stay snake_case.
+// `duration_sec` is 0 unless the call was answered. `ttl` follows the chat's
+// disappearing messages: the call goes with them.
+export interface CallEventWire {
+  id: string;
+  direction: CallDirection;
+  video: boolean;
+  outcome: CallOutcome;
+  duration_sec: number;
+  ttl?: number | null;
+}
+
+// One call of the call log (K13): the contact and when it started (epoch seconds).
+export interface CallLogWire {
+  peer: string;
+  ts: number;
+  call: CallEventWire;
 }
 
 export interface CallSignalEvent {
@@ -394,8 +438,11 @@ export const api = {
     invoke('fetch_file', { url, key, sha256, mime }),
   getHistory: (): Promise<Record<string, HistItem[]>> => invoke('get_history'),
   getProfile: (): Promise<ProfileResponse> => invoke('get_profile'),
-  updateProfile: (handle: string, avatar: string | null): Promise<void> =>
-    invoke('update_profile', { handle, avatar }),
+  // `about` (K12) is the "about me" the contacts get, and '' clears it; left
+  // out, the payload is the one older backends take. Rejects with
+  // `profile_invalid` over the limits of K12.
+  updateProfile: (handle: string, avatar: string | null, about?: string): Promise<void> =>
+    invoke('update_profile', about === undefined ? { handle, avatar } : { handle, avatar, about }),
   forwardFile: (target: string, isGroup: boolean, file: FileRef): Promise<void> =>
     invoke('forward_file', { target, isGroup, file }),
   removeNode: (handle: string): Promise<void> => invoke('remove_node', { handle }),
@@ -474,6 +521,14 @@ export const api = {
     sha256?: string | null,
   ): Promise<void> =>
     invoke('delete_history_item', { convo, ts, side, text: text ?? null, sha256: sha256 ?? null }),
+  // K13: records a call that ended in its contact's chat, at the time it
+  // started (epoch seconds), and answers with the log entry. The same `id`
+  // twice answers with the entry already there.
+  recordCall: (peer: string, call: CallEventWire, startedAt: number): Promise<CallLogWire> =>
+    invoke('record_call', { peer, call, startedAt }),
+  // K13: the calls of every chat, the newest first; 200 when `limit` is left out.
+  listCallHistory: (limit?: number): Promise<CallLogWire[]> =>
+    invoke('list_call_history', { limit: limit ?? null }),
 };
 
 // Metadata a transport relay can see about one event — never its content.
@@ -575,4 +630,14 @@ export async function onContactKeyMismatch(
 // The admin removed us from a group, or deleted it (K10): it is marked ended.
 export async function onGroupRemoved(cb: (event: GroupRemovedEvent) => void): Promise<UnlistenFn> {
   return await listen<GroupRemovedEvent>('group-removed', e => cb(e.payload));
+}
+
+// A call was recorded (K13): the same entry `recordCall` answers with.
+export async function onCallLogged(cb: (entry: CallLogWire) => void): Promise<UnlistenFn> {
+  return await listen<CallLogWire>('call-logged', e => cb(e.payload));
+}
+
+// A contact's shared profile changed (K12).
+export async function onProfileUpdated(cb: (event: ProfileUpdatedEvent) => void): Promise<UnlistenFn> {
+  return await listen<ProfileUpdatedEvent>('profile-updated', e => cb(e.payload));
 }

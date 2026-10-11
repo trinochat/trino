@@ -1,11 +1,14 @@
 /**
- * The props contracts between the units of the redesign (plan §2, E0.3). Only
- * the parent changes this file: a unit that needs a change reports it, the
- * parent makes it on feat/rediseno and the units rebase.
+ * The props contracts between the units of the redesign (plan §2, E0.3, and
+ * plan-cambios-11oct §2, E0c). Only the parent changes this file: a unit that
+ * needs a change reports it, the parent makes it on feat/rediseno and the
+ * units rebase.
  */
 import type { ReactNode } from 'react';
 import type { Announcement, AnnouncementFeed } from '../lib/announcements';
 import type {
+  CallDirection,
+  CallOutcome,
   FileRef,
   ForgeResponse,
   GroupInfo,
@@ -15,6 +18,7 @@ import type {
   TotpBeginResponse,
   UnsealResponse,
 } from '../lib/api';
+import type { CallEvent } from '../lib/call-events';
 import type { ConvoRef } from '../lib/convo';
 import type { ProcessedFile } from '../lib/media';
 
@@ -43,6 +47,12 @@ export interface Msg {
   /** Only for what was sent in this session. */
   state?: SendState;
   failure?: { kind: SendFailure; members?: string[] };
+  /**
+   * A call with this contact, shown as a line of the chat (K13). A message
+   * with `call` has no `text`, `file` or `reply`; its key is 'call:' + id and
+   * its `ts` is when the call started.
+   */
+  call?: CallEvent;
 }
 export type Trust = 'verified' | 'unverified' | 'keyChanged';
 export type Connection = { status: 'connecting' } | { status: 'connected' | 'offline'; up: number; total: number };
@@ -63,6 +73,21 @@ export interface InboxItem {
 }
 export type PanelLayout = 'aside' | 'dialog';
 
+/*
+ * Calls in the chat and in the call log (K13). lib owns them, as it owns
+ * ConvoRef: the wire values in api.ts, the event and its texts in
+ * call-events.ts.
+ */
+export type { CallDirection, CallOutcome, CallEvent };
+/** One row of the call log. `key` is 'call:' + `call.id`, as for the call's `Msg`. */
+export interface CallLogEntry {
+  key: string;
+  peer: string;
+  /** Epoch seconds, when the call started. */
+  ts: number;
+  call: CallEvent;
+}
+
 /* Auth (W1) */
 export interface OnboardingApi {
   checkPassphrase(passphrase: string): Promise<void>;
@@ -76,6 +101,11 @@ export interface OnboardingFlowProps {
   api: OnboardingApi;
   onCreated(r: ForgeResponse, intent: OnboardingIntent): void;
   onVaultExists(): void;
+  /**
+   * The backend sends your profile to your contacts (K12), so the name step
+   * may say so (plan-cambios-11oct §6). Off or left out: the copy without it.
+   */
+  profileSync?: boolean;
 }
 export type LockReason = { kind: 'cold' } | { kind: 'idle'; minutes: number } | { kind: 'manual' };
 export interface UnlockApi {
@@ -169,6 +199,22 @@ export interface GroupPanelSlotProps {
   onOpenContact(handle: string): void;
   onLeft(): void;
 }
+/** "Nuevo chat" from the Chats tab, "Nueva llamada" from the Calls tab. */
+export type NewChatPurpose = 'chat' | 'call';
+/**
+ * The dialog of PropNuevoChat (W4). It only lists your contacts: this batch
+ * looks nobody up on the network, so it takes no API.
+ */
+export interface NewChatSlotProps {
+  purpose: NewChatPurpose;
+  contacts: readonly NodeInfo[];
+  trust: Readonly<Record<string, Trust>>;
+  onClose(): void;
+  onOpenChat(handle: string): void;
+  onCall(handle: string, video: boolean): void;
+  onNewGroup(): void;
+  onAddWithCode(): void;
+}
 
 /* Settings and contact details (W5) */
 export type SettingsSectionId =
@@ -188,6 +234,8 @@ export interface SettingsSlotProps {
   onIdentityWiped(): void;
   onProfileChanged(): void;
   onAutolockChanged(minutes: number): void;
+  /** "Tu código QR" in Settings: the share panel of the contacts unit (W4), not a second QR. */
+  renderShareCode(): ReactNode;
 }
 export interface ContactDetailsSlotProps {
   node: NodeInfo;
@@ -201,16 +249,24 @@ export interface ContactDetailsSlotProps {
 }
 
 /* Calls and verification (W6) */
+/**
+ * The contact's symbols as a quick check, which never verifies (David, 10
+ * Oct): only "They match" on a call's SAS does (docs/sas-v2.md). So there is
+ * no "They match" here, and `onCall` offers the call that verifies.
+ */
 export interface VerifyContactSlotProps {
   peer: NodeInfo;
   myIdentityDigest: string;
   onClose(): void;
-  onVerified(): void;
+  onCall?(): void;
 }
 export interface CallSlot {
   /** Above both panes (Main:43-66). */
   bar: ReactNode | null;
-  /** The call screen, the incoming call, the IP warning, the end card and the audio sink. */
+  /**
+   * The call screen, the incoming call, the question of calling directly
+   * when the call cannot be protected, the end card and the audio sink.
+   */
   layer: ReactNode;
   start(handle: string, video: boolean): void;
   activePeer: string | null;
@@ -226,6 +282,7 @@ export interface ShellSlots {
   settings(p: SettingsSlotProps): ReactNode;
   contactDetails(p: ContactDetailsSlotProps): ReactNode;
   verifyContact(p: VerifyContactSlotProps): ReactNode;
+  newChat(p: NewChatSlotProps): ReactNode;
 }
 export interface Notifier {
   message(n: { convo: ConvoRef; title: string; text?: string; kind: 'text' | 'file' | 'sticker' }): void;

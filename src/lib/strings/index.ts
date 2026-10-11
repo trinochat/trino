@@ -29,7 +29,7 @@ export const NAMESPACES: Readonly<Record<AreaName, readonly string[]>> = {
     'file', 'forge', 'group', 'inspector', 'message', 'notification', 'security', 'settings',
     'sidebar', 'sticker', 'theme', 'time', 'ttl', 'unseal', 'updates', 'window',
   ],
-  common: ['common2', 'time2'],
+  common: ['common2', 'time2', 'callEvent'],
   auth: ['onb', 'unlock2', 'start', 'titlebar'],
   shell: ['shell', 'inbox', 'forward'],
   chat: ['chat2', 'composer2', 'msg2', 'channel', 'media', 'emoji', 'sticker2'],

@@ -16,9 +16,10 @@ export const NOTIF_PREVIEWS = ['full', 'name', 'none'] as const;
 /** What a message notification shows: the text, only the name, or nothing. */
 export type NotifPreview = (typeof NOTIF_PREVIEWS)[number];
 
-export const CALL_IP_WARNINGS = ['once', 'always', 'never'] as const;
-/** When to warn that a call shows your IP: once per contact, every call or never. */
-export type CallIpWarn = (typeof CALL_IP_WARNINGS)[number];
+// No preference touches the question of calling directly when TURN fails:
+// it is asked on every call, never remembered, and Cancel is the default
+// (docs/llamadas-turn.md). The IP warning "once per contact" went away with
+// TURN, since the contact no longer sees your IP (plan-cambios-11oct §1.2).
 
 export const RINGTONES = ['soft', 'silent'] as const;
 export type Ringtone = (typeof RINGTONES)[number];
@@ -28,7 +29,6 @@ export const PREF_DEFAULTS = Object.freeze({
   notifPreview: 'name' as NotifPreview,
   messageSound: true,
   callNotifyHidden: true,
-  callIpWarn: 'once' as CallIpWarn,
   ringtone: 'soft' as Ringtone,
   /** From 0 to 100, like the slider. */
   ringVolume: 60,
@@ -42,7 +42,7 @@ export const DEFAULT_AUTOLOCK_MINUTES = 5;
 export const STICKER_RECENTS_MAX = 24;
 
 /** The per-contact keys, moved on a rename and removed with the contact. */
-const CONTACT_PREFIXES = ['note:', 'ttl:', 'verified:', 'trino.pref.ipWarned:'] as const;
+const CONTACT_PREFIXES = ['note:', 'ttl:', 'verified:'] as const;
 
 const PREF = 'trino.pref.';
 
@@ -87,11 +87,13 @@ export interface Prefs {
   /** Notify of an incoming call while the window is hidden. */
   getCallNotifyHidden(): boolean;
   setCallNotifyHidden(on: boolean): boolean;
-  getCallIpWarn(): CallIpWarn;
-  setCallIpWarn(value: CallIpWarn): boolean;
-  /** Whether the IP warning was already shown for this contact. */
-  getIpWarned(handle: string): boolean;
-  setIpWarned(handle: string, warned: boolean): boolean;
+  /**
+   * When the call log was last seen, in epoch seconds like `Msg.ts`; 0 before
+   * the first time. "Llamadas · N" counts the missed calls after it.
+   */
+  getCallsSeenAt(): number;
+  /** Refuses a moment that is negative or not a number. */
+  setCallsSeenAt(ts: number): boolean;
   getRingtone(): Ringtone;
   setRingtone(value: Ringtone): boolean;
   getRingVolume(): number;
@@ -204,10 +206,11 @@ export function createPrefs(storage?: PrefsStorage): Prefs {
     setMessageSound: on => writeFlag(PREF + 'messageSound', on),
     getCallNotifyHidden: () => readFlag(PREF + 'callNotifyHidden', PREF_DEFAULTS.callNotifyHidden),
     setCallNotifyHidden: on => writeFlag(PREF + 'callNotifyHidden', on),
-    getCallIpWarn: () => readChoice(PREF + 'callIpWarn', CALL_IP_WARNINGS, PREF_DEFAULTS.callIpWarn),
-    setCallIpWarn: value => write(PREF + 'callIpWarn', value),
-    getIpWarned: handle => readFlag(PREF + 'ipWarned:' + handle, false),
-    setIpWarned: (handle, warned) => writeFlag(PREF + 'ipWarned:' + handle, warned),
+    getCallsSeenAt: () => {
+      const value = Number(read(PREF + 'callsSeenAt') || '0');
+      return Number.isFinite(value) && value > 0 ? value : 0;
+    },
+    setCallsSeenAt: ts => Number.isFinite(ts) && ts >= 0 && write(PREF + 'callsSeenAt', String(ts)),
     getRingtone: () => readChoice(PREF + 'ringtone', RINGTONES, PREF_DEFAULTS.ringtone),
     setRingtone: value => write(PREF + 'ringtone', value),
     getRingVolume: () => {

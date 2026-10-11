@@ -3,15 +3,21 @@ import {
   COMMAND_ERROR_CODES,
   api,
   isCommandError,
+  onCallLogged,
   onConnectionChanged,
   onContactKeyMismatch,
   onGroupRemoved,
+  onProfileUpdated,
+  type CallEventWire,
+  type CallLogWire,
   type CommandError,
   type FileRef,
   type GroupInfo,
   type GroupMember,
   type GroupSendReceipt,
+  type HistItem,
   type NodeInfo,
+  type ProfileResponse,
   type SendReceipt,
   type SentFile,
   type SentGroupFile,
@@ -39,6 +45,17 @@ beforeEach(() => {
 });
 
 const FILE = { url: 'https://b.example/x', key: 'k', sha256: 's', mime: 'image/png', name: 'a.png', size: 3 };
+
+// A call as W6 records it (K13). Nested keys are not renamed by Tauri, so they
+// stay snake_case, as the Rust `CallEvent` reads them.
+const CALL: CallEventWire = {
+  id: 'c4ll-1d-0000000001',
+  direction: 'outgoing',
+  video: false,
+  outcome: 'answered',
+  duration_sec: 240,
+  ttl: null,
+};
 
 describe('command errors', () => {
   it('keep the codes of the first run and unlock, in their order', () => {
@@ -69,7 +86,15 @@ describe('command errors', () => {
       'already_contact',
       'not_admin',
       'not_found',
+      'profile_invalid',
     ]);
+  });
+
+  // K12: a name, an "about" or a photo over its limit. Added at the end, so
+  // no earlier code moves.
+  it('end with the code of the shared profile', () => {
+    expect(COMMAND_ERROR_CODES[COMMAND_ERROR_CODES.length - 1]).toBe('profile_invalid');
+    expect(isCommandError({ code: 'profile_invalid', message: 'about is longer than 140' })).toBe(true);
   });
 
   it('are recognised with their extra fields', () => {
@@ -118,6 +143,14 @@ describe('the new commands', () => {
       'delete_history_item',
       { convo: 'grp:g1', ts: 1760000000, side: 'them', text: null, sha256: 'abc' },
     ],
+    [
+      'recordCall',
+      () => api.recordCall('Ana', CALL, 1760000000),
+      'record_call',
+      { peer: 'Ana', call: CALL, startedAt: 1760000000 },
+    ],
+    ['listCallHistory', () => api.listCallHistory(), 'list_call_history', { limit: null }],
+    ['listCallHistory with a limit', () => api.listCallHistory(50), 'list_call_history', { limit: 50 }],
   ])('%s calls its command', async (_name, call, command, args) => {
     await call();
     expect(invoke).toHaveBeenCalledTimes(1);
@@ -138,10 +171,12 @@ describe('the existing commands that gain an optional argument', () => {
     await api.probeNode('{}', 'Ana');
     await api.sendGroupMessage('g1', 'hola');
     await api.sendGroupFile('g1', 'a.png', 'image/png', 'AAAA', null);
+    await api.updateProfile('Ana', null);
     expect(invoke.mock.calls).toEqual([
       ['probe_node', { bundleJson: '{}', handle: 'Ana' }],
       ['send_group_message', { gid: 'g1', text: 'hola' }],
       ['send_group_file', { gid: 'g1', name: 'a.png', mime: 'image/png', dataB64: 'AAAA', thumb: null }],
+      ['update_profile', { handle: 'Ana', avatar: null }],
     ]);
   });
 
@@ -149,10 +184,15 @@ describe('the existing commands that gain an optional argument', () => {
     await api.probeNode('{}', 'Ana', true);
     await api.sendGroupMessage('g1', 'hola', ['Ana']);
     await api.sendGroupFile('g1', 'a.png', 'image/png', 'AAAA', null, ['Ana']);
+    await api.updateProfile('Ana', 'data:image/jpeg;base64,AAAA', 'Hola');
+    // An empty "about" is given too: it clears the one saved (K12).
+    await api.updateProfile('Ana', null, '');
     expect(invoke.mock.calls).toEqual([
       ['probe_node', { bundleJson: '{}', handle: 'Ana', replaceExisting: true }],
       ['send_group_message', { gid: 'g1', text: 'hola', only: ['Ana'] }],
       ['send_group_file', { gid: 'g1', name: 'a.png', mime: 'image/png', dataB64: 'AAAA', thumb: null, only: ['Ana'] }],
+      ['update_profile', { handle: 'Ana', avatar: 'data:image/jpeg;base64,AAAA', about: 'Hola' }],
+      ['update_profile', { handle: 'Ana', avatar: null, about: '' }],
     ]);
   });
 
@@ -198,6 +238,40 @@ describe('the answers W7 and W8 must match', () => {
     expectTypeOf<GroupMember>().toHaveProperty('via_group');
     expectTypeOf<NodeInfo>().not.toHaveProperty('via_group');
   });
+
+  // K13: each call is a history item of its contact's chat, and the call log
+  // lists them with their contact.
+  it('carry a call in the history and in the call log (K13)', () => {
+    expectTypeOf<HistItem['call']>().toEqualTypeOf<CallEventWire | null | undefined>();
+    expectTypeOf<CallEventWire>().toEqualTypeOf<{
+      id: string;
+      direction: 'outgoing' | 'incoming';
+      video: boolean;
+      outcome: 'answered' | 'missed' | 'declined' | 'unanswered' | 'cancelled' | 'failed';
+      duration_sec: number;
+      ttl?: number | null;
+    }>();
+    expectTypeOf<CallLogWire>().toEqualTypeOf<{ peer: string; ts: number; call: CallEventWire }>();
+    expectTypeOf(api.recordCall).returns.toEqualTypeOf<Promise<CallLogWire>>();
+    expectTypeOf(api.listCallHistory).returns.toEqualTypeOf<Promise<CallLogWire[]>>();
+  });
+
+  it('pass a recorded call and the call log through', async () => {
+    const entry: CallLogWire = { peer: 'Ana', ts: 1760000000, call: CALL };
+    invoke.mockResolvedValueOnce(entry);
+    await expect(api.recordCall('Ana', CALL, 1760000000)).resolves.toEqual(entry);
+    invoke.mockResolvedValueOnce([entry]);
+    await expect(api.listCallHistory()).resolves.toEqual([entry]);
+  });
+
+  // K12: the name, photo and "about" each contact shares. Optional until W8.
+  it('add the shared profile to your profile and to each contact (K12)', () => {
+    expectTypeOf<ProfileResponse['about']>().toEqualTypeOf<string | null | undefined>();
+    expectTypeOf<ProfileResponse['sync']>().toEqualTypeOf<number | undefined>();
+    expectTypeOf<NodeInfo['profile_name']>().toEqualTypeOf<string | null | undefined>();
+    expectTypeOf<NodeInfo['about']>().toEqualTypeOf<string | null | undefined>();
+    expectTypeOf<NodeInfo['profile_sync']>().toEqualTypeOf<boolean | undefined>();
+  });
 });
 
 describe('the new events', () => {
@@ -205,6 +279,8 @@ describe('the new events', () => {
     ['onConnectionChanged', onConnectionChanged, 'connection-changed', { up: 1, total: 3, relays: [] }],
     ['onContactKeyMismatch', onContactKeyMismatch, 'contact-key-mismatch', { handle: 'Ana' }],
     ['onGroupRemoved', onGroupRemoved, 'group-removed', { gid: 'g1' }],
+    ['onCallLogged', onCallLogged, 'call-logged', { peer: 'Ana', ts: 1760000000, call: CALL }],
+    ['onProfileUpdated', onProfileUpdated, 'profile-updated', { handle: 'Ana' }],
   ])('%s listens to %s and hands over the payload', async (_name, subscribe, event, payload) => {
     const callback = vi.fn();
     await (subscribe as (cb: (p: unknown) => void) => Promise<unknown>)(callback);

@@ -1,7 +1,10 @@
 /**
- * Words every redesigned screen shares. Frozen after E0, so the units never
- * edit the same file: a unit that needs another shared word adds it under its
- * own prefix. The contract is common.test.ts.
+ * Words every redesigned screen shares. Only the parent changes this file, so
+ * the units never edit the same one: a unit that needs another shared word
+ * adds it under its own prefix. The contract is common.test.ts.
+ *
+ * `callEvent.*` (E0c) are the texts of a call in its chat (W3) and in the
+ * call log (W2), put together by src/lib/call-events.ts.
  */
 import type { AreaStrings } from './types';
 
@@ -21,6 +24,23 @@ export const common: AreaStrings = {
     'time2.today': 'Hoy',
     'time2.yesterday': 'Ayer',
     'time2.justNow': 'Ahora',
+    'callEvent.outgoing': 'Llamada saliente',
+    'callEvent.incoming': 'Llamada entrante',
+    'callEvent.missed': 'Llamada perdida',
+    'callEvent.videoOutgoing': 'Videollamada saliente',
+    'callEvent.videoIncoming': 'Videollamada entrante',
+    'callEvent.videoMissed': 'Videollamada perdida',
+    'callEvent.rowOutgoing': 'Saliente',
+    'callEvent.rowIncoming': 'Entrante',
+    'callEvent.rowMissed': 'Perdida',
+    'callEvent.declined': 'Rechazada',
+    'callEvent.unanswered': 'No contestó',
+    'callEvent.cancelled': 'Cancelada',
+    'callEvent.failed': 'No se pudo conectar',
+    'callEvent.seconds': '{n} s',
+    'callEvent.minutes': '{n} min',
+    'callEvent.hours': '{n} h',
+    'callEvent.callBack': 'Devolver llamada',
   },
   en: {
     'common2.cancel': 'Cancel',
@@ -37,6 +57,23 @@ export const common: AreaStrings = {
     'time2.today': 'Today',
     'time2.yesterday': 'Yesterday',
     'time2.justNow': 'Just now',
+    'callEvent.outgoing': 'Outgoing call',
+    'callEvent.incoming': 'Incoming call',
+    'callEvent.missed': 'Missed call',
+    'callEvent.videoOutgoing': 'Outgoing video call',
+    'callEvent.videoIncoming': 'Incoming video call',
+    'callEvent.videoMissed': 'Missed video call',
+    'callEvent.rowOutgoing': 'Outgoing',
+    'callEvent.rowIncoming': 'Incoming',
+    'callEvent.rowMissed': 'Missed',
+    'callEvent.declined': 'Declined',
+    'callEvent.unanswered': 'No answer',
+    'callEvent.cancelled': 'Canceled',
+    'callEvent.failed': 'Could not connect',
+    'callEvent.seconds': '{n} s',
+    'callEvent.minutes': '{n} min',
+    'callEvent.hours': '{n} h',
+    'callEvent.callBack': 'Call back',
   },
   pt: {
     'common2.cancel': 'Cancelar',
@@ -53,5 +90,22 @@ export const common: AreaStrings = {
     'time2.today': 'Hoje',
     'time2.yesterday': 'Ontem',
     'time2.justNow': 'Agora',
+    'callEvent.outgoing': 'Chamada efetuada',
+    'callEvent.incoming': 'Chamada recebida',
+    'callEvent.missed': 'Chamada perdida',
+    'callEvent.videoOutgoing': 'Chamada de vídeo efetuada',
+    'callEvent.videoIncoming': 'Chamada de vídeo recebida',
+    'callEvent.videoMissed': 'Chamada de vídeo perdida',
+    'callEvent.rowOutgoing': 'Efetuada',
+    'callEvent.rowIncoming': 'Recebida',
+    'callEvent.rowMissed': 'Perdida',
+    'callEvent.declined': 'Recusada',
+    'callEvent.unanswered': 'Não atendida',
+    'callEvent.cancelled': 'Cancelada',
+    'callEvent.failed': 'Não foi possível conectar',
+    'callEvent.seconds': '{n} s',
+    'callEvent.minutes': '{n} min',
+    'callEvent.hours': '{n} h',
+    'callEvent.callBack': 'Retornar chamada',
   },
 };
