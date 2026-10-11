@@ -32,6 +32,11 @@ const KEYS: string[] = [
   'call2.sas.list', 'call2.sas.match', 'call2.sas.mismatch', 'call2.sas.mismatchAlert',
   // The bar over the chats while the call is minimized (Main:43-66).
   'call2.bar.region', 'call2.bar.with', 'call2.bar.return',
+  // Verifying a contact: the quick check, and how to verify (by calling).
+  'verify.title', 'verify.quickCheck', 'verify.quickCheckBody', 'verify.symbols', 'verify.howTo', 'verify.call',
+  'verify.done',
+  // Once: the marks of 0.1.0 came from the weak checks and no longer count.
+  'verify.legacy.title', 'verify.legacy.body', 'verify.legacy.howTo', 'verify.legacy.list', 'verify.legacy.ok',
 ];
 
 const PLACEHOLDERS = {
@@ -44,6 +49,9 @@ const PLACEHOLDERS = {
   'call2.sas.title': ['name'],
   'call2.sas.body': ['name'],
   'call2.bar.with': ['name'],
+  'verify.title': ['name'],
+  'verify.howTo': ['name'],
+  'verify.done': ['name'],
 };
 
 describe('call strings', () => {
@@ -80,6 +88,17 @@ describe('call strings', () => {
       'Puede que alguien esté en medio. Cuelga y vuelve a llamar. Si tu contacto no ha actualizado Trino, verá otros símbolos: actualicen los dos y comparen otra vez.',
     );
     expect(call.es['call2.sas.title']).toBe('Compara estos símbolos con {name}');
+  });
+
+  // plan-cambios-11oct §3.1 and §6.3: only a call verifies; the quick check never does.
+  it('never present the contact’s symbols, or a key, as a way to verify', () => {
+    expect(call.es['verify.quickCheckBody']).toBe('Si ven los mismos símbolos, es buena señal, pero no basta para verificar.');
+    expect(call.es['verify.howTo']).toBe('Para verificar a {name}, llámale y comparen los símbolos de la llamada.');
+    expect(call.es['verify.done']).toBe('Verificaste a {name} en una llamada.');
+    for (const lang of LANG_CODES) {
+      const verify = Object.entries(call[lang]).filter(([key]) => key.startsWith('verify.'));
+      expect(verify.filter(([, text]) => /coincid|match|clave|key|chave|QR/i.test(text))).toEqual([]);
+    }
   });
 
   it.each(LANG_CODES)('promise nothing that is not built yet in %s', lang => {
