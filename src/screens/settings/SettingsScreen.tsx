@@ -16,10 +16,10 @@
  * the focus moves to its heading; going back on one pane gives it to the
  * row of the section left, which for the profile and your QR code is the
  * button of your card. When a change made here (the layout, the profile
- * being read again) takes away the control that had the focus, the focus
- * moves to the heading of the view on screen.
- * Escape goes back on one pane and otherwise closes Settings, but not from
- * inside a text field, where it would throw away what is being typed.
+ * read again) takes away the control that had the focus, the heading of
+ * the view on screen takes it. Escape goes back on one pane and otherwise
+ * closes Settings, but not from inside a text field, where it would throw
+ * away what is being typed.
  */
 import { ArrowLeft } from 'lucide-react';
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent, type ReactNode, type RefObject } from 'react';
@@ -94,7 +94,7 @@ export function SettingsScreen({
   const { effective } = useAccessibility();
   const root = useRef<HTMLDivElement>(null);
   const sectionPane = useRef<HTMLDivElement>(null);
-  /** What had the focus in Settings last, to tell when a change of layout took it away. */
+  /** What had the focus in Settings last, to tell when a change made here took it away. */
   const lastFocus = useRef<Element | null>(null);
   const measured = useMeasuredWidth(root, width === undefined);
   const single = layoutFor(width ?? measured ?? window.innerWidth, ROOT_PX * effective.textScale) === 'single';

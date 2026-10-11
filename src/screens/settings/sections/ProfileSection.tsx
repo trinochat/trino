@@ -140,7 +140,11 @@ export function ProfileSection({ api, profile, profileSync, makeAvatar, onOpenQr
           alt={avatar ? t('settings2.profile.photoAlt') : undefined}
         />
         <div className="flex flex-wrap gap-2">
-          <Button ref={editPhoto} leadingIcon={<Camera {...iconSize('md')} />} onClick={() => fileInput.current?.click()}>
+          <Button
+            ref={editPhoto}
+            leadingIcon={<Camera {...iconSize('md')} />}
+            onClick={() => fileInput.current?.click()}
+          >
             {t('settings2.profile.editPhoto')}
           </Button>
           {avatar ? (
