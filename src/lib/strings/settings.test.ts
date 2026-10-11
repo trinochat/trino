@@ -53,13 +53,46 @@ const PRIVACY = [
   'settings2.privacy.callsLine',
 ];
 
-const KEYS: string[] = [...NOTIFICATION_CONTENT, ...PROFILE, ...QR, ...PRIVACY];
+/** Settings > Notificaciones (NotificationsSection.tsx). */
+const NOTIFICATIONS = [
+  'settings2.notif.title',
+  'settings2.notif.level',
+  'settings2.notif.full',
+  'settings2.notif.fullBody',
+  'settings2.notif.name',
+  'settings2.notif.nameBody',
+  'settings2.notif.none',
+  'settings2.notif.noneBody',
+  'settings2.notif.preview',
+  'settings2.notif.previewA11y',
+  'settings2.notif.sampleName',
+  'settings2.notif.sampleText',
+  'settings2.notif.test',
+  'settings2.notif.sound',
+  'settings2.notif.soundBody',
+  'settings2.notif.callsHidden',
+  'settings2.notif.callsHiddenBody',
+  'settings2.notif.muteGroups',
+  'settings2.notif.muteGroupsBody',
+  'settings2.notif.ringtone',
+  'settings2.notif.ringtoneBody',
+  'settings2.notif.ringSoft',
+  'settings2.notif.ringSilent',
+  'settings2.notif.volume',
+  'settings2.notif.volumeValue',
+  'settings2.notif.autostart',
+  'settings2.notif.autostartBody',
+  'settings2.notif.errAutostart',
+];
+
+const KEYS: string[] = [...NOTIFICATION_CONTENT, ...PROFILE, ...QR, ...PRIVACY, ...NOTIFICATIONS];
 
 const PLACEHOLDERS: Record<string, string[]> = {
   'settings2.profile.aboutCount': ['n'],
   'settings2.profile.sharedPending': ['n'],
   'settings2.privacy.unblockA11y': ['name'],
   'settings2.privacy.errUnblock': ['name'],
+  'settings2.notif.volumeValue': ['n'],
 };
 
 describe('settings strings', () => {
