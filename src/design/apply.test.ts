@@ -223,20 +223,43 @@ describe('initAppearance', () => {
     expect(listeners.size).toBe(0);
   });
 
+  // One fake per query, each keeping its own calls: a query that is never
+  // released cannot hide behind another that is, and only the colour scheme
+  // changes.
   it('uses the older addListener API where addEventListener is missing', () => {
-    const listeners = new Set<() => void>();
-    const query = {
-      matches: false,
-      addListener: (listener: () => void) => listeners.add(listener),
-      removeListener: (listener: () => void) => listeners.delete(listener),
+    const queries = new Map<string, { matches: boolean; added: (() => void)[]; removed: (() => void)[] }>();
+    const matchMedia = (media: string) => {
+      const query = queries.get(media) ?? { matches: false, added: [], removed: [] };
+      queries.set(media, query);
+      return {
+        get matches() {
+          return query.matches;
+        },
+        media,
+        addListener: (listener: () => void) => query.added.push(listener),
+        removeListener: (listener: () => void) => query.removed.push(listener),
+      } as unknown as MediaQueryList;
     };
+    const calls = () => Object.fromEntries([...queries].map(([media, query]) => [media, [query.added.length, query.removed.length]]));
     const { host } = fakeHost({ style: 'calma', mode: 'system', accent: 'verde' }, false);
-    const dispose = initAppearance({ ...host, matchMedia: () => query as unknown as MediaQueryList });
-    query.matches = true;
-    listeners.forEach(listener => listener());
+    const dispose = initAppearance({ ...host, matchMedia });
+    expect(calls()).toEqual({
+      '(prefers-color-scheme: dark)': [1, 0],
+      '(prefers-contrast: more)': [1, 0],
+      '(prefers-reduced-motion: reduce)': [1, 0],
+      '(forced-colors: active)': [1, 0],
+    });
+
+    const scheme = queries.get('(prefers-color-scheme: dark)')!;
+    scheme.matches = true;
+    scheme.added.forEach(listener => listener());
     expect(root().dataset.mode).toBe('dark');
+    expect(root().dataset.contrast).toBe('standard');
+
     dispose();
-    expect(listeners.size).toBe(0);
+    expect(Object.values(calls())).toEqual(Array(4).fill([1, 1]));
+    // Each query lets go of the very listener it was given.
+    for (const query of queries.values()) expect(query.removed).toEqual(query.added);
   });
 
   it('starts light, without throwing, when storage and matchMedia are unavailable', () => {
