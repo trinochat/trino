@@ -56,6 +56,13 @@ describe('NewChatDialog', () => {
     expect(search().getAttribute('placeholder')).toBe('Nombre');
   });
 
+  // Input sets its own min-h-12, and Tailwind puts .min-h-12 after .min-h-11
+  // whatever the order of the classes: a second min-h would never apply.
+  it('leaves the height of the search box to Input, with no override that would lose', () => {
+    open();
+    expect(search().className.split(/\s+/).filter(name => name.startsWith('min-h-'))).toHaveLength(1);
+  });
+
   it('closes with Escape and with its close button', () => {
     const handlers = open();
     fireEvent.keyDown(document.activeElement!, { key: 'Escape' });

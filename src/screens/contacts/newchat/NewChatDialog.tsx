@@ -102,7 +102,8 @@ export function NewChatDialog({
           placeholder={t('contacts.newChat.placeholder')}
           autoComplete="off"
           spellCheck={false}
-          className="min-h-11 pl-9"
+          // Input's own min-h-12 sets the height: a min-h-11 here sorts before it in the CSS and never applies.
+          className="pl-9"
         />
       </div>
 

@@ -13,7 +13,7 @@
  */
 import { useEffect, useId, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 import { Bell, BellOff, CircleAlert, LogOut, Pencil, Trash2, UserPlus, X, type LucideIcon } from 'lucide-react';
-import { Avatar, Banner, Button, Dialog, Field, IconButton, Select, cx, iconSize } from '../../ui';
+import { Avatar, Banner, Button, Dialog, FOCUS_RING, Field, IconButton, Select, cx, iconSize } from '../../ui';
 import type { GroupMember } from '../../lib/api';
 import { useT } from '../../lib/i18n';
 import { useLang } from '../../lib/i18n-context';
@@ -61,8 +61,21 @@ const TTL_LABELS: Readonly<Record<number, string>> = {
   604800: 'groupPanel.ttl1w',
 };
 
-/** Muted is a toggle: an icon of its own, bold, and the accent's border, also under forced colours. */
-const PRESSED = 'border-ui-accent-text bg-ui-accent-soft font-bold text-ui-accent-text forced-colors:border-[color:Highlight]';
+/**
+ * Silenciar is a toggle button, drawn here rather than with Button: a
+ * pressed look passed to Button in className loses to its variant's own
+ * classes, since Tailwind orders the rules by its own sort and not by the
+ * order of the classes (.font-bold comes before .font-semibold,
+ * .text-ui-accent-text before .text-ui-ink, .border-ui-accent-text before
+ * .border-ui-line). So each state carries its whole look, with nothing to
+ * beat, as Segmented and IconButton do. The box is Button's, 44 px tall.
+ */
+const TOGGLE =
+  'inline-flex min-h-11 items-center justify-center gap-2 rounded-ui border px-4 py-2 text-center font-ui text-base leading-tight transition-colors reduce-motion:transition-none';
+/** Not muted: Button's secondary look. */
+const TOGGLE_OFF = 'border-ui-line bg-transparent font-semibold text-ui-ink enabled:hover:bg-ui-raised';
+/** Muted: an icon of its own, bold, the accent's text and border, and Highlight's border under forced colours. */
+const TOGGLE_ON = 'border-ui-accent-text bg-ui-accent-soft font-bold text-ui-accent-text forced-colors:border-[color:Highlight]';
 
 type Open =
   | null
@@ -195,14 +208,17 @@ export function GroupPanel({
       {ended && <Banner tone="warn">{t('groupPanel.ended')}</Banner>}
 
       <div className="flex flex-wrap gap-2">
-        <Button
+        <button
+          type="button"
           aria-pressed={muted}
-          leadingIcon={muted ? <BellOff {...iconSize('md')} aria-hidden="true" /> : <Bell {...iconSize('md')} aria-hidden="true" />}
           onClick={toggleMute}
-          className={cx('flex-[1_1_7.5rem]', muted && PRESSED)}
+          className={cx(TOGGLE, muted ? TOGGLE_ON : TOGGLE_OFF, FOCUS_RING, 'flex-[1_1_7.5rem]')}
         >
+          <span aria-hidden="true" className="inline-flex shrink-0">
+            {muted ? <BellOff {...iconSize('md')} aria-hidden="true" /> : <Bell {...iconSize('md')} aria-hidden="true" />}
+          </span>
           {t('groupPanel.mute')}
-        </Button>
+        </button>
       </div>
 
       {!ended && (

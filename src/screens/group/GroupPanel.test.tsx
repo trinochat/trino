@@ -91,6 +91,22 @@ const rows = async () => within(await screen.findByRole('list', { name: 'Miembro
 const namesOf = (items: HTMLElement[], names: string[]) =>
   items.map(item => names.find(name => within(item).queryByText(name, { exact: true })));
 
+/**
+ * The classes of an element that set one property, without variants.
+ * Tailwind orders its rules by its own sort, not by the order of the
+ * classes (.font-bold comes before .font-semibold, .text-ui-accent-text
+ * before .text-ui-ink, .border-ui-accent-text before .border-ui-line): with
+ * two classes for one property, the one written last may well lose.
+ */
+const PROPERTY = {
+  border: /^border-(?:ui-[\w-]+|transparent)$/,
+  background: /^bg-/,
+  weight: /^font-(?:normal|medium|semibold|bold)$/,
+  colour: /^text-ui-(?:ink|muted|accent-text|accent-ink|danger|surface)$/,
+} as const;
+const setting = (element: Element, property: keyof typeof PROPERTY) =>
+  element.className.split(/\s+/).filter(name => PROPERTY[property].test(name));
+
 describe('GroupPanel', () => {
   // The shell may hand the same API over in a new object on every render.
   it('reads the members once, even when its parent passes the API in a new object each render', async () => {
@@ -170,6 +186,24 @@ describe('GroupPanel', () => {
     expect(prefs.isMuted('g1')).toBe(true);
     fireEvent.click(mute);
     expect(prefs.isMuted('g1')).toBe(false);
+  });
+
+  // The pressed look has to win in the CSS Tailwind builds, so each state
+  // carries exactly one class for each property it sets.
+  it('draws Silenciar with one class per property in each state, so the pressed look shows', () => {
+    mount();
+    const mute = screen.getByRole('button', { name: 'Silenciar' });
+    expect(setting(mute, 'border')).toEqual(['border-ui-line']);
+    expect(setting(mute, 'background')).toEqual(['bg-transparent']);
+    expect(setting(mute, 'weight')).toEqual(['font-semibold']);
+    expect(setting(mute, 'colour')).toEqual(['text-ui-ink']);
+
+    fireEvent.click(mute);
+    expect(setting(mute, 'border')).toEqual(['border-ui-accent-text']);
+    expect(setting(mute, 'background')).toEqual(['bg-ui-accent-soft']);
+    expect(setting(mute, 'weight')).toEqual(['font-bold']);
+    expect(setting(mute, 'colour')).toEqual(['text-ui-accent-text']);
+    expect(mute.className.split(/\s+/)).toContain('forced-colors:border-[color:Highlight]');
   });
 
   it('has no group call', async () => {
