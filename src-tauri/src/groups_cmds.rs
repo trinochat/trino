@@ -209,8 +209,9 @@ pub(crate) fn plan_rename(
 }
 
 /// Delete the group (K10, admin only): the roster of the next epoch with
-/// only the admin, for every member. Their group ends; versions without
-/// K10 keep it, with nobody else in it.
+/// only the admin, for every member. Their group ends. 0.1.0 members drop
+/// this roster, which does not list them (`NotAMember` in its core), and
+/// keep the whole group, with every member still in it.
 ///
 /// Signed here in one go, over the same bytes the core signs
 /// (`roster_signing_bytes`) and checked with the core's `validate_roster`:
@@ -310,12 +311,14 @@ fn check_online(inner: &InnerState, change: &RosterChange) -> Result<(), Command
     Ok(())
 }
 
-/// Plan a change to `gid` with the state locked, store it here, then send it
-/// to its members with the state unlocked (sending locks it per message).
+/// Plan a change to `gid` with the state locked, store it here and save the
+/// groups with `persist`, then send it to its members with the state
+/// unlocked (sending locks it per message).
 async fn apply_and_send(
-    state: &State<'_, AppState>,
+    state: &AppState,
     gid: &str,
     plan: impl FnOnce(&InnerState, &Identity) -> Result<RosterChange, CommandError>,
+    persist: impl FnOnce(&InnerState) -> Result<(), String>,
 ) -> Result<GroupInfo, CommandError> {
     let (change, my_ik) = {
         let mut inner = state.inner.lock().await;
@@ -323,11 +326,61 @@ async fn apply_and_send(
         let change = plan(&inner, &identity)?;
         check_online(&inner, &change)?;
         inner.groups.insert(gid.to_string(), change.roster.clone());
-        persist_groups(&inner).map_err(|e| CommandError::new(ErrorCode::Io, e))?;
+        persist(&inner).map_err(|e| CommandError::new(ErrorCode::Io, e))?;
         (change, hex::encode(identity.ik_sign.pub_bytes))
     };
     send_roster(state, &change.roster, &change.targets).await;
     Ok(group_info(&change.roster, &my_ik))
+}
+
+/// Add the contact `friend_handle` to `gid`: the roster of the next epoch
+/// with them, which only the admin can sign, for every member, the new one
+/// included. A contact in it already gets the current roster again, so an
+/// add that reached nobody can be retried.
+pub(crate) fn plan_addition(
+    inner: &InnerState,
+    identity: &Identity,
+    gid: &str,
+    friend_handle: &str,
+) -> Result<RosterChange, CommandError> {
+    let friend = inner
+        .friends
+        .get(friend_handle)
+        .ok_or_else(|| not_found("unknown contact"))?;
+    let current = inner
+        .groups
+        .get(gid)
+        .ok_or_else(|| not_found("unknown group"))?;
+    let roster = if group::is_member(current, &friend.bundle.ik_sign_pub) {
+        current.clone()
+    } else {
+        // A roster stored before roster v2 lacks member id_sigs; fill in
+        // what we can vouch for so the re-signed roster is valid.
+        let mut current = current.clone();
+        let handle = inner.handle.clone().unwrap_or_else(|| "me".to_string());
+        let me = self_member_bundle(identity, &handle);
+        refresh_member_bindings(&mut current.members, &inner.friends, &me);
+        let member = MemberBundle::from_public_bundle(&friend.handle, &friend.bundle);
+        group::add_member(&current, identity, member).map_err(group_error)?
+    };
+    let targets = contacts_of(inner, &roster.members, &my_ik(identity));
+    Ok(RosterChange { roster, targets })
+}
+
+/// `add_group_member`, saving the groups with `persist`. As K10's changes:
+/// with no relay up it is `offline` and nothing changes here; otherwise the
+/// roster is stored, then sent to every member, past any that fails. A
+/// refused add means the contact was not added.
+pub(crate) async fn add_member(
+    state: &AppState,
+    gid: &str,
+    friend_handle: &str,
+    persist: impl FnOnce(&InnerState) -> Result<(), String>,
+) -> Result<GroupInfo, CommandError> {
+    let plan = |inner: &InnerState, identity: &Identity| {
+        plan_addition(inner, identity, gid, friend_handle)
+    };
+    apply_and_send(state, gid, plan, persist).await
 }
 
 /// Remove a member from a group I administer (K10).
@@ -337,10 +390,9 @@ pub async fn remove_group_member(
     gid: String,
     ik_sign_pub: String,
 ) -> Result<GroupInfo, CommandError> {
-    apply_and_send(&state, &gid, |inner, identity| {
-        plan_removal(inner, identity, &gid, &ik_sign_pub)
-    })
-    .await
+    let plan =
+        |inner: &InnerState, identity: &Identity| plan_removal(inner, identity, &gid, &ik_sign_pub);
+    apply_and_send(&state, &gid, plan, persist_groups).await
 }
 
 /// Rename a group I administer (K10).
@@ -350,10 +402,8 @@ pub async fn rename_group(
     gid: String,
     name: String,
 ) -> Result<GroupInfo, CommandError> {
-    apply_and_send(&state, &gid, |inner, identity| {
-        plan_rename(inner, identity, &gid, &name)
-    })
-    .await
+    let plan = |inner: &InnerState, identity: &Identity| plan_rename(inner, identity, &gid, &name);
+    apply_and_send(&state, &gid, plan, persist_groups).await
 }
 
 /// Leave a group (K10): forget it here, without telling anyone.
@@ -585,9 +635,46 @@ mod tests {
         assert!(!group::is_member(&change.roster, &ik(&bob)));
         assert!(group::is_member(&change.roster, &ik(&ana)));
         assert!(group::verify_roster(&change.roster));
-        // `distribute_roster` would skip bob: this is how he learns it.
+        // Sending only to the members of the new roster would skip bob:
+        // this is how he learns it.
         assert_eq!(sorted(change.targets), ["ana", "bob"]);
         assert_eq!(inner.groups[&gid], before, "the command stores it");
+    }
+
+    #[test]
+    fn adding_signs_the_next_epoch_for_every_member_the_new_one_included() {
+        let (admin, me, ana, eve) = (
+            create_identity(),
+            create_identity(),
+            create_identity(),
+            create_identity(),
+        );
+        let (mut inner, gid) = admin_state(&admin, &[(&ana, "ana")]);
+        inner.friends.insert("eve".into(), friend(&eve, "eve"));
+        let before = inner.groups[&gid].clone();
+
+        let change = plan_addition(&inner, &admin, &gid, "eve").unwrap();
+
+        assert_eq!(change.roster.epoch, before.epoch + 1);
+        assert!(group::is_member(&change.roster, &ik(&eve)));
+        assert!(group::verify_roster(&change.roster));
+        assert_eq!(sorted(change.targets), ["ana", "eve"]);
+        assert_eq!(inner.groups[&gid], before, "the command stores it");
+
+        // A member already: the same roster again, so it can be retried.
+        inner.groups.insert(gid.clone(), change.roster.clone());
+        let again = plan_addition(&inner, &admin, &gid, "eve").unwrap();
+        assert_eq!(again.roster, change.roster);
+        assert_eq!(sorted(again.targets), ["ana", "eve"]);
+
+        let unknown_contact = plan_addition(&inner, &admin, &gid, "nadie").unwrap_err();
+        let unknown_group = plan_addition(&inner, &admin, "nope", "eve").unwrap_err();
+        assert_eq!(unknown_contact.code, ErrorCode::NotFound);
+        assert_eq!(unknown_group.code, ErrorCode::NotFound);
+        // Only the admin signs a roster with a new member.
+        inner.friends.insert("me".into(), friend(&me, "me"));
+        let not_admin = plan_addition(&inner, &ana, &gid, "me").unwrap_err();
+        assert_eq!(not_admin.code, ErrorCode::NotAdmin);
     }
 
     #[test]

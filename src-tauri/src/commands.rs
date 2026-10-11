@@ -1500,37 +1500,6 @@ async fn ensure_session_inner(state: &AppState, handle: &str) -> Result<(), Stri
         .map_err(|e| e.to_string())
 }
 
-/// Send the signed roster to every member (except us) over their pairwise channel.
-async fn distribute_roster(
-    state: &State<'_, AppState>,
-    roster: &GroupRoster,
-    my_ik: &str,
-) -> Result<(), String> {
-    let targets: Vec<String> = {
-        let inner = state.inner.lock().await;
-        roster
-            .members
-            .iter()
-            .filter(|m| m.ik_sign_pub != my_ik)
-            .filter_map(|m| {
-                inner
-                    .friends
-                    .values()
-                    .find(|f| f.bundle.ik_sign_pub == m.ik_sign_pub)
-                    .map(|f| f.handle.clone())
-            })
-            .collect()
-    };
-    let env = encode_envelope(&Envelope::Roster {
-        roster: roster.clone(),
-    });
-    for handle in targets {
-        ensure_session_inner(state, &handle).await?;
-        send_cipher_inner(state, &handle, &env, None).await?;
-    }
-    Ok(())
-}
-
 #[tauri::command]
 pub async fn create_group(state: State<'_, AppState>, name: String) -> Result<GroupInfo, String> {
     let mut inner = state.inner.lock().await;
@@ -1561,39 +1530,14 @@ pub async fn list_groups(state: State<'_, AppState>) -> Result<Vec<GroupInfo>, S
     Ok(out)
 }
 
+/// Add a contact to a group I administer (groups_cmds::add_member).
 #[tauri::command]
 pub async fn add_group_member(
     state: State<'_, AppState>,
     gid: String,
     friend_handle: String,
-) -> Result<GroupInfo, String> {
-    let (roster, my_ik) = {
-        let mut inner = state.inner.lock().await;
-        let identity = inner.identity.as_ref().ok_or("vault sealed")?.clone();
-        let my_ik = hex::encode(identity.ik_sign.pub_bytes);
-        let friend = inner
-            .friends
-            .get(&friend_handle)
-            .ok_or("unknown friend")?
-            .clone();
-        let mut current = inner.groups.get(&gid).ok_or("unknown group")?.clone();
-        let updated = if group::is_member(&current, &friend.bundle.ik_sign_pub) {
-            current // already in: re-send the roster as before
-        } else {
-            // A roster stored before roster v2 lacks member id_sigs; fill in
-            // what we can vouch for so the re-signed roster is valid.
-            let handle = inner.handle.clone().unwrap_or_else(|| "me".to_string());
-            let me = self_member_bundle(&identity, &handle);
-            refresh_member_bindings(&mut current.members, &inner.friends, &me);
-            let member = MemberBundle::from_public_bundle(&friend.handle, &friend.bundle);
-            group::add_member(&current, &identity, member).map_err(|e| e.to_string())?
-        };
-        inner.groups.insert(gid.clone(), updated.clone());
-        persist_groups(&inner)?;
-        (updated, my_ik)
-    };
-    distribute_roster(&state, &roster, &my_ik).await?;
-    Ok(group_info(&roster, &my_ik))
+) -> Result<GroupInfo, CommandError> {
+    groups_cmds::add_member(&state, &gid, &friend_handle, persist_groups).await
 }
 
 /// A text to a group (K4). Every member is tried, whatever happens to the
@@ -5393,6 +5337,90 @@ mod tests {
         );
     }
 
+    // ---- B1: a member is added only when the roster can reach the members ----
+
+    #[tokio::test]
+    async fn a_member_is_not_added_while_no_relay_is_up() {
+        let me = create_identity();
+        let others = [create_identity(), create_identity(), create_identity()];
+        let eve = create_identity();
+        for relays in [vec![unreachable_client(Arc::default())], vec![]] {
+            let state = sending_state(&me, relays).await;
+            let gid = group_of_three(&state, &me, &others).await;
+            let before = {
+                let mut inner = state.inner.lock().await;
+                inner.friends.insert("eve".to_string(), friend(&eve, "eve"));
+                inner.groups[&gid].clone()
+            };
+            let mut saved = false;
+
+            let added = groups_cmds::add_member(&state, &gid, "eve", |_| {
+                saved = true;
+                Ok(())
+            })
+            .await;
+
+            let Err(error) = added else {
+                panic!("added with no relay up");
+            };
+            assert_eq!(error.code, ErrorCode::Offline);
+            assert_eq!(state.inner.lock().await.groups[&gid], before, "stored");
+            assert!(!saved, "groups.json was written");
+        }
+    }
+
+    #[tokio::test]
+    async fn a_member_that_cannot_be_reached_does_not_stop_the_others() {
+        let relay = TestRelay::start(Answer::Accept).await;
+        let me = create_identity();
+        let others = [create_identity(), create_identity(), create_identity()];
+        let eve = create_identity();
+        let state = sending_state(&me, vec![relay.client().await]).await;
+        let gid = group_of_three(&state, &me, &others).await;
+        {
+            let mut inner = state.inner.lock().await;
+            inner.friends.insert("eve".to_string(), friend(&eve, "eve"));
+            // bob, the first member the roster goes to, cannot be reached:
+            // his session is gone, and the prekey kept for him no longer
+            // verifies, so no new one can start.
+            let first = inner.groups[&gid]
+                .members
+                .iter()
+                .find(|m| m.ik_sign_pub != ik(&me));
+            assert_eq!(first.unwrap().ik_sign_pub, ik(&others[0]));
+            inner.ratchets.remove("bob");
+            inner.associated_data.remove("bob");
+            inner.friends.get_mut("bob").unwrap().bundle.spk_sig = "00".repeat(64);
+        }
+
+        let info = groups_cmds::add_member(&state, &gid, "eve", |_| Ok(()))
+            .await
+            .unwrap();
+
+        assert!(info.members.contains(&"eve".to_string()));
+        assert!(group::is_member(
+            &state.inner.lock().await.groups[&gid],
+            &ik(&eve)
+        ));
+        // carol and dave get the roster; eve gets the handshake that opens
+        // her session, then the roster.
+        crate::nostr::test_relay::wait_until("the rosters", || relay.events().len() == 4).await;
+        let mut reached: Vec<String> = relay
+            .events()
+            .iter()
+            .filter_map(|event| event.recipient().map(str::to_string))
+            .collect();
+        reached.sort();
+        let mut expected = vec![
+            pub_hex(&others[1]),
+            pub_hex(&others[2]),
+            pub_hex(&eve),
+            pub_hex(&eve),
+        ];
+        expected.sort();
+        assert_eq!(reached, expected);
+    }
+
     // ---- I0: what goes out says that this Trino reads profiles (K12) ----
 
     /// `add_session`, plus the contact's own side of that session, so a test
@@ -5546,7 +5574,7 @@ mod tests {
         let roster = encode_envelope(&Envelope::Roster { roster });
 
         // A call signal and a roster, as send_call_signal and
-        // distribute_roster send them, this identity's profile,
+        // groups_cmds::send_roster send them, this identity's profile,
         send_cipher_inner(&state, "bob", &call, None).await.unwrap();
         send_cipher_inner(&state, "bob", &roster, None)
             .await
