@@ -209,6 +209,45 @@ mod tests {
     }
 
     #[test]
+    fn a_call_in_the_chat_is_never_deleted_for_me() {
+        // K13 keeps each call as an item of its contact's chat, with neither
+        // text nor file, at the time it started. "Delete for me" names a
+        // message by its text or its file, so nothing can name a call; the
+        // text sent at that same second still goes.
+        let call = item(json!({
+            "side": "me",
+            "call": {
+                "id": "call-0123456789abcdef",
+                "direction": "outgoing",
+                "video": false,
+                "outcome": "answered",
+                "duration_sec": 240,
+            },
+            "ts": NOW,
+        }));
+        assert!(call.call.is_some());
+        let mut history = HashMap::from([("ana".to_string(), vec![call, text("me", "hola", NOW)])]);
+
+        for (body, sha256) in [
+            (None, None),
+            (Some(""), None),
+            (None, Some("")),
+            (Some(""), Some("")),
+        ] {
+            assert!(
+                delete_item(&mut history, "ana", NOW, "me", body, sha256).is_err(),
+                "{body:?} {sha256:?}"
+            );
+        }
+        delete_item(&mut history, "ana", NOW, "me", Some("hola"), None).unwrap();
+
+        let left = &history["ana"];
+        assert_eq!(left.len(), 1);
+        let kept = left[0].call.as_ref().expect("the call is still there");
+        assert_eq!(kept.id, "call-0123456789abcdef");
+    }
+
+    #[test]
     fn a_deleted_message_stays_deleted_after_a_reload() {
         let scratch = ScratchDir::new("delete-for-me");
         let path = scratch.path().join("history.bin");
