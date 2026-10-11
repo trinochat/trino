@@ -198,6 +198,9 @@ pub struct GroupInfo {
     pub is_admin: bool,
     pub member_count: usize,
     pub members: Vec<String>,
+    /// The admin removed me, or deleted the group (K10): the newest roster
+    /// does not list me. The chat stays readable.
+    pub ended: bool,
 }
 
 #[derive(Serialize, Deserialize, Clone)]
@@ -1464,6 +1467,7 @@ fn group_info(roster: &GroupRoster, my_ik: &str) -> GroupInfo {
         is_admin: roster.admin_pub == my_ik,
         member_count: roster.members.len(),
         members: roster.members.iter().map(|m| m.handle.clone()).collect(),
+        ended: !group::is_member(roster, my_ik),
     }
 }
 
@@ -3080,6 +3084,12 @@ enum RosterOutcome {
     Invited {
         gid: String,
     },
+    /// The admin's newer roster for a group we are in does not list us: we
+    /// were removed, or the group was deleted (K10). Kept, so the chat stays
+    /// readable and the group reads as ended.
+    Ended {
+        gid: String,
+    },
     Dropped(String),
 }
 
@@ -3116,6 +3126,15 @@ fn ingest_incoming_roster(
             }
             RosterDecision::PendingInvite => {
                 RosterOutcome::Dropped("invite for a group we are already in".into())
+            }
+            // K10: the admin's next roster leaves us out: we were removed,
+            // or the group was deleted. Kept, so later rosters must be newer
+            // still and the chat stays readable; the group reads as ended.
+            RosterDecision::Reject(group::RosterRejection::NotAMember)
+                if group::accept_roster_update(current, &roster) =>
+            {
+                inner.groups.insert(gid.clone(), sanitize_roster(roster));
+                RosterOutcome::Ended { gid }
             }
             RosterDecision::Reject(why) => RosterOutcome::Dropped(why.to_string()),
         };
@@ -3236,6 +3255,11 @@ fn accept_incoming_roster(
             if let Some(invite) = inner.group_invites.get(&gid) {
                 let _ = app.emit("group-invite", invite_info(invite));
             }
+        }
+        RosterOutcome::Ended { gid } => {
+            let _ = persist_groups(inner);
+            dbg_log("  OK: group ended for us");
+            let _ = app.emit("group-removed", groups_cmds::GroupRemovedEvent { gid });
         }
         RosterOutcome::Dropped(_) => dbg_log("  DROP: roster rejected"),
     }

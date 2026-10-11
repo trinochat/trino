@@ -49,6 +49,8 @@ pub enum ErrorCode {
     AlreadyContact,
     /// No such contact, group, member or message.
     NotFound,
+    /// Only the group's admin can do that (K10).
+    NotAdmin,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
@@ -326,13 +328,20 @@ mod tests {
             ErrorCode::NameTaken,
             ErrorCode::AlreadyContact,
             ErrorCode::NotFound,
+            ErrorCode::NotAdmin,
         ]
         .iter()
         .map(|code| serde_json::to_value(code).unwrap())
         .collect();
         assert_eq!(
             names,
-            ["invalid_code", "name_taken", "already_contact", "not_found"]
+            [
+                "invalid_code",
+                "name_taken",
+                "already_contact",
+                "not_found",
+                "not_admin"
+            ]
         );
     }
 

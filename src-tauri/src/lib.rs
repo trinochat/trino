@@ -250,6 +250,10 @@ pub fn run() {
             commands::contacts_cmds::preview_contact,
             commands::contacts_cmds::acknowledge_key_change,
             commands::groups_cmds::group_members,
+            commands::groups_cmds::remove_group_member,
+            commands::groups_cmds::rename_group,
+            commands::groups_cmds::leave_group,
+            commands::groups_cmds::delete_group,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
