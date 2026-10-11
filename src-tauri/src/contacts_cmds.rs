@@ -232,6 +232,7 @@ pub(crate) fn add_contact(
                 avatar: code.avatar,
                 previous_fingerprint: None,
                 key_changed_at: None,
+                via_group: None,
             },
         );
         return Ok((handle, Added::New));
@@ -255,6 +256,8 @@ pub(crate) fn add_contact(
     friend.avatar = code.avatar;
     friend.previous_fingerprint = Some(fp(&ik_sign, &ik_dh, &nostr));
     friend.key_changed_at = Some(now);
+    // The new keys came with a code, not with a group's roster.
+    friend.via_group = None;
     forget_session_with(inner, &handle, &old_nostr_pub);
     Ok((handle, Added::Replaced))
 }
@@ -384,6 +387,7 @@ mod tests {
             avatar: None,
             previous_fingerprint: None,
             key_changed_at: None,
+            via_group: None,
         }
     }
 
@@ -682,7 +686,9 @@ mod tests {
     fn replacing_a_contact_resets_its_session_and_keeps_the_old_fingerprint() {
         let (me, ana, new_ana) = (create_identity(), create_identity(), create_identity());
         let mut inner = InnerState::default();
-        inner.friends.insert("ana".into(), friend(&ana, "ana"));
+        let mut from_group = friend(&ana, "ana");
+        from_group.via_group = Some("g1".into());
+        inner.friends.insert("ana".into(), from_group);
         let (ratchet, ad) = session_with(&me, &ana);
         inner.ratchets.insert("ana".into(), ratchet);
         inner.associated_data.insert("ana".into(), ad);
@@ -704,6 +710,7 @@ mod tests {
             Some(fingerprint_of(&ana).as_str())
         );
         assert_eq!(replaced.key_changed_at, Some(NOW));
+        assert_eq!(replaced.via_group, None, "the new keys came with a code");
         assert!(
             !inner.ratchets.contains_key("ana"),
             "the old session must go"

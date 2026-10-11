@@ -181,6 +181,10 @@ pub struct FriendRecord {
     /// When the keys were replaced, in unix seconds (K8).
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub key_changed_at: Option<i64>,
+    /// The group whose roster brought this contact (K9); `None` for one added
+    /// with its code.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub via_group: Option<String>,
 }
 
 /// A signed roster for a group we are not in yet, held until the user accepts

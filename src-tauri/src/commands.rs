@@ -121,6 +121,8 @@ pub struct CallConfigResponse {
 // file (sessions, sending, persistence) without making them public.
 #[path = "contacts_cmds.rs"]
 pub(crate) mod contacts_cmds;
+#[path = "groups_cmds.rs"]
+pub(crate) mod groups_cmds;
 
 #[derive(Serialize)]
 pub struct NodeInfo {
@@ -3303,6 +3305,9 @@ fn merge_group_members(
                 avatar: None,
                 previous_fingerprint: None,
                 key_changed_at: None,
+                // K9: the group panel tells these apart from contacts the
+                // user added with a code.
+                via_group: Some(roster.group_id.clone()),
             },
         );
     }
@@ -3721,6 +3726,7 @@ mod tests {
             avatar: None,
             previous_fingerprint: None,
             key_changed_at: None,
+            via_group: None,
         }
     }
 

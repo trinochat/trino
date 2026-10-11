@@ -249,6 +249,7 @@ pub fn run() {
             // -- W8 --
             commands::contacts_cmds::preview_contact,
             commands::contacts_cmds::acknowledge_key_change,
+            commands::groups_cmds::group_members,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

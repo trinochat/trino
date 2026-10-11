@@ -306,6 +306,7 @@ mod tests {
                     avatar: None,
                     previous_fingerprint: None,
                     key_changed_at: None,
+                    via_group: None,
                 },
             );
         }
