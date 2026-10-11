@@ -115,7 +115,6 @@ export default {
       // and `none` inside Tailwind's shadow list would also drop focus rings.
       // Use `[box-shadow:var(--t-shadow)]`.
       animation: {
-        'cursor-blink': 'blink 1s steps(1) infinite',
         'scanline': 'scanline 8s linear infinite',
         'glow-pulse': 'glow 2.4s ease-in-out infinite',
         'decrypt': 'decrypt 0.5s ease-out',
@@ -130,7 +129,6 @@ export default {
         'seal-pop': 'sealPop 0.4s ease-out 0.7s both',
       },
       keyframes: {
-        blink: { '0%, 50%': { opacity: '1' }, '50.01%, 100%': { opacity: '0' } },
         scanline: { '0%': { transform: 'translateY(-100%)' }, '100%': { transform: 'translateY(100vh)' } },
         glow: { '0%, 100%': { textShadow: '0 0 4px currentColor' }, '50%': { textShadow: '0 0 12px currentColor' } },
         decrypt: { '0%': { opacity: '0', filter: 'blur(4px)' }, '100%': { opacity: '1', filter: 'blur(0)' } },

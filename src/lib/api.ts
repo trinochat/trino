@@ -62,11 +62,6 @@ export interface ForgeResponse extends UnsealResponse {
   bundle_json: string;
 }
 
-// TEMPORARY, for the old ForgeWizard in App.tsx: see `api.forge`.
-export interface LegacyForgeResponse extends ForgeResponse {
-  otpauth_uri: string;
-}
-
 // A new TOTP secret to add to an authenticator app, as a QR code or typed in.
 export interface TotpBeginResponse {
   otpauth_uri: string;
@@ -378,15 +373,6 @@ export const api = {
     passphrase: string,
     useTotp: boolean,
   ): Promise<ForgeResponse> => invoke('forge', { handle, passphrase, useTotp }),
-  /**
-   * @deprecated TEMPORARY, only for the old ForgeWizard in App.tsx, which
-   * shows the TOTP QR code once the identity exists and never confirms a
-   * code. Like `forge` before R3.3, it seals a secret nobody has confirmed.
-   * New screens use `totpBegin`, `totpVerify` and `createIdentity`; R3.6
-   * removes this with the old screen.
-   */
-  forge: (handle: string, passphrase: string): Promise<LegacyForgeResponse> =>
-    invoke('forge_legacy', { handle, passphrase }),
   // Leave `totpCode` out, or empty, for a vault without TOTP.
   unseal: (passphrase: string, totpCode?: string | null): Promise<UnsealResponse> =>
     invoke('unseal', { passphrase, totpCode: totpCode ?? null }),

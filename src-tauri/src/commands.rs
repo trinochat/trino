@@ -22,8 +22,7 @@ use crate::state::{
     profiles_path, ratchets_path, trino_home, vault_path, AppState, ConfigFile, FriendRecord,
     FriendsFile, GroupInvite, HandshakeMark, HistItem, InnerState,
 };
-use crate::totp::{generate_totp_secret, otpauth_uri};
-use crate::totp_enrollment::{TotpBeginResponse, TOTP_ISSUER};
+use crate::totp_enrollment::TotpBeginResponse;
 use crate::turn::TurnCache;
 use crate::vault::{decode_vault, encode_vault, seal_vault, unseal_vault, vault_requires_totp};
 use crate::x3dh::{initiate, respond, InitialMessage, X3dhError};
@@ -91,14 +90,6 @@ pub struct ForgeResponse {
     #[serde(flatten)]
     pub session: UnsealResponse,
     pub bundle_json: String,
-}
-
-/// TEMPORARY, see `forge_legacy`: what `forge` returns plus the TOTP URI.
-#[derive(Serialize)]
-pub struct LegacyForgeResponse {
-    #[serde(flatten)]
-    pub created: ForgeResponse,
-    pub otpauth_uri: String,
 }
 
 #[derive(Clone, Deserialize, Serialize)]
@@ -852,8 +843,6 @@ enum NewVaultTotp {
     Off,
     /// The secret from `totp_begin`, once `totp_verify` has confirmed it.
     Confirmed,
-    /// TEMPORARY, see `forge_legacy`: a secret nobody has confirmed.
-    Unconfirmed(Zeroizing<Vec<u8>>),
 }
 
 /// Create a new identity and open its session at once: the first-run screens
@@ -878,31 +867,7 @@ pub async fn forge(
     forge_identity(app, &state, handle, passphrase, totp).await
 }
 
-/// TEMPORARY: `forge` for the old `ForgeWizard` in App.tsx, which shows the
-/// TOTP QR code only once the identity exists and never asks for a code
-/// before. Like `forge` before R3.3, it seals a fresh secret that nobody has
-/// confirmed, and returns its URI for that screen. The new first-run screens
-/// use `totp_begin`, `totp_verify` and `forge`; R3.6 deletes this command
-/// together with the old screen.
-#[tauri::command]
-pub async fn forge_legacy(
-    app: AppHandle,
-    state: State<'_, AppState>,
-    handle: String,
-    passphrase: String,
-) -> Result<LegacyForgeResponse, CommandError> {
-    let secret = Zeroizing::new(generate_totp_secret());
-    let otpauth_uri = otpauth_uri(&secret, &display_handle(&handle), TOTP_ISSUER);
-    let totp = NewVaultTotp::Unconfirmed(secret);
-    let created = forge_identity(app, &state, handle, passphrase, totp).await?;
-    Ok(LegacyForgeResponse {
-        created,
-        otpauth_uri,
-    })
-}
-
-/// `forge` and `forge_legacy`, which differ only in where the TOTP secret
-/// comes from.
+/// `forge`, once it knows whether the vault gets the confirmed TOTP secret.
 async fn forge_identity(
     app: AppHandle,
     state: &AppState,
@@ -926,7 +891,6 @@ async fn forge_identity(
             NewVaultTotp::Confirmed => Some(Zeroizing::new(
                 inner.totp_enrollment.verified_secret()?.to_vec(),
             )),
-            NewVaultTotp::Unconfirmed(secret) => Some(secret),
         }
     };
     let handle = display_handle(&handle);
@@ -3797,7 +3761,7 @@ mod tests {
     use crate::group::roster_signing_bytes;
     use crate::identity::{ed25519_sign, generate_nostr_keypair, generate_x25519, Identity};
     use crate::passphrase::MIN_PASSPHRASE_CHARS;
-    use crate::totp::totp_now;
+    use crate::totp::{generate_totp_secret, totp_now};
     use crate::vault::SealedVault;
 
     const NOW: i64 = 1_760_000_000;
@@ -4891,15 +4855,6 @@ mod tests {
                 "bundle_json": "{}",
             })
         );
-
-        let legacy = LegacyForgeResponse {
-            created,
-            otpauth_uri: "otpauth://totp/trino:ana".to_string(),
-        };
-        let legacy = serde_json::to_value(&legacy).unwrap();
-        assert_eq!(legacy["otpauth_uri"], "otpauth://totp/trino:ana");
-        assert_eq!(legacy["bundle_json"], "{}");
-        assert_eq!(legacy["handle"], "ana");
     }
 
     #[tokio::test]

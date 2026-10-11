@@ -196,7 +196,6 @@ pub fn run() {
             commands::totp_begin,
             commands::totp_verify,
             commands::forge,
-            commands::forge_legacy,
             commands::unseal,
             commands::share_bundle,
             commands::relay_inspect_start,

@@ -2,12 +2,16 @@ import {
   useState,
   useEffect,
   useId,
+  useMemo,
+  useReducer,
   useRef,
   Component,
+  type ComponentType,
   type CSSProperties,
   type ReactNode,
 } from 'react';
 import { createPortal } from 'react-dom';
+import type { UnlistenFn } from '@tauri-apps/api/event';
 import { I18nContext, makeT, detectLang, useT, LANGS, type Lang } from './lib/i18n';
 import { LangCtx, useDocumentLang, useLang } from './lib/i18n-context';
 import { ThemeCtx, useThemePreference } from './lib/theme-context';
@@ -28,12 +32,10 @@ import {
   Hash,
   ImagePlus,
   Info,
-  KeyRound,
   LoaderCircle,
   LockKeyhole,
   Megaphone,
   MessageCircle,
-  Minus,
   MoreVertical,
   Palette,
   Paperclip,
@@ -47,8 +49,6 @@ import {
   ShieldCheck,
   ShieldQuestion,
   Smile,
-  Smartphone,
-  Square,
   Trash2,
   UserRound,
   UserPlus,
@@ -127,6 +127,7 @@ import {
   onSessionEstablished,
   onRelayEvent,
   openLink,
+  isCommandError,
   type NodeInfo,
   type GroupInfo,
   type GroupInvite,
@@ -136,11 +137,22 @@ import {
   type StickerInfo,
 } from './lib/api';
 import { TrinoLogo } from './ui/brand/TrinoLogo';
+import { ToastProvider } from './ui';
+import { AppearanceProvider } from './design/useAppearance';
+import {
+  INITIAL_PHASE,
+  OnboardingFlow,
+  StartupScreen,
+  UnlockScreen,
+  WindowTitlebar,
+  phaseReducer,
+  type WindowApi,
+} from './screens/auth';
+import type { LockReason, OnboardingApi, OnboardingIntent, UnlockApi } from './screens/types';
+import { capabilities } from './app/capabilities';
 import './App.css';
 
 const isMobile = /android|iphone|ipad|ipod/i.test(navigator.userAgent);
-
-type Phase = 'boot' | 'forge' | 'unseal' | 'main';
 
 interface ChatMessage {
   side: 'me' | 'them';
@@ -162,15 +174,75 @@ const TTL_OPTIONS: { key: string; v: number }[] = [
   { key: 'ttl.week1', v: 604800 },
 ];
 
-function App() {
-  const [phase, setPhase] = useState<Phase>('boot');
-  const [bootText, setBootText] = useState<string[]>([]);
-  const [status, setStatus] = useState<StatusResponse | null>(null);
-  const [error, setError] = useState<string | null>(null);
+/**
+ * What App() needs from the backend: `api` of src/lib/api.ts in the app, a
+ * fake in the tests. The first run and the unlock screen take their part.
+ */
+export interface AppApi extends OnboardingApi, UnlockApi {
+  status(): Promise<StatusResponse>;
+  lockVault(): Promise<void>;
+  /** Whether a call holds the microphone: the window's close and the tray's "Salir" ask first. */
+  setCallActive(active: boolean): Promise<void>;
+  onCallCloseRequested(cb: () => void): Promise<UnlistenFn>;
+  onCallQuitRequested(cb: () => void): Promise<UnlistenFn>;
+}
+
+const BACKEND: AppApi = {
+  status: api.status,
+  lockVault: api.lockVault,
+  setCallActive: api.setCallActive,
+  onCallCloseRequested,
+  onCallQuitRequested,
+  checkPassphrase: api.checkPassphrase,
+  totpBegin: api.totpBegin,
+  totpVerify: api.totpVerify,
+  createIdentity: api.createIdentity,
+  // The first run saves the photo only: no `about`, the payload of before K12.
+  updateProfile: (handle, avatar) => api.updateProfile(handle, avatar),
+  unseal: api.unseal,
+  wipe: api.wipe,
+};
+
+/**
+ * This window through Tauri, asked for on each use, so that loading this
+ * module needs no Tauri. Closing hides it to the tray; during a call the
+ * backend asks first (`call-close-requested`).
+ */
+const TAURI_WINDOW: WindowApi = {
+  minimize: () => void getCurrentWindow().minimize().catch(() => {}),
+  toggleMaximize: () => void getCurrentWindow().toggleMaximize().catch(() => {}),
+  close: () => void getCurrentWindow().close().catch(() => {}),
+  isMaximized: () => getCurrentWindow().isMaximized(),
+};
+
+/** What App() gives the chats. */
+export interface MainProps {
+  /** How the first run ended: 'add-contact' opens the contacts once. */
+  intent: OnboardingIntent;
+  /** "Bloquear": asks first while a call holds the microphone. */
+  onLock(): void;
+}
+
+export interface AppProps {
+  /** The backend; the real one unless a test brings its own. */
+  api?: AppApi;
+  /** This window: its title bar, and closing it after a call. */
+  windowApi?: WindowApi;
+  /** The chats, once Trino is unlocked. */
+  Main?: ComponentType<MainProps>;
+}
+
+/**
+ * The phases before the chats (W1's `phaseReducer`): reading the status, its
+ * error, the first run, the unlock screen and the chats. Every lock seals the
+ * vault and then reads the status again, with the reason it locked.
+ */
+function App({ api: backend = BACKEND, windowApi = TAURI_WINDOW, Main = MainShell }: AppProps) {
+  const [phase, dispatch] = useReducer(phaseReducer, INITIAL_PHASE);
   const [lang, setLangState] = useState<Lang>(detectLang);
   useDocumentLang(lang);
   const [theme, setThemeState] = useState<ThemePreference>(loadThemePreference);
-  const t = makeT(lang);
+  const t = useMemo(() => makeT(lang), [lang]);
   const setLang = (l: Lang) => {
     localStorage.setItem('lang', l);
     setLangState(l);
@@ -184,85 +256,84 @@ function App() {
     applyThemePreference(theme);
   }, [theme]);
 
-  useEffect(() => {
-    api.status().then(setStatus).catch(error => {
-      console.error('startup status failed', error);
-      setError(t('error.startup'));
-    });
-  }, []);
+  // The last lock: the status is read once the vault is sealed.
+  const sealing = useRef<Promise<void>>(Promise.resolve());
 
+  // At start, on "Reintentar" and after every lock, read the status; the
+  // reducer turns it into the first run or the unlock screen.
+  const loading = phase.kind === 'loading';
   useEffect(() => {
-    if (phase !== 'boot' || !status) return;
-    const lines = [
-      '[+] kernel: trino 0.1.0',
-      `[+] ${t('boot.console.storage')}: ${status.home_dir}`,
-      status.has_vault
-        ? `[+] ${t('boot.console.vaultFound')}`
-        : `[+] ${t('boot.console.vaultMissing')}`,
-      '',
-      status.has_vault ? `> ${t('boot.console.unlock')}` : `> ${t('boot.console.create')}`,
-    ];
-    let idx = 0;
-    const timer = setInterval(() => {
-      setBootText(prev => [...prev, lines[idx]!]);
-      idx++;
-      if (idx >= lines.length) {
-        clearInterval(timer);
-        setTimeout(() => setPhase(status.has_vault ? 'unseal' : 'forge'), 500);
-      }
-    }, 140);
-    return () => clearInterval(timer);
-  }, [phase, status]);
+    if (!loading) return;
+    let live = true;
+    sealing.current
+      .then(() => backend.status())
+      .then(
+        status => {
+          if (live) dispatch({ type: 'status', status });
+        },
+        (error: unknown) => {
+          console.warn('status failed:', isCommandError(error) ? error.code : 'not a command error');
+          if (live) dispatch({ type: 'statusFailed' });
+        },
+      );
+    return () => {
+      live = false;
+    };
+  }, [loading, backend]);
 
   // A call in progress asks before the window is closed or the vault locked.
   const [callConfirm, setCallConfirm] = useState<'close' | 'lock' | null>(null);
 
-  // Every lock path releases the microphone and camera before sealing.
-  const lockNow = () => {
+  // Every lock path releases the microphone and camera before sealing. The
+  // chats go at once, also when sealing fails.
+  const lockNow = (reason: LockReason) => {
     teardownCall();
-    api.lockVault().catch(() => {});
-    setPhase('unseal');
+    sealing.current = Promise.resolve()
+      .then(() => backend.lockVault())
+      .catch(() => console.warn('lock_vault failed'));
+    dispatch({ type: 'locked', reason });
   };
   const requestLock = () => {
     if (isCallBusy()) setCallConfirm('lock');
-    else lockNow();
+    else lockNow({ kind: 'manual' });
   };
   const confirmCallAction = async () => {
     const action = callConfirm;
     setCallConfirm(null);
     await hangupAndWait(); // the bye goes out before the vault (and its keys) closes
-    if (action === 'lock') lockNow();
-    else if (action === 'close') await getCurrentWindow().close().catch(() => {});
+    if (action === 'lock') lockNow({ kind: 'manual' });
+    else if (action === 'close') windowApi.close();
   };
 
   // The backend asks before hiding the window or quitting while a call holds
   // the microphone (see `set_call_active` and the tray "Salir").
   useEffect(() => {
     // A reload in the middle of a call must not leave a stale flag behind.
-    api.setCallActive(false).catch(() => {});
-    const close = onCallCloseRequested(() => {
+    backend.setCallActive(false).catch(() => {});
+    const close = backend.onCallCloseRequested(() => {
       if (callHoldsMedia()) {
         setCallConfirm('close');
       } else {
-        api
+        backend
           .setCallActive(false)
-          .then(() => getCurrentWindow().close())
+          .then(() => windowApi.close())
           .catch(() => {});
       }
     });
-    const quit = onCallQuitRequested(() => {
-      void hangupAndWait().finally(() => api.setCallActive(false).catch(() => {}));
+    const quit = backend.onCallQuitRequested(() => {
+      void hangupAndWait().finally(() => backend.setCallActive(false).catch(() => {}));
     });
     return () => {
       close.then(fn => fn());
       quit.then(fn => fn());
     };
-  }, []);
+  }, [backend, windowApi]);
 
   // Auto-lock: seal the vault after N minutes of inactivity (0 = disabled).
   // Never during a call: the timer re-arms until the call is over.
+  const unlocked = phase.kind === 'main';
   useEffect(() => {
-    if (phase !== 'main') return;
+    if (!unlocked) return;
     const mins = Number(localStorage.getItem('autolock') ?? '5');
     if (!mins) return;
     let timer: ReturnType<typeof setTimeout>;
@@ -270,7 +341,7 @@ function App() {
       clearTimeout(timer);
       timer = setTimeout(() => {
         if (isCallBusy()) reset();
-        else lockNow();
+        else lockNow({ kind: 'idle', minutes: mins });
       }, mins * 60_000);
     };
     const events = ['mousedown', 'keydown', 'touchstart', 'mousemove', 'wheel'];
@@ -280,342 +351,71 @@ function App() {
       clearTimeout(timer);
       events.forEach(e => window.removeEventListener(e, reset));
     };
-  }, [phase]);
+  }, [unlocked]);
+
+  // "Borrar identidad" deleted the vault, the chats and the contacts. What
+  // this device keeps beside them goes too, as the old screen did: the
+  // consent record, the verified marks, the notes and the settings.
+  const wiped = () => {
+    try {
+      localStorage.clear();
+    } catch {
+      // Storage refused: there is nothing it kept.
+    }
+    dispatch({ type: 'noVault' });
+  };
 
   return (
     <ThemeCtx.Provider value={{ theme, setTheme }}>
       <LangCtx.Provider value={{ lang, setLang }}>
         <I18nContext.Provider value={t}>
-          <div className="h-full flex flex-col">
-            {!isMobile && <Titlebar />}
-            <main className="flex-1 overflow-hidden">
-              {error && <div className="bg-crimson/20 text-crimson p-2 text-xs">{error}</div>}
-              {phase === 'boot' && <BootScreen lines={bootText} />}
-              {phase === 'forge' && <ForgeWizard onDone={() => setPhase('unseal')} />}
-              {phase === 'unseal' && (
-                <UnsealScreen
-                  handle={status?.handle ?? ''}
-                  onDone={() => setPhase('main')}
-                />
-              )}
-              {phase === 'main' && <MainShell onLock={requestLock} />}
-            </main>
-            {callConfirm && (
-              <CallConfirmDialog
-                message={t(callConfirm === 'close' ? 'call.closeHangsUp' : 'call.lockHangsUp')}
-                confirmLabel={t(callConfirm === 'close' ? 'call.hangupAndClose' : 'call.hangupAndLock')}
-                onConfirm={() => void confirmCallAction()}
-                onCancel={() => setCallConfirm(null)}
-              />
-            )}
-          </div>
+          <AppearanceProvider>
+            <ToastProvider closeLabel={t('common2.close')}>
+              <div className="flex h-full flex-col">
+                {!isMobile && <WindowTitlebar api={windowApi} />}
+                <div className="min-h-0 flex-1 overflow-hidden">
+                  {phase.kind === 'loading' || phase.kind === 'startupError' ? (
+                    <StartupScreen failed={phase.kind === 'startupError'} onRetry={() => dispatch({ type: 'retry' })} />
+                  ) : null}
+                  {phase.kind === 'onboarding' ? (
+                    <OnboardingFlow
+                      api={backend}
+                      profileSync={capabilities.profileSync}
+                      onCreated={(_created, intent) => dispatch({ type: 'created', intent })}
+                      onVaultExists={() => dispatch({ type: 'vaultExists' })}
+                    />
+                  ) : null}
+                  {phase.kind === 'unlock' ? (
+                    <UnlockScreen
+                      handle={phase.handle}
+                      totpEnabled={phase.totpEnabled}
+                      reason={phase.reason}
+                      api={backend}
+                      onUnlocked={() => dispatch({ type: 'unlocked' })}
+                      onNoVault={() => dispatch({ type: 'noVault' })}
+                      onWiped={wiped}
+                    />
+                  ) : null}
+                  {phase.kind === 'main' ? (
+                    <main className="h-full">
+                      <Main intent={phase.intent} onLock={requestLock} />
+                    </main>
+                  ) : null}
+                </div>
+                {callConfirm && (
+                  <CallConfirmDialog
+                    message={t(callConfirm === 'close' ? 'call.closeHangsUp' : 'call.lockHangsUp')}
+                    confirmLabel={t(callConfirm === 'close' ? 'call.hangupAndClose' : 'call.hangupAndLock')}
+                    onConfirm={() => void confirmCallAction()}
+                    onCancel={() => setCallConfirm(null)}
+                  />
+                )}
+              </div>
+            </ToastProvider>
+          </AppearanceProvider>
         </I18nContext.Provider>
       </LangCtx.Provider>
     </ThemeCtx.Provider>
-  );
-}
-
-function Titlebar() {
-  const t = useT();
-  const win = getCurrentWindow();
-  return (
-    <div
-      data-tauri-drag-region
-      className="flex h-9 select-none items-center border-b border-bg-line bg-bg-deep px-3"
-    >
-      <span className="pointer-events-none font-mono text-[11px] font-semibold tracking-[0.12em] text-ink-dim">
-        TRINO://DESKTOP
-      </span>
-      <span className="pointer-events-none mx-2 text-bg-line">/</span>
-      <span className="pointer-events-none text-[10px] uppercase tracking-[0.1em] text-ink-muted">
-        {t('app.encryptedMesh')}
-      </span>
-      <div className="ml-auto flex items-center gap-1 -mr-1">
-        <button
-          type="button"
-          aria-label={t('window.minimize')}
-          onClick={() => win.minimize()}
-          className="titlebar-button"
-        >
-          <Minus className="h-3.5 w-3.5" />
-        </button>
-        <button
-          type="button"
-          aria-label={t('window.maximize')}
-          onClick={() => win.toggleMaximize()}
-          className="titlebar-button"
-        >
-          <Square className="h-3 w-3" />
-        </button>
-        <button
-          type="button"
-          aria-label={t('window.close')}
-          onClick={() => win.close()}
-          className="titlebar-button titlebar-button--danger"
-        >
-          <X className="h-3.5 w-3.5" />
-        </button>
-      </div>
-    </div>
-  );
-}
-
-function AuthLayout({
-  eyebrow,
-  stage,
-  title,
-  description,
-  compact = false,
-  children,
-}: {
-  eyebrow: string;
-  stage?: string;
-  title: string;
-  description: string;
-  /**
-   * Drops the value proposition and narrows the side panel. First run has to
-   * argue for itself; the daily unlock does not — the person already chose
-   * trino and is here to type a passphrase, so the task gets the space.
-   */
-  compact?: boolean;
-  children: ReactNode;
-}) {
-  const t = useT();
-  return (
-    <div className={`auth-layout${compact ? ' auth-layout--compact' : ''}`}>
-      <AuthAmbient />
-
-      {/* First run only. A side rail carrying an argument needs the argument;
-          with it removed the column was 150px of content in a 780px window and
-          read as deleted, not designed. */}
-      {!compact && (
-        <section className="auth-intro">
-          <div className="auth-brand">
-            <TrinoLogo size={48} decorative className="text-phosphor-dim" />
-            <div>
-              <div className="font-mono text-sm font-bold tracking-[0.16em] text-ink">
-                TRINO://ID
-              </div>
-              <div className="mt-1 text-[10px] uppercase tracking-[0.12em] text-phosphor-dim">
-                {t('boot.tagline')}
-              </div>
-            </div>
-          </div>
-
-          <div className="auth-intro__message">
-            <span className="auth-kicker">{t('auth.privateNode')}</span>
-            <div className="mt-4 text-xl font-semibold leading-snug text-ink">
-              {t('auth.statement')}
-            </div>
-            <div className="mt-3 max-w-sm text-xs leading-relaxed text-ink-muted">
-              {t('auth.statementSub')}
-            </div>
-          </div>
-
-          <div className="auth-specs">
-            <div><span>{t('auth.vault')}</span><strong>LOCAL / AES-256</strong></div>
-            <div><span>{t('auth.connection')}</span><strong>RATCHET E2E</strong></div>
-            <div><span>{t('auth.network')}</span><strong>NOSTR MESH</strong></div>
-          </div>
-        </section>
-      )}
-
-      <section className="auth-workspace">
-        <div className="auth-workspace__inner animate-pop-in">
-          {compact && (
-            <div className="auth-brand mb-7">
-              <TrinoLogo size={36} decorative className="text-phosphor-dim" />
-              <div className="font-mono text-sm font-bold tracking-[0.16em] text-ink">
-                TRINO://ID
-              </div>
-            </div>
-          )}
-          <div className="flex items-center justify-between gap-4">
-            <div className="auth-kicker">{eyebrow}</div>
-            {stage && (
-              <div className="text-[10px] uppercase tracking-[0.12em] text-ink-muted">
-                {stage}
-              </div>
-            )}
-          </div>
-          <h1 className="mt-4 text-2xl font-semibold leading-tight text-ink">{title}</h1>
-          <p className="mt-2 max-w-md text-xs leading-relaxed text-ink-muted">{description}</p>
-          <div className="mt-7">{children}</div>
-        </div>
-      </section>
-
-      {/* Status belongs on a status bar. Bottom rail is the terminal
-          convention this interface already speaks, and it reports facts about
-          this device rather than claims about the product. */}
-      {compact && (
-        <footer className="auth-statusbar">
-          <div><span>{t('auth.vault')}</span><strong>LOCAL / AES-256</strong></div>
-          <div><span>{t('auth.connection')}</span><strong>RATCHET E2E</strong></div>
-          <div><span>{t('auth.network')}</span><strong>NOSTR MESH</strong></div>
-        </footer>
-      )}
-    </div>
-  );
-}
-
-function BootScreen({ lines }: { lines: string[] }) {
-  const t = useT();
-  return (
-    <AuthLayout
-      eyebrow={t('boot.starting')}
-      title={t('boot.title')}
-      description={t('boot.description')}
-    >
-      <div className="boot-console" aria-live="polite">
-        {lines.map((line, index) => (
-          <div key={index} className="boot-console__line">
-            <span className="text-phosphor/70">{String(index + 1).padStart(2, '0')}</span>
-            <span>{line || ' '}</span>
-          </div>
-        ))}
-        <span className="ml-9 inline-block h-4 w-2 bg-phosphor animate-cursor-blink" />
-      </div>
-    </AuthLayout>
-  );
-}
-
-function ForgeWizard({ onDone }: { onDone: () => void }) {
-  const t = useT();
-  const [step, setStep] = useState<'input' | 'qr'>('input');
-  const [handle, setHandle] = useState('');
-  const [passphrase, setPassphrase] = useState('');
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [result, setResult] = useState<{ otpauth_uri: string; bundle_json: string; fingerprint: string } | null>(null);
-
-  const submit = async () => {
-    setError(null);
-    if (!handle.trim() || !passphrase) {
-      setError(t('forge.required'));
-      return;
-    }
-    setBusy(true);
-    try {
-      const r = await api.forge(handle.trim(), passphrase);
-      setResult(r);
-      setStep('qr');
-    } catch (error) {
-      console.error('identity creation failed', error);
-      setError(t('forge.createError'));
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  if (step === 'qr' && result) {
-    return (
-      <AuthLayout
-        eyebrow={t('forge.enrollment')}
-        stage="02 / 02"
-        title={t('forge.success')}
-        description={t('forge.successDesc')}
-      >
-        <div className="auth-enrollment">
-          <div className="auth-enrollment__qr">
-            <div className="mb-3 flex items-center gap-2 text-xs text-ink-dim">
-              <Smartphone className="h-4 w-4 text-cyan" />
-              {t('forge.scan')}
-            </div>
-            <div className="qr-frame">
-              <QRCodeSVG
-                value={result.otpauth_uri}
-                size={190}
-                marginSize={2}
-                fgColor="#07100b"
-                bgColor="#ffffff"
-                style={{ display: 'block', width: '100%', height: 'auto' }}
-              />
-            </div>
-          </div>
-
-          <div className="space-y-3">
-            <CopyBox label={t('forge.fingerprint')} value={result.fingerprint} />
-            <details className="auth-details">
-              <summary>{t('forge.showUri')}</summary>
-              <pre>{result.otpauth_uri}</pre>
-            </details>
-          </div>
-        </div>
-
-        <div className="mt-5 space-y-2">
-          {toCompactCode(result.bundle_json) ? (
-            <CopyBox
-              label={t('forge.bundle')}
-              value={toCompactCode(result.bundle_json)}
-              truncate
-            />
-          ) : (
-            <BundleCopy json={result.bundle_json} />
-          )}
-          <p className="text-xs leading-relaxed text-ink-dim">{t('forge.bundleHint')}</p>
-        </div>
-
-        <button className="auth-primary mt-6" onClick={onDone}>
-          <LockKeyhole className="h-4 w-4" />
-          {t('forge.continue')}
-        </button>
-      </AuthLayout>
-    );
-  }
-
-  return (
-    <AuthLayout
-      eyebrow={t('forge.title')}
-      stage="01 / 02"
-      title={t('forge.title')}
-      description={t('forge.desc')}
-    >
-      <form
-        className="auth-form"
-        onSubmit={event => {
-          event.preventDefault();
-          submit();
-        }}
-      >
-        <label className="auth-field">
-          <span>{t('forge.handle')}</span>
-        <input
-          className="auth-input"
-          value={handle}
-          onChange={e => setHandle(e.target.value)}
-          placeholder={t('forge.handlePlaceholder')}
-          autoFocus
-        />
-        </label>
-
-        <label className="auth-field">
-          <span>{t('forge.pass')}</span>
-        <input
-          className="auth-input"
-          type="password"
-          value={passphrase}
-          onChange={e => setPassphrase(e.target.value)}
-          placeholder={t('forge.passPlaceholder')}
-        />
-        </label>
-
-        <div className="auth-security-note">
-          <KeyRound className="h-4 w-4 shrink-0 text-phosphor" />
-          <span>{t('forge.passHint')}</span>
-        </div>
-
-        {error && <div className="auth-error">{error}</div>}
-
-        <button className="auth-primary" disabled={busy} type="submit">
-          {busy ? (
-            <LoaderCircle className="h-4 w-4 animate-spin" />
-          ) : (
-            <Fingerprint className="h-4 w-4" />
-          )}
-          {busy ? t('forge.sealing') : t('forge.submit')}
-        </button>
-      </form>
-    </AuthLayout>
   );
 }
 
@@ -677,184 +477,6 @@ function CopyBox({ label, value, truncate = false }: { label: string; value: str
   );
 }
 
-function UnsealScreen({ handle, onDone }: { handle: string; onDone: () => void }) {
-  const t = useT();
-  const [passphrase, setPassphrase] = useState('');
-  const [code, setCode] = useState('');
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [confirmWipe, setConfirmWipe] = useState(false);
-  const [wiping, setWiping] = useState(false);
-
-  // TOTP codes live in 30s windows aligned to the epoch. Without showing the
-  // window, the most common failure here is typing a code that expired
-  // mid-keystroke — and the error that follows blames the passphrase too.
-  const [secondsLeft, setSecondsLeft] = useState(() => 30 - (Math.floor(Date.now() / 1000) % 30));
-  useEffect(() => {
-    const id = setInterval(() => setSecondsLeft(30 - (Math.floor(Date.now() / 1000) % 30)), 1000);
-    return () => clearInterval(id);
-  }, []);
-
-  const submit = async () => {
-    setError(null);
-    setBusy(true);
-    try {
-      await api.unseal(passphrase, code);
-      onDone();
-    } catch (error) {
-      console.error('unlock failed', error);
-      setError(t('unseal.unlockError'));
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const doWipe = async () => {
-    setWiping(true);
-    try {
-      await api.wipe();
-      localStorage.clear();
-      window.location.reload();
-    } catch (error) {
-      console.error('vault deletion failed', error);
-      setError(t('unseal.deleteError'));
-      setWiping(false);
-    }
-  };
-
-  return (
-    <AuthLayout
-      compact
-      eyebrow={t('unseal.eyebrow')}
-      stage={t('unseal.status')}
-      title={t('unseal.title')}
-      description={t('unseal.desc')}
-    >
-      <div className="auth-identity-row">
-        <Avatar
-          name={handle || t('unseal.identity')}
-          size={44}
-          status="away"
-          statusLabel={t('unseal.status')}
-        />
-        <div className="min-w-0">
-          <div className="truncate text-sm font-semibold text-ink">
-            {handle || t('unseal.identity')}
-          </div>
-          <div className="mt-0.5 text-[10px] uppercase tracking-[0.12em] text-ink-muted">
-            {t('unseal.localIdentity')}
-          </div>
-        </div>
-      </div>
-
-      <form
-        className="auth-form mt-5"
-        onSubmit={event => {
-          event.preventDefault();
-          submit();
-        }}
-      >
-        <label className="auth-field">
-          <span>{t('forge.pass')}</span>
-        <input
-          className="auth-input"
-          type="password"
-          value={passphrase}
-          onChange={e => setPassphrase(e.target.value)}
-          placeholder={t('unseal.passPlaceholder')}
-          autoFocus
-        />
-        </label>
-
-        <label className="auth-field">
-          <span className="flex items-center justify-between gap-3">
-            {t('unseal.totp')}
-            <span
-              aria-live="off"
-              className={`font-mono tabular-nums ${
-                secondsLeft <= 5 ? 'text-crimson' : 'text-ink-muted'
-              }`}
-              title={t('unseal.totpWindow')}
-            >
-              {secondsLeft}s
-            </span>
-          </span>
-          <input
-            className="auth-input auth-input--totp"
-            inputMode="numeric"
-            autoComplete="one-time-code"
-            value={code}
-            onChange={event => setCode(event.target.value.replace(/\D/g, '').slice(0, 6))}
-            placeholder="000000"
-          />
-        </label>
-
-        {error && <div className="auth-error">{error}</div>}
-
-        <button className="auth-primary" disabled={busy} type="submit">
-          {busy ? (
-            <LoaderCircle className="h-4 w-4 animate-spin" />
-          ) : (
-            <LockKeyhole className="h-4 w-4" />
-          )}
-          {busy ? t('unseal.working') : t('unseal.submit')}
-        </button>
-      </form>
-
-      <div className="auth-danger-zone">
-        {!confirmWipe ? (
-          <button
-            className="auth-danger-trigger"
-            onClick={() => setConfirmWipe(true)}
-            type="button"
-          >
-            <Trash2 className="h-3.5 w-3.5" />
-            {t('unseal.forgot')}
-          </button>
-        ) : (
-          <div className="auth-danger-confirm animate-fade-in">
-            <div className="text-xs leading-relaxed text-crimson">
-              {t('unseal.wipeWarning')}
-            </div>
-            <div className="mt-3 flex gap-2">
-              <button
-                className="term-button flex-1 text-xs"
-                disabled={wiping}
-                onClick={() => setConfirmWipe(false)}
-                type="button"
-              >
-                {t('common.cancel')}
-              </button>
-              <button
-                className="flex flex-1 items-center justify-center gap-2 rounded-md border border-crimson/60 bg-crimson/10 px-3 py-2 text-xs text-crimson transition-colors hover:bg-crimson/20"
-                disabled={wiping}
-                onClick={doWipe}
-                type="button"
-              >
-                {wiping && <LoaderCircle className="h-3.5 w-3.5 animate-spin" />}
-                {wiping ? t('unseal.wiping') : t('unseal.wipe')}
-              </button>
-            </div>
-          </div>
-        )}
-      </div>
-    </AuthLayout>
-  );
-}
-
-// Ambient CRT scanlines + faint vignette for the auth screens.
-function AuthAmbient() {
-  return (
-    <div
-      className="pointer-events-none absolute inset-0 opacity-50"
-      style={{
-        background:
-          'repeating-linear-gradient(transparent 0 2px, rgba(34,255,102,0.025) 3px 3px)',
-      }}
-    />
-  );
-}
-
 function ding(): void {
   try {
     new Audio(
@@ -874,14 +496,15 @@ type SidebarView = 'chats' | 'groups';
 
 const groupUnreadKey = (gid: string) => `grp:${gid}`;
 
-function MainShell({ onLock }: { onLock: () => void }) {
+function MainShell({ intent, onLock }: MainProps) {
   const t = useT();
   const [nodes, setNodes] = useState<NodeInfo[]>([]);
   const [groups, setGroups] = useState<GroupInfo[]>([]);
   const [sel, setSel] = useState<Selection>(null);
   const [msgsByHandle, setMsgsByHandle] = useState<Record<string, ChatMessage[]>>({});
   const [msgsByGroup, setMsgsByGroup] = useState<Record<string, ChatMessage[]>>({});
-  const [showAddNode, setShowAddNode] = useState(false);
+  // "Agregar un contacto" at the end of the first run opens it once (I3 moves it to Contactos).
+  const [showAddNode, setShowAddNode] = useState(intent === 'add-contact');
   const [showShare, setShowShare] = useState(false);
   const [showNewGroup, setShowNewGroup] = useState(false);
   const [showAddMember, setShowAddMember] = useState(false);
@@ -2527,7 +2150,7 @@ function SettingsModal({ onClose, onSaved }: { onClose: () => void; onSaved: () 
               onClick={doWipe}
               type="button"
             >
-              {wiping ? t('unseal.wiping') : t('settings.confirmDeleteAll')}
+              {wiping ? t('unlock2.wiping') : t('settings.confirmDeleteAll')}
             </button>
           </div>
         )}
