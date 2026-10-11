@@ -10,7 +10,7 @@
  * start. Links open in the system browser through `onOpenLink`.
  */
 import { ArrowLeft, Bell, BellOff, ExternalLink, PackageCheck } from 'lucide-react';
-import { useId, useMemo } from 'react';
+import { Fragment, useId, useMemo } from 'react';
 import type { Announcement } from '../../lib/announcements';
 import { clockTime } from '../../lib/dates';
 import { useT } from '../../lib/i18n';
@@ -128,18 +128,19 @@ export function ChannelView({ announcements, source, lastReadId, muted, onToggle
           if (item.type === 'day') return <DaySeparator key={item.key} label={item.label} />;
           const announcement = byId.get(item.msg.key);
           if (!announcement) return null;
-          const bubble = (
-            <AnnouncementBubble key={item.msg.key} announcement={announcement} ts={item.msg.ts} onOpenLink={onOpenLink} />
+          // Every announcement sits in the same keyed box, so the mark coming or going never mounts it again.
+          return (
+            <Fragment key={item.msg.key}>
+              {item.msg.key === firstUnread && (
+                <p className="flex items-center gap-3 text-ui-xs font-semibold text-ui-accent-text">
+                  <span aria-hidden="true" className="h-px flex-1 bg-ui-line" />
+                  {t('channel.unread')}
+                  <span aria-hidden="true" className="h-px flex-1 bg-ui-line" />
+                </p>
+              )}
+              <AnnouncementBubble announcement={announcement} ts={item.msg.ts} onOpenLink={onOpenLink} />
+            </Fragment>
           );
-          if (item.msg.key !== firstUnread) return bubble;
-          return [
-            <p key="unread" className="flex items-center gap-3 text-ui-xs font-semibold text-ui-accent-text">
-              <span aria-hidden="true" className="h-px flex-1 bg-ui-line" />
-              {t('channel.unread')}
-              <span aria-hidden="true" className="h-px flex-1 bg-ui-line" />
-            </p>,
-            bubble,
-          ];
         })}
       </div>
       <p className="border-t border-ui-line px-4 py-3.5 text-center text-ui-md text-ui-muted">{t('channel.readOnly')}</p>

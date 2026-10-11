@@ -118,11 +118,29 @@ describe('MessageList', () => {
   });
 
   it('gives a call no options: it cannot be answered, copied or deleted', () => {
-    list([missedCall('k13-missed-0123456789', at(2026, 10, 11, 16, 40))], { onCall: () => {} });
-    expect(screen.queryByRole('button', { name: 'Opciones del mensaje' })).toBeNull();
-    expect(screen.queryByText('Responder')).toBeNull();
-    expect(screen.queryByText('Borrar para mí')).toBeNull();
-    expect(screen.getByRole('button', { name: 'Devolver llamada' })).toBeTruthy();
+    list(
+      [
+        message('m', at(2026, 10, 11, 16, 30), { text: 'Te llamo en 10 minutos' }),
+        missedCall('k13-missed-0123456789', at(2026, 10, 11, 16, 40)),
+      ],
+      { onCall: () => {} },
+    );
+    const call = document.querySelector<HTMLElement>('[data-call-event]')!;
+    // Its one button calls back; it has no menu of any name.
+    expect(within(call).getAllByRole('button').map(button => button.textContent)).toEqual(['Devolver llamada']);
+    expect(call.querySelector('[aria-haspopup]')).toBeNull();
+    // The log's only options are the message's: opened, its items are outside the call.
+    const options = within(log()).getAllByRole('button', { name: 'Opciones del mensaje' });
+    expect(options).toHaveLength(1);
+    fireEvent.click(options[0]!);
+    const menu = screen.getByRole('menu');
+    expect(call.contains(menu)).toBe(false);
+    expect(within(menu).getAllByRole('menuitem').map(item => item.textContent)).toEqual([
+      'Responder',
+      'Copiar',
+      'Reenviar',
+      'Borrar para mí',
+    ]);
   });
 
   it('keeps every message mounted from one update to the next, so none is read out twice', () => {

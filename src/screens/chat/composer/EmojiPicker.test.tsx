@@ -10,6 +10,18 @@ afterEach(cleanup);
 const press = (key: string) => fireEvent.keyDown(document.activeElement!, { key });
 const ALL = EMOJI_GROUPS.flatMap(group => group.emojis);
 
+/**
+ * Enter or Space on the focused button, as a browser presses it: jsdom has
+ * no default actions, so the click a browser makes of a key nobody stopped
+ * is made here, on keydown for Enter and on keyup for Space.
+ */
+function pressButton(key: 'Enter' | ' ') {
+  const target = document.activeElement!;
+  const down = fireEvent.keyDown(target, { key });
+  const up = key === ' ' ? fireEvent.keyUp(target, { key }) : true;
+  if (target instanceof HTMLButtonElement && down && up) fireEvent.click(target);
+}
+
 describe('the curated emoji', () => {
   it('fill whole rows in every group, so the arrows go straight up and down', () => {
     for (const group of EMOJI_GROUPS) {
@@ -64,6 +76,15 @@ describe('EmojiPicker', () => {
     renderIn(<EmojiPicker platform="other" onPick={onPick} />);
     fireEvent.click(screen.getByRole('button', { name: ALL[2] }));
     expect(onPick).toHaveBeenLastCalledWith(ALL[2]);
+    // The arrows reach an emoji, and Enter or Space puts it in the message.
+    press('ArrowDown');
+    press('ArrowRight');
+    pressButton('Enter');
+    expect(onPick).toHaveBeenLastCalledWith(ALL[EMOJI_COLUMNS + 1]);
+    press('ArrowRight');
+    pressButton(' ');
+    expect(onPick).toHaveBeenLastCalledWith(ALL[EMOJI_COLUMNS + 2]);
+    expect(onPick).toHaveBeenCalledTimes(3);
   });
 
   it("mentions the system's own emoji panel where there is one", () => {

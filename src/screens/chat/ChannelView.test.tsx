@@ -114,6 +114,29 @@ describe('ChannelView', () => {
     expect(screen.queryByText('Sin leer')).toBeNull();
   });
 
+  // The log reads out what is added: an announcement mounted again would be read out again.
+  it('adds or takes out only the "Sin leer" mark, and never mounts an announcement again', () => {
+    const props: ChannelViewProps = {
+      announcements: [CALLS, BETA],
+      source: 'verified',
+      lastReadId: null,
+      muted: false,
+      onToggleMuted: vi.fn(),
+      onOpenLink: vi.fn(),
+      now: NOW,
+    };
+    const view = renderIn(<ChannelView {...props} />);
+    const calls = () => document.querySelector('[data-announcement="calls"]');
+    const first = calls();
+    // The shell reads where you left off once the channel is on screen.
+    view.rerender(<ChannelView {...props} lastReadId="beta-2" />);
+    expect(screen.getByText('Sin leer')).toBeTruthy();
+    expect(calls()).toBe(first);
+    view.rerender(<ChannelView {...props} lastReadId="calls" />);
+    expect(screen.queryByText('Sin leer')).toBeNull();
+    expect(calls()).toBe(first);
+  });
+
   it('says so when there is no news', () => {
     show({ announcements: [] });
     expect(within(log()).getByText('Todavía no hay novedades.')).toBeTruthy();
