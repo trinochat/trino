@@ -6,6 +6,7 @@ import { render, type RenderOptions, type RenderResult } from '@testing-library/
 import type { ReactElement, ReactNode } from 'react';
 import { I18nContext, makeT, type Lang, type TFunction } from '../../lib/i18n';
 import { LangCtx } from '../../lib/i18n-context';
+import { ToastProvider } from '../../ui';
 import type { Msg } from '../types';
 
 const lookups = new Map<Lang, TFunction>();
@@ -20,18 +21,31 @@ export function tFor(lang: Lang): TFunction {
   return t;
 }
 
-/** The language and the texts the app gives every screen. */
+/** The language, the texts and the toasts the app gives every screen (the toasts from its root, step I1). */
 export function LangWrapper({ lang = 'es', children }: { lang?: Lang; children?: ReactNode }) {
   return (
     <LangCtx.Provider value={{ lang, setLang: () => {} }}>
-      <I18nContext.Provider value={tFor(lang)}>{children}</I18nContext.Provider>
+      <I18nContext.Provider value={tFor(lang)}>
+        <ToastProvider closeLabel={tFor(lang)('common2.close')}>{children}</ToastProvider>
+      </I18nContext.Provider>
     </LangCtx.Provider>
   );
 }
 
-/** Renders `ui` in a language, Spanish unless told otherwise. */
+/** Renders `ui` in a language, Spanish unless told otherwise; a rerender keeps the wrapper and its toasts. */
 export function renderIn(ui: ReactElement, lang: Lang = 'es', options?: Omit<RenderOptions, 'wrapper'>): RenderResult {
   return render(ui, { wrapper: ({ children }) => <LangWrapper lang={lang}>{children}</LangWrapper>, ...options });
+}
+
+/** A promise the test settles when it chooses, such as files still on their way. */
+export function deferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (reason: unknown) => void;
+  const promise = new Promise<T>((yes, no) => {
+    resolve = yes;
+    reject = no;
+  });
+  return { promise, resolve, reject };
 }
 
 /** Epoch seconds of a local date and time, like `Msg.ts`. */

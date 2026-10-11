@@ -50,6 +50,9 @@ export const chat: AreaStrings = {
     'composer2.sendingFiles': 'Enviando archivos…',
     'composer2.filesFailed': 'No se pudo enviar: {names}. Puedes intentarlo de nuevo.',
     'composer2.stickerFailed': 'No se pudo enviar el sticker.',
+    'composer2.fileFailedAway': 'No se pudo enviar {file} a {name}. Para intentarlo de nuevo, vuelve a adjuntarlo en ese chat.',
+    'composer2.filesFailedAway': 'No se pudieron enviar {files} a {name}. Para intentarlo de nuevo, vuelve a adjuntarlos en ese chat.',
+    'composer2.stickerFailedAway': 'No se pudo enviar el sticker a {name}.',
 
     'emoji.title': 'Emojis',
     'emoji.group.faces': 'Caras',
@@ -171,6 +174,9 @@ export const chat: AreaStrings = {
     'composer2.sendingFiles': 'Sending files…',
     'composer2.filesFailed': 'Could not send: {names}. You can try again.',
     'composer2.stickerFailed': 'The sticker could not be sent.',
+    'composer2.fileFailedAway': 'Could not send {file} to {name}. To try again, attach it again in that chat.',
+    'composer2.filesFailedAway': 'Could not send {files} to {name}. To try again, attach them again in that chat.',
+    'composer2.stickerFailedAway': 'The sticker could not be sent to {name}.',
 
     'emoji.title': 'Emoji',
     'emoji.group.faces': 'Faces',
@@ -293,6 +299,9 @@ export const chat: AreaStrings = {
     'composer2.sendingFiles': 'Enviando arquivos…',
     'composer2.filesFailed': 'Não foi possível enviar: {names}. Você pode tentar de novo.',
     'composer2.stickerFailed': 'Não foi possível enviar a figurinha.',
+    'composer2.fileFailedAway': 'Não foi possível enviar {file} para {name}. Para tentar de novo, anexe-o outra vez nessa conversa.',
+    'composer2.filesFailedAway': 'Não foi possível enviar {files} para {name}. Para tentar de novo, anexe-os outra vez nessa conversa.',
+    'composer2.stickerFailedAway': 'Não foi possível enviar a figurinha para {name}.',
 
     'emoji.title': 'Emojis',
     'emoji.group.faces': 'Rostos',

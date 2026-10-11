@@ -6,7 +6,7 @@ import type { StickerInfo } from '../../../lib/api';
 import type { ProcessedFile } from '../../../lib/media';
 import { createPrefs } from '../../../lib/prefs';
 import type { ReplyRef, StickerApi } from '../../types';
-import { renderIn } from '../test-utils';
+import { deferred, renderIn } from '../test-utils';
 import { Composer, type ComposerProps } from './Composer';
 import { EMOJI_GROUPS } from './emoji-data';
 
@@ -29,41 +29,54 @@ const fileOf = (name: string, type: string, bytes = 1024) => {
   return file;
 };
 
-type HarnessProps = Partial<ComposerProps> & { initial?: string; initialReply?: ReplyRef | null };
+type HarnessProps = Partial<ComposerProps> & { initial?: string; initialReply?: ReplyRef | null; otherReply?: ReplyRef };
 
-/** The composer with its draft and reply kept by the test, as the chat pane keeps them. */
-function Harness({ initial = '', initialReply = null, ...props }: HarnessProps) {
+/**
+ * The composer with its draft and reply kept by the test, as the chat pane
+ * keeps them; with `otherReply`, a button chooses that reply, as Responder does.
+ */
+function Harness({ initial = '', initialReply = null, otherReply, ...props }: HarnessProps) {
   const [draft, setDraft] = useState(initial);
   const [reply, setReply] = useState<ReplyRef | null>(initialReply);
   return (
-    <Composer
-      recipient="Ana Torres"
-      maxTextLength={1000}
-      onSendText={() => {}}
-      onSendFiles={async () => ({ failed: [] })}
-      onSendSticker={async () => {}}
-      stickers={stickers()}
-      prepareFile={async file => prepared(file)}
-      platform="other"
-      stickerRecents={createPrefs({ getItem: () => null, setItem: () => {}, removeItem: () => {} })}
-      {...props}
-      draft={draft}
-      onDraftChange={text => {
-        setDraft(text);
-        props.onDraftChange?.(text);
-      }}
-      reply={reply}
-      onClearReply={() => {
-        setReply(null);
-        props.onClearReply?.();
-      }}
-    />
+    <>
+      {otherReply && (
+        <button type="button" onClick={() => setReply(otherReply)}>
+          Responder a otro
+        </button>
+      )}
+      <Composer
+        recipient="Ana Torres"
+        maxTextLength={1000}
+        onSendText={() => {}}
+        onSendFiles={async () => ({ failed: [] })}
+        onSendSticker={async () => {}}
+        stickers={stickers()}
+        prepareFile={async file => prepared(file)}
+        platform="other"
+        stickerRecents={createPrefs({ getItem: () => null, setItem: () => {}, removeItem: () => {} })}
+        {...props}
+        draft={draft}
+        onDraftChange={text => {
+          setDraft(text);
+          props.onDraftChange?.(text);
+        }}
+        reply={reply}
+        onClearReply={() => {
+          setReply(null);
+          props.onClearReply?.();
+        }}
+      />
+    </>
   );
 }
 
 const box = () => screen.getByRole('textbox', { name: 'Mensaje para Ana Torres' }) as HTMLTextAreaElement;
 const chooseFiles = (files: File[]) =>
   fireEvent.change(document.querySelector('input[type="file"]')!, { target: { files } });
+/** Waits until every file in the tray is ready to go. */
+const allPrepared = () => waitFor(() => expect(screen.queryByText('Preparando…')).toBeNull());
+type Sent = { failed: readonly ProcessedFile[] };
 
 describe('Composer', () => {
   it('is a text box for the message, kept by the draft', () => {
@@ -161,6 +174,73 @@ describe('Composer', () => {
     });
     expect(onSendText).toHaveBeenCalledWith('Aquí van', undefined);
     expect(screen.queryByRole('list', { name: 'Archivos para enviar' })).toBeNull();
+  });
+
+  it('keeps what you type while the files go: only the text you sent leaves the box', async () => {
+    const onSendText = vi.fn();
+    const upload = deferred<Sent>();
+    renderIn(<Harness initial="Aquí va el contrato" onSendText={onSendText} onSendFiles={() => upload.promise} />);
+    chooseFiles([fileOf('contrato.pdf', 'application/pdf')]);
+    await allPrepared();
+    await act(async () => {
+      fireEvent.keyDown(box(), { key: 'Enter' });
+    });
+    fireEvent.change(box(), { target: { value: 'Aquí va el contrato. Y otra cosa importante' } });
+    await act(async () => upload.resolve({ failed: [] }));
+    expect(onSendText).toHaveBeenCalledWith('Aquí va el contrato', undefined);
+    expect(box().value).toBe('. Y otra cosa importante');
+  });
+
+  it('sends the text with the reply it had, and keeps a reply you chose while the files went', async () => {
+    const onSendText = vi.fn();
+    const upload = deferred<Sent>();
+    const other: ReplyRef = { author: 'Carlos', preview: 'Te paso la dirección' };
+    renderIn(
+      <Harness initial="Aquí va" initialReply={REPLY} otherReply={other} onSendText={onSendText} onSendFiles={() => upload.promise} />,
+    );
+    chooseFiles([fileOf('plano.pdf', 'application/pdf')]);
+    await allPrepared();
+    await act(async () => {
+      fireEvent.keyDown(box(), { key: 'Enter' });
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Responder a otro' }));
+    await act(async () => upload.resolve({ failed: [] }));
+    expect(onSendText).toHaveBeenCalledWith('Aquí va', REPLY);
+    expect(screen.getByText('Respondiendo a Carlos')).toBeTruthy();
+  });
+
+  it('says which files did not go when their chat closed on the way, in a toast that stays', async () => {
+    for (const [names, failing, text] of [
+      [['a.pdf', 'b.pdf'], ['b.pdf'], 'No se pudo enviar b.pdf a Ana Torres. Para intentarlo de nuevo, vuelve a adjuntarlo en ese chat.'],
+      [['a.pdf', 'b.pdf'], ['a.pdf', 'b.pdf'], 'No se pudieron enviar a.pdf y b.pdf a Ana Torres. Para intentarlo de nuevo, vuelve a adjuntarlos en ese chat.'],
+    ] as const) {
+      const onSendText = vi.fn();
+      const upload = deferred<Sent>();
+      const onSendFiles = vi.fn((_files: readonly ProcessedFile[]) => upload.promise);
+      const view = renderIn(<Harness initial="Aquí van" onSendText={onSendText} onSendFiles={onSendFiles} />);
+      chooseFiles(names.map(name => fileOf(name, 'application/pdf')));
+      await allPrepared();
+      await act(async () => {
+        fireEvent.click(screen.getByRole('button', { name: 'Enviar' }));
+      });
+      // Another chat opens: the pane, its composer and the tray go.
+      view.rerender(<p>Otro chat</p>);
+      const failed = onSendFiles.mock.calls[0]![0].filter(file => (failing as readonly string[]).includes(file.name));
+      await act(async () => upload.resolve({ failed }));
+      expect((await screen.findByRole('alert')).textContent).toBe(text);
+      expect(onSendText).not.toHaveBeenCalled();
+      cleanup();
+    }
+  });
+
+  it('says so in a toast when a sticker fails after its chat closed', async () => {
+    const sending = deferred<void>();
+    const view = renderIn(<Harness onSendSticker={() => sending.promise} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Stickers' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Enviar sticker 1' }));
+    view.rerender(<p>Otro chat</p>);
+    await act(async () => sending.reject(new Error('upload_failed')));
+    expect((await screen.findByRole('alert')).textContent).toBe('No se pudo enviar el sticker a Ana Torres.');
   });
 
   it('refuses a file over 25 MB before preparing it', () => {

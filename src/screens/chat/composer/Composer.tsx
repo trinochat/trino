@@ -10,10 +10,17 @@
  * people count them (an emoji is one), says so and does not go. Files go
  * first, then the text, which waits while any file failed: what failed stays
  * in the tray to try again. Pasted pictures join the tray.
+ *
+ * The box stays open while the files go. The text that goes is what it held
+ * when you sent, and only that text leaves it: what you typed meanwhile
+ * stays for the next message. If you open another chat before the files are
+ * through, this composer and its tray go, so a file or a sticker that fails
+ * then is told in a toast that stays (the app's ToastProvider, at its root).
  */
 import { CircleAlert, Paperclip, Send, Smile, Sticker } from 'lucide-react';
 import {
   useCallback,
+  useEffect,
   useId,
   useLayoutEffect,
   useRef,
@@ -26,7 +33,7 @@ import type { StickerInfo } from '../../../lib/api';
 import { useT } from '../../../lib/i18n';
 import { useLang } from '../../../lib/i18n-context';
 import { processFile, type ProcessedFile } from '../../../lib/media';
-import { IconButton, Textarea, cx, iconSize } from '../../../ui';
+import { IconButton, Textarea, cx, iconSize, useToast } from '../../../ui';
 import type { ReplyRef, StickerApi } from '../../types';
 import { nameList } from '../lists';
 import { composerKeyAction } from './composer-keys';
@@ -75,6 +82,16 @@ function assign<T>(ref: Ref<T> | undefined, node: T | null) {
   else if (ref) ref.current = node;
 }
 
+/**
+ * The draft once `sent` went: the text you sent leaves it, and what you typed
+ * around it while the files went stays. A draft that no longer holds the
+ * sent text, because you changed it, stays as you left it.
+ */
+function withoutSent(draft: string, sent: string): string {
+  const at = draft.indexOf(sent);
+  return at < 0 ? draft : draft.slice(0, at) + draft.slice(at + sent.length);
+}
+
 export function Composer({
   recipient,
   draft,
@@ -94,6 +111,7 @@ export function Composer({
 }: ComposerProps) {
   const t = useT();
   const { lang } = useLang();
+  const toast = useToast();
   const box = useRef<HTMLTextAreaElement | null>(null);
   const fileInput = useRef<HTMLInputElement>(null);
   const emojiButton = useRef<HTMLButtonElement>(null);
@@ -109,8 +127,24 @@ export function Composer({
   const [sendingFiles, setSendingFiles] = useState(false);
   const [problem, setProblem] = useState<string | null>(null);
 
+  /** The draft and the reply as they are now, for a send that waited for its files. */
+  const latest = useRef({ draft, reply });
+  /** Still on screen: opening another chat unmounts the composer while its files may still be on their way. */
+  const mounted = useRef(true);
+
   const count = [...draft].length;
   const tooLong = count > maxTextLength;
+
+  useLayoutEffect(() => {
+    latest.current = { draft, reply };
+  });
+
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+    };
+  }, []);
 
   useLayoutEffect(() => {
     if (caret.current === null || !box.current) return;
@@ -144,9 +178,26 @@ export function Composer({
     }
   };
 
+  /** What did not go, said where it still shows: the tray's line, or a toast once the chat closed. */
+  const reportFailed = (failed: readonly ProcessedFile[]) => {
+    const names = nameList(failed.map(file => file.name), lang);
+    if (mounted.current) {
+      setProblem(t('composer2.filesFailed', { names }));
+      return;
+    }
+    const text =
+      failed.length === 1
+        ? t('composer2.fileFailedAway', { file: names, name: recipient })
+        : t('composer2.filesFailedAway', { files: names, name: recipient });
+    toast.show({ tone: 'error', text });
+  };
+
   const send = async () => {
     if (sendingFiles || tooLong) return;
-    const text = draft.trim();
+    // What the box holds now is what goes, even if you go on typing while the files go.
+    const typed = draft;
+    const text = typed.trim();
+    const replyTo = reply;
     const ready = tray.flatMap(item => (item.status === 'ready' && item.file ? [item.file] : []));
     if (!text && ready.length === 0) return;
     setProblem(null);
@@ -158,17 +209,20 @@ export function Composer({
       } catch {
         failed = ready;
       }
-      setSendingFiles(false);
-      setTray(items => items.filter(item => item.status !== 'ready' || (item.file !== undefined && failed.includes(item.file))));
+      if (mounted.current) {
+        setSendingFiles(false);
+        setTray(items => items.filter(item => item.status !== 'ready' || (item.file !== undefined && failed.includes(item.file))));
+      }
       if (failed.length > 0) {
-        setProblem(t('composer2.filesFailed', { names: nameList(failed.map(file => file.name), lang) }));
+        reportFailed(failed);
         return;
       }
     }
     if (text) {
-      onSendText(text, reply ?? undefined);
-      onDraftChange('');
-      if (reply) onClearReply();
+      onSendText(text, replyTo ?? undefined);
+      onDraftChange(withoutSent(latest.current.draft, typed));
+      // A reply you chose while the files went stays for the next message.
+      if (replyTo && latest.current.reply === replyTo) onClearReply();
     }
   };
 
@@ -214,7 +268,8 @@ export function Composer({
     try {
       await onSendSticker(sticker);
     } catch {
-      setProblem(t('composer2.stickerFailed'));
+      if (mounted.current) setProblem(t('composer2.stickerFailed'));
+      else toast.show({ tone: 'error', text: t('composer2.stickerFailedAway', { name: recipient }) });
     }
   };
 
