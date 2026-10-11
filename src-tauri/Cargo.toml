@@ -60,5 +60,11 @@ dirs = "5"
 [target.'cfg(target_os = "linux")'.dependencies]
 webkit2gtk = "=2.0.2"
 
+# Reads Windows' text size from the registry in-process (src/a11y.rs), where
+# spawning reg.exe fails under the policy that blocks the registry tools. The
+# build already has this version through embed-resource, so no new crate.
+[target.'cfg(target_os = "windows")'.dependencies]
+winreg = "0.55.0"
+
 [dev-dependencies]
 proptest = "1"
