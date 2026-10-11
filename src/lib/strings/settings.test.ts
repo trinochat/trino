@@ -145,7 +145,42 @@ const SECURITY = [
   'settings2.wipe.error',
 ];
 
-const KEYS: string[] = [...NOTIFICATION_CONTENT, ...PROFILE, ...QR, ...PRIVACY, ...NOTIFICATIONS, ...SECURITY];
+/** Settings > Apariencia (AppearanceSection.tsx). */
+const APPEARANCE = [
+  'settings2.appearance.title',
+  'settings2.appearance.style',
+  'settings2.appearance.calma',
+  'settings2.appearance.terminal',
+  'settings2.appearance.sampleIn',
+  'settings2.appearance.sampleMe',
+  'settings2.appearance.mode',
+  'settings2.appearance.light',
+  'settings2.appearance.dark',
+  'settings2.appearance.system',
+  'settings2.appearance.accent',
+  'settings2.appearance.accentBody',
+  'settings2.appearance.accentChosen',
+  'settings2.appearance.accentVerde',
+  'settings2.appearance.accentAzul',
+  'settings2.appearance.accentMorado',
+  'settings2.appearance.accentNaranja',
+  'settings2.appearance.previewIn',
+  'settings2.appearance.previewMe',
+  'settings2.appearance.previewButton',
+  'settings2.appearance.scanLines',
+  'settings2.appearance.scanLinesBody',
+  'settings2.appearance.errSave',
+];
+
+const KEYS: string[] = [
+  ...NOTIFICATION_CONTENT,
+  ...PROFILE,
+  ...QR,
+  ...PRIVACY,
+  ...NOTIFICATIONS,
+  ...SECURITY,
+  ...APPEARANCE,
+];
 
 const PLACEHOLDERS: Record<string, string[]> = {
   'settings2.profile.aboutCount': ['n'],
@@ -155,6 +190,7 @@ const PLACEHOLDERS: Record<string, string[]> = {
   'settings2.notif.volumeValue': ['n'],
   'settings2.security.autolockMinutes': ['n'],
   'settings2.passphrase.errShort': ['min'],
+  'settings2.appearance.accentChosen': ['name'],
 };
 
 describe('settings strings', () => {
