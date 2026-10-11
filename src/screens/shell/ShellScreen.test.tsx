@@ -128,6 +128,7 @@ function setup(
 const row = (name: string) => screen.findByRole('button', { name: new RegExp(`^${name}`) });
 const sidebar = () => screen.queryByRole('navigation', { name: 'Chats y llamadas' });
 const message = () => screen.getByRole('textbox', { name: 'Mensaje' }) as HTMLInputElement;
+const classesOf = (element: Element | null) => (element?.getAttribute('class') ?? '').split(/\s+/);
 
 describe('ShellScreen: the chat of each conversation', () => {
   // App.tsx mounted one chat for every conversation, with no key: the draft
@@ -166,6 +167,18 @@ describe('ShellScreen: the chat of each conversation', () => {
     fireEvent.click(await row('Familia'));
     expect(lastProps(slots.chat).header).toMatchObject({ kind: 'group', name: 'Familia', memberCount: 3, ended: false });
     expect(lastProps(slots.chat).onCall).toBeUndefined();
+  });
+
+  // W3's sticker picker reloads every sticker when its API object changes, and
+  // the shell renders at least every 10 s and on every backend event.
+  it('hands the chat the same sticker API on every render', async () => {
+    const { slots, emit } = setup();
+    fireEvent.click(await row('Ana'));
+    const first = lastProps(slots.chat).stickers;
+    const renders = slots.chat.mock.calls.length;
+    act(() => emit.messageReceived({ from_handle: 'Bea', text: 'hola', timestamp: NOW }));
+    expect(slots.chat.mock.calls.length).toBeGreaterThan(renders);
+    expect(lastProps(slots.chat).stickers).toBe(first);
   });
 
   it('leaves "Borrar para mí" out without the backend for it (K11)', async () => {
@@ -234,9 +247,37 @@ describe('ShellScreen: layout', () => {
     await row('Ana');
   });
 
-  it('draws the scan lines of Terminal on its background', () => {
+  // The sidebar and the main pane paint opaque backgrounds over all of the
+  // shell, so lines on the shell's own background never showed, and the
+  // Appearance switch (W5) had nothing to turn off (accesibilidad.md §2.2).
+  it('draws the scan lines of Terminal over both panes, where nothing covers them', async () => {
     const { container } = setup();
-    expect(container.firstElementChild?.className).toContain('[background-image:var(--t-scan)]');
+    await row('Ana');
+    const root = container.firstElementChild!;
+    const lines = [...root.querySelectorAll('*')].filter(el => classesOf(el).includes('[background-image:var(--t-scan)]'));
+    expect(lines).toHaveLength(1);
+    expect(classesOf(root)).not.toContain('[background-image:var(--t-scan)]');
+    const overlay = lines[0]!;
+    // A layer of the shell itself, over all of it, that nothing reads or clicks.
+    expect(overlay.parentElement).toBe(root);
+    expect(classesOf(overlay)).toEqual(expect.arrayContaining(['pointer-events-none', 'absolute', 'inset-0']));
+    expect(overlay.getAttribute('aria-hidden')).toBe('true');
+    // Positioned after both panes, so it paints over them.
+    for (const pane of [sidebar()!, screen.getByRole('main')]) {
+      expect(pane.compareDocumentPosition(overlay) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+      expect(overlay.contains(pane)).toBe(false);
+    }
+    // The call screen still goes over everything.
+    expect(overlay.compareDocumentPosition(screen.getByTestId('call-layer')) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  // W6's call layer is absolute and inset 0: the shell is the box it fills,
+  // not the window with the title bar above the shell.
+  it('is the positioned box the call layer fills', () => {
+    const { container } = setup();
+    const root = container.firstElementChild!;
+    expect(classesOf(root)).toContain('relative');
+    expect(screen.getByTestId('call-layer').parentElement).toBe(root);
   });
 });
 

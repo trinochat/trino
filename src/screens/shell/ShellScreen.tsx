@@ -15,7 +15,7 @@
  *
  * Ctrl+K goes back to Chats and to the search; Ctrl+L locks.
  */
-import { Fragment, useEffect, useRef, useState, type ReactNode } from 'react';
+import { Fragment, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { THEMES } from '../../design/tokens';
 import { useAppearance } from '../../design/useAppearance';
 import { loadAnnouncementFeed, type AnnouncementFeed } from '../../lib/announcements';
@@ -176,6 +176,9 @@ export function ShellScreen(props: ShellScreenProps) {
     // The chats' cleanup clock: a call leaves the log when it leaves its chat.
     now: conv.now,
   });
+  // One object for as long as the API is the same: the chat's sticker picker
+  // reloads every sticker whenever it gets a new one.
+  const stickers = useMemo(() => stickerApi(api), [api]);
 
   // What is on screen is read: the chat that opens, and the call log.
   const { markRead } = conv;
@@ -388,7 +391,7 @@ export function ShellScreen(props: ShellScreenProps) {
         header.trust === 'keyChanged' && { onAcknowledgeKeyChange: () => void conv.acknowledgeKeyChange(ref.handle) }),
       ...(single && { onBack: back }),
       fetchFile: file => api.fetchFile(file.url, file.key, file.sha256, file.mime),
-      stickers: stickerApi(api),
+      stickers,
     };
     chat = <Fragment key={key}>{slots.chat(chatProps)}</Fragment>;
   }
@@ -556,7 +559,8 @@ export function ShellScreen(props: ShellScreenProps) {
   }
 
   return (
-    <div ref={rootRef} className="flex h-full min-h-0 flex-col bg-ui-bg font-ui text-ui-ink [background-image:var(--t-scan)]">
+    // Relative: the call layer (W6) is absolute and fills the shell, not the window under the title bar.
+    <div ref={rootRef} className="relative flex h-full min-h-0 flex-col bg-ui-bg font-ui text-ui-ink">
       {call.bar}
       {(conv.historyFailed || error) && (
         <div className="flex flex-col gap-2 px-3 pt-3">
@@ -661,6 +665,12 @@ export function ShellScreen(props: ShellScreenProps) {
           </aside>
         )}
       </div>
+      {/*
+        Terminal dark's scan lines (--t-scan, none elsewhere or when switched
+        off), over both panes: their opaque backgrounds hid lines drawn on the
+        shell's own. Under the dialogs and the call layer.
+      */}
+      <div aria-hidden="true" className="pointer-events-none absolute inset-0 [background-image:var(--t-scan)]" />
       {detailsLayout === 'dialog' && detailsPanel}
       {overlayContent}
       {call.layer}
