@@ -213,6 +213,35 @@ const ACCESSIBILITY = [
   'settings2.shortcuts.close',
 ];
 
+/** Settings > Idioma (LanguageSection.tsx). */
+const LANGUAGE = ['settings2.language.title', 'settings2.language.body'];
+
+/** Settings > Avanzado and its network activity (AdvancedSection.tsx, NetworkActivityDialog.tsx). */
+const ADVANCED = [
+  'settings2.advanced.title',
+  'settings2.advanced.relays',
+  'settings2.advanced.relayUp',
+  'settings2.advanced.relayDown',
+  'settings2.advanced.relaysError',
+  'settings2.advanced.activity',
+  'settings2.advanced.activityBody',
+  'settings2.advanced.activityOpen',
+  'settings2.advanced.key',
+  'settings2.advanced.log',
+  'settings2.advanced.version',
+  'settings2.network.title',
+  'settings2.network.body',
+  'settings2.network.connecting',
+  'settings2.network.error',
+  'settings2.network.observing',
+  'settings2.network.waiting',
+  'settings2.network.events',
+  'settings2.network.you',
+  'settings2.network.noRecipient',
+  'settings2.network.size',
+  'settings2.network.yourKey',
+];
+
 const KEYS: string[] = [
   ...NOTIFICATION_CONTENT,
   ...PROFILE,
@@ -222,6 +251,8 @@ const KEYS: string[] = [
   ...SECURITY,
   ...APPEARANCE,
   ...ACCESSIBILITY,
+  ...LANGUAGE,
+  ...ADVANCED,
 ];
 
 const PLACEHOLDERS: Record<string, string[]> = {
@@ -236,6 +267,10 @@ const PLACEHOLDERS: Record<string, string[]> = {
   'settings2.a11y.textSizeSystem': ['n'],
   'settings2.a11y.textSizeValue': ['n'],
   'settings2.a11y.textSizeValueA11y': ['n'],
+  'settings2.advanced.version': ['version'],
+  'settings2.network.observing': ['relays'],
+  'settings2.network.size': ['n'],
+  'settings2.network.yourKey': ['key'],
 };
 
 describe('settings strings', () => {
