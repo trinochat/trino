@@ -5,6 +5,7 @@
  * the meaning.
  */
 import { createElement } from 'react';
+import { iconSize, type IconSizeName } from '../design/type';
 import type { Lang } from './i18n';
 import { useLang } from './i18n-context';
 import { SAS_TABLE, sasSymbol } from './sas-symbols';
@@ -13,11 +14,14 @@ export interface SasIconProps {
   /** Index into the table, 0 to 63. */
   index: number;
   /**
-   * Width and height: a number is px, a string any CSS length. The default,
-   * `1.25em`, follows the font size around it (20 px at 16 px text), so the
-   * icon grows with the text scale instead of shrinking beside its word.
+   * A step of the icon sizes (src/design/type.ts), which grows with the text
+   * size: `lg`, 20 px at 100 %, wherever two people compare symbols, and
+   * `2xl`, 28 px, in the comparison panel and the contact verification
+   * dialog (docs/sas-v2.md). Without it, `1.25em`: the icon follows the font
+   * size around it (20 px at 16 px text). Never a number, which would stay
+   * in px, nor a rem string, which older WebKit rejects in the attributes.
    */
-  size?: number | string;
+  size?: IconSizeName;
   className?: string;
 }
 
@@ -25,14 +29,17 @@ export interface SasIconProps {
 export const SAS_ICON_SIZE = '1.25em';
 
 /** The icon alone, for a row of symbols that is labelled as a whole. */
-export function SasIcon({ index, size = SAS_ICON_SIZE, className }: SasIconProps) {
+export function SasIcon({ index, size, className }: SasIconProps) {
   const symbol = sasSymbol(index);
+  // A step puts px in the attributes and rem in a class that beats them; the
+  // default em is an SVG 1.1 length, which every engine takes as it is.
+  const sized = size ? iconSize(size, className) : { size: SAS_ICON_SIZE, className };
   return (
     <svg
       xmlns="http://www.w3.org/2000/svg"
       viewBox={SAS_TABLE.viewBox}
-      width={size}
-      height={size}
+      width={sized.size}
+      height={sized.size}
       fill={SAS_TABLE.fill}
       stroke="currentColor"
       strokeWidth={SAS_TABLE.strokeWidth}
@@ -41,7 +48,7 @@ export function SasIcon({ index, size = SAS_ICON_SIZE, className }: SasIconProps
       aria-hidden="true"
       focusable="false"
       data-sas={symbol.lucide}
-      className={className ? `shrink-0 ${className}` : 'shrink-0'}
+      className={sized.className ? `shrink-0 ${sized.className}` : 'shrink-0'}
     >
       {symbol.nodes.map(([tag, attrs], i) => createElement(tag, { key: i, ...attrs }))}
     </svg>
@@ -58,7 +65,7 @@ export interface SasSymbolProps extends SasIconProps {
  * so a screen reader reads it with the right voice even when `lang` differs
  * from the app's language.
  */
-export function SasSymbol({ index, size = SAS_ICON_SIZE, lang, className }: SasSymbolProps) {
+export function SasSymbol({ index, size, lang, className }: SasSymbolProps) {
   const current = useLang().lang;
   const wordLang = lang ?? current;
   const word = sasSymbol(index).words[wordLang];

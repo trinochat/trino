@@ -3,7 +3,7 @@ import tailwindcss, { type Config } from 'tailwindcss';
 import { describe, expect, it } from 'vitest';
 import tailwindConfig from '../../tailwind.config.js?raw';
 import { cssVariables, resolveTokens } from './appearance';
-import { TYPE_SCALE } from './type';
+import { ICON_SIZE, TYPE_SCALE, type IconSizeName } from './type';
 
 // Components reach the tokens through Tailwind classes such as `bg-ui-surface`,
 // so every colour, radius and font family token needs its entry in
@@ -78,5 +78,21 @@ describe('the type scale in Tailwind', () => {
       return !css.includes(`.text-ui-${name} { font-size: ${size}; line-height: ${lineHeight} }`);
     });
     expect(missing).toEqual([]);
+  });
+});
+
+// An icon's size reaches the page as its class (iconSize, type.ts), which
+// beats the width and height attributes in px: the class has to exist.
+describe('the icon sizes in Tailwind', () => {
+  it('turn the class of every step into its width and height in rem', async () => {
+    const names = Object.keys(ICON_SIZE) as IconSizeName[];
+    const sizes = await Promise.all(
+      names.map(async name => {
+        const css = (await compile(ICON_SIZE[name].className)).replace(/\s+/g, ' ');
+        const rem = `${ICON_SIZE[name].px / 16}rem`;
+        return [name, css.includes(`{ width: ${rem}; height: ${rem} }`)] as const;
+      }),
+    );
+    expect(sizes.filter(([, found]) => !found).map(([name]) => name)).toEqual([]);
   });
 });

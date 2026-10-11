@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { ICON_SIZE } from '../design/type';
 
 /**
  * Sizes follow the text, and the app's own settings decide motion and layout
@@ -6,10 +7,15 @@ import { describe, expect, it } from 'vitest';
  * the redesigned screens (src/screens) and the app around them (src/app):
  *
  * - no text size in px (`text-[13px]`): the type scale, `text-ui-*`, or rem;
- * - no number as the `size` of a lucide icon or of SasIcon and SasSymbol:
- *   `ICON_SIZE` (src/design/type.ts) or a rem string. The `size` of <Avatar>
- *   is a size key, and the one of QRCodeSVG and QRCodeCanvas is not a size on
- *   screen, so they are left alone;
+ * - every lucide icon sized with `{...iconSize('md')}` (src/design/type.ts),
+ *   which puts px in the attributes and rem in a class that beats them, and
+ *   no `size` or `className` of its own beside it: a number would stay in px,
+ *   older WebKit draws a rem string in the attributes at 100 %, and a class
+ *   would replace the size's (extra classes go in `iconSize('md', '…')`).
+ *   SasIcon and SasSymbol take a step's key (`size="lg"`) or nothing, never a
+ *   number or a CSS length. The `size` of <Avatar> is a size key, and the one
+ *   of QRCodeSVG and QRCodeCanvas is not a size on screen, so they are left
+ *   alone;
  * - no box size in px in an arbitrary value (`h-[22px]`, `max-w-[480px]`,
  *   `p-[10px]`, `gap-[5px]`): rem, or Tailwind's own steps, which are rem;
  * - no `motion-reduce:` or `motion-safe:`, which only hear the system:
@@ -139,14 +145,48 @@ function endOfTag(source: string, from: number): number {
   return source.length;
 }
 
-/** Icons given a number as their size, even when the tag spans lines. */
-function numericIconSizes(code: string): Finding[] {
-  return [...code.matchAll(/<([A-Z][\w.]*)/g)].flatMap(match => {
+/** `size=` and its value: a quoted string, or an expression in braces with no braces inside. */
+const SIZE_ATTRIBUTE = /(?<![\w-])size=(?:"[^"]*"|'[^']*'|\{[^{}]*\})/;
+/** A value that is one string literal: `"lg"`, `'lg'`, `{'lg'}` or `` {`lg`} ``. */
+const STRING_SIZE = /^size=(?:"([^"]*)"|'([^']*)'|\{\s*(?:"([^"]*)"|'([^']*)'|`([^`$]*)`)\s*\})$/;
+const NUMBER_SIZE = /^size=\{\s*-?\d[\d.]*\s*\}$/;
+const SIZE_KEYS: ReadonlySet<string> = new Set(Object.keys(ICON_SIZE));
+
+/**
+ * What is wrong with the size of one icon tag, with where in the tag, or
+ * null. A lucide icon spreads `iconSize(…)` and has no `size` or `className`
+ * of its own. SasIcon and SasSymbol take a step's key, or nothing for the
+ * 1.25em that follows the text around them; an expression is left to
+ * TypeScript, which only lets the keys through.
+ */
+function iconSizeProblem(name: string, tag: string): { at: number; text: string } | null {
+  const size = SIZE_ATTRIBUTE.exec(tag);
+  if (name === 'SasIcon' || name === 'SasSymbol') {
+    if (!size) return null;
+    const key = STRING_SIZE.exec(size[0])
+      ?.slice(1)
+      .find(part => part !== undefined);
+    const wrong = NUMBER_SIZE.test(size[0]) || (key !== undefined && !SIZE_KEYS.has(key));
+    return wrong ? { at: size.index, text: `<${name} ${size[0]}>` } : null;
+  }
+  if (size) return { at: size.index, text: `<${name} ${size[0]}>` };
+  if (!/\{\s*\.\.\.iconSize\(/.test(tag)) return { at: 0, text: `<${name}> without {...iconSize()}` };
+  const className = /(?<![\w-])className=/.exec(tag);
+  return className ? { at: className.index, text: `<${name} className> beside {...iconSize()}` } : null;
+}
+
+/**
+ * Icons sized any other way than the rule says, even when the tag spans
+ * lines. A `<` right after a name opens type arguments (`Array<LucideIcon>`),
+ * not a tag.
+ */
+function iconSizes(code: string): Finding[] {
+  return [...code.matchAll(/(?<![\w$])<([A-Z][\w.]*)/g)].flatMap(match => {
     if (!isIconTag(match[1], code)) return [];
     const start = match.index ?? 0;
     const tag = code.slice(start, endOfTag(code, start + match[0].length));
-    const size = /(?<![\w-])size=\{\s*-?\d[\d.]*\s*\}/.exec(tag);
-    return size ? [{ rule: 'icon-size' as const, line: lineAt(code, start + size.index), text: `<${match[1]} ${size[0]}>` }] : [];
+    const problem = iconSizeProblem(match[1], tag);
+    return problem ? [{ rule: 'icon-size' as const, line: lineAt(code, start + problem.at), text: problem.text }] : [];
   });
 }
 
@@ -156,7 +196,7 @@ function scan(source: string): Finding[] {
   const classes = CLASS_RULES.flatMap(([rule, pattern]) =>
     [...code.matchAll(pattern)].map(match => ({ rule, line: lineAt(code, match.index ?? 0), text: match[0] })),
   );
-  return [...classes, ...numericIconSizes(code)].sort((a, b) => a.line - b.line);
+  return [...classes, ...iconSizes(code)].sort((a, b) => a.line - b.line);
 }
 
 /** `./controls/Switch.tsx` → `src/ui/controls/Switch.tsx`, `../screens/x.tsx` → `src/screens/x.tsx`. */
@@ -245,42 +285,78 @@ describe('scan', () => {
     expect(scan(source.join('\n'))).toEqual([]);
   });
 
-  it('finds a number as the size of a lucide icon, of a table of them, and of the SAS symbols', () => {
+  it('finds a lucide icon, or a table of them, given a size of its own: a number, a rem string or an expression', () => {
     const source = [
       "import { Check, ChevronDown, X as Close, type LucideIcon } from 'lucide-react';",
       'const a = <Check size={14} aria-hidden="true" />;',
       'const b = (',
       '  <ChevronDown',
       '    aria-hidden="true"',
-      '    size={18}',
+      '    size="1rem"',
       '    onClick={() => open()}',
       '  />',
       ');',
-      'const c = <Close size={20} />;',
+      "const c = <Close {...iconSize('lg')} size={ICON_SIZE.lg} />;",
       'const { Icon } = KINDS[kind];',
-      'const d = <Icon size={15} />;',
-      'const e = <SasSymbol symbol={s} size={28} />;',
+      "const d = <Icon size={'0.875rem'} />;",
     ];
     expect(scan(source.join('\n')).map(found => [found.line, found.text])).toEqual([
       [2, '<Check size={14}>'],
-      [6, '<ChevronDown size={18}>'],
-      [10, '<Close size={20}>'],
-      [12, '<Icon size={15}>'],
-      [13, '<SasSymbol size={28}>'],
+      [6, '<ChevronDown size="1rem">'],
+      [10, '<Close size={ICON_SIZE.lg}>'],
+      [12, "<Icon size={'0.875rem'}>"],
     ]);
   });
 
-  it('lets icon sizes in rem through, and the sizes that are not icon sizes', () => {
+  it('finds a lucide icon without iconSize, or with a class of its own beside it', () => {
     const source = [
-      "import { Check } from 'lucide-react';",
-      'const a = <Check size={ICON_SIZE.sm} />;',
-      'const b = <Check size="1rem" />;',
-      'const c = <SasIcon index={3} size="1.75rem" />;',
-      'const d = <Avatar {...avatar} size={44} />;',
-      'const e = <QRCodeSVG value={code} size={160} />;',
-      'const f = <QRCodeCanvas value={code} size={512} />;',
-      'const g = <TrinoLogo size={32} />;',
-      'const h = <input size={20} />;',
+      "import { Check, type LucideIcon } from 'lucide-react';",
+      'const a = <Check aria-hidden="true" />;',
+      'const { Icon } = KINDS[kind];',
+      'const b = <Icon {...sized} />;',
+      'const c = (',
+      '  <Check',
+      "    {...iconSize('md')}",
+      '    className="mt-1"',
+      '  />',
+      ');',
+      "const d = <Check className={cx('a', b)} {...iconSize('md')} />;",
+    ];
+    expect(scan(source.join('\n')).map(found => [found.line, found.text])).toEqual([
+      [2, '<Check> without {...iconSize()}'],
+      [4, '<Icon> without {...iconSize()}'],
+      [8, '<Check className> beside {...iconSize()}'],
+      [11, '<Check className> beside {...iconSize()}'],
+    ]);
+  });
+
+  it('finds a number or a CSS length as the size of a SAS symbol', () => {
+    const source = [
+      'const a = <SasSymbol index={s} size={28} />;',
+      'const b = <SasIcon index={3} size="1.75rem" />;',
+      "const c = <SasIcon index={3} size={'1.25em'} />;",
+    ];
+    expect(scan(source.join('\n')).map(found => [found.line, found.text])).toEqual([
+      [1, '<SasSymbol size={28}>'],
+      [2, '<SasIcon size="1.75rem">'],
+      [3, "<SasIcon size={'1.25em'}>"],
+    ]);
+  });
+
+  it('lets icons sized with iconSize through, and the sizes that are not icon sizes', () => {
+    const source = [
+      "import { Check, type LucideIcon } from 'lucide-react';",
+      "const a = <Check {...iconSize('sm')} />;",
+      "const b = <Check aria-hidden=\"true\" {...iconSize('md', 'mt-0.5 shrink-0')} data-icon=\"check\" />;",
+      'const c = <SasIcon index={3} size="2xl" />;',
+      "const d = <SasSymbol index={3} size={compact ? 'lg' : '2xl'} />;",
+      'const e = <SasSymbol index={3} />;',
+      'const f = <Avatar {...avatar} size={44} />;',
+      'const g = <QRCodeSVG value={code} size={160} />;',
+      'const h = <QRCodeCanvas value={code} size={512} />;',
+      'const i = <TrinoLogo size={32} />;',
+      'const j = <input size={20} />;',
+      'const icons: Array<LucideIcon> = [];',
     ];
     expect(scan(source.join('\n'))).toEqual([]);
   });
@@ -305,7 +381,7 @@ describe('the component library, the screens and the app', () => {
     expect(findings(SOURCES, 'text-px')).toEqual([]);
   });
 
-  it('give no icon a number as its size', () => {
+  it('size every icon with iconSize, or a SAS symbol with its key', () => {
     expect(findings(SOURCES, 'icon-size')).toEqual([]);
   });
 
@@ -338,6 +414,17 @@ describe('the component library, the screens and the app', () => {
     ]);
     expect(findings({ './controls/Segmented.tsx': planted }, 'text-px')).toEqual([
       `src/ui/controls/Segmented.tsx:${line}: text-[15px]`,
+    ]);
+  });
+
+  // The same for the icons: a real one sized with a rem string instead.
+  it('would report an icon sized without iconSize in a component', () => {
+    const original = SOURCES['./controls/Field.tsx'];
+    const planted = original.replace(/\{\.\.\.iconSize\([^)]*\)\}/, 'size="1rem"');
+    expect(planted).not.toBe(original);
+    const line = planted.slice(0, planted.indexOf('size="1rem"')).split('\n').length;
+    expect(findings({ './controls/Field.tsx': planted }, 'icon-size')).toEqual([
+      `src/ui/controls/Field.tsx:${line}: <CircleAlert size="1rem">`,
     ]);
   });
 });

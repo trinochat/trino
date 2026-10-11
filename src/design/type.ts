@@ -34,15 +34,42 @@ export const TYPE_SCALE = {
 export type TypeStepName = keyof typeof TYPE_SCALE;
 
 /**
- * Icon sizes for lucide's `size`, which takes a string: 10, 14, 16, 20 and
- * 24 px at 100 %. Never a number, which would stay in px.
+ * The icon sizes: 10, 14, 16, 20 and 24 px at 100 %, and 28 px for the SAS
+ * symbols in the comparison panel (docs/sas-v2.md). Each one twice: in px
+ * for the `width` and `height` attributes, and in rem as a class. Older
+ * WebKit (WebKitGTK before about 2.50, older WKWebView) rejects rem in those
+ * attributes and draws the icon at 100 % of its box, so they stay in px; the
+ * class beats them in every engine and grows with the text. Reach them
+ * through `iconSize`.
  */
 export const ICON_SIZE = {
-  xs: '0.625rem',
-  sm: '0.875rem',
-  md: '1rem',
-  lg: '1.25rem',
-  xl: '1.5rem',
-} as const;
+  xs: { px: 10, className: 'size-[0.625rem]' },
+  sm: { px: 14, className: 'size-[0.875rem]' },
+  md: { px: 16, className: 'size-[1rem]' },
+  lg: { px: 20, className: 'size-[1.25rem]' },
+  xl: { px: 24, className: 'size-[1.5rem]' },
+  '2xl': { px: 28, className: 'size-[1.75rem]' },
+} as const satisfies Record<string, { px: number; className: string }>;
 
 export type IconSizeName = keyof typeof ICON_SIZE;
+
+/** What `iconSize` gives an icon: lucide's own props, so it can be spread. */
+export interface IconSizeProps {
+  /** Width and height attributes in px: what an engine draws without the class. */
+  size: number;
+  /** The size in rem, then the caller's classes. */
+  className: string;
+}
+
+/**
+ * Sizes a lucide icon: `<Check {...iconSize('md')} aria-hidden="true" />`.
+ * Other classes for the icon go in the second argument,
+ * `iconSize('md', 'shrink-0')`: a `className` beside the spread would
+ * replace the size's class, or lose its own. Nor a `size` of its own.
+ * a11y-classes.test.ts holds src/ui, src/screens and src/app to this.
+ * SasIcon and SasSymbol take the step's name as their `size` instead.
+ */
+export function iconSize(name: IconSizeName, className?: string): IconSizeProps {
+  const step = ICON_SIZE[name];
+  return { size: step.px, className: className ? `${step.className} ${className}` : step.className };
+}

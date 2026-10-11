@@ -22,6 +22,7 @@ const KEY_EXPORTS = [
   'ConnectionChip',
   'TrinoLogo',
   'FOCUS_RING',
+  'iconSize',
   'cx',
 ];
 
@@ -37,6 +38,7 @@ describe('the library barrel, src/ui/index.ts', () => {
     expect(KEY_EXPORTS.filter(name => !(name in ui))).toEqual([]);
     expect(ui.cx('a', false, 'b')).toBe('a b');
     expect(ui.FOCUS_RING).toContain('focus-visible:outline-ui-accent-text');
+    expect(ui.iconSize('md')).toEqual({ size: 16, className: 'size-[1rem]' });
   });
 
   it('re-exports everything controls/index.ts exports', () => {

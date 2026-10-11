@@ -9,7 +9,7 @@
  * out politely, so the label should only change when the state does.
  */
 import { Circle, CircleDashed, CircleSlash, type LucideIcon } from 'lucide-react';
-import { ICON_SIZE } from '../../design/type';
+import { iconSize } from '../../design/type';
 import { cx } from '../cx';
 import { LABEL_TEXT } from './label';
 
@@ -37,11 +37,10 @@ export function ConnectionChip({ status, label, className }: ConnectionChipProps
       className={cx('inline-flex items-center gap-1.5 rounded-full bg-ui-accent-soft px-2.5 py-1 text-ui-muted', LABEL_TEXT, className)}
     >
       <Icon
-        size={ICON_SIZE.xs}
+        {...iconSize('xs', cx('shrink-0', colour))}
         aria-hidden="true"
         data-icon={icon}
         fill={filled ? 'currentColor' : 'none'}
-        className={cx('shrink-0', colour)}
       />
       {label}
     </span>

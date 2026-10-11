@@ -18,7 +18,7 @@ import {
 } from 'react';
 import { createPortal } from 'react-dom';
 import { CircleAlert, CircleCheck, Info, X } from 'lucide-react';
-import { ICON_SIZE } from '../../design/type';
+import { iconSize } from '../../design/type';
 import { cx } from '../cx';
 import { FOCUS_RING } from '../focus';
 
@@ -154,7 +154,7 @@ function ToastCard({ toast, durationMs, closeLabel, onDismiss }: ToastCardProps)
       )}
     >
       <span className={cx('flex shrink-0', iconColour)}>
-        <Icon size={ICON_SIZE.lg} aria-hidden="true" />
+        <Icon {...iconSize('lg')} aria-hidden="true" />
       </span>
       {/* The alert is the text alone, so screen readers do not read the buttons out with it. */}
       <span role={toast.tone === 'error' ? 'alert' : undefined} className="min-w-0 flex-1 py-2.5">
@@ -182,7 +182,7 @@ function ToastCard({ toast, durationMs, closeLabel, onDismiss }: ToastCardProps)
           onClick={() => onDismiss(toast.id)}
           className={cx('flex h-11 w-11 shrink-0 items-center justify-center rounded-ui text-ui-ink hover:bg-ui-raised', FOCUS_RING)}
         >
-          <X size={ICON_SIZE.md} aria-hidden="true" />
+          <X {...iconSize('md')} aria-hidden="true" />
         </button>
       )}
     </div>

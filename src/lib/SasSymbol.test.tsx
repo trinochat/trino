@@ -4,7 +4,7 @@ import type { ReactNode } from 'react';
 import { afterEach, describe, expect, it } from 'vitest';
 import type { Lang } from './i18n';
 import { LangCtx } from './i18n-context';
-import { SasIcon, SasSymbol } from './SasSymbol';
+import { SasIcon, SasSymbol, type SasIconProps } from './SasSymbol';
 import { SAS_SYMBOLS, SAS_TABLE } from './sas-symbols';
 
 afterEach(cleanup);
@@ -62,13 +62,26 @@ describe('SasIcon', () => {
     expect(svg.getAttribute('height')).toBe('1.25em');
   });
 
-  it('takes a size in px or as any CSS length', () => {
-    const { container, rerender } = render(<SasIcon index={1} size={28} />);
-    expect(container.querySelector('svg')!.getAttribute('width')).toBe('28');
-    expect(container.querySelector('svg')!.getAttribute('height')).toBe('28');
-    rerender(<SasIcon index={1} size="1.75rem" />);
-    expect(container.querySelector('svg')!.getAttribute('width')).toBe('1.75rem');
-    expect(container.querySelector('svg')!.getAttribute('height')).toBe('1.75rem');
+  // Older WebKit rejects rem in the width and height of an <svg> and draws
+  // it at 100 %: a step of the icon sizes puts px there and rem in a class
+  // that beats them. 20 px wherever two people compare symbols, 28 px in the
+  // comparison panel (docs/sas-v2.md).
+  it('takes a step of the icon sizes: px in the attributes, rem in a class', () => {
+    const { container, rerender } = render(<SasIcon index={1} size="2xl" />);
+    const svg = () => container.querySelector('svg')!;
+    expect([svg().getAttribute('width'), svg().getAttribute('height')]).toEqual(['28', '28']);
+    expect(svg().classList).toContain('size-[1.75rem]');
+    rerender(<SasIcon index={1} size="lg" className="text-ui-ink" />);
+    expect([svg().getAttribute('width'), svg().getAttribute('height')]).toEqual(['20', '20']);
+    expect([...svg().classList]).toEqual(['shrink-0', 'size-[1.25rem]', 'text-ui-ink']);
+  });
+
+  it('takes no number and no CSS length as its size', () => {
+    // @ts-expect-error A number would stay in px.
+    const inPx: SasIconProps = { index: 1, size: 28 };
+    // @ts-expect-error Older WebKit rejects rem in the attributes.
+    const inRem: SasIconProps = { index: 1, size: '1.75rem' };
+    expect([inPx.size, inRem.size]).toEqual([28, '1.75rem']);
   });
 });
 
@@ -102,11 +115,14 @@ describe('SasSymbol', () => {
     expect(container.querySelector('svg')!.getAttribute('width')).toBe('1.25em');
   });
 
-  it('draws the icon beside the word', () => {
-    const { container } = render(inLang('es', <SasSymbol index={44} size={16} />));
+  it('draws the icon beside the word, at the step it is given', () => {
+    const { container } = render(inLang('es', <SasSymbol index={44} size="lg" className="text-ui-ink" />));
     const svg = container.querySelector('svg')!;
     expect(svg.getAttribute('data-sas')).toBe('Guitar');
-    expect(svg.getAttribute('width')).toBe('16');
+    expect(svg.getAttribute('width')).toBe('20');
+    expect(svg.classList).toContain('size-[1.25rem]');
+    // The class of SasSymbol is for the pair, not for the icon.
+    expect(svg.classList).not.toContain('text-ui-ink');
     expect(container.textContent).toBe('Guitarra');
   });
 });

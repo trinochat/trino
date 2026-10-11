@@ -1,6 +1,6 @@
 import { CircleAlert } from 'lucide-react';
 import { useId, useMemo, type ReactNode } from 'react';
-import { ICON_SIZE } from '../../design/type';
+import { iconSize } from '../../design/type';
 import { cx } from '../cx';
 import { hasContent, joinIds } from './aria';
 import { FieldContext, type FieldControl } from './field-context';
@@ -45,7 +45,7 @@ export function Field({ label, hint, error, id, className, children }: FieldProp
       ) : null}
       {errorId ? (
         <p id={errorId} className="m-0 flex items-start gap-1.5 font-ui text-ui-md font-semibold text-ui-danger">
-          <CircleAlert aria-hidden="true" size={ICON_SIZE.md} className="mt-0.5 shrink-0" />
+          <CircleAlert aria-hidden="true" {...iconSize('md', 'mt-0.5 shrink-0')} />
           <span>{error}</span>
         </p>
       ) : null}

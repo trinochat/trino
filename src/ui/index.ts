@@ -3,6 +3,8 @@
 export { cx } from './cx';
 // The one focus ring, and what Tab reaches, for pieces the screens build themselves.
 export { FOCUS_RING, FOCUS_RING_INSET, focusableWithin } from './focus';
+// The size of every lucide icon: `<Check {...iconSize('md')} />` (src/design/type.ts).
+export { iconSize, type IconSizeName, type IconSizeProps } from '../design/type';
 // The frame of a QR code, black on white in every theme and under forced colours.
 export { QR_FRAME } from './qr';
 // Form controls and buttons.

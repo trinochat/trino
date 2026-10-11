@@ -14,7 +14,7 @@ import {
   type ReactNode,
 } from 'react';
 import { Ellipsis } from 'lucide-react';
-import { ICON_SIZE } from '../../design/type';
+import { iconSize } from '../../design/type';
 import { cx } from '../cx';
 import { FOCUS_RING, FOCUS_RING_INSET } from '../focus';
 
@@ -163,7 +163,7 @@ export function Menu({ label, trigger, items, footnote, align = 'end', triggerCl
           triggerClassName,
         )}
       >
-        {trigger ?? <Ellipsis size={ICON_SIZE.lg} aria-hidden="true" />}
+        {trigger ?? <Ellipsis {...iconSize('lg')} aria-hidden="true" />}
       </button>
       {open && (
         <div

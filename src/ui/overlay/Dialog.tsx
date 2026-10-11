@@ -6,7 +6,7 @@
 import { useEffect, useId, useLayoutEffect, useRef, type ReactNode, type RefObject } from 'react';
 import { createPortal } from 'react-dom';
 import { X } from 'lucide-react';
-import { ICON_SIZE } from '../../design/type';
+import { iconSize } from '../../design/type';
 import { cx } from '../cx';
 import { FOCUS_RING, focusableWithin } from '../focus';
 
@@ -147,7 +147,7 @@ function OpenDialog({
               FOCUS_RING,
             )}
           >
-            <X size={ICON_SIZE.lg} aria-hidden="true" />
+            <X {...iconSize('lg')} aria-hidden="true" />
           </button>
         )}
       </div>

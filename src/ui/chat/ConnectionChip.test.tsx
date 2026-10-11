@@ -26,18 +26,25 @@ describe('ConnectionChip', () => {
     expect(classesOf(mark).filter(name => name.startsWith('bg-'))).toEqual([]);
   });
 
-  it('fills only the circle of a working connection, and sizes the icons in rem', () => {
-    const fills = (['connected', 'connecting', 'offline'] as const).map(status => {
+  // 10 px in the attributes, which every engine reads, and 0.625 rem in the
+  // class that beats them and grows with the text (iconSize, type.ts).
+  it('fills only the circle of a working connection, and sizes the icons in rem over a px fallback', () => {
+    const icons = (['connected', 'connecting', 'offline'] as const).map(status => {
       const { container, unmount } = render(<ConnectionChip status={status} label={status} />);
       const icon = container.querySelector('svg');
-      const result = [icon?.getAttribute('fill'), icon?.getAttribute('width')];
+      const result = [
+        icon?.getAttribute('fill'),
+        icon?.getAttribute('width'),
+        icon?.getAttribute('height'),
+        classesOf(icon).includes('size-[0.625rem]'),
+      ];
       unmount();
       return result;
     });
-    expect(fills).toEqual([
-      ['currentColor', '0.625rem'],
-      ['none', '0.625rem'],
-      ['none', '0.625rem'],
+    expect(icons).toEqual([
+      ['currentColor', '10', '10', true],
+      ['none', '10', '10', true],
+      ['none', '10', '10', true],
     ]);
   });
 

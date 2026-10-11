@@ -62,15 +62,20 @@ describe('TrustBadge', () => {
     expect(marked).toEqual(['verified']);
   });
 
+  // 1 rem in the class, over 16 px in the attributes for engines that would
+  // reject rem there (iconSize, type.ts).
   it('gives each kind an icon no other kind has, at 1 rem', () => {
     const icons = (['verified', 'unverified', 'keyChanged', 'request'] as const).map(kind => {
       const { container, unmount } = render(<TrustBadge kind={kind} label="Estado" compact />);
       const svg = container.querySelector('svg');
-      const result = { name: svg?.getAttribute('class')?.split(/\s+/).find(name => /^lucide-./.test(name)), size: svg?.getAttribute('width') };
+      const result = {
+        name: classesOf(svg).find(name => /^lucide-./.test(name)),
+        size: [svg?.getAttribute('width'), svg?.getAttribute('height'), classesOf(svg).includes('size-[1rem]')],
+      };
       unmount();
       return result;
     });
     expect(new Set(icons.map(icon => icon.name)).size).toBe(4);
-    expect(icons.every(icon => icon.size === '1rem')).toBe(true);
+    expect(icons.map(icon => icon.size)).toEqual(Array(4).fill(['16', '16', true]));
   });
 });

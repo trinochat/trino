@@ -1,6 +1,6 @@
 import { LoaderCircle } from 'lucide-react';
 import { forwardRef, type ButtonHTMLAttributes, type ReactElement, type ReactNode } from 'react';
-import { ICON_SIZE } from '../../design/type';
+import { iconSize } from '../../design/type';
 import { cx } from '../cx';
 import { FOCUS_RING } from '../focus';
 import { DISABLED } from './styles';
@@ -70,7 +70,7 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button
   ref,
 ) {
   const icon = loading ? (
-    <LoaderCircle size={ICON_SIZE.md} className="animate-spin reduce-motion:animate-none" />
+    <LoaderCircle {...iconSize('md', 'animate-spin reduce-motion:animate-none')} />
   ) : (
     leadingIcon
   );

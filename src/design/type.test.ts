@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { ICON_SIZE, TYPE_SCALE } from './type';
+import { ICON_SIZE, TYPE_SCALE, iconSize } from './type';
 
 /** `0.875rem` → 0.875; anything but a rem length throws. */
 function rem(value: string): number {
@@ -41,9 +41,45 @@ describe('the type scale', () => {
   });
 });
 
+/** `size-[0.875rem]` → `0.875rem`; anything but a size class in rem throws. */
+function sizeClass(className: string): string {
+  const match = /^size-\[(\d*\.?\d+rem)\]$/.exec(className);
+  if (!match) throw new Error(`Expected size-[…rem], got ${JSON.stringify(className)}`);
+  return match[1];
+}
+
 describe('the icon sizes', () => {
-  // Lucide takes a string as its size, so icons grow with the text.
-  it('are in rem: 10, 14, 16, 20 and 24 px at 100 %', () => {
-    expect(pxAt100(ICON_SIZE)).toEqual({ xs: 10, sm: 14, md: 16, lg: 20, xl: 24 });
+  it('are 10, 14, 16, 20, 24 and 28 px at 100 %', () => {
+    const px = Object.fromEntries(Object.entries(ICON_SIZE).map(([name, step]) => [name, step.px]));
+    expect(px).toEqual({ xs: 10, sm: 14, md: 16, lg: 20, xl: 24, '2xl': 28 });
+  });
+
+  // Older WebKit (WebKitGTK before about 2.50, older WKWebView) rejects rem
+  // in the width and height of an <svg> and draws it at 100 %: the attribute
+  // stays in px, and the class, in rem, beats it and grows with the text.
+  it('give each step a class in rem that measures its px at 100 %', () => {
+    const classes = Object.fromEntries(Object.entries(ICON_SIZE).map(([name, step]) => [name, sizeClass(step.className)]));
+    expect(pxAt100(classes)).toEqual(Object.fromEntries(Object.entries(ICON_SIZE).map(([name, step]) => [name, step.px])));
+  });
+});
+
+describe('iconSize', () => {
+  it('gives an icon its size in px, for the attributes, and its class in rem', () => {
+    expect(iconSize('xs')).toEqual({ size: 10, className: 'size-[0.625rem]' });
+    expect(iconSize('md')).toEqual({ size: 16, className: 'size-[1rem]' });
+    expect(iconSize('2xl')).toEqual({ size: 28, className: 'size-[1.75rem]' });
+  });
+
+  it("puts the caller's classes after its own", () => {
+    expect(iconSize('md', 'mt-0.5 shrink-0')).toEqual({ size: 16, className: 'size-[1rem] mt-0.5 shrink-0' });
+    expect(iconSize('lg', '')).toEqual({ size: 20, className: 'size-[1.25rem]' });
+  });
+
+  // Lucide writes its size into the attributes as it is, and `1rem` there is
+  // what older WebKit rejects.
+  it('never gives a string as the size', () => {
+    for (const name of Object.keys(ICON_SIZE) as (keyof typeof ICON_SIZE)[]) {
+      expect(typeof iconSize(name).size).toBe('number');
+    }
   });
 });

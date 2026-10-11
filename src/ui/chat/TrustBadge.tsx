@@ -8,7 +8,7 @@
  */
 import type { ReactNode } from 'react';
 import { Shield, ShieldAlert, ShieldCheck, ShieldQuestion, type LucideIcon } from 'lucide-react';
-import { ICON_SIZE } from '../../design/type';
+import { iconSize } from '../../design/type';
 import { cx } from '../cx';
 
 export type TrustKind = 'verified' | 'unverified' | 'keyChanged' | 'request';
@@ -36,14 +36,14 @@ export function TrustBadge({ kind, label, compact = false, action, className }: 
   if (compact) {
     return (
       <span data-trust={kind} className={cx('inline-flex shrink-0', tone, className)}>
-        <Icon size={ICON_SIZE.md} aria-hidden="true" />
+        <Icon {...iconSize('md')} aria-hidden="true" />
         <span className="sr-only">{label}</span>
       </span>
     );
   }
   const badge = (
     <span data-trust={kind} className={cx('inline-flex items-center gap-1 text-ui-md', tone, !action && className)}>
-      {iconWithLabel && <Icon size={ICON_SIZE.md} aria-hidden="true" />}
+      {iconWithLabel && <Icon {...iconSize('md')} aria-hidden="true" />}
       {label}
     </span>
   );
