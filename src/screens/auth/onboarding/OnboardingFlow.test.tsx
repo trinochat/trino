@@ -288,14 +288,18 @@ describe('the name and the photo', () => {
     expect(api.updateProfile).toHaveBeenCalledWith('Rechita', PHOTO);
   });
 
-  it('removes the photo', async () => {
+  // "Quitar foto" goes away with the photo it removes: the focus must not
+  // fall to the page, where the next Tab starts again at the window bar.
+  it('removes the photo, and hands the focus to "Agregar foto", which takes its place', async () => {
     const { container } = setup();
     passWelcome();
     fireEvent.change(container.querySelector('input[type="file"]')!, { target: { files: [new File(['x'], 'a.png', { type: 'image/png' })] } });
     await settle();
+    button('Quitar foto').focus();
     click('Quitar foto');
     expect(container.querySelector('img')).toBeNull();
-    expect(button('Agregar foto')).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Quitar foto' })).toBeNull();
+    expect(document.activeElement).toBe(button('Agregar foto'));
   });
 
   it('says when a picture cannot be used, and lets the person go on', async () => {

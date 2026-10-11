@@ -28,6 +28,18 @@ export interface NameStepProps {
 export function NameStep({ state, send, headingId, headingRef, nameRef, profileSync, makeAvatar }: NameStepProps) {
   const t = useT();
   const fileRef = useRef<HTMLInputElement>(null);
+  /** "Agregar foto", or "Cambiar foto" once there is one: the same button. */
+  const photoButtonRef = useRef<HTMLButtonElement>(null);
+
+  /**
+   * "Quitar foto" goes away with the photo it removes, and the focus would
+   * fall to the page: it goes to the button that stays, which reads "Agregar
+   * foto" again.
+   */
+  const removePhoto = () => {
+    send({ type: 'removePhoto' });
+    photoButtonRef.current?.focus();
+  };
 
   const choose = (event: ChangeEvent<HTMLInputElement>) => {
     const input = event.currentTarget;
@@ -54,9 +66,11 @@ export function NameStep({ state, send, headingId, headingRef, nameRef, profileS
         <div className="flex flex-wrap items-center gap-4">
           <Avatar initials={state.name.trim() ? identityInitials(state.name) : ''} src={state.photo ?? undefined} size={80} />
           <div className="flex flex-wrap gap-2">
-            <Button onClick={() => fileRef.current?.click()}>{t(state.photo ? 'onb.changePhoto' : 'onb.addPhoto')}</Button>
+            <Button ref={photoButtonRef} onClick={() => fileRef.current?.click()}>
+              {t(state.photo ? 'onb.changePhoto' : 'onb.addPhoto')}
+            </Button>
             {state.photo ? (
-              <Button variant="ghost" onClick={() => send({ type: 'removePhoto' })}>
+              <Button variant="ghost" onClick={removePhoto}>
                 {t('onb.removePhoto')}
               </Button>
             ) : null}
