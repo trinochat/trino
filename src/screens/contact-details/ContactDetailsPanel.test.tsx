@@ -108,6 +108,41 @@ describe('ContactDetailsPanel', () => {
     expect(screen.queryByText(/Nombre en su perfil/)).toBeNull();
   });
 
+  // A contact's name is also the key of its chat: "channel" and "grp:…" are
+  // the keys of the channel and of the groups (convo.ts), and names here are
+  // at most 40 characters, where a profile allows 64.
+  it('offers no name the contact chose that would stand for a group or the channel, or that is too long', () => {
+    const long = 'a'.repeat(64);
+    for (const profileName of ['grp:g1', 'channel', long]) {
+      const { api, storage } = setup({
+        contact: node('ana', { profile_name: profileName }),
+        stored: { 'ttl:ana': '30', 'ttl:grp:g1': '3600' },
+      });
+      expect(screen.getByText(`Nombre en su perfil: ${profileName}`), profileName).toBeTruthy();
+      expect(screen.queryByRole('button', { name: 'Usar este nombre' }), profileName).toBeNull();
+      expect(api.renameNode).not.toHaveBeenCalled();
+      expect(storage.data.get('ttl:grp:g1')).toBe('3600');
+      cleanup();
+    }
+    setup({ contact: node('ana', { profile_name: '🦜'.repeat(40) }) });
+    expect(screen.getByRole('button', { name: 'Usar este nombre' })).toBeTruthy();
+  });
+
+  it('refuses to rename the contact to a name that stands for a group or the channel', async () => {
+    const { api } = setup({ stored: { 'ttl:ana': '30', 'ttl:grp:g1': '3600' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Cambiar nombre' }));
+    const dialog = screen.getByRole('dialog', { name: 'Cambiar el nombre de ana' });
+    const field = within(dialog).getByRole('textbox', { name: 'Nombre' });
+    for (const name of ['grp:g1', ' channel ']) {
+      fireEvent.change(field, { target: { value: name } });
+      fireEvent.click(within(dialog).getByRole('button', { name: 'Guardar' }));
+      expect((await within(dialog).findByRole('alert')).textContent, name).toContain(
+        'Ese nombre está reservado. Escribe otro.',
+      );
+    }
+    expect(api.renameNode).not.toHaveBeenCalled();
+  });
+
   it('renames the contact with checks, moving what is kept for them', async () => {
     const renameNode = vi
       .fn<ContactDetailsApi['renameNode']>()

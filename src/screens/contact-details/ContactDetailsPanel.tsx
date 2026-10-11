@@ -7,8 +7,10 @@
  *   them, how much you trust them and "Verificar", which opens the
  *   verification of the call unit.
  * - What they share (K12): their "Sobre mí", and the name they gave
- *   themselves when it differs from yours, with "Usar este nombre". Their
- *   name never replaces yours on its own (plan-cambios-11oct §10).
+ *   themselves when it differs from yours, with "Usar este nombre" when a
+ *   contact can have that name here (`isContactName`: not a group's or the
+ *   channel's key, and not too long). Their name never replaces yours on
+ *   its own (plan-cambios-11oct §10).
  * - Yours, on this device: a private note and the timer of your new
  *   messages in this chat, in the device's preferences.
  * - Block, and remove after an alert dialog.
@@ -26,7 +28,7 @@ import { prefs as devicePrefs, type Prefs } from '../../lib/prefs';
 import { Avatar, Button, Dialog, Field, iconSize, IconButton, Select, Textarea, TrustBadge } from '../../ui';
 import { ErrorLine } from '../settings/ErrorLine';
 import type { ContactDetailsSlotProps, Trust } from '../types';
-import { RenameContactDialog } from './RenameContactDialog';
+import { isContactName, RenameContactDialog } from './RenameContactDialog';
 
 export interface ContactDetailsApi {
   renameNode(oldHandle: string, newHandle: string): Promise<void>;
@@ -182,9 +184,11 @@ export function ContactDetailsPanel({
           <p className="m-0 min-w-0 flex-[1_1_12rem] text-ui-md text-ui-muted [overflow-wrap:anywhere]">
             {t('contactInfo.profileName', { name: profileName })}
           </p>
-          <Button loading={busy === 'name'} onClick={() => void adoptProfileName(profileName)}>
-            {t('contactInfo.useProfileName')}
-          </Button>
+          {isContactName(profileName) ? (
+            <Button loading={busy === 'name'} onClick={() => void adoptProfileName(profileName)}>
+              {t('contactInfo.useProfileName')}
+            </Button>
+          ) : null}
         </div>
       ) : null}
 
