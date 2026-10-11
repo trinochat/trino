@@ -54,6 +54,8 @@ export interface ComposerProps {
   /** In characters as people count them: Unicode code points, an emoji is one. */
   maxTextLength: number;
   reply: ReplyRef | null;
+  /** The message you reply to is yours: the bar says "tu mensaje". */
+  replyToYours?: boolean;
   /** Takes the reply back; the composer also calls it once the reply went. */
   onClearReply(): void;
   /** Optimistic: the message shows at once as sending. */
@@ -98,6 +100,7 @@ export function Composer({
   onDraftChange,
   maxTextLength,
   reply,
+  replyToYours = false,
   onClearReply,
   onSendText,
   onSendFiles,
@@ -286,7 +289,7 @@ export function Composer({
           {problem}
         </p>
       )}
-      {reply && <ReplyBar reply={reply} onCancel={onClearReply} focusBox={focusBox} />}
+      {reply && <ReplyBar reply={reply} yours={replyToYours} onCancel={onClearReply} focusBox={focusBox} />}
       {tray.length > 0 && (
         <FileTray
           items={tray}

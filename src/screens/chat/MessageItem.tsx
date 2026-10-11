@@ -10,6 +10,11 @@
  * itself. The options appear when the pointer is over the message or the
  * focus is in it, as in Signal: a row "Opciones" under every message
  * (Main:200) doubled the height of the log once the received ones had it too.
+ *
+ * Who wrote it shows only by the bubble's side and colour, so screen readers
+ * hear it first, out of sight: "Tú:" or "Ana Torres:". Where the bubble shows
+ * a group member's name, that line is hidden from them instead, so the name
+ * is read once.
  */
 import { Timer } from 'lucide-react';
 import { useRef } from 'react';
@@ -29,7 +34,11 @@ import { ReplyQuote } from './ReplyQuote';
 /** What the chat does with a message; the pane passes them down. */
 export interface MessageActions {
   onRetry(msgKey: string): void;
-  onReply(reply: ReplyRef): void;
+  /**
+   * `yours`: the message is yours, so the reply bar says "tu mensaje".
+   * Without it there is no "Responder": nobody can write here.
+   */
+  onReply?(reply: ReplyRef, yours: boolean): void;
   onCopy(text: string): void;
   onForward(msgKey: string): void;
   /** Without it (no K11) there is no "Borrar para mí". */
@@ -116,20 +125,25 @@ export function MessageItem({ msg, now, sender, authorName, actions }: MessageIt
   const left = secondsLeft(msg, now);
   const status = mine && msg.state ? { state: msg.state, label: t(STATUS_LABELS[msg.state]) } : undefined;
   const failed = mine && msg.state === 'failed';
-  const quoteAuthor =
-    msg.reply && !mine && YOU.has(msg.reply.author.trim().toLocaleLowerCase()) ? authorName : msg.reply?.author;
+  // "Tú" in a quote is whoever wrote the message that quotes: them in theirs, you in yours.
+  const quotesItsAuthor = msg.reply !== undefined && YOU.has(msg.reply.author.trim().toLocaleLowerCase());
+  const quoteAuthor = quotesItsAuthor && !mine ? authorName : msg.reply?.author;
+  const { onReply } = actions;
 
   return (
     <div ref={row} data-message={msg.key} className="flex flex-col gap-1">
       <div className={cx('group/msg flex items-center gap-1', mine ? 'flex-row-reverse' : 'flex-row')}>
-        <MessageBubble
-          className="contents"
-          direction={mine ? 'out' : 'in'}
-          sender={mine ? undefined : sender}
-          time={clockTime(msg.ts, lang)}
-          status={status}
-        >
-          {msg.reply && <ReplyQuote author={quoteAuthor ?? ''} preview={msg.reply.preview} mine={mine} />}
+        <MessageBubble className="contents" direction={mine ? 'out' : 'in'} time={clockTime(msg.ts, lang)} status={status}>
+          {/* MessageBubble's own name line, drawn here so screen readers skip it and hear the line after. */}
+          {!mine && sender && (
+            <span aria-hidden="true" className="text-ui-sm font-bold text-ui-accent-text">
+              {sender}
+            </span>
+          )}
+          <span className="sr-only">{mine ? t('msg2.byYou') : t('msg2.by', { name: authorName })}</span>
+          {msg.reply && (
+            <ReplyQuote author={quoteAuthor ?? ''} preview={msg.reply.preview} mine={mine} yours={mine && quotesItsAuthor} />
+          )}
           {msg.file && <Attachment file={msg.file} mine={mine} fetchFile={actions.fetchFile} />}
           {text && (
             <p className="whitespace-pre-wrap text-ui-base [overflow-wrap:anywhere]">
@@ -151,7 +165,9 @@ export function MessageItem({ msg, now, sender, authorName, actions }: MessageIt
         <MessageMenu
           align={mine ? 'end' : 'start'}
           className={MENU_REVEAL}
-          onReply={() => actions.onReply({ author: mine ? t('msg2.you') : authorName, preview: replyPreview(msg, t) })}
+          onReply={
+            onReply && (() => onReply({ author: mine ? t('msg2.you') : authorName, preview: replyPreview(msg, t) }, mine))
+          }
           onCopy={text ? () => actions.onCopy(text) : undefined}
           onForward={() => actions.onForward(msg.key)}
           onDelete={actions.onDeleteForMe ? () => actions.onDeleteForMe?.(msg.key) : undefined}

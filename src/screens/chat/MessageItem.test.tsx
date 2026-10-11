@@ -33,6 +33,17 @@ function show(msg: Msg, extra: { actions?: MessageActions; sender?: string; auth
 
 const openMenu = () => fireEvent.click(screen.getByRole('button', { name: 'Opciones del mensaje' }));
 const menuItems = () => screen.getAllByRole('menuitem').map(item => item.textContent);
+
+/** What a screen reader reads of a bubble: its texts in order, without what is hidden from it. */
+function readOut(direction: 'in' | 'out'): string {
+  const bubble = document.querySelector(`[data-direction="${direction}"]`)!;
+  const parts: string[] = [];
+  const walker = document.createTreeWalker(bubble, NodeFilter.SHOW_TEXT);
+  for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+    if (!node.parentElement?.closest('[aria-hidden="true"]')) parts.push(node.textContent ?? '');
+  }
+  return parts.join(' ').replace(/\s+/g, ' ').trim();
+}
 const mine = (key: string, extra: Partial<Msg> = {}) => message(key, at(2026, 10, 11, 10, 31), { side: 'me', ...extra });
 const theirs = (key: string, extra: Partial<Msg> = {}) => message(key, at(2026, 10, 11, 10, 35), extra);
 
@@ -79,7 +90,7 @@ describe('MessageItem', () => {
       fireEvent.click(screen.getByRole('menuitem', { name }));
     };
     choose('Responder');
-    expect(props.onReply).toHaveBeenCalledWith({ author: 'Ana Torres', preview: 'Perfecto, nos vemos el jueves' });
+    expect(props.onReply).toHaveBeenCalledWith({ author: 'Ana Torres', preview: 'Perfecto, nos vemos el jueves' }, false);
     choose('Copiar');
     expect(props.onCopy).toHaveBeenCalledWith('Perfecto, nos vemos el jueves');
     choose('Reenviar');
@@ -92,14 +103,15 @@ describe('MessageItem', () => {
     const props = show(mine('Lo compro de camino'));
     openMenu();
     fireEvent.click(screen.getByRole('menuitem', { name: 'Responder' }));
-    expect(props.onReply).toHaveBeenCalledWith({ author: 'Tú', preview: 'Lo compro de camino' });
+    // "Tú" travels as the author, as the 0.1.0 wrote it; the second argument says the message is yours.
+    expect(props.onReply).toHaveBeenCalledWith({ author: 'Tú', preview: 'Lo compro de camino' }, true);
     cleanup();
 
     const sticker = { url: 'u', key: 'k', sha256: 's', mime: 'image/webp', name: 'sticker::abc.webp', size: 900 };
     const replies = show(theirs('s', { text: undefined, file: sticker }));
     openMenu();
     fireEvent.click(screen.getByRole('menuitem', { name: 'Responder' }));
-    expect(replies.onReply).toHaveBeenCalledWith({ author: 'Ana Torres', preview: 'Sticker' });
+    expect(replies.onReply).toHaveBeenCalledWith({ author: 'Ana Torres', preview: 'Sticker' }, false);
   });
 
   it('shows the clock of a disappearing message, with the time it has left', () => {
@@ -189,5 +201,47 @@ describe('MessageItem', () => {
   it('shows the name of a group member over the first of their messages', () => {
     show(theirs('g1', { text: '¿Quién trae el pan para la cena?', from: 'Mamá' }), { sender: 'Mamá' });
     expect(screen.getByText('Mamá')).toBeTruthy();
+  });
+
+  // Who wrote a message shows only by its side and colour: screen readers hear it first (WCAG 1.3.1).
+  it('tells screen readers who wrote each message, and whom a quote is from', () => {
+    const quote = { author: 'Ana Torres', preview: '¿Hablamos a las 4:40?' };
+    show(mine('m1', { text: 'Mejor a las 5', reply: quote }));
+    expect(readOut('out')).toMatch(/^Tú: En respuesta a Ana Torres: ¿Hablamos a las 4:40\? Mejor a las 5 /);
+    expect(document.querySelector('[data-direction="out"] blockquote')).not.toBeNull();
+    cleanup();
+    show(theirs('t1', { text: '¿Hablamos a las 4:40?' }));
+    expect(readOut('in')).toMatch(/^Ana Torres: ¿Hablamos a las 4:40\? /);
+    cleanup();
+    // A quote of your own message, in your bubble, is yours.
+    show(mine('m2', { text: 'Y llevo el pan', reply: { author: 'Tú', preview: 'Llego a las 7' } }));
+    expect(readOut('out')).toMatch(/^Tú: En respuesta a tu mensaje: Llego a las 7 Y llevo el pan /);
+  });
+
+  it("names a group member once to screen readers, where the bubble shows the member's name", () => {
+    show(theirs('g1', { text: '¿Quién trae el pan?', from: 'Mamá' }), { sender: 'Mamá', authorName: 'Mamá' });
+    expect(screen.getByText('Mamá')).toBeTruthy();
+    expect(readOut('in')).toMatch(/^Mamá: ¿Quién trae el pan\? /);
+    cleanup();
+    show(theirs('g2', { text: 'Para la cena', from: 'Mamá' }), { authorName: 'Mamá' });
+    expect(readOut('in')).toMatch(/^Mamá: Para la cena /);
+  });
+
+  it('says who wrote a message in English and in Portuguese too', () => {
+    const quote = { author: 'Ana Torres', preview: 'At 4:40?' };
+    for (const [lang, expected] of [
+      ['en', /^You: In reply to Ana Torres: At 4:40\? Better at 5 /],
+      ['pt', /^Você: Em resposta a Ana Torres: At 4:40\? Better at 5 /],
+    ] as const) {
+      renderIn(<MessageItem msg={mine('m', { text: 'Better at 5', reply: quote })} now={NOW} authorName="Ana Torres" actions={actions()} />, lang);
+      expect(readOut('out')).toMatch(expected);
+      cleanup();
+    }
+  });
+
+  it('offers no Responder where nobody can write', () => {
+    show(theirs('Hola'), { actions: actions({ onReply: undefined }) });
+    openMenu();
+    expect(menuItems()).toEqual(['Copiar', 'Reenviar', 'Borrar para mí']);
   });
 });

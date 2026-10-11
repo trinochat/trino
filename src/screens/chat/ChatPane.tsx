@@ -9,7 +9,8 @@
  * first, since it cannot be undone, and says above the composer when it
  * failed. You cannot write to a contact you blocked, whose messages do not
  * reach you, nor in a group you are no longer in: a line says why in place
- * of the composer. A blocked contact is never called back either.
+ * of the composer, and no message offers Responder. A blocked contact is
+ * never called back either.
  */
 import { Check, CircleAlert, Trash2 } from 'lucide-react';
 import { useEffect, useId, useMemo, useRef, useState } from 'react';
@@ -80,7 +81,8 @@ export function ChatPane(props: ChatPaneProps) {
   const headingId = useId();
   const pane = useRef<HTMLElement>(null);
   const input = useRef<HTMLTextAreaElement>(null);
-  const [reply, setReply] = useState<ReplyRef | null>(null);
+  /** What you reply to, and whether that message is yours. */
+  const [reply, setReply] = useState<{ ref: ReplyRef; yours: boolean } | null>(null);
   const [notice, setNotice] = useState<Notice | null>(null);
   /** The message Borrar para mí asks about, until you answer. */
   const [deleting, setDeleting] = useState<string | null>(null);
@@ -92,6 +94,7 @@ export function ChatPane(props: ChatPaneProps) {
   const blocked = header.kind === 'contact' && header.blocked;
   const ended = header.kind === 'group' && header.ended;
   const call = contact && !blocked ? onCall : undefined;
+  const writable = !blocked && !ended;
 
   // A status leaves on its own; an alert stays until the next notice.
   useEffect(() => {
@@ -106,10 +109,12 @@ export function ChatPane(props: ChatPaneProps) {
       onForward,
       onOpenLink,
       fetchFile,
-      onReply: next => {
-        setReply(next);
-        input.current?.focus();
-      },
+      onReply: writable
+        ? (next, yours) => {
+            setReply({ ref: next, yours });
+            input.current?.focus();
+          }
+        : undefined,
       onCopy: text => {
         const failed = () => setNotice({ tone: 'alert', text: t('msg2.copyFailed') });
         const clipboard = typeof navigator === 'undefined' ? undefined : navigator.clipboard;
@@ -118,7 +123,7 @@ export function ChatPane(props: ChatPaneProps) {
       },
       onDeleteForMe: onDeleteForMe ? setDeleting : undefined,
     }),
-    [onRetry, onForward, onOpenLink, fetchFile, onDeleteForMe, t],
+    [onRetry, onForward, onOpenLink, fetchFile, onDeleteForMe, writable, t],
   );
 
   const confirmDelete = () => {
@@ -169,7 +174,8 @@ export function ChatPane(props: ChatPaneProps) {
         draft={props.draft}
         onDraftChange={props.onDraftChange}
         maxTextLength={props.maxTextLength}
-        reply={reply}
+        reply={reply?.ref ?? null}
+        replyToYours={reply?.yours}
         onClearReply={() => setReply(null)}
         onSendText={props.onSendText}
         onSendFiles={props.onSendFiles}

@@ -116,6 +116,28 @@ describe('ChatPane', () => {
     expect(screen.queryByText('Respondiendo a Ana Torres')).toBeNull();
   });
 
+  it('says a reply to your own message is to "tu mensaje", and still sends it as yours', () => {
+    const p = show({ messages: [message('m1', at(2026, 10, 11, 10, 44), { side: 'me', text: 'Lo compro de camino' })] });
+    choose('Responder');
+    expect(screen.getByText('Respondiendo a tu mensaje')).toBeTruthy();
+    expect(screen.queryByText('Respondiendo a Tú')).toBeNull();
+    fireEvent.change(box()!, { target: { value: 'Y el pan' } });
+    fireEvent.keyDown(box()!, { key: 'Enter' });
+    expect(p.onSendText).toHaveBeenCalledWith('Y el pan', { author: 'Tú', preview: 'Lo compro de camino' });
+  });
+
+  it('offers no Responder where you cannot write: to a contact you blocked, or in a group you left', () => {
+    const items = () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Opciones del mensaje' }));
+      return screen.getAllByRole('menuitem').map(item => item.textContent);
+    };
+    show({ header: { ...ANA, blocked: true } });
+    expect(items()).toEqual(['Copiar', 'Reenviar', 'Borrar para mí']);
+    cleanup();
+    show({ convo: { kind: 'group', gid: 'g1' }, header: { ...FAMILIA, ended: true }, onCall: undefined });
+    expect(items()).toEqual(['Copiar', 'Reenviar', 'Borrar para mí']);
+  });
+
   it('copies a message and says so', async () => {
     const writeText = vi.fn(async (_text: string) => {});
     Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText } });
