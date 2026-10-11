@@ -83,6 +83,15 @@ describe('the welcome step', () => {
     expect(drive(refused, { type: 'setAge', checked: true }).state.error?.field).toBe('consent');
     expect(drive(refused, { type: 'setAge', checked: true }, { type: 'setPrivacy', checked: true }).state.error).toBeNull();
   });
+
+  // The flow moves the focus when the error changes: a second refusal is a
+  // new error, so the focus goes to the box that is still unticked.
+  it('refuses with a new error each time', () => {
+    const refused = drive(INITIAL_ONBOARDING, { type: 'next' }).state;
+    const again = drive(refused, { type: 'setAge', checked: true }, { type: 'next' }).state;
+    expect(again.error).toEqual(refused.error);
+    expect(again.error).not.toBe(refused.error);
+  });
 });
 
 describe('the name step', () => {

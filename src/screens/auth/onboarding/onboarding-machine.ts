@@ -135,7 +135,11 @@ export function stepNumber(state: OnboardingState): { current: number; total: nu
   return { current: PROGRESS_STEPS.indexOf(state.step) + 1, total: PROGRESS_STEPS.length };
 }
 
-const CONSENT_ERROR: UiError = { field: 'consent', key: 'onb.errConsent' };
+/**
+ * A fresh object for each refusal, so the flow sees a new error and takes the
+ * focus again to the first unticked box.
+ */
+const consentError = (): UiError => ({ field: 'consent', key: 'onb.errConsent' });
 
 const stay = (state: OnboardingState): Transition => ({ state, effects: [] });
 const go = (state: OnboardingState, ...effects: OnboardingEffect[]): Transition => ({ state, effects });
@@ -159,7 +163,7 @@ function nameError(name: string): UiError | null {
  * way to `createIdentity`, whatever happened before.
  */
 function create(state: OnboardingState, useTotp: boolean): Transition {
-  if (!consentGiven(state)) return stay({ ...state, step: 'welcome', twofa: 'ask', busy: null, error: CONSENT_ERROR });
+  if (!consentGiven(state)) return stay({ ...state, step: 'welcome', twofa: 'ask', busy: null, error: consentError() });
   const badName = nameError(state.name);
   if (badName) return stay({ ...state, step: 'name', twofa: 'ask', busy: null, error: badName });
   return go(
@@ -178,7 +182,7 @@ const PREVIOUS: Partial<Record<OnboardingStep, OnboardingStep>> = {
 function next(state: OnboardingState): Transition {
   switch (state.step) {
     case 'welcome':
-      return consentGiven(state) ? stay({ ...state, step: 'name', error: null }) : stay({ ...state, error: CONSENT_ERROR });
+      return consentGiven(state) ? stay({ ...state, step: 'name', error: null }) : stay({ ...state, error: consentError() });
     case 'name': {
       const error = nameError(state.name);
       return stay(error ? { ...state, error } : { ...state, step: 'password', error: null });
