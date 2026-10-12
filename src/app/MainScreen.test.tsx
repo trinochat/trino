@@ -487,6 +487,24 @@ describe('MainScreen: calls over the shell', () => {
     expect(document.activeElement).toBe(within(bar).getByRole('button', { name: 'Volver a la llamada' }));
   });
 
+  // The notice about the marks of 0.1.0 is a dialog over the window, where
+  // the shell's `inert` does not reach: it waits while the call screen
+  // covers the shell, and comes back with the call minimized, still unread.
+  it('keeps the notice about old marks out of the call screen’s way until it goes', async () => {
+    const { signal, storage } = setup({ stored: { 'verified:Bea': 'fp-Bea' } });
+    const title = 'Vuelve a verificar a tus contactos';
+    expect(await screen.findByRole('dialog', { name: title })).toBeTruthy();
+    await signal('Ana', { t: 'offer', callId: newOfferId(), sdp: sdp('offer', false), video: false });
+    await press(within(screen.getByRole('alertdialog', { name: 'Ana' })).getByRole('button', { name: 'Contestar' }));
+    expect(callScreen()).not.toBeNull();
+    expect(screen.queryByRole('dialog', { name: title })).toBeNull();
+
+    fireEvent.keyDown(within(callScreen()!).getByRole('heading', { name: 'Ana' }), { key: 'Escape' });
+    expect(await screen.findByRole('dialog', { name: title })).toBeTruthy();
+    // Shown again, not closed: the mark goes once it is read.
+    expect(storage.data.get('verified:Bea')).toBe('fp-Bea');
+  });
+
   it('rings over Settings, covers it once answered, and keeps the minimized call’s bar above it', async () => {
     const { signal } = setup();
     const settings = await openSettings();

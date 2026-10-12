@@ -16,7 +16,7 @@
  *   (src/app/notifier.ts), with the window's focus, which Tauri reports.
  * - Your profile, read at the start and again once Settings saved it; and
  *   the one-time notice about the verification marks of 0.1.0, once the
- *   contacts are read.
+ *   contacts are read, which waits while the call screen covers the shell.
  * - What only App does goes up through MainProps: the lock (Ctrl+L too is
  *   App's), the wipe, a new auto-lock time and the calls' gate.
  *
@@ -333,7 +333,11 @@ export function MainScreen({ intent, onLock, onAutolockChanged, onWiped, onCallG
         {...(width !== undefined && { width })}
         {...(rootPx !== undefined && { rootPx })}
       />
-      {legacyMarksNotice}
+      {/*
+        A dialog over the window, where the shell's `inert` does not reach:
+        it waits, still unread, while the call screen covers the shell.
+      */}
+      {calls.slot.covering ? null : legacyMarksNotice}
     </>
   );
 }
