@@ -55,7 +55,7 @@ export interface SettingsCapabilities {
   /** Your profile reaches your contacts (K12): "Sobre mí" and its honest line. */
   profileSync: boolean;
   /**
-   * The backend writes trino-gui.log on this device. After T3 (W7) a release
+   * The backend writes trino-gui-debug.log on this device. After T3 (W7) a release
    * build writes nothing, so the line that says so only shows with this.
    */
   diagnosticLog?: boolean;

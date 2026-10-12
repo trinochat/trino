@@ -58,12 +58,14 @@ describe('AdvancedSection', () => {
     expect(await screen.findByText('Trino Chat 0.1.0')).toBeTruthy();
   });
 
-  it('says a log is kept only when the backend keeps one', () => {
+  // The debug build's log is trino-gui-debug.log (diag.rs, B2), and every
+  // build removes the trino-gui.log of before T3.
+  it('says a log is kept only when the backend keeps one, under the name it has', () => {
     setup({ relayStatus: true, diagnosticLog: true });
-    expect(screen.getByText(/trino-gui\.log/)).toBeTruthy();
+    expect(screen.getByText(/\(trino-gui-debug\.log\)/)).toBeTruthy();
     cleanup();
     setup({ relayStatus: true });
-    expect(screen.queryByText(/trino-gui\.log/)).toBeNull();
+    expect(screen.queryByText(/trino-gui/)).toBeNull();
   });
 
   it('has no "Agregar relay", no diagnostic switch and no Tor', async () => {

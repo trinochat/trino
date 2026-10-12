@@ -249,7 +249,7 @@ export const settings: AreaStrings = {
       'Mira lo que un servidor ve de tus mensajes: el contenido va cifrado, pero las direcciones y la hora se ven.',
     'settings2.advanced.activityOpen': 'Ver actividad de red',
     'settings2.advanced.key': 'Tu clave',
-    'settings2.advanced.log': 'Trino guarda un registro técnico en este equipo (trino-gui.log) para resolver problemas.',
+    'settings2.advanced.log': 'Trino guarda un registro técnico en este equipo (trino-gui-debug.log) para resolver problemas.',
     'settings2.advanced.version': 'Trino Chat {version}',
     'settings2.network.title': 'Actividad de red',
     'settings2.network.body':
@@ -538,7 +538,7 @@ export const settings: AreaStrings = {
       'See what a server sees of your messages: the content is encrypted, but the addresses and the time show.',
     'settings2.advanced.activityOpen': 'See network activity',
     'settings2.advanced.key': 'Your key',
-    'settings2.advanced.log': 'Trino keeps a technical log on this device (trino-gui.log) to solve problems.',
+    'settings2.advanced.log': 'Trino keeps a technical log on this device (trino-gui-debug.log) to solve problems.',
     'settings2.advanced.version': 'Trino Chat {version}',
     'settings2.network.title': 'Network activity',
     'settings2.network.body':
@@ -826,7 +826,7 @@ export const settings: AreaStrings = {
       'Veja o que um servidor vê das suas mensagens: o conteúdo vai criptografado, mas os endereços e a hora aparecem.',
     'settings2.advanced.activityOpen': 'Ver atividade de rede',
     'settings2.advanced.key': 'Sua chave',
-    'settings2.advanced.log': 'O Trino guarda um registro técnico neste dispositivo (trino-gui.log) para resolver problemas.',
+    'settings2.advanced.log': 'O Trino guarda um registro técnico neste dispositivo (trino-gui-debug.log) para resolver problemas.',
     'settings2.advanced.version': 'Trino Chat {version}',
     'settings2.network.title': 'Atividade de rede',
     'settings2.network.body':

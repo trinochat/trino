@@ -55,7 +55,7 @@ describe('capabilities', () => {
     expect(capabilities.changePassphrase).toBe(true);
   });
 
-  // After T3 (W7) only a debug build writes trino-gui.log, and `tauri dev`
+  // After T3 (W7) only a debug build writes trino-gui-debug.log, and `tauri dev`
   // runs one with Vite's dev server; the exe writes none, so Settings must
   // not say that it does.
   it('says there is a diagnostic log only in a development build', async () => {

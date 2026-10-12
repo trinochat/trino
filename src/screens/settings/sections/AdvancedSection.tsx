@@ -7,7 +7,7 @@
  *   list is left out. "Agregar relay" is not here: the relays are fixed.
  * - "Actividad de red", what the relays see of your messages.
  * - Your key, in capitals and groups of four.
- * - The line about trino-gui.log only for a backend that writes it (after
+ * - The line about trino-gui-debug.log only for a backend that writes it (after
  *   T3 a release build does not), and no switch that would lie about it.
  * - The version.
  */

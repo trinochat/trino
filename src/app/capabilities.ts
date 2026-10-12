@@ -29,9 +29,10 @@ export interface Capabilities {
   /** K10: removing a member, renaming, leaving and deleting a group (the group's details). */
   manageGroups: boolean;
   /**
-   * The backend writes trino-gui.log on this device, and Settings > Avanzado
-   * says so. After T3 (W7) only a debug build does: `tauri dev`, which runs
-   * with Vite's dev server. The exe writes none.
+   * The backend writes trino-gui-debug.log on this device, and Settings >
+   * Avanzado says so. After T3 (W7) only a debug build does: `tauri dev`,
+   * which runs with Vite's dev server. The exe writes none, and every build
+   * removes the trino-gui.log of before T3 (B2).
    */
   diagnosticLog: boolean;
   /** Invitation links (INV, supplement §8): built now, turned on with Tor. */
