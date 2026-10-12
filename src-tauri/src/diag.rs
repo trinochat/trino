@@ -1,10 +1,11 @@
-//! The diagnostic log, `trino-gui.log` in the data directory (T3).
+//! The diagnostic log, `trino-gui-debug.log` in the data directory (T3).
 //!
 //! It exists to find out why something failed in a live test on a
 //! developer's own machine, so:
-//! - only debug builds write it. A release build never creates it, and
-//!   removes the one an older version left (`remove_stale_log`): before T3
-//!   every build wrote one, with names in it;
+//! - only debug builds write it. A release build never creates it. Before
+//!   T3 every build wrote `trino-gui.log`, with names in it: every build
+//!   removes that one (`remove_stale_log`), and the log of T3 has a name of
+//!   its own so a debug build never appends to it;
 //! - a line is fixed text and numbers. `note` takes a `&'static str` and
 //!   `Plain` is only for numbers and yes/no, so a line can never carry a
 //!   name, a file name, a key or a prefix of one, an event id or anything a
@@ -14,7 +15,11 @@
 
 use std::path::Path;
 
-pub(crate) const LOG_FILE: &str = "trino-gui.log";
+/// The log a debug build writes.
+pub(crate) const LOG_FILE: &str = "trino-gui-debug.log";
+/// The log every build wrote before T3: contacts' names, file names and
+/// key prefixes. Nothing writes it any more.
+pub(crate) const LEGACY_LOG_FILE: &str = "trino-gui.log";
 
 /// The kind of build that is running: only a debug build keeps the log.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -88,11 +93,12 @@ fn write_line(path: &Path, build: Build, text: &str, fields: &[(&str, &dyn Plain
     }
 }
 
-/// A build that keeps no log removes the one in `home` that an older version
-/// wrote: those logged contacts' names, file names and key prefixes.
+/// Remove from `home` the log every build wrote before T3, and, in a build
+/// that keeps no log, a debug build's log as well, so it leaves none.
 /// Called whenever a session opens, so the first unlock after an update
-/// removes it. Best effort: there is nothing to tell the user if it fails.
+/// removes them. Best effort: there is nothing to tell the user if it fails.
 pub(crate) fn remove_stale_log(home: &Path, build: Build) {
+    let _ = std::fs::remove_file(home.join(LEGACY_LOG_FILE));
     if !build.keeps_the_log() {
         let _ = std::fs::remove_file(home.join(LOG_FILE));
     }
@@ -138,16 +144,34 @@ mod tests {
     }
 
     #[test]
-    fn the_running_build_is_the_one_compiled() {
-        assert_eq!(Build::CURRENT == Build::Debug, cfg!(debug_assertions));
+    fn only_a_debug_build_keeps_a_log_and_the_running_build_decides() {
+        assert!(Build::Debug.keeps_the_log());
+        assert!(!Build::Release.keeps_the_log());
+        // Every line, and the clean-up whenever a session opens (unseal and
+        // forge), go by the build that is running.
+        let diag = include_str!("diag.rs")
+            .split("#[cfg(test)]")
+            .next()
+            .unwrap();
+        assert!(diag.contains("write_line(&log, Build::CURRENT, text, fields)"));
+        let commands = include_str!("commands.rs")
+            .split("#[cfg(test)]")
+            .next()
+            .unwrap();
+        let clean_ups = "remove_stale_log(&files.home, crate::diag::Build::CURRENT)";
+        assert_eq!(commands.matches(clean_ups).count(), 2, "unseal and forge");
     }
+
+    /// What the versions before T3 wrote in every build: names in it.
+    const BEFORE_T3: &str = "[2026-10-01 10:00:00] SESSION OPEN handle='ana'\n";
 
     #[test]
     fn a_release_build_removes_the_log_an_older_version_left() {
         let scratch = ScratchDir::new("diag-stale");
-        let log = scratch.path().join(LOG_FILE);
-        // What the versions before T3 wrote, in any build.
-        std::fs::write(&log, "[2026-10-01 10:00:00] SESSION OPEN handle='ana'\n").unwrap();
+        let log = scratch.path().join("trino-gui.log");
+        std::fs::write(&log, BEFORE_T3).unwrap();
+        let debug_log = scratch.path().join("trino-gui-debug.log");
+        std::fs::write(&debug_log, "[2026-10-11 10:00:00] vault locked\n").unwrap();
         let history = scratch.path().join("history.bin");
         std::fs::write(&history, b"sealed").unwrap();
 
@@ -157,20 +181,43 @@ mod tests {
             !log.exists(),
             "the log an older version left is still there"
         );
-        assert!(history.exists(), "only the log goes");
+        assert!(!debug_log.exists(), "a debug build's log is still there");
+        assert!(history.exists(), "only the logs go");
         // Nothing left to remove is fine as well.
         remove_stale_log(scratch.path(), Build::Release);
     }
 
     #[test]
-    fn a_debug_build_keeps_its_log() {
+    fn a_debug_build_keeps_its_own_log_and_removes_the_one_from_before_t3() {
         let scratch = ScratchDir::new("diag-keep");
-        let log = scratch.path().join(LOG_FILE);
-        std::fs::write(&log, "[2026-10-01 10:00:00] vault locked\n").unwrap();
+        let before_t3 = scratch.path().join("trino-gui.log");
+        std::fs::write(&before_t3, BEFORE_T3).unwrap();
+        let own = scratch.path().join("trino-gui-debug.log");
+        std::fs::write(&own, "[2026-10-11 10:00:00] vault locked\n").unwrap();
 
         remove_stale_log(scratch.path(), Build::Debug);
 
-        assert!(log.exists());
+        assert!(!before_t3.exists(), "the log from before T3 is still there");
+        assert!(own.exists());
+        assert_eq!(LOG_FILE, "trino-gui-debug.log", "it appends to the old log");
+    }
+
+    #[test]
+    fn a_wipe_removes_both_logs() {
+        let commands: String = include_str!("commands.rs").split_whitespace().collect();
+        let wipe = commands
+            .split("pubasyncfnwipe(")
+            .nth(1)
+            .and_then(|rest| rest.split("#[tauri::command]").next())
+            .unwrap();
+        assert!(
+            wipe.contains("trino_home().join(crate::diag::LOG_FILE),"),
+            "wipe leaves a debug build's log behind"
+        );
+        assert!(
+            wipe.contains("trino_home().join(crate::diag::LEGACY_LOG_FILE),"),
+            "wipe leaves the log from before T3 behind"
+        );
     }
 
     /// The calls to the log in `source` whose arguments build text at run

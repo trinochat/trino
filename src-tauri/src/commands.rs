@@ -1370,7 +1370,8 @@ pub async fn wipe(state: State<'_, AppState>) -> Result<(), String> {
             ratchets_path(),
             profiles_path(),
             trino_home().join(profile::DAMAGED_PROFILES_FILE),
-            trino_home().join("trino-gui.log"),
+            trino_home().join(crate::diag::LOG_FILE),
+            trino_home().join(crate::diag::LEGACY_LOG_FILE),
         ],
         &mut failures,
     );
