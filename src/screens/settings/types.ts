@@ -73,8 +73,6 @@ export type SettingsScreenProps = SettingsSlotProps & {
   makeAvatar?(file: File): Promise<string>;
   /** The screen's width in px, to choose one pane or two; measured when left out. */
   width?: number;
-  /** A contact was unblocked here: the shell reads its contacts again. */
-  onContactsChanged?(): void;
 };
 
 export type { SettingsSectionId };

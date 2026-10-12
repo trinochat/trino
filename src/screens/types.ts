@@ -234,6 +234,8 @@ export interface SettingsSlotProps {
   onIdentityWiped(): void;
   onProfileChanged(): void;
   onAutolockChanged(minutes: number): void;
+  /** A contact changed in Settings, such as one unblocked: the shell reads its contacts again. */
+  onContactsChanged(): void;
   /** "Tu código QR" in Settings: the share panel of the contacts unit (W4), not a second QR. */
   renderShareCode(): ReactNode;
 }

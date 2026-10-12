@@ -142,6 +142,11 @@ describe('the screen contracts', () => {
     expectTypeOf<SettingsSlotProps['renderShareCode']>().toEqualTypeOf<() => ReactNode>();
   });
 
+  // A contact unblocked in Settings must not stay blocked in the chats (I6).
+  it('let Settings tell the shell that its contacts changed', () => {
+    expectTypeOf<SettingsSlotProps['onContactsChanged']>().toEqualTypeOf<() => void>();
+  });
+
   // The honest copy of the first run (plan-cambios §6) depends on K12.
   it('tell the first run whether the profile reaches the contacts', () => {
     expectTypeOf<OnboardingFlowProps['profileSync']>().toEqualTypeOf<boolean | undefined>();

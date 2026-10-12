@@ -24,6 +24,7 @@ import { Fragment, useEffect, useMemo, useRef, useState, type ReactNode } from '
 import { THEMES } from '../../design/tokens';
 import { useAppearance } from '../../design/useAppearance';
 import { loadAnnouncementFeed, type AnnouncementFeed } from '../../lib/announcements';
+import type { NodeInfo } from '../../lib/api';
 import { convoKey } from '../../lib/convo';
 import { useT } from '../../lib/i18n';
 import { prefs as devicePrefs } from '../../lib/prefs';
@@ -83,6 +84,12 @@ export interface ShellScreenProps {
   isWindowFocused(): boolean;
   /** What only the app does for Settings: after a wipe or a profile change, the auto-lock, and the QR panel of W4. */
   settings: Pick<SettingsSlotProps, 'onIdentityWiped' | 'onProfileChanged' | 'onAutolockChanged' | 'renderShareCode'>;
+  /**
+   * The contacts, each time the shell reads them: the app keeps the calls,
+   * which need to know who a call is with, and the notice about old
+   * verification marks.
+   */
+  onContactsChange?(contacts: readonly NodeInfo[]): void;
   /** The preferences of this device; lib/prefs by default. */
   prefs?: ShellPrefs;
   /** The announcements feed; lib/announcements by default. */
@@ -198,6 +205,12 @@ export function ShellScreen(props: ShellScreenProps) {
   // One object for as long as the API is the same: the chat's sticker picker
   // reloads every sticker whenever it gets a new one.
   const stickers = useMemo(() => stickerApi(api), [api]);
+
+  // The app hears the contacts once they are read, and after each read.
+  const { nodes: contacts, nodesLoaded: contactsRead } = conv;
+  useEffect(() => {
+    if (contactsRead) latest.current.onContactsChange?.(contacts);
+  }, [contacts, contactsRead]);
 
   // What is on screen is read: the chat that opens, and the call log.
   const { markRead } = conv;
@@ -441,6 +454,8 @@ export function ShellScreen(props: ShellScreenProps) {
             focusNext.current = 'settings';
           },
           onLockNow: props.onLock,
+          // A contact unblocked there is blocked no more in its chat.
+          onContactsChanged: () => void conv.refreshNodes(),
           ...props.settings,
         })
       : open?.kind === 'channel'

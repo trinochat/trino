@@ -700,6 +700,30 @@ describe('ShellScreen: contacts, invitations and Settings', () => {
     expect(screen.getByTestId('contacts').getAttribute('data-tab')).toBe('share');
     await row('Ana');
   });
+
+  // Unblocking happens in Settings > Privacidad (W5): the chat of that
+  // contact must not stay blocked until something else reads the contacts.
+  it('reads the contacts again when Settings changed one', async () => {
+    const { slots, api } = setup({}, { nodes: [node('Ana', { blocked: true }), node('Bea')] });
+    await row('Ana');
+    fireEvent.click(screen.getByRole('button', { name: 'Ajustes' }));
+    const reads = api.listNodes.mock.calls.length;
+    api.listNodes.mockResolvedValue([node('Ana'), node('Bea')]);
+    act(() => lastProps(slots.settings).onContactsChanged());
+    await waitFor(() => expect(api.listNodes.mock.calls.length).toBe(reads + 1));
+  });
+
+  // The app keeps the calls and the notice about old verification marks,
+  // which need the contacts the shell reads (I6).
+  it('tells the app its contacts each time it reads them', async () => {
+    const onContactsChange = vi.fn();
+    const { slots, api } = setup({ onContactsChange });
+    await waitFor(() => expect(onContactsChange).toHaveBeenLastCalledWith([node('Ana'), node('Bea')]));
+    api.listNodes.mockResolvedValue([node('Bea')]);
+    fireEvent.click(screen.getByRole('button', { name: 'Ajustes' }));
+    act(() => lastProps(slots.settings).onContactsChanged());
+    await waitFor(() => expect(onContactsChange).toHaveBeenLastCalledWith([node('Bea')]));
+  });
 });
 
 describe('ShellScreen: verifying a contact', () => {
