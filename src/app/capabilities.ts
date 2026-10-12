@@ -11,8 +11,12 @@ export interface Capabilities {
   profileSync: boolean;
   /** K13: calls are kept in the encrypted chat history ("Llamadas", the call events). */
   callLog: boolean;
-  /** K3: the real state of each relay (Settings > Avanzado). */
+  /** K3: the real state of each relay (Settings > Avanzado, and the chats' connection chip). */
   relayStatus: boolean;
+  /** K4: a send answers with the receipt of a relay that took it, so a message shows as sent. */
+  sendAck: boolean;
+  /** K11: "Borrar para mí" deletes a message from the history on this device for good. */
+  deleteForMe: boolean;
   /** K5: turning two-step verification on and off (Settings > Cuenta y seguridad). */
   totp: boolean;
   /** K6: a new password for the vault (Settings > Cuenta y seguridad). */
@@ -42,6 +46,8 @@ export const capabilities: Readonly<Capabilities> = Object.freeze({
   profileSync: true,
   callLog: true,
   relayStatus: true,
+  sendAck: true,
+  deleteForMe: true,
   totp: true,
   changePassphrase: true,
   groupMembers: true,

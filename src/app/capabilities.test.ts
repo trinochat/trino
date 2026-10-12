@@ -13,6 +13,7 @@ describe('capabilities', () => {
     expect(Object.keys(capabilities).sort()).toEqual([
       'callLog',
       'changePassphrase',
+      'deleteForMe',
       'diagnosticLog',
       'groupMembers',
       'inviteLinks',
@@ -21,8 +22,17 @@ describe('capabilities', () => {
       'names',
       'profileSync',
       'relayStatus',
+      'sendAck',
       'totp',
     ]);
+  });
+
+  // The chats (I6) show what W7 and W8 brought in I0: a message sent only
+  // once a relay took it (K4), and "Borrar para mí", which deletes it from
+  // the history on this device for good (K11).
+  it('turns on the relays’ receipt of a send and deleting a message here, which came in with I0', () => {
+    expect(capabilities.sendAck).toBe(true);
+    expect(capabilities.deleteForMe).toBe(true);
   });
 
   // The group details (I4) show what W8 brought in I0: the members matched
