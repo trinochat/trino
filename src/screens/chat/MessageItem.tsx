@@ -11,24 +11,33 @@
  * focus is in it, as in Signal: a row "Opciones" under every message
  * (Main:200) doubled the height of the log once the received ones had it too.
  *
+ * A right-click on the bubble, or Shift + F10 or the menu key on what has
+ * the focus in it, opens the same options as a menu at the pointer (MC-2,
+ * PropMenuContextual): on a link, Abrir enlace and Copiar enlace; on a photo,
+ * a video or a file, Ver, Descargar and, for a photo where the clipboard
+ * takes pictures, Copiar imagen, then the options of the message; and while
+ * text in the message is marked, Copiar selección first, in place of Copiar,
+ * or alone when the marked text runs over several messages. Beside the
+ * bubble, where the row is blank, nothing opens.
+ *
  * Who wrote it shows only by the bubble's side and colour, so screen readers
  * hear it first, out of sight: "Tú:" or "Ana Torres:". Where the bubble shows
  * a group member's name, that line is hidden from them instead, so the name
  * is read once.
  */
-import { Timer } from 'lucide-react';
+import { Copy, Download, ExternalLink, Link, Maximize2, Timer } from 'lucide-react';
 import { useRef } from 'react';
 import type { FileRef } from '../../lib/api';
 import { clockTime } from '../../lib/dates';
 import { DICTS, useT, type Lang, type TFunction } from '../../lib/i18n';
 import { useLang } from '../../lib/i18n-context';
-import { Button, MessageBubble, cx, iconSize } from '../../ui';
+import { Button, MessageBubble, cx, iconSize, useContextMenu, type ContextMenuRequest, type MenuEntry } from '../../ui';
 import type { Msg, ReplyRef, SendFailure, SendState } from '../types';
-import { Attachment, fileKind } from './attachments/Attachment';
+import { Attachment, fileKind, type AttachmentHandle } from './attachments/Attachment';
 import { remainingDuration } from './durations';
 import { Linkify } from './Linkify';
 import { nameList } from './lists';
-import { MessageMenu } from './MessageMenu';
+import { MessageMenu, messageEntries, type MessageMenuActions } from './MessageMenu';
 import { ReplyQuote } from './ReplyQuote';
 
 /** What the chat does with a message; the pane passes them down. */
@@ -39,7 +48,10 @@ export interface MessageActions {
    * Without it there is no "Responder": nobody can write here.
    */
   onReply?(reply: ReplyRef, yours: boolean): void;
-  onCopy(text: string): void;
+  /** Copies text: the message's, or what `what` says it is, for the chat to say what it copied. */
+  onCopy(text: string, what?: 'selection' | 'link'): void;
+  /** Only where the clipboard takes pictures: copies a photo, as a PNG still on its way. */
+  onCopyImage?(png: Promise<Blob>): void;
   onForward(msgKey: string): void;
   /** Without it (no K11) there is no "Borrar para mí". */
   onDeleteForMe?(msgKey: string): void;
@@ -100,6 +112,19 @@ export function replyPreview(msg: Msg, t: TFunction): string {
   }
 }
 
+/**
+ * The text marked in the page, if any of it is in this bubble, and whether
+ * all of it is.
+ */
+function markedText(bubble: Element): { text: string; within: boolean } | null {
+  const selection = document.getSelection();
+  if (!selection || selection.isCollapsed || selection.rangeCount === 0) return null;
+  const text = selection.toString();
+  const range = selection.getRangeAt(0);
+  if (!text.trim() || !range.intersectsNode(bubble)) return null;
+  return { text, within: bubble.contains(range.startContainer) && bubble.contains(range.endContainer) };
+}
+
 /** Why a message was not sent, and for a group, who it did not reach. */
 function failureText(failure: Msg['failure'], t: TFunction, lang: Lang): string {
   if (failure?.kind === 'partial') {
@@ -128,11 +153,74 @@ export function MessageItem({ msg, now, sender, authorName, actions }: MessageIt
   // "Tú" in a quote is whoever wrote the message that quotes: them in theirs, you in yours.
   const quotesItsAuthor = msg.reply !== undefined && YOU.has(msg.reply.author.trim().toLocaleLowerCase());
   const quoteAuthor = quotesItsAuthor && !mine ? authorName : msg.reply?.author;
-  const { onReply } = actions;
+  const { onReply, onCopyImage } = actions;
+  const attachment = useRef<AttachmentHandle | null>(null);
+
+  const options: MessageMenuActions = {
+    onReply: onReply && (() => onReply({ author: mine ? t('msg2.you') : authorName, preview: replyPreview(msg, t) }, mine)),
+    onCopy: text ? () => actions.onCopy(text) : undefined,
+    onForward: () => actions.onForward(msg.key),
+    onDelete: actions.onDeleteForMe ? () => actions.onDeleteForMe?.(msg.key) : undefined,
+  };
+
+  /** The menu of a photo, a video or a file: what its card does, then the options of the message. */
+  const cardMenu = (card: AttachmentHandle): ContextMenuRequest => {
+    const entries: MenuEntry[] = [];
+    if (card.view) {
+      const label = t(card.kind === 'video' ? 'media.viewVideo' : 'media.viewPhoto');
+      entries.push({ id: 'view', label, icon: Maximize2, onSelect: card.view });
+    }
+    entries.push({ id: 'download', label: t('media.download'), icon: Download, onSelect: card.download });
+    const { copyImage } = card;
+    if (copyImage && onCopyImage) {
+      entries.push({ id: 'copy-image', label: t('media.copyImage'), icon: Copy, onSelect: () => onCopyImage(copyImage()) });
+    }
+    entries.push({ id: 'card-separator', separator: true }, ...messageEntries(options, t));
+    return { label: t('media.menu', { name: card.name }), entries };
+  };
+
+  const contextMenu = useContextMenu(target => {
+    const bubble = row.current?.querySelector('[data-direction]');
+    if (!bubble) return null;
+    const onBubble = bubble.contains(target);
+    // The options button is the message's too; the rest of the row is blank.
+    if (!onBubble && !target.closest('[aria-haspopup="menu"]')) return null;
+    const link = onBubble ? target.closest('a[href]') : null;
+    if (link) {
+      const url = link.getAttribute('href') ?? '';
+      return {
+        label: t('msg2.linkMenu'),
+        entries: [
+          { id: 'open-link', label: t('msg2.openLink'), icon: ExternalLink, onSelect: () => actions.onOpenLink(url) },
+          { id: 'copy-link', label: t('msg2.copyLink'), icon: Link, onSelect: () => actions.onCopy(url, 'link') },
+        ],
+      };
+    }
+    if (onBubble && target.closest('[data-attachment]') && attachment.current) return cardMenu(attachment.current);
+    const marked = markedText(bubble);
+    if (marked) {
+      const copySelection: MenuEntry = {
+        id: 'copy-selection',
+        label: t('msg2.copySelection'),
+        icon: Copy,
+        shortcut: { label: t('msg2.copyShortcut'), keys: 'Control+C' },
+        onSelect: () => actions.onCopy(marked.text, 'selection'),
+      };
+      const rest = marked.within ? messageEntries({ ...options, onCopy: undefined }, t) : [];
+      return {
+        label: t('msg2.selectionMenu'),
+        entries: rest.length > 0 ? [copySelection, { id: 'selection-separator', separator: true }, ...rest] : [copySelection],
+      };
+    }
+    return { label: t('msg2.options'), entries: messageEntries(options, t) };
+  });
 
   return (
     <div ref={row} data-message={msg.key} className="flex flex-col gap-1">
-      <div className={cx('group/msg flex items-center gap-1', mine ? 'flex-row-reverse' : 'flex-row')}>
+      <div
+        {...contextMenu.triggerProps}
+        className={cx('group/msg flex items-center gap-1', mine ? 'flex-row-reverse' : 'flex-row')}
+      >
         <MessageBubble className="contents" direction={mine ? 'out' : 'in'} time={clockTime(msg.ts, lang)} status={status}>
           {/* MessageBubble's own name line, drawn here so screen readers skip it and hear the line after. */}
           {!mine && sender && (
@@ -144,7 +232,7 @@ export function MessageItem({ msg, now, sender, authorName, actions }: MessageIt
           {msg.reply && (
             <ReplyQuote author={quoteAuthor ?? ''} preview={msg.reply.preview} mine={mine} yours={mine && quotesItsAuthor} />
           )}
-          {msg.file && <Attachment file={msg.file} mine={mine} fetchFile={actions.fetchFile} />}
+          {msg.file && <Attachment ref={attachment} file={msg.file} mine={mine} fetchFile={actions.fetchFile} />}
           {text && (
             <p className="whitespace-pre-wrap text-ui-base [overflow-wrap:anywhere]">
               <Linkify text={text} onOpenLink={actions.onOpenLink} />
@@ -162,16 +250,8 @@ export function MessageItem({ msg, now, sender, authorName, actions }: MessageIt
             </span>
           )}
         </MessageBubble>
-        <MessageMenu
-          align={mine ? 'end' : 'start'}
-          className={MENU_REVEAL}
-          onReply={
-            onReply && (() => onReply({ author: mine ? t('msg2.you') : authorName, preview: replyPreview(msg, t) }, mine))
-          }
-          onCopy={text ? () => actions.onCopy(text) : undefined}
-          onForward={() => actions.onForward(msg.key)}
-          onDelete={actions.onDeleteForMe ? () => actions.onDeleteForMe?.(msg.key) : undefined}
-        />
+        <MessageMenu align={mine ? 'end' : 'start'} className={MENU_REVEAL} {...options} />
+        {contextMenu.menu}
       </div>
       {failed && (
         <div className="flex flex-wrap items-center justify-end gap-2 text-ui-md">

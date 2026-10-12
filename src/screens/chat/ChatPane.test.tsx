@@ -14,6 +14,12 @@ const MESSAGES: Msg[] = [message('k1', at(2026, 10, 11, 10, 42), { text: 'Perfec
 
 const realResizeObserver = globalThis.ResizeObserver;
 
+// A picture becomes a PNG on a canvas, which jsdom does not draw.
+vi.mock('../../lib/clipboard-image', async importOriginal => ({
+  ...(await importOriginal<typeof import('../../lib/clipboard-image')>()),
+  pngOf: vi.fn(async () => new Blob(['png'], { type: 'image/png' })),
+}));
+
 afterEach(() => {
   cleanup();
   globalThis.ResizeObserver = realResizeObserver;
@@ -295,6 +301,92 @@ describe('ChatPane', () => {
     Object.defineProperty(pane, 'clientHeight', { configurable: true, value: 40 * 16 });
     act(() => observers.forEach(notify => notify()));
     expect(box()!.rows).toBe(6);
+  });
+});
+
+describe('ChatPane, the right-click menu', () => {
+  const FULL_JPEG = 'data:image/jpeg;base64,/9j/4AAQSkZJRgABAgAAAQABAAD/2wBDAA==';
+  const PHOTO: Msg = message('f1', at(2026, 10, 11, 10, 55), {
+    text: undefined,
+    file: { url: 'u', key: 'k', sha256: 's', mime: 'image/jpeg', name: 'finca.jpg', size: 2048, thumb: 'data:image/jpeg;base64,/9j/4AAQSkZJRgABAQ==' },
+  });
+  /** ClipboardItem as Chromium has it, keeping what it was given. */
+  class FakeItem {
+    static supports = (type: string): boolean => type === 'image/png';
+    constructor(readonly items: Record<string, Promise<Blob>>) {}
+  }
+  const rightClick = (element: Element) => fireEvent.contextMenu(element, { clientX: 40, clientY: 50 });
+
+  afterEach(() => {
+    Reflect.deleteProperty(globalThis, 'ClipboardItem');
+    getSelection()?.removeAllRanges();
+  });
+
+  it('copies a link and marked text, and says which it copied', async () => {
+    const writeText = vi.fn(async (_text: string) => {});
+    Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText } });
+    show({ messages: [message('k1', at(2026, 10, 11, 10, 50), { text: 'Ya salió https://trinochat.org/ hoy' })] });
+    rightClick(screen.getByRole('link', { name: 'https://trinochat.org/' }));
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Copiar enlace' }));
+    expect(writeText).toHaveBeenCalledWith('https://trinochat.org/');
+    await waitFor(() => expect(screen.getByRole('status').textContent).toContain('Enlace copiado.'));
+
+    const text = screen.getByText('Ya salió', { exact: false, selector: 'p' });
+    const range = document.createRange();
+    range.setStart(text.firstChild!, 3);
+    range.setEnd(text.firstChild!, 8);
+    getSelection()!.removeAllRanges();
+    getSelection()!.addRange(range);
+    rightClick(text);
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Copiar selección' }));
+    expect(writeText).toHaveBeenLastCalledWith('salió');
+    await waitFor(() => expect(screen.getByRole('status').textContent).toContain('Texto copiado.'));
+  });
+
+  it('opens a link from the menu outside the app', () => {
+    const p = show({ messages: [message('k1', at(2026, 10, 11, 10, 50), { text: 'https://trinochat.org/' })] });
+    rightClick(screen.getByRole('link', { name: 'https://trinochat.org/' }));
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Abrir enlace' }));
+    expect(p.onOpenLink).toHaveBeenCalledWith('https://trinochat.org/');
+  });
+
+  it('copies a photo as a PNG picture and says so, or says it could not', async () => {
+    Object.defineProperty(globalThis, 'ClipboardItem', { configurable: true, value: FakeItem });
+    const write = vi.fn(async (_items: FakeItem[]) => {});
+    Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { write, writeText: vi.fn() } });
+    show({ messages: [PHOTO], fetchFile: vi.fn(async () => FULL_JPEG) });
+    const preview = screen.getByRole('button', { name: 'Ver finca.jpg' });
+    rightClick(preview);
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Copiar imagen' }));
+    expect(write).toHaveBeenCalledTimes(1);
+    const [[items]] = write.mock.calls;
+    expect(Object.keys(items[0].items)).toEqual(['image/png']);
+    await expect(items[0].items['image/png']).resolves.toBeInstanceOf(Blob);
+    await waitFor(() => expect(screen.getByRole('status').textContent).toContain('Imagen copiada.'));
+
+    write.mockImplementationOnce(async () => Promise.reject(new Error('NotAllowedError')));
+    rightClick(preview);
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Copiar imagen' }));
+    await waitFor(() => expect(screen.getByRole('alert').textContent).toContain('No se pudo copiar la imagen.'));
+  });
+
+  it('offers no Copiar imagen where the clipboard takes no pictures', () => {
+    Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText: vi.fn() } });
+    show({ messages: [PHOTO] });
+    rightClick(screen.getByRole('button', { name: 'Ver finca.jpg' }));
+    expect(screen.queryByRole('menuitem', { name: 'Copiar imagen' })).toBeNull();
+    expect(screen.getByRole('menuitem', { name: 'Descargar' })).toBeTruthy();
+  });
+
+  it('asks before Borrar para mí from the menu too, and gives the focus back to the message', () => {
+    const p = show();
+    optionsOf('k1').focus();
+    fireEvent.keyDown(optionsOf('k1'), { key: 'F10', shiftKey: true });
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Borrar para mí' }));
+    const question = screen.getByRole('alertdialog', { name: '¿Borrar este mensaje para ti?' });
+    fireEvent.click(within(question).getByRole('button', { name: 'Cancelar' }));
+    expect(p.onDeleteForMe).not.toHaveBeenCalled();
+    expect(document.activeElement).toBe(optionsOf('k1'));
   });
 });
 

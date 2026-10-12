@@ -3,14 +3,20 @@
  * deviation 3): Responder, Copiar when it has text, Reenviar, and Borrar para
  * mí when the backend keeps it deleted (K11). There is no "Borrar para
  * todos": it would need a new message type the 0.1.0 shows as JSON (plan §1.2).
- * Borrar para mí cannot be undone, so it is the danger item, and the chat
- * asks before it goes. Responder is left out where nobody can write: to a
- * contact you blocked, or in a group you are no longer in.
+ * Borrar para mí cannot be undone, so it is the danger item, after a
+ * separator, and the chat asks before it goes. Responder is left out where
+ * nobody can write: to a contact you blocked, or in a group you are no
+ * longer in.
+ *
+ * The options button and the right-click menu (MC-2) list the same entries,
+ * with an icon each, from `messageEntries`. A deletion for everyone, once it
+ * exists, joins the items after the separator.
  */
-import { useT } from '../../lib/i18n';
-import { Menu, type MenuItem } from '../../ui';
+import { Copy, Forward, Reply, Trash2 } from 'lucide-react';
+import { useT, type TFunction } from '../../lib/i18n';
+import { Menu, type MenuEntry } from '../../ui';
 
-export interface MessageMenuProps {
+export interface MessageMenuActions {
   /** Only where you can write. */
   onReply?(): void;
   /** Only for a message with text. */
@@ -18,17 +24,27 @@ export interface MessageMenuProps {
   onForward(): void;
   /** Only when the backend can delete it for good (K11). */
   onDelete?(): void;
+}
+
+/** The options of a message, in order: what it does, then a separator and what deletes it. */
+export function messageEntries({ onReply, onCopy, onForward, onDelete }: MessageMenuActions, t: TFunction): MenuEntry[] {
+  const entries: MenuEntry[] = [];
+  if (onReply) entries.push({ id: 'reply', label: t('msg2.reply'), icon: Reply, onSelect: onReply });
+  if (onCopy) entries.push({ id: 'copy', label: t('common2.copy'), icon: Copy, onSelect: onCopy });
+  entries.push({ id: 'forward', label: t('msg2.forward'), icon: Forward, onSelect: onForward });
+  const deleting: MenuEntry[] = [];
+  if (onDelete) deleting.push({ id: 'delete', label: t('msg2.deleteForMe'), icon: Trash2, tone: 'danger', onSelect: onDelete });
+  if (deleting.length > 0) entries.push({ id: 'delete-separator', separator: true }, ...deleting);
+  return entries;
+}
+
+export interface MessageMenuProps extends MessageMenuActions {
   /** The edge of the trigger the menu lines up with: the bubble's side. */
   align: 'start' | 'end';
   className?: string;
 }
 
-export function MessageMenu({ onReply, onCopy, onForward, onDelete, align, className }: MessageMenuProps) {
+export function MessageMenu({ align, className, ...actions }: MessageMenuProps) {
   const t = useT();
-  const items: MenuItem[] = [];
-  if (onReply) items.push({ id: 'reply', label: t('msg2.reply'), onSelect: onReply });
-  if (onCopy) items.push({ id: 'copy', label: t('common2.copy'), onSelect: onCopy });
-  items.push({ id: 'forward', label: t('msg2.forward'), onSelect: onForward });
-  if (onDelete) items.push({ id: 'delete', label: t('msg2.deleteForMe'), tone: 'danger', onSelect: onDelete });
-  return <Menu label={t('msg2.options')} items={items} align={align} className={className} />;
+  return <Menu label={t('msg2.options')} items={messageEntries(actions, t)} align={align} className={className} />;
 }

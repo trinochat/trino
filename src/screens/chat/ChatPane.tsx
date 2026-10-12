@@ -5,7 +5,10 @@
  * `key={convoKey}`, so what you reply to never crosses to another chat.
  *
  * What a message's options do lives here: Responder fills the reply bar and
- * puts the focus in the box; Copiar says it copied. Borrar para mí asks
+ * puts the focus in the box; Copiar, and the right-click menu's Copiar
+ * selección, Copiar enlace and Copiar imagen (MC-2), say what they copied,
+ * or that they could not. Copiar imagen is offered only where the clipboard
+ * takes pictures (clipboard-image.ts). Borrar para mí asks
  * first, since it cannot be undone, and says above the composer when it
  * failed. You cannot write to a contact you blocked, whose messages do not
  * reach you, nor in a group you are no longer in: a line says why in place
@@ -14,6 +17,7 @@
  */
 import { Check, CircleAlert, Trash2 } from 'lucide-react';
 import { useEffect, useId, useMemo, useRef, useState } from 'react';
+import { canCopyImages, writeImage } from '../../lib/clipboard-image';
 import { convoKey } from '../../lib/convo';
 import { useT } from '../../lib/i18n';
 import { Button, Dialog, iconSize } from '../../ui';
@@ -29,6 +33,14 @@ import { useComposerRows } from './use-composer-rows';
 const NOTICE_MS = 4000;
 
 type Notice = { tone: 'status' | 'alert'; text: string };
+
+/** What each kind of copy says when it worked, and when it did not. */
+const COPY_NOTICES = {
+  message: ['msg2.copied', 'msg2.copyFailed'],
+  selection: ['msg2.selectionCopied', 'msg2.selectionCopyFailed'],
+  link: ['msg2.linkCopied', 'msg2.linkCopyFailed'],
+  image: ['media.imageCopied', 'media.imageCopyFailed'],
+} as const;
 
 /** The messages of a chat's log, in its order: calls are no messages and have no options. */
 function messageRows(root: HTMLElement | null): HTMLElement[] {
@@ -103,8 +115,10 @@ export function ChatPane(props: ChatPaneProps) {
     return () => clearTimeout(timer);
   }, [notice]);
 
-  const actions = useMemo<MessageActions>(
-    () => ({
+  const actions = useMemo<MessageActions>(() => {
+    const copied = (what: keyof typeof COPY_NOTICES) => () => setNotice({ tone: 'status', text: t(COPY_NOTICES[what][0]) });
+    const notCopied = (what: keyof typeof COPY_NOTICES) => () => setNotice({ tone: 'alert', text: t(COPY_NOTICES[what][1]) });
+    return {
       onRetry,
       onForward,
       onOpenLink,
@@ -115,16 +129,17 @@ export function ChatPane(props: ChatPaneProps) {
             input.current?.focus();
           }
         : undefined,
-      onCopy: text => {
-        const failed = () => setNotice({ tone: 'alert', text: t('msg2.copyFailed') });
+      onCopy: (text, what) => {
+        const kind = what ?? 'message';
         const clipboard = typeof navigator === 'undefined' ? undefined : navigator.clipboard;
-        if (!clipboard) return failed();
-        clipboard.writeText(text).then(() => setNotice({ tone: 'status', text: t('msg2.copied') }), failed);
+        if (!clipboard) return notCopied(kind)();
+        clipboard.writeText(text).then(copied(kind), notCopied(kind));
       },
+      // Read when the chat opens: a webview gains no clipboard while it runs.
+      onCopyImage: canCopyImages() ? png => void writeImage(png).then(copied('image'), notCopied('image')) : undefined,
       onDeleteForMe: onDeleteForMe ? setDeleting : undefined,
-    }),
-    [onRetry, onForward, onOpenLink, fetchFile, onDeleteForMe, writable, t],
-  );
+    };
+  }, [onRetry, onForward, onOpenLink, fetchFile, onDeleteForMe, writable, t]);
 
   const confirmDelete = () => {
     const key = deleting;

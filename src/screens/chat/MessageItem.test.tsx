@@ -1,12 +1,23 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { cleanup, fireEvent, screen, within } from '@testing-library/react';
+import { cleanup, fireEvent, screen, waitFor, within } from '@testing-library/react';
 import { useState } from 'react';
+import type { FileRef } from '../../lib/api';
 import type { Msg } from '../types';
 import { MessageItem, type MessageActions } from './MessageItem';
 import { BUBBLE_ME_COLOUR, at, classesOf, colourClassesWithin, message, renderIn } from './test-utils';
 
-afterEach(cleanup);
+// A picture becomes a PNG on a canvas, which jsdom does not draw.
+vi.mock('../../lib/clipboard-image', async importOriginal => ({
+  ...(await importOriginal<typeof import('../../lib/clipboard-image')>()),
+  pngOf: vi.fn(async () => new Blob(['png'], { type: 'image/png' })),
+}));
+
+afterEach(() => {
+  cleanup();
+  vi.restoreAllMocks();
+  getSelection()?.removeAllRanges();
+});
 
 const NOW = at(2026, 10, 11, 18, 0);
 
@@ -243,5 +254,191 @@ describe('MessageItem', () => {
     show(theirs('Hola'), { actions: actions({ onReply: undefined }) });
     openMenu();
     expect(menuItems()).toEqual(['Copiar', 'Reenviar', 'Borrar para mí']);
+  });
+});
+
+const JPEG = 'data:image/jpeg;base64,/9j/4AAQSkZJRgABAQ==';
+const FULL_JPEG = 'data:image/jpeg;base64,/9j/4AAQSkZJRgABAgAAAQABAAD/2wBDAA==';
+const photo: FileRef = { url: 'u', key: 'k', sha256: 's', mime: 'image/jpeg', name: 'finca.jpg', size: 2048, thumb: JPEG };
+const video: FileRef = { ...photo, mime: 'video/mp4', name: 'paseo.mp4' };
+const pdf: FileRef = { ...photo, mime: 'application/pdf', name: 'informe.pdf', thumb: null };
+const sticker: FileRef = { ...photo, mime: 'image/webp', name: 'sticker::abc.webp' };
+
+/** Right-clicks an element, as the pointer does; false when the native menu was taken. */
+const rightClick = (element: Element) => fireEvent.contextMenu(element, { clientX: 40, clientY: 50 });
+const contextMenu = () => screen.queryByRole('menu');
+/** What the menu lists in order, with `—` for each separator. */
+function listed(): string[] {
+  const menu = screen.getByRole('menu');
+  return Array.from(menu.querySelectorAll('[role="menuitem"], [role="separator"]')).map(element =>
+    element.getAttribute('role') === 'separator' ? '—' : (element.querySelector('span')?.textContent ?? ''),
+  );
+}
+/** Marks text from `from` in an element's first text to `end` in another's (the same one by default). */
+function select(element: Element, from: number, to: number, last: Element = element, end = to) {
+  const range = document.createRange();
+  range.setStart(element.firstChild!, from);
+  range.setEnd(last.firstChild!, end);
+  const selection = getSelection()!;
+  selection.removeAllRanges();
+  selection.addRange(range);
+}
+const bubbleText = (text: string) => screen.getByText(text, { selector: 'p' });
+
+describe('MessageItem, the right-click menu', () => {
+  it('opens on your bubble and on theirs, with the options of the message, a separator before deleting, and an icon each', () => {
+    for (const msg of [mine('Hola'), theirs('Hola')]) {
+      show(msg);
+      expect(rightClick(bubbleText('Hola'))).toBe(false);
+      expect(screen.getByRole('menu', { name: 'Opciones del mensaje' })).toBeTruthy();
+      expect(listed()).toEqual(['Responder', 'Copiar', 'Reenviar', '—', 'Borrar para mí']);
+      for (const item of screen.getAllByRole('menuitem')) expect(item.querySelector('svg')).not.toBeNull();
+      expect(classesOf(screen.getByRole('menuitem', { name: 'Borrar para mí' }))).toContain('text-ui-danger');
+      cleanup();
+    }
+  });
+
+  it('lists the same in the options button, which is the same menu', () => {
+    show(theirs('Hola'));
+    openMenu();
+    expect(listed()).toEqual(['Responder', 'Copiar', 'Reenviar', '—', 'Borrar para mí']);
+  });
+
+  it('opens nothing beside the bubble, where the row is blank', () => {
+    show(theirs('Hola'));
+    const row = document.querySelector('[data-message="Hola"] > div')!;
+    expect(rightClick(row)).toBe(true);
+    expect(contextMenu()).toBeNull();
+  });
+
+  it('opens with Shift + F10 on the focused options, and gives the focus back on Escape', () => {
+    show(theirs('Hola'));
+    const options = screen.getByRole('button', { name: 'Opciones del mensaje' });
+    options.focus();
+    expect(fireEvent.keyDown(options, { key: 'F10', shiftKey: true })).toBe(false);
+    expect(document.activeElement).toBe(screen.getByRole('menuitem', { name: 'Responder' }));
+    fireEvent.keyDown(document.activeElement!, { key: 'Escape' });
+    expect(contextMenu()).toBeNull();
+    expect(document.activeElement).toBe(options);
+  });
+
+  it('hands the message to the chat from the menu', () => {
+    const props = show(theirs('k1', { text: 'Perfecto, nos vemos el jueves' }));
+    const choose = (name: string) => {
+      rightClick(bubbleText('Perfecto, nos vemos el jueves'));
+      fireEvent.click(screen.getByRole('menuitem', { name }));
+    };
+    choose('Responder');
+    expect(props.onReply).toHaveBeenCalledWith({ author: 'Ana Torres', preview: 'Perfecto, nos vemos el jueves' }, false);
+    choose('Copiar');
+    expect(props.onCopy).toHaveBeenCalledWith('Perfecto, nos vemos el jueves');
+    choose('Reenviar');
+    expect(props.onForward).toHaveBeenCalledWith('k1');
+    choose('Borrar para mí');
+    expect(props.onDeleteForMe).toHaveBeenCalledWith('k1');
+  });
+
+  it('puts Copiar selección first, with its shortcut, in place of Copiar, while text in the message is marked', () => {
+    const props = show(theirs('k1', { text: 'TRN-4821 es el código de la reserva' }));
+    const text = bubbleText('TRN-4821 es el código de la reserva');
+    select(text, 0, 8);
+    rightClick(text);
+    expect(screen.getByRole('menu', { name: 'Opciones del texto seleccionado' })).toBeTruthy();
+    expect(listed()).toEqual(['Copiar selección', '—', 'Responder', 'Reenviar', '—', 'Borrar para mí']);
+    const copy = screen.getByRole('menuitem', { name: 'Copiar selección' });
+    expect(copy.getAttribute('aria-keyshortcuts')).toBe('Control+C');
+    expect(copy.textContent).toContain('Ctrl + C');
+    fireEvent.click(copy);
+    expect(props.onCopy).toHaveBeenCalledWith('TRN-4821', 'selection');
+  });
+
+  it('offers only Copiar selección when the marked text runs over several messages', () => {
+    const props = actions();
+    renderIn(
+      <>
+        <MessageItem msg={theirs('a', { text: 'Primero' })} now={NOW} authorName="Ana Torres" actions={props} />
+        <MessageItem msg={theirs('b', { text: 'Segundo' })} now={NOW} authorName="Ana Torres" actions={props} />
+      </>,
+    );
+    select(bubbleText('Primero'), 2, 7, bubbleText('Segundo'), 3);
+    rightClick(bubbleText('Segundo'));
+    expect(listed()).toEqual(['Copiar selección']);
+  });
+
+  it('keeps the menu of the message when the marked text is in another one', () => {
+    const props = actions();
+    renderIn(
+      <>
+        <MessageItem msg={theirs('a', { text: 'Primero' })} now={NOW} authorName="Ana Torres" actions={props} />
+        <MessageItem msg={theirs('b', { text: 'Segundo' })} now={NOW} authorName="Ana Torres" actions={props} />
+      </>,
+    );
+    select(bubbleText('Primero'), 0, 4);
+    rightClick(bubbleText('Segundo'));
+    expect(listed()).toEqual(['Responder', 'Copiar', 'Reenviar', '—', 'Borrar para mí']);
+  });
+
+  it('offers Abrir enlace and Copiar enlace on a link, and opens it outside the app', () => {
+    const props = show(theirs('link', { text: 'Ya salió la beta 2: https://trinochat.org/' }));
+    const link = screen.getByRole('link', { name: 'https://trinochat.org/' });
+    expect(rightClick(link)).toBe(false);
+    expect(screen.getByRole('menu', { name: 'Opciones del enlace' })).toBeTruthy();
+    expect(listed()).toEqual(['Abrir enlace', 'Copiar enlace']);
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Abrir enlace' }));
+    expect(props.onOpenLink).toHaveBeenCalledWith('https://trinochat.org/');
+    link.focus();
+    fireEvent.keyDown(link, { key: 'ContextMenu' });
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Copiar enlace' }));
+    expect(props.onCopy).toHaveBeenCalledWith('https://trinochat.org/', 'link');
+  });
+
+  it('offers Ver foto, Descargar and Copiar imagen on a photo, then the options of the message', async () => {
+    const onCopyImage = vi.fn((png: Promise<Blob>) => void png.catch(() => {}));
+    const fetchFile = vi.fn(async () => FULL_JPEG);
+    show(theirs('f', { text: undefined, file: photo }), { actions: actions({ onCopyImage, fetchFile }) });
+    const preview = screen.getByRole('button', { name: 'Ver finca.jpg' });
+    rightClick(preview);
+    expect(screen.getByRole('menu', { name: 'Opciones de finca.jpg' })).toBeTruthy();
+    expect(listed()).toEqual(['Ver foto', 'Descargar', 'Copiar imagen', '—', 'Responder', 'Reenviar', '—', 'Borrar para mí']);
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Copiar imagen' }));
+    expect(onCopyImage).toHaveBeenCalledTimes(1);
+    await expect(onCopyImage.mock.calls[0][0]).resolves.toBeInstanceOf(Blob);
+    expect(fetchFile).toHaveBeenCalledWith(photo);
+    rightClick(preview);
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Ver foto' }));
+    expect(await screen.findByRole('dialog', { name: 'finca.jpg' })).toBeTruthy();
+  });
+
+  it('downloads the file from the menu, with its own name', async () => {
+    const saved: string[] = [];
+    vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(function (this: HTMLAnchorElement) {
+      saved.push(this.download);
+    });
+    show(theirs('f', { text: undefined, file: photo }), { actions: actions({ fetchFile: vi.fn(async () => FULL_JPEG) }) });
+    rightClick(screen.getByRole('button', { name: 'Ver finca.jpg' }));
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Descargar' }));
+    await waitFor(() => expect(saved).toEqual(['finca.jpg']));
+  });
+
+  it('leaves Copiar imagen out where the clipboard takes no pictures, and on a video', () => {
+    show(theirs('f', { text: undefined, file: photo }), { actions: actions({ onCopyImage: undefined }) });
+    rightClick(screen.getByRole('button', { name: 'Ver finca.jpg' }));
+    expect(listed()).toEqual(['Ver foto', 'Descargar', '—', 'Responder', 'Reenviar', '—', 'Borrar para mí']);
+    cleanup();
+    show(theirs('v', { text: undefined, file: video }), { actions: actions({ onCopyImage: vi.fn() }) });
+    rightClick(screen.getByRole('button', { name: 'Ver paseo.mp4' }));
+    expect(screen.getByRole('menu', { name: 'Opciones de paseo.mp4' })).toBeTruthy();
+    expect(listed()).toEqual(['Ver video', 'Descargar', '—', 'Responder', 'Reenviar', '—', 'Borrar para mí']);
+  });
+
+  it('offers Descargar on any other file, and only the options of the message on a sticker', () => {
+    show(theirs('f', { text: undefined, file: pdf }));
+    rightClick(screen.getByText('informe.pdf'));
+    expect(listed()).toEqual(['Descargar', '—', 'Responder', 'Reenviar', '—', 'Borrar para mí']);
+    cleanup();
+    show(theirs('s', { text: undefined, file: sticker }));
+    rightClick(screen.getByRole('img', { name: 'Sticker' }));
+    expect(screen.getByRole('menu', { name: 'Opciones del mensaje' })).toBeTruthy();
+    expect(listed()).toEqual(['Responder', 'Reenviar', '—', 'Borrar para mí']);
   });
 });

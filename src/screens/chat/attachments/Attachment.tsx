@@ -7,10 +7,15 @@
  * reach an <img> or a <video> (safe-media.ts): no SVG and no remote address.
  * The whole file comes from the shell's `fetchFile`, once. Inside your bubble
  * everything keeps the bubble's ink, with `bubbleMeMuted` for the size.
+ *
+ * The message's right-click menu (MC-2) reaches the card's own actions
+ * through its `ref`: Ver, Descargar and, for a photo, its picture as a PNG
+ * for Copiar imagen. A sticker has no card, so its menu is the message's.
  */
 import { CircleAlert, Download, FileText, Play } from 'lucide-react';
-import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { useEffect, useImperativeHandle, useLayoutEffect, useRef, useState, type Ref } from 'react';
 import type { FileRef } from '../../../lib/api';
+import { pngOf } from '../../../lib/clipboard-image';
 import type { Lang } from '../../../lib/i18n';
 import { useT } from '../../../lib/i18n';
 import { useLang } from '../../../lib/i18n-context';
@@ -69,25 +74,39 @@ function useLatest<T>(value: T) {
   return ref;
 }
 
+/** What the card of a photo, a video or any other file offers the message's menu. */
+export interface AttachmentHandle {
+  kind: Exclude<FileKind, 'sticker'>;
+  /** The file's name, which names its menu. */
+  name: string;
+  /** Opens the viewer: only where the card shows a preview. */
+  view?(): void;
+  download(): void;
+  /** The whole picture as a PNG, for the clipboard: only for a photo with a preview. */
+  copyImage?(): Promise<Blob>;
+}
+
 export interface AttachmentProps {
   file: FileRef;
   /** In your own bubble: everything takes its ink. */
   mine: boolean;
   /** The whole file as a data URL (the shell decrypts it). */
   fetchFile(f: FileRef): Promise<string>;
+  /** The card's actions, for the message's menu; a sticker leaves it empty. */
+  ref?: Ref<AttachmentHandle | null>;
 }
 
-export function Attachment({ file, mine, fetchFile }: AttachmentProps) {
+export function Attachment({ file, mine, fetchFile, ref }: AttachmentProps) {
   const kind = fileKind(file);
   return kind === 'sticker' ? (
     <StickerPicture file={file} fetchFile={fetchFile} />
   ) : (
-    <FileCard file={file} kind={kind} mine={mine} fetchFile={fetchFile} />
+    <FileCard file={file} kind={kind} mine={mine} fetchFile={fetchFile} ref={ref} />
   );
 }
 
 /** A sticker: its inline picture, or the file, downloaded as soon as it shows. */
-function StickerPicture({ file, fetchFile }: Omit<AttachmentProps, 'mine'>) {
+function StickerPicture({ file, fetchFile }: Omit<AttachmentProps, 'mine' | 'ref'>) {
   const t = useT();
   const inline = safeInlineRasterSrc(file.thumb);
   const [fetched, setFetched] = useState<string>();
@@ -129,7 +148,7 @@ type Problem = 'download' | 'unsafe';
  * each with its size and Descargar. A picture without a safe preview is
  * saved, not shown.
  */
-function FileCard({ file, kind, mine, fetchFile }: AttachmentProps & { kind: Exclude<FileKind, 'sticker'> }) {
+function FileCard({ file, kind, mine, fetchFile, ref }: AttachmentProps & { kind: Exclude<FileKind, 'sticker'> }) {
   const t = useT();
   const { lang } = useLang();
   const [busy, setBusy] = useState(false);
@@ -167,10 +186,24 @@ function FileCard({ file, kind, mine, fetchFile }: AttachmentProps & { kind: Exc
       else setProblem('unsafe');
     });
   const download = () => run(url => saveAs(url, file.name));
+  /** The whole picture, never more than the viewer would show, drawn as a PNG. */
+  const copyImage = () =>
+    getFull().then(url => {
+      const safe = safeInlineRasterSrc(url, INLINE_MEDIA_MAX_CHARS);
+      if (!safe) throw new Error('unsafe picture');
+      return pngOf(safe);
+    });
+  useImperativeHandle(ref, () => ({
+    kind,
+    name: file.name,
+    download,
+    ...(preview ? { view } : {}),
+    ...(preview && kind === 'image' ? { copyImage } : {}),
+  }));
   const action = cx('inline-flex min-h-11 items-center gap-1.5 rounded-ui px-2 text-ui-md font-semibold underline', BUBBLE_RING);
 
   return (
-    <div className="flex min-w-0 flex-col gap-1">
+    <div data-attachment="" className="flex min-w-0 flex-col gap-1">
       {preview && (
         <button
           type="button"

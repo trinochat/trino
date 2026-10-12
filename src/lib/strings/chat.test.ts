@@ -61,6 +61,17 @@ const KEYS: string[] = [
   'msg2.deleteTitle',
   'msg2.deleteBody',
   'msg2.deleteBodyGroup',
+  // The right-click menu of a message (MC-2): marked text and links.
+  'msg2.selectionMenu',
+  'msg2.copySelection',
+  'msg2.copyShortcut',
+  'msg2.selectionCopied',
+  'msg2.selectionCopyFailed',
+  'msg2.linkMenu',
+  'msg2.openLink',
+  'msg2.copyLink',
+  'msg2.linkCopied',
+  'msg2.linkCopyFailed',
   // The composer, its tray of files and what it replies to.
   'composer2.label',
   'composer2.placeholder',
@@ -136,6 +147,13 @@ const KEYS: string[] = [
   'media.sticker',
   'media.stickerFailed',
   'media.loading',
+  // The right-click menu of a photo, a video or a file (MC-2).
+  'media.menu',
+  'media.viewPhoto',
+  'media.viewVideo',
+  'media.copyImage',
+  'media.imageCopied',
+  'media.imageCopyFailed',
 ];
 
 const PLACEHOLDERS: Record<string, string[]> = {
@@ -153,6 +171,7 @@ const PLACEHOLDERS: Record<string, string[]> = {
   'composer2.filesFailedAway': ['files', 'name'],
   'composer2.stickerFailedAway': ['name'],
   'channel.version': ['version'],
+  'media.menu': ['name'],
   'sticker2.send': ['n'],
   'sticker2.remove': ['n'],
   'sticker2.addFailed': ['name'],
