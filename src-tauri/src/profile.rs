@@ -2228,6 +2228,19 @@ mod tests {
     fn the_vectors_in_the_doc_hold() {
         let doc = include_str!("../../docs/perfil-v1.md");
 
+        // What the rules refuse, and what shows nothing by itself but white
+        // space and the joiners of emoji, is written as a `\u` escape: the
+        // doc reads the same in any viewer, and nothing in it reorders text.
+        let unseen = |c: char| {
+            shows_nothing(c) && !c.is_whitespace() && !matches!(c, '\u{200C}' | '\u{200D}')
+        };
+        let raw: Vec<String> = doc
+            .chars()
+            .filter(|&c| c != '\r' && (!allowed_char(c, true) || unseen(c)))
+            .map(|c| format!("U+{:04X}", c as u32))
+            .collect();
+        assert!(raw.is_empty(), "written as they are: {raw:?}");
+
         // The announcement: each `in` line becomes the `out` line below it.
         let lines: Vec<&str> = doc.lines().collect();
         let mut pairs = 0;

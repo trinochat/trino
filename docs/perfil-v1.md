@@ -201,12 +201,12 @@ Invalid, and dropped:
 {"ty":"profile","v":1,"rev":3,"name":"Ana"}                      no about
 {"ty":"profile","v":1,"rev":3,"name":"   ","about":""}           empty name
 {"ty":"profile","v":1,"rev":3,"name":7,"about":""}               name not a string
-{"ty":"profile","v":1,"rev":3,"name":"Ana‮","about":""}     a bidi control in the name
+{"ty":"profile","v":1,"rev":3,"name":"Ana\u202e","about":""}     a bidi control in the name
 {"ty":"profile","v":1,"rev":3,"name":"An\u0007a","about":""}     a control character in the name
 {"ty":"profile","v":1,"rev":3,"name":"Ana\nLópez","about":""}    a line break in the name
-{"ty":"profile","v":1,"rev":3,"name":"​","about":""}        a name with nothing that shows
-{"ty":"profile","v":1,"rev":3,"name":"ㅤ","about":""}        the same, with a Hangul filler
-{"ty":"profile","v":1,"rev":3,"name":"Ana","about":"⁦x⁩"}  bidi isolates in the about
+{"ty":"profile","v":1,"rev":3,"name":"\u200b","about":""}        a name with nothing that shows
+{"ty":"profile","v":1,"rev":3,"name":"\u3164","about":""}        the same, with a Hangul filler
+{"ty":"profile","v":1,"rev":3,"name":"Ana","about":"\u2066x\u2069"}  bidi isolates in the about
 {"ty":"profile","v":1,"rev":3,"name":"Ana","about":"a\tb"}       a tab in the about
 ```
 
