@@ -14,13 +14,22 @@ describe('capabilities', () => {
       'callLog',
       'changePassphrase',
       'diagnosticLog',
+      'groupMembers',
       'inviteLinks',
+      'manageGroups',
       'messageRequests',
       'names',
       'profileSync',
       'relayStatus',
       'totp',
     ]);
+  });
+
+  // The group details (I4) show what W8 brought in I0: the members matched
+  // to contacts by key (K9), and removing, renaming, leaving and deleting (K10).
+  it('turns on the members of a group and managing it, which came in with I0', () => {
+    expect(capabilities.groupMembers).toBe(true);
+    expect(capabilities.manageGroups).toBe(true);
   });
 
   it('turns on the shared profile (K12) and the call log (K13), which came in with I0', () => {

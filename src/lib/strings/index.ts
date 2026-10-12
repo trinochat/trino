@@ -25,7 +25,7 @@ export type AreaName = keyof typeof AREAS;
  */
 export const NAMESPACES: Readonly<Record<AreaName, readonly string[]>> = {
   legacy: [
-    'call', 'chat', 'common', 'composer', 'contact', 'empty', 'error', 'file', 'group', 'message',
+    'call', 'chat', 'common', 'composer', 'contact', 'empty', 'error', 'file', 'message',
     'notification', 'security', 'sidebar', 'sticker', 'ttl', 'updates',
   ],
   common: ['common2', 'time2', 'callEvent'],

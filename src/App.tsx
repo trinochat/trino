@@ -110,6 +110,7 @@ import {
   onMessageReceived,
   onGroupMessage,
   onGroupUpdated,
+  onGroupRemoved,
   onGroupInvite,
   onHandshakeNeeded,
   onFileMessage,
@@ -143,6 +144,7 @@ import type { LockReason, OnboardingApi, OnboardingIntent, UnlockApi } from './s
 import { capabilities } from './app/capabilities';
 import { installBrowserChromeGuard } from './app/browser-chrome';
 import { useContacts, type ContactsEvents } from './app/contacts';
+import { useGroups, type GroupsEvents } from './app/groups';
 import { settingsBackend, useSettings } from './app/settings';
 import { useAutoLock } from './app/useAutoLock';
 import './App.css';
@@ -462,6 +464,8 @@ const groupUnreadKey = (gid: string) => `grp:${gid}`;
 
 /** The backend's events about contacts, for Contactos (src/app/contacts.tsx). */
 const CONTACT_EVENTS: ContactsEvents = { onGroupInvite, onHandshakeNeeded };
+/** The backend's events about groups, for their screens (src/app/groups.tsx). */
+const GROUP_EVENTS: GroupsEvents = { onGroupRemoved };
 
 function MainShell({ intent, onLock, onAutolockChanged, onWiped }: MainProps) {
   const t = useT();
@@ -470,8 +474,6 @@ function MainShell({ intent, onLock, onAutolockChanged, onWiped }: MainProps) {
   const [sel, setSel] = useState<Selection>(null);
   const [msgsByHandle, setMsgsByHandle] = useState<Record<string, ChatMessage[]>>({});
   const [msgsByGroup, setMsgsByGroup] = useState<Record<string, ChatMessage[]>>({});
-  const [showNewGroup, setShowNewGroup] = useState(false);
-  const [showAddMember, setShowAddMember] = useState(false);
   const [callState, setCallState] = useState<CallState>('idle');
   const [callPeer, setCallPeer] = useState<string | null>(null);
   const [callVideo, setCallVideo] = useState(false);
@@ -650,6 +652,42 @@ function MainShell({ intent, onLock, onAutolockChanged, onWiped }: MainProps) {
     onContactsChanged: () => void refreshNodes(),
   });
 
+  // Groups (W4): "Nuevo grupo" from the groups' "+", and the details of the
+  // group on screen from its header, beside the chat on a wide window and a
+  // dialog otherwise (src/app/groups.tsx). Its listeners below ask whether a
+  // group is muted.
+  const activeGroup = sel?.kind === 'group' ? groups.find(g => g.gid === sel.id) : undefined;
+  const groupScreens = useGroups({
+    api,
+    events: GROUP_EVENTS,
+    contacts: nodes,
+    group: activeGroup,
+    onCreated: gid => {
+      void refreshGroups().then(() => setSel({ kind: 'group', id: gid }));
+    },
+    onChanged: () => void refreshGroups(),
+    onOpenContact: handle => {
+      setSel({ kind: 'node', id: handle });
+      setUnread(u => ({ ...u, [handle]: 0 }));
+    },
+    // Left or deleted: the backend forgot the group and its chat, and so does
+    // this shell.
+    onLeft: gid => {
+      setSel(current => (current?.kind === 'group' && current.id === gid ? null : current));
+      setMsgsByGroup(prev => {
+        const next = { ...prev };
+        delete next[gid];
+        return next;
+      });
+      setUnread(u => {
+        const next = { ...u };
+        delete next[groupUnreadKey(gid)];
+        return next;
+      });
+      void refreshGroups();
+    },
+  });
+
   useEffect(() => {
     refreshNodes();
     refreshGroups();
@@ -697,9 +735,12 @@ function MainShell({ intent, onLock, onAutolockChanged, onWiped }: MainProps) {
           },
         ],
       }));
-      ding();
-      if (!windowFocusedRef.current) {
-        notify(`${t('notification.group')} · ${event.from_handle}`, text || `📎 ${t('message.file')}`);
+      // A group muted in its details neither sounds nor notifies; it still counts as unread.
+      if (!groupScreens.isMuted(event.gid)) {
+        ding();
+        if (!windowFocusedRef.current) {
+          notify(`${t('notification.group')} · ${event.from_handle}`, text || `📎 ${t('message.file')}`);
+        }
       }
       if (selRef.current?.kind !== 'group' || selRef.current.id !== event.gid) {
         const key = groupUnreadKey(event.gid);
@@ -730,8 +771,10 @@ function MainShell({ intent, onLock, onAutolockChanged, onWiped }: MainProps) {
           [event.from_handle]: [...(prev[event.from_handle] ?? []), msg],
         }));
       }
-      ding();
-      if (!windowFocusedRef.current) notify(event.from_handle, '📎 ' + event.file.name);
+      if (!event.gid || !groupScreens.isMuted(event.gid)) {
+        ding();
+        if (!windowFocusedRef.current) notify(event.from_handle, '📎 ' + event.file.name);
+      }
       if (
         !event.gid &&
         (selRef.current?.kind !== 'node' || selRef.current.id !== event.from_handle)
@@ -864,7 +907,6 @@ function MainShell({ intent, onLock, onAutolockChanged, onWiped }: MainProps) {
       .catch(e => reportFailure(t('error.loadHistory'), e));
   }, []);
 
-  const activeGroup = sel?.kind === 'group' ? groups.find(g => g.gid === sel.id) : undefined;
   const avatarOf = (handle: string) => nodes.find(n => n.handle === handle)?.avatar;
   const q = search.trim().toLowerCase();
   const filteredNodes = q ? nodes.filter(n => n.handle.toLowerCase().includes(q)) : nodes;
@@ -902,7 +944,7 @@ function MainShell({ intent, onLock, onAutolockChanged, onWiped }: MainProps) {
   };
 
   return (
-    <div className="app-shell relative h-full overflow-hidden">
+    <div ref={groupScreens.shellRef} className="app-shell relative h-full overflow-hidden">
       <aside
         inert={settings.isOpen}
         className={`sidebar-shell flex-col h-full w-full md:w-auto ${
@@ -1001,7 +1043,7 @@ function MainShell({ intent, onLock, onAutolockChanged, onWiped }: MainProps) {
             title={sidebarView === 'chats' ? t('sidebar.addContact') : t('sidebar.createGroup')}
             onClick={() => {
               if (sidebarView === 'chats') contacts.open('add');
-              else setShowNewGroup(true);
+              else groupScreens.openNew();
             }}
           >
             {sidebarView === 'chats' ? (
@@ -1084,7 +1126,7 @@ function MainShell({ intent, onLock, onAutolockChanged, onWiped }: MainProps) {
                   {t('sidebar.noGroups')}
                 </div>
               </div>
-              <button className="term-button text-xs" onClick={() => setShowNewGroup(true)}>
+              <button className="term-button text-xs" onClick={() => groupScreens.openNew()}>
                 <Plus className="h-3.5 w-3.5" />
                 {t('sidebar.createGroup')}
               </button>
@@ -1291,12 +1333,15 @@ function MainShell({ intent, onLock, onAutolockChanged, onWiped }: MainProps) {
           }}
         />
       ) : activeGroup ? (
+        // The group's details sit beside its chat on a wide window (groupScreens.aside).
+        <div className="flex h-full min-h-0">
+        <div className="h-full min-h-0 min-w-0 flex-1">
         <GroupChatView
           onBack={() => setSel(null)}
           group={activeGroup}
           messages={msgsByGroup[activeGroup.gid] ?? []}
           avatarOf={avatarOf}
-          onAddMember={() => setShowAddMember(true)}
+          onOpenDetails={() => groupScreens.openDetails()}
           onSend={async (text, reply) => {
             const gid = activeGroup.gid;
             try {
@@ -1367,6 +1412,9 @@ function MainShell({ intent, onLock, onAutolockChanged, onWiped }: MainProps) {
             }
           }}
         />
+        </div>
+        {groupScreens.aside}
+        </div>
       ) : (
         <EmptyChat />
       )}
@@ -1374,6 +1422,7 @@ function MainShell({ intent, onLock, onAutolockChanged, onWiped }: MainProps) {
 
       {settings.layer}
       {contacts.dialog}
+      {groupScreens.dialogs}
       {forwarding && (
         <ForwardModal
           nodes={nodes}
@@ -1463,27 +1512,6 @@ function MainShell({ intent, onLock, onAutolockChanged, onWiped }: MainProps) {
         />
       )}
       {sealing && <LockSeal />}
-      {showNewGroup && (
-        <NewGroupModal
-          onClose={() => setShowNewGroup(false)}
-          onCreated={async gid => {
-            setShowNewGroup(false);
-            await refreshGroups();
-            setSel({ kind: 'group', id: gid });
-          }}
-        />
-      )}
-      {showAddMember && activeGroup && (
-        <AddMemberModal
-          group={activeGroup}
-          nodes={nodes}
-          onClose={() => setShowAddMember(false)}
-          onAdded={async () => {
-            setShowAddMember(false);
-            await refreshGroups();
-          }}
-        />
-      )}
       {activityError && (
         <div
           role="alert"
@@ -1622,7 +1650,7 @@ function GroupChatView({
   onSend,
   onSendFile,
   onSendSticker,
-  onAddMember,
+  onOpenDetails,
   onForward,
   onDelete,
   avatarOf,
@@ -1634,7 +1662,8 @@ function GroupChatView({
   onSend: (text: string, reply?: { author: string; preview: string }) => Promise<void> | void;
   onSendFile: (p: ProcessedFile) => Promise<void> | void;
   onSendSticker: (s: StickerInfo) => Promise<void> | void;
-  onAddMember: () => void;
+  /** The group's details (W4's GroupPanel), for every member: inviting is there, for whoever administers. */
+  onOpenDetails: () => void;
   onForward: (m: ChatMessage) => void;
   onDelete: (index: number) => void;
   avatarOf: (handle: string) => string | null | undefined;
@@ -1663,12 +1692,10 @@ function GroupChatView({
             </div>
           </div>
         </div>
-        {group.is_admin && (
-          <button className="term-button text-xs" onClick={onAddMember}>
-            <UserPlus className="h-3.5 w-3.5" />
-            {t('group.addMember')}
-          </button>
-        )}
+        <button type="button" className="term-button shrink-0 text-xs" onClick={onOpenDetails}>
+          <Info className="h-3.5 w-3.5" aria-hidden="true" />
+          {t('chat.groupDetails')}
+        </button>
       </div>
       <div ref={scrollRef} onScroll={onScroll} className="flex-1 overflow-y-auto p-4">
         {messages.length === 0 && (
@@ -1707,105 +1734,6 @@ function GroupChatView({
         placeholder={t('composer.placeholderGroup')}
       />
     </section>
-  );
-}
-
-function NewGroupModal({
-  onClose,
-  onCreated,
-}: {
-  onClose: () => void;
-  onCreated: (gid: string) => void;
-}) {
-  const t = useT();
-  const [name, setName] = useState('');
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const create = async () => {
-    if (!name.trim()) return;
-    setBusy(true);
-    setError(null);
-    try {
-      const info = await api.createGroup(name.trim());
-      onCreated(info.gid);
-    } catch {
-      setError(t('group.createError'));
-      setBusy(false);
-    }
-  };
-  return (
-    <Modal onClose={onClose} title={t('group.newTitle')}>
-      <div className="text-phosphor-dim text-xs mb-3">
-        {t('group.newDesc')}
-      </div>
-      <input
-        className="term-input w-full mb-4"
-        placeholder={t('group.namePlaceholder')}
-        value={name}
-        onChange={e => setName(e.target.value)}
-        onKeyDown={e => e.key === 'Enter' && create()}
-        autoFocus
-      />
-      {error && <div className="text-crimson text-xs mb-3">{error}</div>}
-      <button type="button" className="term-button w-full" disabled={busy} onClick={create}>
-        {busy ? t('group.creating') : t('group.create')}
-      </button>
-    </Modal>
-  );
-}
-
-function AddMemberModal({
-  group,
-  nodes,
-  onClose,
-  onAdded,
-}: {
-  group: GroupInfo;
-  nodes: NodeInfo[];
-  onClose: () => void;
-  onAdded: () => void;
-}) {
-  const t = useT();
-  const [busy, setBusy] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const candidates = nodes.filter(n => !group.members.includes(n.handle));
-  const add = async (handle: string) => {
-    setBusy(handle);
-    setError(null);
-    try {
-      await api.addGroupMember(group.gid, handle);
-      onAdded();
-    } catch {
-      setError(t('group.addError'));
-      setBusy(null);
-    }
-  };
-  return (
-    <Modal onClose={onClose} title={`${t('group.addTitle')} #${group.name}`}>
-      <div className="text-phosphor-dim text-xs mb-3">
-        {t('group.addDesc')}
-      </div>
-      {candidates.length === 0 && (
-        <div className="text-phosphor-dim text-sm">{t('group.noCandidates')}</div>
-      )}
-      <div className="space-y-1 max-h-64 overflow-y-auto">
-        {candidates.map(n => (
-          <button
-            type="button"
-            key={n.handle}
-            className="w-full text-left px-3 py-2 hover:bg-bg-line flex items-center justify-between"
-            disabled={busy !== null}
-            onClick={() => add(n.handle)}
-          >
-            <span className="text-phosphor">{n.handle}</span>
-            <span className="text-phosphor-dim text-xs">
-              {busy === n.handle ? t('group.adding') : n.fingerprint}
-            </span>
-          </button>
-        ))}
-      </div>
-      {error && <div className="text-crimson text-xs mt-3">{error}</div>}
-    </Modal>
   );
 }
 

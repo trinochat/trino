@@ -18,6 +18,13 @@ export interface Capabilities {
   /** K6: a new password for the vault (Settings > Cuenta y seguridad). */
   changePassphrase: boolean;
   /**
+   * K9: the members of a group, matched to your contacts by key (the group's
+   * details), and so whom "Invitar" can offer.
+   */
+  groupMembers: boolean;
+  /** K10: removing a member, renaming, leaving and deleting a group (the group's details). */
+  manageGroups: boolean;
+  /**
    * The backend writes trino-gui.log on this device, and Settings > Avanzado
    * says so. After T3 (W7) only a debug build does: `tauri dev`, which runs
    * with Vite's dev server. The exe writes none.
@@ -37,6 +44,8 @@ export const capabilities: Readonly<Capabilities> = Object.freeze({
   relayStatus: true,
   totp: true,
   changePassphrase: true,
+  groupMembers: true,
+  manageGroups: true,
   diagnosticLog: import.meta.env.DEV,
   inviteLinks: false,
   messageRequests: false,
