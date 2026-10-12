@@ -2,6 +2,7 @@ import {
   useState,
   useEffect,
   useId,
+  useLayoutEffect,
   useMemo,
   useReducer,
   useRef,
@@ -307,6 +308,27 @@ function App({ api: backend = BACKEND, windowApi = TAURI_WINDOW, Main = MainShel
     else if (action === 'close') windowApi.close();
   };
 
+  // Ctrl+L locks from anywhere in the chats, as Settings says ("También con
+  // Ctrl + L."), and asks first during a call, like "Bloquear". A key a
+  // screen already took is left alone (the redesigned shell of I6 has its
+  // own Ctrl+L), and so is Ctrl+Alt, which is AltGr.
+  const latestRequestLock = useRef(requestLock);
+  useLayoutEffect(() => {
+    latestRequestLock.current = requestLock;
+  });
+  const chatsShown = phase.kind === 'main';
+  useEffect(() => {
+    if (!chatsShown) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.defaultPrevented || event.repeat || event.isComposing) return;
+      if (!(event.ctrlKey || event.metaKey) || event.altKey || event.key.toLowerCase() !== 'l') return;
+      event.preventDefault();
+      latestRequestLock.current();
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [chatsShown]);
+
   // The backend asks before hiding the window or quitting while a call holds
   // the microphone (see `set_call_active` and the tray "Salir").
   useEffect(() => {
@@ -341,7 +363,7 @@ function App({ api: backend = BACKEND, windowApi = TAURI_WINDOW, Main = MainShel
     dispatch(event);
   };
   useAutoLock({
-    enabled: phase.kind === 'main',
+    enabled: chatsShown,
     minutes: autolockMinutes,
     isCallBusy,
     onLock: minutes => lockNow({ kind: 'idle', minutes }),

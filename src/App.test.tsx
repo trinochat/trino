@@ -248,6 +248,40 @@ describe('App', () => {
     expect(api.status).toHaveBeenCalledTimes(1);
   });
 
+  // Settings says "También con Ctrl + L." and lists the shortcut. It locks
+  // from anywhere in the chats, asking first during a call like "Bloquear".
+  it('locks with Ctrl+L from the chats', async () => {
+    const api = fakeApi(VAULT, { ...VAULT, handle: 'Rechi' });
+    renderApp(api);
+    await heading('Hola de nuevo, Rechita');
+    await unlockWith(PASS);
+
+    expect(fireEvent.keyDown(screen.getByText('intent: chats'), { key: 'l', ctrlKey: true })).toBe(false);
+    expect(await heading('Hola de nuevo, Rechi')).toBeTruthy();
+    expect(screen.getByText('Bloqueaste Trino.')).toBeTruthy();
+    expect(api.calls).toEqual(['status', 'lockVault', 'status']);
+  });
+
+  // The redesigned shell (I6) has a Ctrl+L of its own, and AltGr is Ctrl+Alt.
+  it('leaves Ctrl+L alone before the chats, once a screen took it, and with Alt', async () => {
+    const api = fakeApi(VAULT);
+    renderApp(api);
+    const title = await heading('Hola de nuevo, Rechita');
+    fireEvent.keyDown(title, { key: 'l', ctrlKey: true });
+    await unlockWith(PASS);
+
+    const chats = screen.getByText('intent: chats');
+    const taken = (event: KeyboardEvent) => event.preventDefault();
+    chats.addEventListener('keydown', taken);
+    fireEvent.keyDown(chats, { key: 'l', ctrlKey: true });
+    chats.removeEventListener('keydown', taken);
+    fireEvent.keyDown(chats, { key: 'l', ctrlKey: true, altKey: true });
+    fireEvent.keyDown(chats, { key: 'l' });
+
+    expect(screen.getByText('intent: chats')).toBeTruthy();
+    expect(api.lockVault).not.toHaveBeenCalled();
+  });
+
   // The auto-lock (useAutoLock): src/app/useAutoLock.test.ts has its cases.
   it('locks after the minutes saved on this device, and says why', async () => {
     fakeClock();
