@@ -127,7 +127,7 @@ describe('loadAppearance', () => {
 });
 
 describe('migration from the legacy theme', () => {
-  it('reads the key that lib/theme.ts writes', () => {
+  it('reads the key where 0.1.0 kept its theme', () => {
     expect(LEGACY_THEME_STORAGE_KEY).toBe('appearance.theme');
   });
 

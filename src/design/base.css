@@ -1,9 +1,20 @@
 /*
- * Base rules of the redesign that follow the accessibility settings
- * (accesibilidad.md §4.5). src/design/apply.ts marks <html> with them.
+ * The page's base stylesheet: Tailwind's layers, the rules of <html>, <body>
+ * and #root, and the rules that follow the accessibility settings
+ * (accesibilidad.md §4.5 and §4.7). src/design/apply.ts marks <html> with
+ * those settings and sets the --t-* variables that these rules read.
  *
  * - The root is 16 px, so 1rem means what the code says; applyAccessibility
- *   sets 16 px × the text scale inline, over this rule.
+ *   sets 16 px × the text scale inline, over this rule. No other rule sets a
+ *   font size.
+ * - The window is the app: html, body and #root fill it with the theme's
+ *   background, text colour and font, and never scroll (§4.7, rule 9).
+ *   Whatever can grow scrolls in a box of its own. #root keeps out of a
+ *   phone's safe areas (status bar, notch, navigation bar), which are 0 on a
+ *   computer.
+ * - Scrollbars are thin, on a track that lets the surface show through. The
+ *   thumb is in controlLine, which reaches 3:1 on every surface, and turns
+ *   muted under the pointer.
  * - Reduced motion: no animations, transitions or smooth scrolling.
  * - Wide spacing: the minimums of WCAG 1.4.12 (line height 1.5, paragraphs
  *   2 em apart, letters 0.12 em and words 0.16 em). `body *` and not `#root *`:
@@ -11,11 +22,57 @@
  *   followed by another get the 2 em: a message bubble is one <p>, and 1.4.12
  *   asks for the space between paragraphs, not after the last one.
  *
- * The integration (I7) adds the base rules of App.css here, before the motion
- * and spacing rules, without a font size.
+ * The motion and spacing rules come last, after Tailwind's utilities and
+ * their variants (`hover:`, `reduce-motion:`…), which Tailwind would
+ * otherwise append at the very end.
  */
-html {
-  font-size: 16px;
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+@tailwind variants;
+
+@layer base {
+  html {
+    font-size: 16px;
+  }
+
+  html,
+  body,
+  #root {
+    height: 100%;
+    margin: 0;
+    background: var(--t-bg);
+    color: var(--t-ink);
+    font-family: var(--t-font);
+    overflow: hidden;
+  }
+
+  #root {
+    box-sizing: border-box;
+    padding-top: env(safe-area-inset-top);
+    padding-bottom: env(safe-area-inset-bottom);
+    padding-left: env(safe-area-inset-left);
+    padding-right: env(safe-area-inset-right);
+  }
+
+  ::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+
+  ::-webkit-scrollbar-track,
+  ::-webkit-scrollbar-corner {
+    background: transparent;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    background: var(--t-control-line);
+    border-radius: 2px;
+  }
+
+  ::-webkit-scrollbar-thumb:hover {
+    background: var(--t-muted);
+  }
 }
 
 :root[data-motion='reduce'] *,

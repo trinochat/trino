@@ -4,7 +4,8 @@ import { ICON_SIZE } from '../design/type';
 /**
  * Sizes follow the text, and the app's own settings decide motion and layout
  * (accesibilidad.md §4.5, §4.7 and §5.1). In the component library (src/ui),
- * the redesigned screens (src/screens) and the app around them (src/app):
+ * the redesigned screens (src/screens), the app around them (src/app) and its
+ * root (src/App.tsx and src/main.tsx):
  *
  * - no text size in px (`text-[13px]`): the type scale, `text-ui-*`, or rem;
  * - every lucide icon sized with `{...iconSize('md')}` (src/design/type.ts),
@@ -35,6 +36,7 @@ const SOURCES: Record<string, string> = {
     ['../screens/**/*.{ts,tsx}', '!../screens/**/*.test.{ts,tsx}', '../app/**/*.{ts,tsx}', '!../app/**/*.test.{ts,tsx}'],
     { query: '?raw', import: 'default', eager: true },
   ),
+  ...import.meta.glob<string>(['../App.tsx', '../main.tsx'], { query: '?raw', import: 'default', eager: true }),
 };
 
 type Rule = 'text-px' | 'icon-size' | 'box-px' | 'motion-variant' | 'width-query';
@@ -368,12 +370,18 @@ describe('scan', () => {
 });
 
 describe('the component library, the screens and the app', () => {
-  // Every source of src/ui, src/screens and src/app but the tests, listed
-  // apart from SOURCES and never loaded: a folder dropped from SOURCES fails here.
+  // Every source of src/ui, src/screens and src/app but the tests, and the
+  // app's root (App.tsx and main.tsx, since the old screens left it in I7),
+  // listed apart from SOURCES and never loaded: a folder dropped from SOURCES fails here.
   it('are all scanned', () => {
     const everySource = Object.keys(import.meta.glob('../**/*.{ts,tsx}')).map(repositoryPath);
-    const expected = everySource.filter(path => /^src\/(ui|screens|app)\//.test(path) && !/\.test\.tsx?$/.test(path));
-    expect(expected).toEqual(expect.arrayContaining(['src/ui/controls/Switch.tsx', 'src/screens/types.ts']));
+    const expected = everySource.filter(
+      path =>
+        (/^src\/(ui|screens|app)\//.test(path) || /^src\/(App|main)\.tsx$/.test(path)) && !/\.test\.tsx?$/.test(path),
+    );
+    expect(expected).toEqual(
+      expect.arrayContaining(['src/ui/controls/Switch.tsx', 'src/screens/types.ts', 'src/App.tsx', 'src/main.tsx']),
+    );
     expect(Object.keys(SOURCES).map(repositoryPath).sort()).toEqual(expected.sort());
   });
 

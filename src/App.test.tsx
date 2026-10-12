@@ -376,6 +376,23 @@ describe('App', () => {
     expect(fireEvent.contextMenu(document.body)).toBe(true);
     expect(fireEvent.keyDown(document.body, { key: 'F5' })).toBe(true);
   });
+
+  // I7: the old theme is gone with the old screens. <html> takes the app's
+  // language before the first paint and, besides it, only what the redesign's
+  // appearance puts there (src/design/apply.ts): never the old data-theme or
+  // its --color-* variables, which nothing reads any more.
+  it('puts its language on <html>, and nothing of the old theme', async () => {
+    const root = document.documentElement;
+    root.removeAttribute('data-theme');
+    root.removeAttribute('style');
+    root.setAttribute('lang', 'en'); // what index.html ships
+    renderApp(fakeApi(NO_VAULT));
+    await heading('Te damos la bienvenida a Trino');
+    expect(root.getAttribute('lang')).toBe('es');
+    expect(root.hasAttribute('data-theme')).toBe(false);
+    const variables = Array.from({ length: root.style.length }, (_, index) => root.style.item(index));
+    expect(variables.filter(name => name.startsWith('--color-'))).toEqual([]);
+  });
 });
 
 // The chats hand App the gate of their calls (src/app/calls.tsx): locking,

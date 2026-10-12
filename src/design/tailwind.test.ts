@@ -44,6 +44,21 @@ async function compile(classes: string): Promise<string> {
   return (await postcss([plugin]).process('@tailwind utilities;', { from: undefined })).css;
 }
 
+// I7: the old theme went with the old screens: its colours (`bg-bg-panel`,
+// `text-phosphor`, `border-crimson`…) and the animations only they used.
+describe('the old theme in Tailwind', () => {
+  it('is gone from the colours, which are the tokens of the redesign only', () => {
+    expect(Object.keys(config.theme?.extend?.colors ?? {})).toEqual(['ui']);
+  });
+
+  it('builds nothing for its classes', async () => {
+    const css = await compile(
+      'bg-bg-panel text-phosphor border-crimson text-ink-dim bg-amber-dim text-cyan text-magenta animate-pop-in animate-glow-pulse animate-decrypt animate-scanline',
+    );
+    expect(css.trim()).toBe('');
+  });
+});
+
 // The accessibility settings mark <html> (apply.ts, applyAccessibility), and
 // these variants read the marks, so the app's own settings decide: also
 // `more-contrast:` and `reduce-motion:` rather than Tailwind's media variants.

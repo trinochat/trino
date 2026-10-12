@@ -5,10 +5,11 @@ import { describe, expect, it } from 'vitest';
  * tokens (`src/design/tokens.ts` and the accessibility layers of
  * `src/design/a11y-tokens.ts`) and reach the screens through the `ui-*`
  * Tailwind classes and the `--t-*` CSS variables, so the component library,
- * the design engine, the redesigned screens (`src/screens`) and the app
- * around them (`src/app`) hold no colour literals: no hex, no rgb() or hsl(),
- * and no colour class outside the tokens (`bg-white`, `text-gray-500`). Only
- * the tokens, the colour maths (`color.ts`) and the tests may write one.
+ * the design engine, the redesigned screens (`src/screens`), the app around
+ * them (`src/app`) and its root (`src/App.tsx` and `src/main.tsx`) hold no
+ * colour literals: no hex, no rgb() or hsl(), and no colour class outside the
+ * tokens (`bg-white`, `text-gray-500`). Only the tokens, the colour maths
+ * (`color.ts`) and the tests may write one.
  */
 const SOURCES: Record<string, string> = {
   ...import.meta.glob<string>(['./**/*.{ts,tsx}', '!./**/*.test.{ts,tsx}'], {
@@ -30,6 +31,7 @@ const SOURCES: Record<string, string> = {
     ['../screens/**/*.{ts,tsx}', '!../screens/**/*.test.{ts,tsx}', '../app/**/*.{ts,tsx}', '!../app/**/*.test.{ts,tsx}'],
     { query: '?raw', import: 'default', eager: true },
   ),
+  ...import.meta.glob<string>(['../App.tsx', '../main.tsx'], { query: '?raw', import: 'default', eager: true }),
 };
 
 /** `#abc`, `#abcd`, `#aabbcc` and `#aabbccdd`, but not `page#add` or `&#123;`. */
@@ -42,8 +44,6 @@ const COLOUR_UTILITY =
 /** Tailwind's default palette, whose colours come in shades: `gray-100`, `red-500`. */
 const PALETTE =
   'slate|gray|zinc|neutral|stone|red|orange|amber|yellow|lime|green|emerald|teal|cyan|sky|blue|indigo|violet|purple|fuchsia|pink|rose';
-/** The legacy theme's colours in tailwind.config.js (`text-phosphor`, `bg-bg-panel`), for the old screens only. */
-const LEGACY = 'bg|ink|phosphor|cyan|magenta|amber|crimson';
 
 /**
  * A colour utility class with a colour of its own, after any variant and with
@@ -52,7 +52,7 @@ const LEGACY = 'bg|ink|phosphor|cyan|magenta|amber|crimson';
  * their own, so they pass; so do `text-base`, `border-2` and the like.
  */
 const COLOUR_CLASS = new RegExp(
-  `(?<![\\w-])(?:${COLOUR_UTILITY})-(?:white|black|(?:${PALETTE})-\\d{2,3}|(?:${LEGACY})(?:-[a-z]+)?)(?:/[\\w.[\\]]+)?(?![\\w-])`,
+  `(?<![\\w-])(?:${COLOUR_UTILITY})-(?:white|black|(?:${PALETTE})-\\d{2,3})(?:/[\\w.[\\]]+)?(?![\\w-])`,
   'g',
 );
 
@@ -213,18 +213,6 @@ describe('colourLiterals', () => {
     ]);
   });
 
-  it("finds the legacy theme's colour classes, which the redesign replaces", () => {
-    const source = ["'text-phosphor bg-bg-panel border-crimson text-ink-dim bg-amber-dim text-cyan'"];
-    expect(colourLiterals(source.join('\n')).map(found => found.literal)).toEqual([
-      'text-phosphor',
-      'bg-bg-panel',
-      'border-crimson',
-      'text-ink-dim',
-      'bg-amber-dim',
-      'text-cyan',
-    ]);
-  });
-
   it('lets the token classes, transparent, current and inherit through, and classes in comments', () => {
     const source = [
       "const tokens = 'bg-ui-surface text-ui-ink border-ui-control-line outline-ui-accent-text hover:bg-ui-raised';",
@@ -254,17 +242,18 @@ describe('the component library, the design engine and the screens', () => {
   });
 
   // Every source of src, listed apart from SOURCES and never loaded: a folder
-  // dropped from SOURCES, or a file it misses, fails here. src/app does not
-  // exist yet; its files are checked as soon as the integration adds them.
-  it('cover every source file of src/ui, src/design, src/screens and src/app', () => {
+  // dropped from SOURCES, or a file it misses, fails here. With the old
+  // screens gone (I7), the app's root, App.tsx and main.tsx, is held to the
+  // same rule.
+  it('cover every source file of src/ui, src/design, src/screens and src/app, and the app’s root', () => {
     const everySource = Object.keys(import.meta.glob('../**/*.{ts,tsx}')).map(repositoryPath);
     const expected = everySource.filter(
       path =>
-        /^src\/(ui|design|screens|app)\//.test(path) &&
+        (/^src\/(ui|design|screens|app)\//.test(path) || /^src\/(App|main)\.tsx$/.test(path)) &&
         !/\.test\.tsx?$/.test(path) &&
         !/^src\/design\/(tokens|a11y-tokens|color)\.ts$/.test(path),
     );
-    expect(expected).toContain('src/screens/types.ts');
+    expect(expected).toEqual(expect.arrayContaining(['src/screens/types.ts', 'src/App.tsx', 'src/main.tsx']));
     expect(Object.keys(SOURCES).map(repositoryPath).sort()).toEqual(expected.sort());
   });
 

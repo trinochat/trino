@@ -32,7 +32,7 @@ const SOURCES: Record<string, string> = import.meta.glob<string>(['./**/*.{ts,ts
 /** `FOCUS_RING =` or `FOCUS_RING_INSET =`: a definition, not a comparison, an arrow or an import. */
 const RING_DEFINITION = /\b(FOCUS_RING(?:_INSET)?)\s*=(?![=>])/g;
 
-/** What both rings share: a 2 px outline in the accent text colour, without the legacy glow. */
+/** What both rings share: a 2 px outline in the accent text colour, with no shadow under it. */
 const RING = [
   'focus-visible:outline',
   'focus-visible:outline-2',

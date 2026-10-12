@@ -3,14 +3,7 @@ import type { UnlistenFn } from '@tauri-apps/api/event';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { I18nContext, makeT, detectLang, type Lang } from './lib/i18n';
 import { LangCtx, useDocumentLang } from './lib/i18n-context';
-import { ThemeCtx } from './lib/theme-context';
 import { prefs } from './lib/prefs';
-import {
-  applyThemePreference,
-  loadThemePreference,
-  saveThemePreference,
-  type ThemePreference,
-} from './lib/theme';
 import { teardownCall, isCallBusy } from './lib/call';
 import { api, onCallCloseRequested, onCallQuitRequested, isCommandError, type StatusResponse } from './lib/api';
 import { ToastProvider } from './ui';
@@ -31,7 +24,6 @@ import { installBrowserChromeGuard } from './app/browser-chrome';
 import type { CallGate } from './app/calls';
 import { MainScreen, type MainProps } from './app/MainScreen';
 import { useAutoLock } from './app/useAutoLock';
-import './App.css';
 
 export type { MainProps };
 
@@ -96,24 +88,15 @@ function App({ api: backend = BACKEND, windowApi = TAURI_WINDOW, Main = MainScre
   const [phase, dispatch] = useReducer(phaseReducer, INITIAL_PHASE);
   const [lang, setLangState] = useState<Lang>(detectLang);
   useDocumentLang(lang);
-  const [theme, setThemeState] = useState<ThemePreference>(loadThemePreference);
   const t = useMemo(() => makeT(lang), [lang]);
   const setLang = (l: Lang) => {
     localStorage.setItem('lang', l);
     setLangState(l);
   };
-  const setTheme = (next: ThemePreference) => {
-    saveThemePreference(next);
-    setThemeState(next);
-  };
 
   // Trino is an app, not a web page: no browser menu outside the text fields
   // and none of the browser's shortcuts, on every screen (src/app/browser-chrome.ts).
   useEffect(() => installBrowserChromeGuard(window), []);
-
-  useEffect(() => {
-    applyThemePreference(theme);
-  }, [theme]);
 
   // The last lock: the status is read once the vault is sealed.
   const sealing = useRef<Promise<void>>(Promise.resolve());
@@ -245,55 +228,53 @@ function App({ api: backend = BACKEND, windowApi = TAURI_WINDOW, Main = MainScre
   };
 
   return (
-    <ThemeCtx.Provider value={{ theme, setTheme }}>
-      <LangCtx.Provider value={{ lang, setLang }}>
-        <I18nContext.Provider value={t}>
-          <AppearanceProvider>
-            <ToastProvider closeLabel={t('common2.close')}>
-              <div className="flex h-full flex-col">
-                {!isMobile && <WindowTitlebar api={windowApi} />}
-                <div className="min-h-0 flex-1 overflow-hidden">
-                  {phase.kind === 'loading' || phase.kind === 'startupError' ? (
-                    <StartupScreen failed={phase.kind === 'startupError'} onRetry={() => dispatch({ type: 'retry' })} />
-                  ) : null}
-                  {phase.kind === 'onboarding' ? (
-                    <OnboardingFlow
-                      api={backend}
-                      profileSync={capabilities.profileSync}
-                      onCreated={(_created, intent) => openChats({ type: 'created', intent })}
-                      onVaultExists={() => dispatch({ type: 'vaultExists' })}
-                    />
-                  ) : null}
-                  {phase.kind === 'unlock' ? (
-                    <UnlockScreen
-                      handle={phase.handle}
-                      totpEnabled={phase.totpEnabled}
-                      reason={phase.reason}
-                      api={backend}
-                      onUnlocked={() => openChats({ type: 'unlocked' })}
-                      onNoVault={() => dispatch({ type: 'noVault' })}
+    <LangCtx.Provider value={{ lang, setLang }}>
+      <I18nContext.Provider value={t}>
+        <AppearanceProvider>
+          <ToastProvider closeLabel={t('common2.close')}>
+            <div className="flex h-full flex-col">
+              {!isMobile && <WindowTitlebar api={windowApi} />}
+              <div className="min-h-0 flex-1 overflow-hidden">
+                {phase.kind === 'loading' || phase.kind === 'startupError' ? (
+                  <StartupScreen failed={phase.kind === 'startupError'} onRetry={() => dispatch({ type: 'retry' })} />
+                ) : null}
+                {phase.kind === 'onboarding' ? (
+                  <OnboardingFlow
+                    api={backend}
+                    profileSync={capabilities.profileSync}
+                    onCreated={(_created, intent) => openChats({ type: 'created', intent })}
+                    onVaultExists={() => dispatch({ type: 'vaultExists' })}
+                  />
+                ) : null}
+                {phase.kind === 'unlock' ? (
+                  <UnlockScreen
+                    handle={phase.handle}
+                    totpEnabled={phase.totpEnabled}
+                    reason={phase.reason}
+                    api={backend}
+                    onUnlocked={() => openChats({ type: 'unlocked' })}
+                    onNoVault={() => dispatch({ type: 'noVault' })}
+                    onWiped={wiped}
+                  />
+                ) : null}
+                {phase.kind === 'main' ? (
+                  // The chats' own <main> is the pane on screen (src/app/MainScreen.tsx).
+                  <div className="h-full">
+                    <Main
+                      intent={phase.intent}
+                      onLock={requestLock}
+                      onAutolockChanged={setAutolockMinutes}
                       onWiped={wiped}
+                      onCallGate={registerCallGate}
                     />
-                  ) : null}
-                  {phase.kind === 'main' ? (
-                    // The chats' own <main> is the pane on screen (src/app/MainScreen.tsx).
-                    <div className="h-full">
-                      <Main
-                        intent={phase.intent}
-                        onLock={requestLock}
-                        onAutolockChanged={setAutolockMinutes}
-                        onWiped={wiped}
-                        onCallGate={registerCallGate}
-                      />
-                    </div>
-                  ) : null}
-                </div>
+                  </div>
+                ) : null}
               </div>
-            </ToastProvider>
-          </AppearanceProvider>
-        </I18nContext.Provider>
-      </LangCtx.Provider>
-    </ThemeCtx.Provider>
+            </div>
+          </ToastProvider>
+        </AppearanceProvider>
+      </I18nContext.Provider>
+    </LangCtx.Provider>
   );
 }
 

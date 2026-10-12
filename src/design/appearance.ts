@@ -37,7 +37,10 @@ export interface Appearance {
 export type AppearanceStorage = Pick<Storage, 'getItem' | 'setItem'>;
 
 export const APPEARANCE_STORAGE_KEY = 'trino.appearance';
-/** Written by the legacy theme (`src/lib/theme.ts`); read to migrate. */
+/**
+ * Where the old theme of Trino 0.1.0 kept its preset and accent; read to
+ * migrate. Nothing writes it since the old screens went (I7).
+ */
 export const LEGACY_THEME_STORAGE_KEY = 'appearance.theme';
 
 /** The user's choice for a fresh install: Calma, light, verde. */
@@ -166,8 +169,8 @@ function normalize(value: unknown): Appearance {
 }
 
 /**
- * Legacy presets (`src/lib/theme.ts`, `App.css`): `trino` was the dark terminal
- * look, `corporate` a light sans theme and `simple` a dark sans theme.
+ * The presets of the old theme (0.1.0): `trino` was the dark terminal look,
+ * `corporate` a light sans theme and `simple` a dark sans theme.
  */
 const LEGACY_PRESETS = new Map<string, Pick<Appearance, 'style' | 'mode'>>([
   ['trino', { style: 'terminal', mode: 'dark' }],

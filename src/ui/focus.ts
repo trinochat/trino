@@ -7,9 +7,9 @@
 /**
  * Visible keyboard focus (WCAG 2.4.7): a 2 px outline in the accent text
  * colour, 2 px away from the element, which reaches 4.5:1 on every surface,
- * and 3 px with more contrast. `shadow-none` drops the glow the legacy
- * stylesheet adds to every focused element. An outline, so forced colours
- * keep it.
+ * and 3 px with more contrast. `shadow-none` takes a focused element's own
+ * shadow away (a selected tab has one), so the ring lies on the surface its
+ * contrast is measured on. An outline, so forced colours keep it.
  *
  * Forced colours repaint the ring in a system colour, except on an element
  * that keeps its own colours (`forced-color-adjust: none`, such as the

@@ -31,7 +31,7 @@ const root = () => document.documentElement;
 const variable = (name: string) => root().style.getPropertyValue(name);
 
 function resetRoot() {
-  for (const attribute of ['style', 'data-style', 'data-mode', 'data-theme']) {
+  for (const attribute of ['style', 'data-style', 'data-mode']) {
     root().removeAttribute(attribute);
   }
   holdAppearance(document, null);
@@ -112,14 +112,6 @@ describe('applyAppearance', () => {
     expect(root().dataset.mode).toBe('light');
   });
 
-  it('leaves the legacy theme alone, so the current screens keep working', () => {
-    root().dataset.theme = 'trino';
-    root().style.setProperty('--color-accent', '34 255 102');
-    applyAppearance(document, { style: 'calma', mode: 'light', accent: 'verde' }, false);
-    expect(root().dataset.theme).toBe('trino');
-    expect(variable('--color-accent')).toBe('34 255 102');
-  });
-
   it.each([
     ['light', false, 'light'],
     ['dark', false, 'dark'],
@@ -133,7 +125,8 @@ describe('applyAppearance', () => {
     },
   );
 
-  it('leaves color-scheme on <html> unset, so the legacy screens keep their native controls', () => {
+  // Each control applies the mode itself (COLOR_SCHEME in src/ui/controls/styles.ts).
+  it('leaves color-scheme on <html> unset', () => {
     applyAppearance(document, { style: 'calma', mode: 'dark', accent: 'verde' }, false);
     expect(root().style.getPropertyValue('color-scheme')).toBe('');
   });
@@ -590,7 +583,9 @@ describe('base.css', () => {
     expect(BASE_RULES).toContain(
       ":root[data-spacing='wide'] :where(body *) { line-height: 1.5 !important; letter-spacing: 0.12em !important; word-spacing: 0.16em !important; }",
     );
-    expect(BASE_RULES).not.toContain('#root');
+    const spacing = BASE_RULES.match(/:root\[data-spacing='wide'\][^{]*\{[^}]*\}/g) ?? [];
+    expect(spacing).toHaveLength(2);
+    expect(spacing.filter(rule => rule.includes('#root'))).toEqual([]);
   });
 
   // A message bubble is a single <p>: 2 em after it would only push the time down.
@@ -598,6 +593,75 @@ describe('base.css', () => {
     expect(BASE_RULES).toContain(
       ":root[data-spacing='wide'] :where(body p:not(:last-child)) { margin-block-end: 2em !important; }",
     );
+  });
+
+  // I7 brought the base rules of App.css here, on the redesign's tokens
+  // (accesibilidad.md §5.1). App.css held Tailwind's layers too. Without
+  // `@tailwind variants`, Tailwind appends the variants of the utilities at
+  // the very end, after the motion and spacing rules.
+  it("brings in Tailwind's layers, and adds its own rules to the base one", () => {
+    expect(
+      BASE_RULES.startsWith(
+        '@tailwind base; @tailwind components; @tailwind utilities; @tailwind variants; @layer base {',
+      ),
+    ).toBe(true);
+  });
+
+  // accesibilidad.md §4.7, rule 9: the page never scrolls, so whatever can
+  // grow (the chats, the messages, a section of Settings) scrolls on its own.
+  it("fills the window with the theme's background, text colour and font, and never scrolls it", () => {
+    expect(BASE_RULES).toContain(
+      'html, body, #root { height: 100%; margin: 0; background: var(--t-bg); color: var(--t-ink); font-family: var(--t-font); overflow: hidden; }',
+    );
+  });
+
+  // The status bar, a notch or the navigation bar of a phone; 0 on a computer.
+  it("keeps the app out of a phone's safe areas", () => {
+    expect(BASE_RULES).toContain(
+      '#root { box-sizing: border-box; padding-top: env(safe-area-inset-top); padding-bottom: env(safe-area-inset-bottom); padding-left: env(safe-area-inset-left); padding-right: env(safe-area-inset-right); }',
+    );
+  });
+
+  // The thumb is in controlLine, which reaches 3:1 on every surface (tokens.ts),
+  // as the boundary of a control should (WCAG 1.4.11); the track lets the
+  // surface it scrolls show through.
+  it('draws thin scrollbars whose thumb shows on every surface', () => {
+    for (const rule of [
+      '::-webkit-scrollbar { width: 6px; height: 6px; }',
+      '::-webkit-scrollbar-track, ::-webkit-scrollbar-corner { background: transparent; }',
+      '::-webkit-scrollbar-thumb { background: var(--t-control-line); border-radius: 2px; }',
+      '::-webkit-scrollbar-thumb:hover { background: var(--t-muted); }',
+    ]) {
+      expect(BASE_RULES).toContain(rule);
+    }
+  });
+
+  // The 14 px that App.css once gave the page made every rem smaller.
+  it("sets no font size but the root's", () => {
+    expect(BASE_RULES.match(/font-size/g)).toEqual(['font-size']);
+  });
+
+  // Its variables, its scan lines over the window, its focus glow and its
+  // selection colours: the redesign has its own (tokens.ts, the shell's scan
+  // lines, FOCUS_RING), and the system draws the selection.
+  it('keeps nothing of the old theme', () => {
+    expect(BASE_RULES).not.toMatch(/--color-|data-theme|--font-ui|body::before|:focus-visible|::selection/);
+  });
+
+  // accesibilidad.md §5.1: the rules that follow the accessibility settings
+  // come after every other one, Tailwind's utilities included.
+  it('keeps the motion and spacing rules last', () => {
+    const start = BASE_RULES.indexOf(":root[data-motion='reduce']");
+    expect(start).toBeGreaterThan(0);
+    const selectors = BASE_RULES.slice(start)
+      .split('}')
+      .map(rule => rule.split('{')[0]!.trim())
+      .filter(Boolean);
+    expect(selectors).toEqual([
+      ":root[data-motion='reduce'] *, :root[data-motion='reduce'] *::before, :root[data-motion='reduce'] *::after",
+      ":root[data-spacing='wide'] :where(body *)",
+      ":root[data-spacing='wide'] :where(body p:not(:last-child))",
+    ]);
   });
 });
 

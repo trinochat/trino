@@ -3,13 +3,11 @@
  * variables, the `data-style` and `data-mode` attributes of <html>, the
  * accessibility marks (`data-vision`, `data-contrast`, `data-motion`,
  * `data-spacing`) that the Tailwind variants and `base.css` read, and the root
- * font size that every rem follows. It coexists with the legacy theme
- * (`src/lib/theme.ts`), which owns `data-theme` and the `--color-*` variables
- * of the current screens.
+ * font size that every rem follows.
  *
- * `--t-color-scheme` holds the resolved mode for the native parts of the new
- * controls (`COLOR_SCHEME` in src/ui/controls/styles.ts). `color-scheme`
- * itself stays off <html>, where it would also restyle the legacy screens.
+ * `--t-color-scheme` holds the resolved mode for the native parts of the
+ * controls, which each control applies (`COLOR_SCHEME` in
+ * src/ui/controls/styles.ts). <html> itself gets no `color-scheme`.
  */
 import { createPrefs, type Prefs } from '../lib/prefs';
 import { STANDARD_A11Y, type A11yLayers } from './a11y-tokens';
