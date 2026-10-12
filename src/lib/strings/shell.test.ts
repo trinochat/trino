@@ -58,6 +58,9 @@ const KEYS: string[] = [
   'shell.error.history',
   'shell.error.reconnect',
   'shell.error.forward',
+  'shell.error.forwardOffline',
+  'shell.error.forwardTooLong',
+  'shell.error.forwardGroup',
   // Forwarding a message.
   'forward.title',
   'forward.search',

@@ -41,7 +41,10 @@ import type { ShellApi, ShellCapabilities, ShellEvents, ShellPrefs } from './she
 export const PRUNE_EVERY_MS = 10_000;
 
 /** What went wrong outside a message, for the shell to say. */
-export type ShellError = { kind: 'reconnect'; handle: string } | { kind: 'forward' };
+/** `forward`: a file that did not go out, why (K4's codes) and whether to a group. */
+export type ShellError =
+  | { kind: 'reconnect'; handle: string }
+  | { kind: 'forward'; reason: SendFailure; group: boolean };
 
 export interface ConversationsOptions {
   api: ShellApi;
@@ -451,7 +454,7 @@ export function useConversations(options: ConversationsOptions): ConversationsSt
       apply({ type: 'optimistic', convo: convoKey(to), msg: { key: newKey(), side: 'me', ts: nowSeconds(), file: msg.file } });
     } catch (error) {
       console.error('forward failed', error);
-      latest.current.onError?.({ kind: 'forward' });
+      latest.current.onError?.({ kind: 'forward', reason: sendFailureOf(error), group: to.kind === 'group' });
     }
   };
 

@@ -60,6 +60,7 @@ import { stickerApi } from './stickers';
 import { useAnnouncements } from './useAnnouncements';
 import { useCallLog } from './useCallLog';
 import { useConnection } from './useConnection';
+import { shellErrorText } from './shell-error';
 import { useConversations, type ShellError } from './useConversations';
 import { useInvites } from './useInvites';
 import { useStrangerAttempts } from './useStrangerAttempts';
@@ -634,7 +635,7 @@ export function ShellScreen(props: ShellScreenProps) {
                 </Button>
               }
             >
-              {error.kind === 'reconnect' ? t('shell.error.reconnect', { name: error.handle }) : t('shell.error.forward')}
+              {shellErrorText(t, error)}
             </Banner>
           )}
         </div>

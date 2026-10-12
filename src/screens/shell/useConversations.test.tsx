@@ -368,6 +368,27 @@ describe('useConversations: sending', () => {
     expect(hook.result.current.messages.Bea?.[0]).toMatchObject({ side: 'me', text: 'mira esto' });
     expect(hook.result.current.messages['grp:g1']?.[0]).toMatchObject({ side: 'me', file: sentFile('plano.pdf') });
   });
+
+  // forward_file rejects with K4's codes (B2): offline before anything goes
+  // out, message_too_long when the file's message does not fit the relays.
+  it('says why forwarding a file failed, and for which kind of chat, without showing it as forwarded', async () => {
+    const history: Record<string, HistItem[]> = { Ana: [{ side: 'them', file: sentFile('plano.pdf'), ts: T0 }] };
+    const onError = vi.fn();
+    const { hook, api } = setup({ onError }, { history, nodes: [node('Ana'), node('Bea')] });
+    await waitFor(() => expect(hook.result.current.messages.Ana).toHaveLength(1));
+    const BEA = { kind: 'contact', handle: 'Bea' } as const;
+    api.forwardFile.mockRejectedValueOnce({ code: 'offline', message: 'no relay is up' });
+    await act(() => hook.result.current.forward(ANA, `${T0}:0`, BEA));
+    expect(onError).toHaveBeenLastCalledWith({ kind: 'forward', reason: 'offline', group: false });
+    api.forwardFile.mockRejectedValueOnce({ code: 'message_too_long', message: 'too large' });
+    await act(() => hook.result.current.forward(ANA, `${T0}:0`, FAMILIA));
+    expect(onError).toHaveBeenLastCalledWith({ kind: 'forward', reason: 'too_long', group: true });
+    api.forwardFile.mockRejectedValueOnce({ code: 'internal', message: 'seal failed' });
+    await act(() => hook.result.current.forward(ANA, `${T0}:0`, FAMILIA));
+    expect(onError).toHaveBeenLastCalledWith({ kind: 'forward', reason: 'other', group: true });
+    expect(hook.result.current.messages.Bea).toBeUndefined();
+    expect(hook.result.current.messages['grp:g1']).toBeUndefined();
+  });
 });
 
 describe('useConversations: deleting and expiring', () => {
