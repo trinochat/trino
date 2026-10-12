@@ -86,6 +86,8 @@ export function fakeController(over: Partial<CallController> = {}): CallControll
     hangup: vi.fn(),
     toggleMute: vi.fn(),
     toggleCamera: vi.fn(),
+    selectMicrophone: vi.fn(async () => {}),
+    selectCamera: vi.fn(async () => {}),
     hangupAndWait: vi.fn(async () => {}),
     confirmEnd: vi.fn(async () => true),
     ...over,

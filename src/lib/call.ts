@@ -64,6 +64,10 @@ export interface MediaState {
   muted: boolean;
   cameraOn: boolean;
   hasVideo: boolean; // whether this call currently carries a video track
+  // The devices in use, as enumerateDevices names them: the open track's, or
+  // the one chosen for when it opens; left out while unknown (the system's).
+  microphoneId?: string;
+  cameraId?: string;
 }
 
 export type CallErrorCode =
@@ -338,6 +342,12 @@ let mediaFlag = false;
 let mediaFlagHeld = false; // keep it set until a pending bye has gone out
 let mediaFlagSync: Promise<void> = Promise.resolve();
 let cameraBusy = false; // a camera on/off switch is in progress
+let microphoneBusy = false; // a microphone switch is in progress
+// The devices chosen on the call screen, for the rest of the session (never
+// stored): null is the system's. A new call or a camera turned on asks for
+// them as `ideal`, so one that is gone falls back instead of failing.
+let microphoneChoice: string | null = null;
+let cameraChoice: string | null = null;
 
 export function initCall(callbacks: CallCallbacks): void {
   cbs = callbacks;
@@ -537,15 +547,30 @@ function stopStream(stream: MediaStream | null): void {
   stream?.getTracks().forEach(t => t.stop());
 }
 
+/** The device a track comes from, where the platform says it. */
+function deviceOf(track: MediaStreamTrack | undefined): string | undefined {
+  return track?.getSettings?.().deviceId || undefined;
+}
+
 function reportMedia(): void {
   if (!cbs) return;
   const audio = localStream?.getAudioTracks()[0];
   const vid = localStream?.getVideoTracks()[0];
-  cbs.onMedia({
+  const state: MediaState = {
     muted: audio ? !audio.enabled : false,
     cameraOn: vid ? vid.enabled : false,
     hasVideo: !!vid,
-  });
+  };
+  const microphoneId = deviceOf(audio) ?? microphoneChoice ?? undefined;
+  const cameraId = deviceOf(vid) ?? cameraChoice ?? undefined;
+  if (microphoneId !== undefined) state.microphoneId = microphoneId;
+  if (cameraId !== undefined) state.cameraId = cameraId;
+  cbs.onMedia(state);
+}
+
+/** The constraints of a microphone or a camera, with the device chosen for it. */
+function withDevice(base: MediaTrackConstraints, deviceId: string | null, how: 'ideal' | 'exact'): MediaTrackConstraints {
+  return deviceId ? { ...base, deviceId: { [how]: deviceId } } : base;
 }
 
 // Request mic (+ camera). If the camera is unavailable but was requested, fall
@@ -553,14 +578,14 @@ function reportMedia(): void {
 async function getMedia(withVideo: boolean): Promise<{ stream: MediaStream; video: boolean }> {
   try {
     const stream = await navigator.mediaDevices.getUserMedia({
-      audio: AUDIO_CONSTRAINTS,
-      video: withVideo ? VIDEO_CONSTRAINTS : false,
+      audio: withDevice(AUDIO_CONSTRAINTS, microphoneChoice, 'ideal'),
+      video: withVideo ? withDevice(VIDEO_CONSTRAINTS, cameraChoice, 'ideal') : false,
     });
     return { stream, video: withVideo };
   } catch (e) {
     if (!withVideo) throw e;
     const stream = await navigator.mediaDevices.getUserMedia({
-      audio: AUDIO_CONSTRAINTS,
+      audio: withDevice(AUDIO_CONSTRAINTS, microphoneChoice, 'ideal'),
       video: false,
     });
     return { stream, video: false };
@@ -1181,7 +1206,9 @@ async function switchCamera(p: RTCPeerConnection, stream: MediaStream): Promise<
   }
   let track: MediaStreamTrack | undefined;
   try {
-    const cam = await navigator.mediaDevices.getUserMedia({ video: VIDEO_CONSTRAINTS });
+    const cam = await navigator.mediaDevices.getUserMedia({
+      video: withDevice(VIDEO_CONSTRAINTS, cameraChoice, 'ideal'),
+    });
     track = cam.getVideoTracks()[0];
   } catch (error) {
     if (my === generation) cbs?.onError(mediaErrorCode(error, 'camera'));
@@ -1208,6 +1235,85 @@ async function switchCamera(p: RTCPeerConnection, stream: MediaStream): Promise<
     cbs?.onError(mediaErrorCode(error, 'camera'));
     return false;
   }
+}
+
+// Switch the microphone or the camera of the call to another device (the
+// call screen's menus). The new track takes the old one's place with
+// replaceTrack, so nothing renegotiates; a muted microphone stays muted. A
+// camera that is off only remembers the choice, for when it turns on, and
+// so does a call that has no media yet. If the device cannot be opened, the
+// call keeps the one it has and the promise rejects: the screen says so.
+// It never reaches onError, whose errors explain why a call ended.
+export async function selectMicrophone(deviceId: string): Promise<void> {
+  microphoneChoice = deviceId;
+  const p = pc;
+  const stream = localStream;
+  const current = stream?.getAudioTracks()[0];
+  if (!p || !stream || !current || microphoneBusy || deviceOf(current) === deviceId) {
+    reportMedia();
+    return;
+  }
+  microphoneBusy = true;
+  try {
+    await switchTrack(p, stream, current, deviceId);
+  } finally {
+    microphoneBusy = false;
+  }
+}
+
+export async function selectCamera(deviceId: string): Promise<void> {
+  cameraChoice = deviceId;
+  const p = pc;
+  const stream = localStream;
+  const current = stream?.getVideoTracks()[0];
+  if (!p || !stream || !current || cameraBusy || deviceOf(current) === deviceId) {
+    reportMedia();
+    return;
+  }
+  cameraBusy = true;
+  try {
+    await switchTrack(p, stream, current, deviceId);
+    cbs?.onLocalStream(stream);
+  } finally {
+    cameraBusy = false;
+  }
+}
+
+async function switchTrack(
+  p: RTCPeerConnection,
+  stream: MediaStream,
+  current: MediaStreamTrack,
+  deviceId: string,
+): Promise<void> {
+  const my = generation;
+  const audio = current.kind === 'audio';
+  const opened = await navigator.mediaDevices.getUserMedia(
+    audio
+      ? { audio: withDevice(AUDIO_CONSTRAINTS, deviceId, 'exact') }
+      : { video: withDevice(VIDEO_CONSTRAINTS, deviceId, 'exact') },
+  );
+  const track = (audio ? opened.getAudioTracks() : opened.getVideoTracks())[0];
+  if (!track) {
+    stopStream(opened);
+    throw new Error(`no ${current.kind} track from ${deviceId}`);
+  }
+  // The call ended, or the track was turned off, while the device was opening.
+  if (my !== generation || pc !== p || localStream !== stream || !stream.getTracks().includes(current)) {
+    track.stop();
+    return;
+  }
+  track.enabled = current.enabled;
+  const sender = p.getSenders().find(s => s.track === current) ?? (audio ? undefined : videoTransceiver(p)?.sender);
+  try {
+    if (sender) await sender.replaceTrack(track);
+  } catch (error) {
+    track.stop();
+    throw error;
+  }
+  stream.removeTrack(current);
+  stream.addTrack(track);
+  current.stop();
+  reportMedia();
 }
 
 function end(finalState: CallState = 'ended'): void {

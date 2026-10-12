@@ -47,6 +47,8 @@ function fakeEngine() {
     teardownCall: vi.fn(),
     toggleMute: vi.fn(() => true),
     toggleCamera: vi.fn(async () => true),
+    selectMicrophone: vi.fn(async (_deviceId: string) => {}),
+    selectCamera: vi.fn(async (_deviceId: string) => {}),
     answerDirectConsent: vi.fn(),
     isCallBusy: vi.fn(() => status.busy),
     callHoldsMedia: vi.fn(() => status.media),
@@ -763,6 +765,36 @@ describe('useCallController', () => {
       act(() => s.cb().onMedia({ muted: true, cameraOn: true, hasVideo: true }));
       expect(s.result.current.media).toEqual({ muted: true, cameraOn: true, hasVideo: true });
       expect(s.result.current.video).toBe(true);
+    });
+  });
+
+  // The device menus of the call screen (12 Oct 2026).
+  describe('choosing the devices', () => {
+    it('switches the microphone and the camera through call.ts, and shows the ones in use', async () => {
+      const s = setup();
+      connectedCall(s, newId());
+      await act(async () => s.result.current.selectMicrophone('usb'));
+      await act(async () => s.result.current.selectCamera('cam-2'));
+      expect(s.engine.selectMicrophone).toHaveBeenCalledWith('usb');
+      expect(s.engine.selectCamera).toHaveBeenCalledWith('cam-2');
+      act(() =>
+        s.cb().onMedia({ muted: false, cameraOn: true, hasVideo: true, microphoneId: 'usb', cameraId: 'cam-2' }),
+      );
+      expect(s.result.current.media).toEqual(expect.objectContaining({ microphoneId: 'usb', cameraId: 'cam-2' }));
+      expect(s.result.current.notice).toBeNull();
+    });
+
+    it('says so when the chosen microphone or camera cannot be used, and the call goes on', async () => {
+      vi.spyOn(console, 'error').mockImplementation(() => {});
+      const s = setup();
+      connectedCall(s, newId());
+      s.engine.selectMicrophone.mockRejectedValueOnce(new DOMException('gone', 'NotFoundError'));
+      await act(async () => s.result.current.selectMicrophone('gone'));
+      expect(s.result.current.notice).toBe('microphone');
+      s.engine.selectCamera.mockRejectedValueOnce(new DOMException('busy', 'NotReadableError'));
+      await act(async () => s.result.current.selectCamera('cam-2'));
+      expect(s.result.current.notice).toBe('camera');
+      expect(s.result.current.view).toBe('connected');
     });
   });
 });

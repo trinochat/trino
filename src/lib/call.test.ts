@@ -684,3 +684,159 @@ async function setupCallbacks() {
     onDirectConsent: vi.fn(),
   };
 }
+
+// The call screen's device menus (12 Oct 2026): a microphone or a camera is switched in place, with
+// replaceTrack and no renegotiation, and a choice made while nothing is open is kept for later. A
+// switch that fails leaves the call as it was and is the screen's to tell: it never reaches onError,
+// whose errors explain why a call ended.
+describe('choosing the devices of a call', () => {
+  type Track = { kind: string; enabled: boolean; stop: ReturnType<typeof vi.fn>; getSettings(): { deviceId: string } };
+
+  function deviceOf(constraint: unknown, fallback: string): string {
+    const id = (constraint as { deviceId?: { exact?: string; ideal?: string } } | undefined)?.deviceId;
+    return id?.exact ?? id?.ideal ?? fallback;
+  }
+
+  function track(kind: string, deviceId: string): Track {
+    return { kind, enabled: true, stop: vi.fn(), getSettings: () => ({ deviceId }) };
+  }
+
+  function liveStream(tracks: Track[]) {
+    return {
+      getTracks: () => [...tracks],
+      getAudioTracks: () => tracks.filter(t => t.kind === 'audio'),
+      getVideoTracks: () => tracks.filter(t => t.kind === 'video'),
+      addTrack: (t: Track) => tracks.push(t),
+      removeTrack: (t: Track) => tracks.splice(tracks.indexOf(t), 1),
+    };
+  }
+
+  beforeEach(() => {
+    getUserMedia.mockImplementation(async (constraints: { audio?: unknown; video?: unknown }) =>
+      liveStream([
+        ...(constraints.audio ? [track('audio', deviceOf(constraints.audio, 'default'))] : []),
+        ...(constraints.video ? [track('video', deviceOf(constraints.video, 'cam-1'))] : []),
+      ]),
+    );
+  });
+
+  /** The sender of the call's track of `kind`, which follows replaceTrack. */
+  function senderFor(pc: FakePc, kind: 'audio' | 'video', current: Track) {
+    const sender = {
+      track: current as Track | null,
+      replaceTrack: vi.fn(async (next: Track | null) => {
+        sender.track = next;
+      }),
+    };
+    const senders = (pc.getSenders() as unknown[]).concat(sender);
+    pc.getSenders = () => senders;
+    pc.getTransceivers = () => (kind === 'video' ? [{ receiver: { track: { kind } }, direction: 'sendrecv', sender }] : []);
+    return sender;
+  }
+
+  const lastMedia = (cb: { onMedia: ReturnType<typeof vi.fn> }) => cb.onMedia.mock.calls.slice(-1)[0]?.[0];
+
+  it('switches the microphone in place, keeping it muted, and says which one is in use', async () => {
+    api.getTurnServers.mockResolvedValue(turnOk());
+    const { call, cb } = await setup();
+    const pc = await connectedCall(call);
+    const stream = cb.onLocalStream.mock.calls.find(([s]) => s)![0] as ReturnType<typeof liveStream>;
+    const before = stream.getAudioTracks()[0]!;
+    const sender = senderFor(pc, 'audio', before);
+    expect(lastMedia(cb)).toEqual(expect.objectContaining({ microphoneId: 'default' }));
+    call.toggleMute();
+
+    await call.selectMicrophone('usb');
+
+    expect(getUserMedia).toHaveBeenLastCalledWith({ audio: expect.objectContaining({ deviceId: { exact: 'usb' } }) });
+    const after = stream.getAudioTracks()[0]!;
+    expect(after).not.toBe(before);
+    expect(sender.replaceTrack).toHaveBeenCalledWith(after);
+    expect(after.enabled).toBe(false);
+    expect(before.stop).toHaveBeenCalled();
+    expect(stream.getAudioTracks()).toHaveLength(1);
+    expect(lastMedia(cb)).toEqual(expect.objectContaining({ muted: true, microphoneId: 'usb' }));
+    expect(sent().filter(s => s.signal.t === 'offer')).toHaveLength(1);
+  });
+
+  it('keeps the microphone it has when the chosen one cannot be opened, and leaves onError alone', async () => {
+    api.getTurnServers.mockResolvedValue(turnOk());
+    const { call, cb } = await setup();
+    const pc = await connectedCall(call);
+    const stream = cb.onLocalStream.mock.calls.find(([s]) => s)![0] as ReturnType<typeof liveStream>;
+    const before = stream.getAudioTracks()[0]!;
+    const sender = senderFor(pc, 'audio', before);
+    getUserMedia.mockRejectedValueOnce(new DOMException('gone', 'NotFoundError'));
+
+    await expect(call.selectMicrophone('gone')).rejects.toBeTruthy();
+
+    expect(stream.getAudioTracks()).toEqual([before]);
+    expect(before.stop).not.toHaveBeenCalled();
+    expect(sender.replaceTrack).not.toHaveBeenCalled();
+    expect(cb.onError).not.toHaveBeenCalled();
+    expect(lastState(cb)).toBe('connected');
+  });
+
+  it('opens the next call with the chosen microphone, falling back to another if it is gone', async () => {
+    api.getTurnServers.mockResolvedValue(turnOk());
+    const { call } = await setup();
+    await call.selectMicrophone('usb');
+    expect(getUserMedia).not.toHaveBeenCalled();
+    await call.startCall(PEER, false);
+    expect(getUserMedia.mock.calls[0]![0].audio).toEqual(expect.objectContaining({ deviceId: { ideal: 'usb' } }));
+  });
+
+  it('remembers the chosen camera while it is off, and opens it when it turns on', async () => {
+    api.getTurnServers.mockResolvedValue(turnOk());
+    const { call, cb } = await setup();
+    await connectedCall(call);
+    getUserMedia.mockClear();
+
+    await call.selectCamera('cam-2');
+    expect(getUserMedia).not.toHaveBeenCalled();
+    expect(lastMedia(cb)).toEqual(expect.objectContaining({ cameraOn: false, cameraId: 'cam-2' }));
+
+    await call.toggleCamera();
+    expect(getUserMedia).toHaveBeenCalledWith({ video: expect.objectContaining({ deviceId: { ideal: 'cam-2' } }) });
+    expect(lastMedia(cb)).toEqual(expect.objectContaining({ cameraOn: true, cameraId: 'cam-2' }));
+  });
+
+  it('switches a camera that is on in place, and shows it in the preview', async () => {
+    api.getTurnServers.mockResolvedValue(turnOk());
+    const { call, cb } = await setup();
+    const pc = await connectedCall(call);
+    await call.toggleCamera();
+    const stream = cb.onLocalStream.mock.calls.find(([s]) => s)![0] as ReturnType<typeof liveStream>;
+    const before = stream.getVideoTracks()[0]!;
+    const sender = senderFor(pc, 'video', before);
+    cb.onLocalStream.mockClear();
+
+    await call.selectCamera('cam-2');
+
+    expect(getUserMedia).toHaveBeenLastCalledWith({ video: expect.objectContaining({ deviceId: { exact: 'cam-2' } }) });
+    const after = stream.getVideoTracks()[0]!;
+    expect(sender.replaceTrack).toHaveBeenCalledWith(after);
+    expect(before.stop).toHaveBeenCalled();
+    expect(stream.getVideoTracks()).toHaveLength(1);
+    expect(cb.onLocalStream).toHaveBeenCalledWith(stream);
+    expect(lastMedia(cb)).toEqual(expect.objectContaining({ cameraOn: true, cameraId: 'cam-2' }));
+  });
+
+  it('keeps the camera it has when the chosen one cannot be opened', async () => {
+    api.getTurnServers.mockResolvedValue(turnOk());
+    const { call, cb } = await setup();
+    const pc = await connectedCall(call);
+    await call.toggleCamera();
+    const stream = cb.onLocalStream.mock.calls.find(([s]) => s)![0] as ReturnType<typeof liveStream>;
+    const before = stream.getVideoTracks()[0]!;
+    const sender = senderFor(pc, 'video', before);
+    getUserMedia.mockRejectedValueOnce(new DOMException('busy', 'NotReadableError'));
+
+    await expect(call.selectCamera('cam-2')).rejects.toBeTruthy();
+
+    expect(stream.getVideoTracks()).toEqual([before]);
+    expect(before.stop).not.toHaveBeenCalled();
+    expect(sender.replaceTrack).not.toHaveBeenCalled();
+    expect(cb.onError).not.toHaveBeenCalled();
+  });
+});

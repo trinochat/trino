@@ -54,6 +54,8 @@ export type CallEngine = Pick<
   | 'teardownCall'
   | 'toggleMute'
   | 'toggleCamera'
+  | 'selectMicrophone'
+  | 'selectCamera'
   | 'answerDirectConsent'
   | 'isCallBusy'
   | 'callHoldsMedia'
@@ -157,6 +159,9 @@ export interface CallEndCard {
   logged: boolean;
 }
 
+/** A problem during a call that did not end it. */
+export type CallNotice = 'camera' | 'microphone';
+
 /** What asks before a call is hung up: locking, or closing the window. */
 export type EndConfirmReason = 'lock' | 'close';
 
@@ -191,8 +196,11 @@ export interface CallController {
    * before the call (as the DTLS fingerprint rule does). The call goes on.
    */
   reportMismatch(): void;
-  /** A problem during the call that did not end it. */
-  notice: 'camera' | null;
+  /**
+   * A problem during the call that did not end it: the camera failed, or the
+   * microphone chosen on the call screen could not be used.
+   */
+  notice: CallNotice | null;
   ended: CallEndCard | null;
   dismissEnded(): void;
   /** "Volver a llamar" from the end card. */
@@ -209,6 +217,13 @@ export interface CallController {
   hangup(): void;
   toggleMute(): void;
   toggleCamera(): void;
+  /**
+   * The call screen's menus: switch to another microphone or camera, in place.
+   * A camera that is off takes the choice when it turns on. A device that
+   * cannot be used leaves the call as it was and shows a notice.
+   */
+  selectMicrophone(deviceId: string): Promise<void>;
+  selectCamera(deviceId: string): Promise<void>;
   /** Hang up and wait for the bye and the call's record (bounded): before locking. */
   hangupAndWait(): Promise<void>;
   /**
@@ -267,7 +282,7 @@ export function useCallController(deps: CallControllerDeps): CallController {
   const [sas, setSas] = useState<CallSas | null>(null);
   const [minimized, setMinimized] = useState(false);
   const [ended, setEnded] = useState<CallEndCard | null>(null);
-  const [notice, setNotice] = useState<'camera' | null>(null);
+  const [notice, setNotice] = useState<CallNotice | null>(null);
   const [connectedAt, setConnectedAt] = useState<number | null>(null);
   const [endConfirm, setEndConfirm] = useState<EndConfirmReason | null>(null);
 
@@ -442,13 +457,17 @@ export function useCallController(deps: CallControllerDeps): CallController {
       if (s === 'ended' || s === 'rejected') finish(current, at);
     }
 
+    /** Shows a notice for a while. */
+    function showNotice(next: CallNotice) {
+      setNotice(next);
+      if (live.noticeTimer) clearTimeout(live.noticeTimer);
+      live.noticeTimer = setTimeout(() => setNotice(null), NOTICE_MS);
+    }
+
     function onError(code: CallErrorCode) {
       const call = live.call;
       if (call && !call.finished) call.errors.push(code);
-      if (code !== 'camera') return;
-      setNotice('camera');
-      if (live.noticeTimer) clearTimeout(live.noticeTimer);
-      live.noticeTimer = setTimeout(() => setNotice(null), NOTICE_MS);
+      if (code === 'camera') showNotice('camera');
     }
 
     /** The 7 symbols, from the call id, both identity digests and both fingerprints. */
@@ -545,6 +564,22 @@ export function useCallController(deps: CallControllerDeps): CallController {
         engine()
           .toggleCamera()
           .catch(error => console.error('camera switch failed', error));
+      },
+      selectMicrophone(deviceId: string) {
+        return engine()
+          .selectMicrophone(deviceId)
+          .catch(error => {
+            console.error('microphone not switched', error);
+            if (live.call && !live.call.finished) showNotice('microphone');
+          });
+      },
+      selectCamera(deviceId: string) {
+        return engine()
+          .selectCamera(deviceId)
+          .catch(error => {
+            console.error('camera not switched', error);
+            if (live.call && !live.call.finished) showNotice('camera');
+          });
       },
       confirmMatch() {
         const call = live.call;
@@ -693,6 +728,8 @@ export function useCallController(deps: CallControllerDeps): CallController {
     hangup: actions.hangup,
     toggleMute: actions.toggleMute,
     toggleCamera: actions.toggleCamera,
+    selectMicrophone: actions.selectMicrophone,
+    selectCamera: actions.selectCamera,
     hangupAndWait: actions.hangupAndWait,
     confirmEnd: actions.confirmEnd,
   };
