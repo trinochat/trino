@@ -1606,12 +1606,33 @@ async fn prepare_file(
     mime: &str,
     data_b64: &str,
     thumb: Option<String>,
+    gid: Option<&str>,
 ) -> Result<FileRef, CommandError> {
+    let (identity, blob, file) =
+        encrypt_attachment(state, name, mime, data_b64, thumb, gid).await?;
+    let url = blossom::upload(&identity, &blob, &file.sha256).await?;
+    Ok(FileRef { url, ..file })
+}
+
+/// What `prepare_file` uploads: the identity that signs the upload, the
+/// encrypted blob, and its reference, without the URL the upload gives it.
+/// `gid` is the group it goes to, if any.
+async fn encrypt_attachment(
+    state: &AppState,
+    name: &str,
+    mime: &str,
+    data_b64: &str,
+    thumb: Option<String>,
+    gid: Option<&str>,
+) -> Result<(Identity, Vec<u8>, FileRef), CommandError> {
     let too_large = || CommandError::internal("attachment is too large (25 MB max)");
     if data_b64.len() > MAX_ATTACHMENT_BYTES.div_ceil(3) * 4 + 4 {
         return Err(too_large());
     }
     let thumb = checked_inline_raster(thumb).map_err(CommandError::internal)?;
+    if !announcement_fits(name, mime, data_b64, thumb.as_deref(), gid) {
+        return Err(SendError::TooLong.into());
+    }
     let identity = {
         let inner = state.inner.lock().await;
         let identity = inner.identity.as_ref().ok_or(SendError::Sealed)?.clone();
@@ -1633,16 +1654,46 @@ async fn prepare_file(
     let size = data.len() as u64;
     let enc = blossom::encrypt_file(&data)?;
     drop(data);
-    let url = blossom::upload(&identity, &enc.blob, &enc.sha256_hex).await?;
-    Ok(FileRef {
-        url,
+    let file = FileRef {
+        url: String::new(),
         key: enc.key_hex,
         sha256: enc.sha256_hex,
         mime: mime.to_string(),
         name: name.to_string(),
         size,
         thumb,
-    })
+    };
+    Ok((identity, enc.blob, file))
+}
+
+/// Whether the announcement of a file can fit a relay whatever URL its
+/// upload gives it (`blossom::MAX_URL_BYTES`), to a contact or to the group
+/// `gid`. Checked before the upload, so a file that cannot be announced,
+/// such as one with too large a preview, is never uploaded. The preview is
+/// a checked data URL, which JSON writes as it is: a stand-in of its length
+/// sizes it without copying it.
+fn announcement_fits(
+    name: &str,
+    mime: &str,
+    data_b64: &str,
+    thumb: Option<&str>,
+    gid: Option<&str>,
+) -> bool {
+    let announcement = Envelope::File {
+        file: FileRef {
+            url: "u".repeat(blossom::MAX_URL_BYTES),
+            key: "0".repeat(64),
+            sha256: "0".repeat(64),
+            mime: mime.to_string(),
+            name: name.to_string(),
+            // The most bytes `data_b64` can hold.
+            size: (data_b64.len() / 4 * 3 + 3) as u64,
+            thumb: thumb.map(|thumb| "t".repeat(thumb.len())),
+        },
+        gid: gid.map(str::to_string),
+        body: None,
+    };
+    largest_frame_bytes(&encode_envelope(&announcement), unix_now()) <= MAX_EVENT_BYTES
 }
 
 /// A file to a contact (K4): uploaded, then announced like a text, and sent
@@ -1656,18 +1707,29 @@ pub async fn send_file(
     data_b64: String,
     thumb: Option<String>,
 ) -> Result<SentFile, CommandError> {
-    let file = prepare_file(&state, &name, &mime, &data_b64, thumb).await?;
+    let file = prepare_file(&state, &name, &mime, &data_b64, thumb, None).await?;
+    Ok(announce_file(&state, &handle, file, ACK_WAIT).await?)
+}
+
+/// `send_file` once the file is uploaded: announce it to `handle`, waiting
+/// up to `wait` for a relay's OK.
+async fn announce_file(
+    state: &AppState,
+    handle: &str,
+    file: FileRef,
+    wait: std::time::Duration,
+) -> Result<SentFile, SendError> {
     let env = encode_envelope(&Envelope::File {
         file: file.clone(),
         gid: None,
         body: None,
     });
-    ensure_session(&state, &handle).await?;
-    let receipt = send_acked(&state, &handle, &env, unix_now(), ACK_WAIT).await?;
+    ensure_session(state, handle).await?;
+    let receipt = send_acked(state, handle, &env, unix_now(), wait).await?;
     let mut inner = state.inner.lock().await;
     record_history(
         &mut inner,
-        handle.clone(),
+        handle.to_string(),
         HistItem {
             side: "me".into(),
             from: None,
@@ -1693,25 +1755,37 @@ pub async fn send_group_file(
     thumb: Option<String>,
     only: Option<Vec<String>>,
 ) -> Result<SentGroupFile, CommandError> {
-    let file = prepare_file(&state, &name, &mime, &data_b64, thumb).await?;
+    let file = prepare_file(&state, &name, &mime, &data_b64, thumb, Some(&gid)).await?;
+    Ok(announce_group_file(&state, &gid, file, only.as_deref(), ACK_WAIT).await?)
+}
+
+/// `send_group_file` once the file is uploaded: announce it to the group as
+/// `send_group_text` sends a text.
+async fn announce_group_file(
+    state: &AppState,
+    gid: &str,
+    file: FileRef,
+    only: Option<&[String]>,
+    wait: std::time::Duration,
+) -> Result<SentGroupFile, SendError> {
     let (targets, env) = {
         let inner = state.inner.lock().await;
         let identity = inner.identity.as_ref().ok_or(SendError::Sealed)?;
         let my_ik = hex::encode(identity.ik_sign.pub_bytes);
-        let roster = inner.groups.get(&gid).ok_or(SendError::UnknownGroup)?;
+        let roster = inner.groups.get(gid).ok_or(SendError::UnknownGroup)?;
         let env = encode_envelope(&Envelope::File {
             file: file.clone(),
-            gid: Some(gid.clone()),
+            gid: Some(gid.to_string()),
             body: None,
         });
-        (member_handles(&inner, roster, &my_ik, only.as_deref()), env)
+        (member_handles(&inner, roster, &my_ik, only), env)
     };
-    let receipt = fan_out(&state, &targets, &env, unix_now(), ACK_WAIT).await?;
+    let receipt = fan_out(state, &targets, &env, unix_now(), wait).await?;
     if only.is_none() {
         let mut inner = state.inner.lock().await;
         record_history(
             &mut inner,
-            group_convo(&gid),
+            group_convo(gid),
             HistItem {
                 side: "me".into(),
                 from: None,
@@ -2368,6 +2442,46 @@ fn event_frame_bytes(event: &NostrEvent) -> usize {
     serde_json::json!(["EVENT", event]).to_string().len()
 }
 
+/// The largest frame `plaintext` can make once `seal_for` seals it for any
+/// contact, dated `ts`: with the longest profile announcement
+/// `profile::with_caps` can add, and the widest counters a session can have.
+/// A message for several contacts, and a file before its upload, are sized
+/// with it, so one too large for the relays goes to nobody.
+fn largest_frame_bytes(plaintext: &[u8], ts: i64) -> usize {
+    let mut profiles = profile::Profiles::default();
+    profiles.contacts.insert(
+        String::new(),
+        profile::ContactProfile {
+            rev: u64::MAX,
+            ..Default::default()
+        },
+    );
+    let bare = br#"{"ty":"text"}"#;
+    let announcement = profile::with_caps(&profiles, "", bare).len() - bare.len();
+    let payload = WirePayload {
+        header: WireHeader {
+            dh_pub: "0".repeat(64),
+            pn: u32::MAX,
+            n: u32::MAX,
+        },
+        // AES-GCM, as `ratchet_encrypt` uses it: a 12-byte nonce, and the
+        // plaintext with its 16-byte tag, both in hex.
+        nonce: "0".repeat(24),
+        ciphertext: "0".repeat((plaintext.len() + announcement + 16) * 2),
+        handshake: None,
+    };
+    let event = NostrEvent {
+        id: "0".repeat(64),
+        pubkey: "0".repeat(64),
+        created_at: ts,
+        kind: TRINO_KIND,
+        tags: vec![vec!["p".to_string(), "0".repeat(64)]],
+        content: serde_json::to_string(&payload).unwrap_or_default(),
+        sig: "0".repeat(128),
+    };
+    event_frame_bytes(&event)
+}
+
 /// Encrypt and publish without waiting for any relay: handshakes, call
 /// signals, rosters and resends, as before K4. A relay that is down gets it
 /// once it is back.
@@ -2469,8 +2583,9 @@ fn member_handles(
 
 /// Send `plaintext` to each of `targets`, all dated `ts`, each waiting for
 /// its own relay OK. Every member is tried whatever happens to the others:
-/// the send used to stop at the first one that failed. When nobody takes
-/// it, it is `NotAccepted`.
+/// the send used to stop at the first one that failed. A message too large
+/// for the relays is refused before any member gets it; when nobody takes
+/// it, `group_receipt` says why.
 async fn fan_out(
     state: &AppState,
     targets: &[String],
@@ -2478,13 +2593,11 @@ async fn fan_out(
     ts: i64,
     wait: std::time::Duration,
 ) -> Result<GroupSendReceipt, SendError> {
-    let mut receipt = GroupSendReceipt {
-        ts,
-        accepted: Vec::new(),
-        failed: Vec::new(),
-    };
+    if largest_frame_bytes(plaintext, ts) > MAX_EVENT_BYTES {
+        return Err(SendError::TooLong);
+    }
     if targets.is_empty() {
-        return Ok(receipt);
+        return group_receipt(ts, Vec::new());
     }
     if !any_relay_up(state).await {
         return Err(SendError::Offline);
@@ -2496,18 +2609,47 @@ async fn fan_out(
                 .map(drop),
             Err(error) => Err(error),
         };
-        (handle, sent)
+        (handle.clone(), sent)
     });
-    for (handle, sent) in futures_util::future::join_all(sends).await {
+    group_receipt(ts, futures_util::future::join_all(sends).await)
+}
+
+/// What a group send dated `ts` answers once every member was tried: the
+/// receipt, when one member at least took it (or there was nobody to send
+/// to). When nobody did, why: the reason every member failed for, when it
+/// is the same one (too large, offline, no session…), and `NotAccepted`
+/// when they failed in different ways.
+fn group_receipt(
+    ts: i64,
+    results: Vec<(String, Result<(), SendError>)>,
+) -> Result<GroupSendReceipt, SendError> {
+    let mut receipt = GroupSendReceipt {
+        ts,
+        accepted: Vec::new(),
+        failed: Vec::new(),
+    };
+    let mut causes = Vec::new();
+    for (handle, sent) in results {
         match sent {
-            Ok(()) => receipt.accepted.push(handle.clone()),
-            Err(_) => receipt.failed.push(handle.clone()),
+            Ok(()) => receipt.accepted.push(handle),
+            Err(error) => {
+                receipt.failed.push(handle);
+                causes.push(error);
+            }
         }
     }
-    if receipt.accepted.is_empty() {
-        return Err(SendError::NotAccepted);
+    let mut causes = causes.into_iter();
+    let Some(first) = causes.next() else {
+        return Ok(receipt);
+    };
+    if !receipt.accepted.is_empty() {
+        return Ok(receipt);
     }
-    Ok(receipt)
+    if causes.all(|other| other == first) {
+        Err(first)
+    } else {
+        Err(SendError::NotAccepted)
+    }
 }
 
 /// What to do with a signature-verified event from a relay, decided before any
@@ -5233,6 +5375,210 @@ mod tests {
         assert_eq!(
             SendError::NoSession.to_string(),
             "no session — run connect first"
+        );
+    }
+
+    // ---- B2: a message too large for the relays goes to nobody ----
+
+    /// A preview `chars` characters long, as the UI sends a sticker's data
+    /// URL with a file.
+    fn preview_of(chars: usize) -> String {
+        format!("data:image/png;base64,{}", "A".repeat(chars))
+    }
+
+    /// Whether the session with each of `handles` is where it started.
+    async fn no_session_moved_on(state: &AppState, handles: &[&str]) -> bool {
+        for handle in handles {
+            if sent_so_far(state, handle).await != 0 {
+                return false;
+            }
+        }
+        true
+    }
+
+    #[tokio::test]
+    async fn a_group_text_too_large_for_the_relays_goes_to_no_member() {
+        let me = create_identity();
+        let others = [create_identity(), create_identity(), create_identity()];
+        let relay = TestRelay::start(Answer::Accept).await;
+        let state = sending_state(&me, vec![relay.client().await]).await;
+        let gid = group_of_three(&state, &me, &others).await;
+
+        // About 80 KB once encrypted and hex-encoded, as for one contact.
+        let error = send_group_text(&state, &gid, "x".repeat(40_000), None, SHORT_WAIT)
+            .await
+            .unwrap_err();
+
+        assert_eq!(error, SendError::TooLong);
+        assert_eq!(CommandError::from(error).code, ErrorCode::MessageTooLong);
+        assert!(relay.events().is_empty(), "a member got it");
+        assert!(no_session_moved_on(&state, &["bob", "carol", "dave"]).await);
+        assert!(!state
+            .inner
+            .lock()
+            .await
+            .history
+            .contains_key(&group_convo(&gid)));
+    }
+
+    #[tokio::test]
+    async fn a_group_file_whose_preview_is_too_large_goes_to_no_member() {
+        let me = create_identity();
+        let others = [create_identity(), create_identity(), create_identity()];
+        let relay = TestRelay::start(Answer::Accept).await;
+        let state = sending_state(&me, vec![relay.client().await]).await;
+        let gid = group_of_three(&state, &me, &others).await;
+        // A sticker whose 40,000-character data URL goes as its preview.
+        let file = FileRef {
+            thumb: Some(preview_of(40_000)),
+            ..sample_file()
+        };
+
+        let Err(error) = announce_group_file(&state, &gid, file, None, SHORT_WAIT).await else {
+            panic!("announced");
+        };
+
+        assert_eq!(error, SendError::TooLong);
+        assert!(relay.events().is_empty(), "a member got it");
+        assert!(no_session_moved_on(&state, &["bob", "carol", "dave"]).await);
+    }
+
+    #[tokio::test]
+    async fn a_file_whose_announcement_cannot_fit_is_refused_before_its_upload() {
+        let relay = TestRelay::start(Answer::Accept).await;
+        let me = create_identity();
+        let state = sending_state(&me, vec![relay.client().await]).await;
+        let data = base64::engine::general_purpose::STANDARD.encode(b"a small sticker");
+        let gid = "ab".repeat(32);
+
+        for to_group in [None, Some(gid.as_str())] {
+            let encrypted = encrypt_attachment(
+                &state,
+                "sticker.png",
+                "image/png",
+                &data,
+                Some(preview_of(40_000)),
+                to_group,
+            )
+            .await;
+
+            // Refused here, it never reaches a file server.
+            let Err(error) = encrypted else {
+                panic!("it would be uploaded, to group {to_group:?}");
+            };
+            assert_eq!(error.code, ErrorCode::MessageTooLong, "{to_group:?}");
+        }
+        // A preview that fits goes on to the upload.
+        let (_, _, file) = encrypt_attachment(
+            &state,
+            "sticker.png",
+            "image/png",
+            &data,
+            Some(preview_of(8_000)),
+            Some(&gid),
+        )
+        .await
+        .unwrap();
+        assert_eq!(file.thumb, Some(preview_of(8_000)));
+    }
+
+    #[tokio::test]
+    async fn the_largest_frame_of_a_message_bounds_the_event_sealed_for_it() {
+        let relay = TestRelay::start(Answer::Accept).await;
+        let (me, bob) = (create_identity(), create_identity());
+        let state = sending_state(&me, vec![relay.client().await]).await;
+        {
+            let mut inner = state.inner.lock().await;
+            add_session(&mut inner, &me, &bob, "bob");
+            // The longest announcement a profile revision can make.
+            inner.profiles.contacts.insert(
+                "bob".to_string(),
+                profile::ContactProfile {
+                    rev: u64::MAX,
+                    ..Default::default()
+                },
+            );
+        }
+        let file = FileRef {
+            url: "u".repeat(blossom::MAX_URL_BYTES),
+            thumb: Some(preview_of(8_000)),
+            ..sample_file()
+        };
+        for envelope in [
+            Envelope::Text {
+                body: String::new(),
+                id: new_msg_id(),
+            },
+            Envelope::Text {
+                body: "ñandú \"citado\" \u{1}".repeat(500),
+                id: new_msg_id(),
+            },
+            Envelope::Group {
+                gid: "ab".repeat(32),
+                ep: u64::MAX,
+                body: "x".repeat(20_000),
+            },
+            Envelope::File {
+                file,
+                gid: Some("ab".repeat(32)),
+                body: None,
+            },
+        ] {
+            let plaintext = encode_envelope(&envelope);
+            let ts = unix_now();
+
+            let (event, _) = seal_for(&state, "bob", &plaintext, None, Some(ts), true)
+                .await
+                .unwrap();
+
+            let sealed = event_frame_bytes(&event);
+            let largest = largest_frame_bytes(&plaintext, ts);
+            assert!(sealed <= largest, "{sealed} > {largest}");
+            // Only the counters of the session can be shorter than the
+            // widest: up to nine digits each.
+            assert!(largest - sealed <= 18, "{largest} - {sealed}");
+        }
+    }
+
+    #[test]
+    fn when_no_member_takes_a_group_message_the_answer_says_why() {
+        let failed = |errors: Vec<SendError>| -> Vec<(String, Result<(), SendError>)> {
+            let names = ["bob", "carol", "dave"].map(String::from);
+            names.into_iter().zip(errors.into_iter().map(Err)).collect()
+        };
+        // Every member failed the same way: that is the answer.
+        let causes: [fn() -> SendError; 6] = [
+            || SendError::TooLong,
+            || SendError::Offline,
+            || SendError::NoSession,
+            || SendError::Sealed,
+            || SendError::NotAccepted,
+            || SendError::Failed("bad prekey".to_string()),
+        ];
+        for cause in causes {
+            let all = failed(vec![cause(), cause(), cause()]);
+            assert_eq!(group_receipt(NOW, all), Err(cause()));
+        }
+        // Different ways: no relay took it for anyone.
+        let mixed = failed(vec![
+            SendError::TooLong,
+            SendError::NotAccepted,
+            SendError::Offline,
+        ]);
+        assert_eq!(group_receipt(NOW, mixed), Err(SendError::NotAccepted));
+        // One member at least took it: the receipt says who did not.
+        let partly = vec![
+            ("bob".to_string(), Ok(())),
+            ("carol".to_string(), Err(SendError::TooLong)),
+            ("dave".to_string(), Ok(())),
+        ];
+        assert_eq!(
+            group_receipt(NOW, partly),
+            Ok(GroupSendReceipt {
+                ts: NOW,
+                accepted: vec!["bob".to_string(), "dave".to_string()],
+                failed: vec!["carol".to_string()],
+            })
         );
     }
 

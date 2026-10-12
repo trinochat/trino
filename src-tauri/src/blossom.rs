@@ -37,6 +37,10 @@ const TRANSFER: Deadlines = Deadlines {
 pub const MAX_BLOB_BYTES: usize = 25 * 1024 * 1024 + 12 + 16;
 /// The descriptor a server answers an upload with is small JSON.
 const MAX_DESCRIPTOR_BYTES: usize = 16 * 1024;
+/// The longest URL a file can have once uploaded. The announcement of a
+/// file is sized with one this long before the upload (commands.rs), so a
+/// file that cannot be announced is never uploaded.
+pub const MAX_URL_BYTES: usize = 256;
 /// How much of a server's `X-Reason` is kept.
 const MAX_REASON_CHARS: usize = 80;
 
@@ -174,14 +178,27 @@ async fn put_blob(
     if !response.status().is_success() {
         return Err(http_failure(&response));
     }
-    // The blob is stored: the descriptor only says where. Without a usable
-    // `url` in it, the canonical address.
+    // The blob is stored: the descriptor only says where. Without a `url`
+    // in it that an announcement can carry, the canonical address.
     let url = net::read_capped(&mut response, MAX_DESCRIPTOR_BYTES)
         .await
         .ok()
         .and_then(|body| serde_json::from_slice::<serde_json::Value>(&body).ok())
-        .and_then(|descriptor| descriptor.get("url")?.as_str().map(str::to_string));
+        .and_then(|descriptor| descriptor.get("url")?.as_str().map(str::to_string))
+        .filter(|url| announceable(url));
     Ok(url.unwrap_or_else(|| format!("{base}/{sha256_hex}")))
+}
+
+/// Whether `url`, from a server's descriptor, can go into a file's
+/// announcement as it is: at most `MAX_URL_BYTES`, all printable ASCII that
+/// JSON writes unescaped, so the announcement is no larger than it was
+/// sized before the upload.
+fn announceable(url: &str) -> bool {
+    !url.is_empty()
+        && url.len() <= MAX_URL_BYTES
+        && url
+            .bytes()
+            .all(|b| b.is_ascii_graphic() && b != b'"' && b != b'\\')
 }
 
 /// `http <status>`, followed by the server's `X-Reason` when it gives one,
@@ -421,6 +438,57 @@ mod tests {
         assert!(base64::engine::general_purpose::URL_SAFE_NO_PAD
             .decode(token)
             .is_ok());
+    }
+
+    #[tokio::test]
+    async fn a_url_too_long_or_odd_for_an_announcement_gives_way_to_the_canonical_one() {
+        // The announcement of a file is sized before its upload, with a URL
+        // of MAX_URL_BYTES (commands.rs): a server must not make it longer.
+        let me = create_identity();
+        let blob = b"ciphertext".to_vec();
+        let sha = sha_of(&blob);
+        let served = |url: String| {
+            let descriptor = serde_json::json!({ "url": url, "size": 10 }).to_string();
+            mock::serve(move |_| {
+                vec![mock::response(
+                    "200 OK",
+                    "Content-Type: application/json\r\n",
+                    descriptor.as_bytes(),
+                )]
+            })
+        };
+        for odd in [
+            format!("https://cdn.example/{}", "a".repeat(MAX_URL_BYTES)),
+            format!("https://cdn.example/{sha}\"quoted\""),
+            format!("https://cdn.example/{sha}\\x"),
+            format!("https://cdn.example/{sha}\u{202E}gnp"),
+            format!("https://cdn.example/{sha} .png"),
+            String::new(),
+        ] {
+            let (server, _) = served(odd.clone()).await;
+
+            let url = within(upload_to(&[&server], QUICK, &me, &blob, &sha))
+                .await
+                .unwrap();
+
+            assert_eq!(url, format!("{server}/{sha}"), "{odd:?}");
+        }
+        // A short, plain one is kept as the server gives it.
+        let plain = format!("https://cdn.example/{sha}.png");
+        let (server, _) = served(plain.clone()).await;
+        let url = within(upload_to(&[&server], QUICK, &me, &blob, &sha))
+            .await
+            .unwrap();
+        assert_eq!(url, plain);
+    }
+
+    #[test]
+    fn every_canonical_url_fits_an_announcement() {
+        let sha = "f".repeat(64);
+        for server in DEFAULT_BLOSSOM {
+            let canonical = format!("{server}/{sha}");
+            assert!(announceable(&canonical), "{canonical}");
+        }
     }
 
     #[tokio::test]
