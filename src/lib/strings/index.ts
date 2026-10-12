@@ -20,14 +20,11 @@ export type AreaName = keyof typeof AREAS;
 
 /**
  * The key prefixes (the text before the first dot) each area may use, so two
- * units never write the same key. `legacy` keeps the prefixes of the old
- * screens; the new areas never reuse them.
+ * units never write the same key. `legacy` kept the prefixes of the old
+ * screens until I6 removed the last of them; I7 removes the area.
  */
 export const NAMESPACES: Readonly<Record<AreaName, readonly string[]>> = {
-  legacy: [
-    'chat', 'common', 'composer', 'contact', 'empty', 'error', 'file', 'message',
-    'notification', 'sidebar', 'sticker', 'ttl', 'updates',
-  ],
+  legacy: [],
   common: ['common2', 'time2', 'callEvent'],
   auth: ['onb', 'unlock2', 'start', 'titlebar'],
   shell: ['shell', 'inbox', 'forward'],

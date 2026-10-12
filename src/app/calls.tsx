@@ -1,8 +1,6 @@
 /**
- * Calls in the old chats (plan §4, I5; plan-cambios-11oct §7, I5): W6's
- * call controller over call.ts, and its screens over the shell, where
- * MainShell kept the call's state and drew CallOverlay, IncomingCall,
- * RejectedCall and the old questions.
+ * The calls of the chats (plan §4, I5 and I6; plan-cambios-11oct §7): W6's
+ * call controller over call.ts, and its screens over the shell.
  *
  * - Who a call is with comes from the shell's contacts: the name given
  *   here, the photo, the identity digest the SAS v2 needs (K7), and whether
@@ -19,12 +17,12 @@
  *   the ringtone, its volume and the notice of a call that rings while
  *   Trino is behind other windows, from Settings.
  *
- * The shell mounts `slot.bar` above both panes and `slot.layer` in its
- * positioned box under the title bar, after Settings, and makes its panes
- * inert while `slot.covering`: OldShellFrame does that for the old shell.
- * App ends a call through `gate` before it locks, closes the window or quits.
+ * The shell (W2's ShellScreen, src/app/MainScreen.tsx) mounts `slot.bar`
+ * above both panes and `slot.layer` over them, below the title bar, and
+ * makes all of itself but the layer inert while `slot.covering`. App ends a
+ * call through `gate` before it locks, closes the window or quits.
  */
-import { useMemo, type ReactNode } from 'react';
+import { useMemo } from 'react';
 import { api, notify, onCallSignal, type CallEventWire, type CallLogWire, type CallSignalEvent, type NodeInfo } from '../lib/api';
 import { prefs as devicePrefs, type Prefs } from '../lib/prefs';
 import { callSlot, useCallController, type CallController, type CallSounds } from '../screens/call';
@@ -111,42 +109,4 @@ export function useCalls(options: CallsOptions): Calls {
   });
   const gate = useMemo<CallGate>(() => ({ confirmEnd: controller.confirmEnd }), [controller.confirmEnd]);
   return { slot: callSlot(controller), gate };
-}
-
-export interface OldShellFrameProps {
-  /** The bar of a minimized call (`slot.bar`): above both panes, where no layer reaches it. */
-  bar: ReactNode;
-  /** Settings or the call screen covers the panes, which are inert and isolated meanwhile. */
-  covered: boolean;
-  /** Settings' layer, over the panes. */
-  settings: ReactNode;
-  /** The call's layer (`slot.layer`), over the panes and over Settings. */
-  call: ReactNode;
-  /** The old shell's panes. */
-  children: ReactNode;
-}
-
-/**
- * The old shell's frame for Settings and the call, until the redesigned
- * shell (I6): the bar of a minimized call above both panes, then the
- * positioned box where the panes sit and the layers lie over them. Settings
- * and the call screen are both `absolute inset-0 z-30` in that box: the
- * call comes after Settings, so a call answered over Settings covers it,
- * and neither reaches the bar, which a call minimized over Settings keeps
- * in sight. Beneath either layer the panes are inert, and isolated so
- * nothing of theirs (the old sticker panel is z-40) paints over it.
- */
-export function OldShellFrame({ bar, covered, settings, call, children }: OldShellFrameProps) {
-  return (
-    <>
-      {bar}
-      <div className="relative min-h-0 flex-1 overflow-hidden">
-        <div inert={covered} className={covered ? 'h-full isolate' : 'h-full'}>
-          {children}
-        </div>
-        {settings}
-        {call}
-      </div>
-    </>
-  );
 }

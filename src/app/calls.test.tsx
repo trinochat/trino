@@ -6,16 +6,14 @@ import { AppearanceProvider } from '../design/useAppearance';
 import type { CallEventWire, CallSignalEvent } from '../lib/api';
 import { FakePc, STUN, TURN_DOWN, fakeStream, sdp, settle, turnOk } from '../lib/call-test-support';
 import type { CallSounds } from '../screens/call';
-import { fakeApi, fakeHost, memoryPrefs, node, withLang } from '../screens/settings/test-utils';
-import { OldShellFrame, useCalls, type CallGate, type CallsBackend, type CallsOptions } from './calls';
-import { useSettings } from './settings';
+import { fakeHost, memoryPrefs, node, withLang } from '../screens/settings/test-utils';
+import { useCalls, type CallGate, type CallsBackend, type CallsOptions } from './calls';
 
-// Calls in the old chats (plan §4, I5; plan-cambios-11oct §7, I5): W6's
-// controller and screens over the real call.ts, which talks to the fake
-// RTCPeerConnection of call.test.ts (src/lib/call-test-support.ts) and to a
-// fake backend. A stand-in for the old shell stacks Settings and the call
-// the way MainShell does: the bar above the panes, then Settings and the
-// call over them, both in the shell's positioned box.
+// The calls (plan §4, I5; plan-cambios-11oct §7, I5): W6's controller and
+// screens over the real call.ts, which talks to the fake RTCPeerConnection
+// of call.test.ts (src/lib/call-test-support.ts) and to a fake backend. A
+// bare frame stands for the shell here: how the call lies over the real
+// shell, and over Settings in its main pane, is src/app/MainScreen.test.tsx.
 
 // call.ts reaches the backend through lib/api's `api`.
 const backend = vi.hoisted(() => ({
@@ -110,7 +108,7 @@ function mount({ stored = {}, over = {} }: MountOptions = {}) {
   const sounds = quiet();
   const gate: { current: CallGate | null } = { current: null };
 
-  function OldShell() {
+  function Frame() {
     const ui = useCalls({
       contacts: [ANA, BETO],
       myIdentityDigest: ME,
@@ -121,35 +119,16 @@ function mount({ stored = {}, over = {} }: MountOptions = {}) {
       sounds,
       ...over,
     });
-    const settings = useSettings({
-      api: { ...fakeApi(), shareBundle: vi.fn(async () => '{}') },
-      onLockNow: () => {},
-      onIdentityWiped: () => {},
-      onAutolockChanged: () => {},
-      onProfileChanged: () => {},
-      onContactsChanged: () => {},
-      platform: 'windows',
-      prefs,
-      makeAvatar: async () => 'data:image/jpeg;base64,AAAA',
-      covered: ui.slot.covering,
-    });
     gate.current = ui.gate;
-    // As MainShell mounts them: its frame, with the old shell's panes inside.
     return (
-      <div className="flex h-full flex-col">
-        <OldShellFrame
-          bar={ui.slot.bar}
-          covered={settings.isOpen || ui.slot.covering}
-          settings={settings.layer}
-          call={ui.slot.layer}
-        >
-          <div data-testid="panes">
-            <button type="button" onClick={() => ui.slot.start('Ana', false)}>
-              Llamar a Ana
-            </button>
-            <button type="button" title="ajustes" onClick={() => settings.open()} />
-          </div>
-        </OldShellFrame>
+      <div className="relative flex h-full flex-col">
+        {ui.slot.bar}
+        <div inert={ui.slot.covering}>
+          <button type="button" onClick={() => ui.slot.start('Ana', false)}>
+            Llamar a Ana
+          </button>
+        </div>
+        {ui.slot.layer}
       </div>
     );
   }
@@ -158,7 +137,7 @@ function mount({ stored = {}, over = {} }: MountOptions = {}) {
   render(
     withLang(
       <AppearanceProvider host={host}>
-        <OldShell />
+        <Frame />
       </AppearanceProvider>,
     ),
   );
@@ -166,9 +145,6 @@ function mount({ stored = {}, over = {} }: MountOptions = {}) {
 }
 
 const callScreen = (name = 'Ana') => screen.queryByRole('region', { name: `Llamada en curso con ${name}` });
-const panes = () => screen.getByTestId('panes');
-/** The panes are inert, as the frame makes them under Settings or the call screen. */
-const panesInert = () => panes().closest('[inert]') !== null;
 /** Every signal call.ts handed to the backend, parsed. */
 const sent = () =>
   backend.sendCallSignal.mock.calls.map(([to, payload]) => ({ to: to as string, signal: JSON.parse(payload as string) }));
@@ -191,23 +167,7 @@ async function connectedCall(signal: ReturnType<typeof callBackend>['signal']) {
   return callId;
 }
 
-describe('calls in the old shell', () => {
-  it('covers the shell with the call screen, its panes inert, and minimizes to the bar above them', async () => {
-    mount();
-    await placeCall();
-    const call = callScreen()!;
-    expect(call).not.toBeNull();
-    expect(panesInert()).toBe(true);
-    expect(call.contains(document.activeElement)).toBe(true);
-
-    fireEvent.keyDown(document.activeElement!, { key: 'Escape' });
-    expect(callScreen()).toBeNull();
-    const bar = screen.getByRole('region', { name: 'Llamada en curso' });
-    expect(panesInert()).toBe(false);
-    expect(bar.compareDocumentPosition(panes()) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    expect(document.activeElement).toBe(within(bar).getByRole('button', { name: 'Volver a la llamada' }));
-  });
-
+describe('the calls', () => {
   // docs/sas-v2.md, "The DTLS fingerprint rule": a different fingerprint after the first answer
   // ends the call, and undoes a "Coinciden" given in it for a contact not verified before.
   it('ends the call and takes the mark back when the fingerprint changes after "Coinciden"', async () => {
@@ -257,49 +217,6 @@ describe('calls in the old shell', () => {
     expect(screen.queryByRole('alertdialog')).toBeNull();
     expect(FakePc.instances).toHaveLength(1);
     expect(sent().filter(s => s.signal.t === 'offer')).toHaveLength(1);
-  });
-
-  // The incoming call is a dialog over the whole window (z-40); Settings is a box over the shell
-  // (z-30), and so is the call screen, which comes after it and covers it.
-  it('rings above Settings, and the answered call covers Settings too', async () => {
-    const { signal } = mount();
-    fireEvent.click(screen.getByRole('button', { name: 'ajustes' }));
-    const settings = screen.getByRole('region', { name: 'Ajustes' });
-    await signal('Ana', { t: 'offer', callId: newOfferId(), sdp: sdp('offer', false), video: false });
-
-    const ringing = screen.getByRole('alertdialog', { name: 'Ana', description: 'Llamada entrante' });
-    expect(ringing.closest('[inert]')).toBeNull();
-    expect(ringing.closest('.fixed.z-40')).not.toBeNull();
-    expect(settings.classList.contains('z-30')).toBe(true);
-    expect(document.activeElement).toBe(within(ringing).getByRole('heading', { name: 'Ana' }));
-
-    await press(within(ringing).getByRole('button', { name: 'Contestar' }));
-    const call = callScreen()!;
-    expect(call).not.toBeNull();
-    expect(settings.hasAttribute('inert')).toBe(true);
-    expect(panesInert()).toBe(true);
-    expect(call.closest('[inert]')).toBeNull();
-    expect(settings.compareDocumentPosition(call) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    expect(call.contains(document.activeElement)).toBe(true);
-  });
-
-  // Settings covers the box of the panes, never the bar above it: a call minimized over Settings
-  // stays in sight and in reach, and so does the focus the bar takes (WCAG 2.4.11).
-  it('keeps the bar of a call minimized over Settings above it, where Settings does not reach', async () => {
-    const { signal } = mount();
-    fireEvent.click(screen.getByRole('button', { name: 'ajustes' }));
-    const settings = screen.getByRole('region', { name: 'Ajustes' });
-    await signal('Ana', { t: 'offer', callId: newOfferId(), sdp: sdp('offer', false), video: false });
-    await press(within(screen.getByRole('alertdialog', { name: 'Ana' })).getByRole('button', { name: 'Contestar' }));
-    fireEvent.keyDown(within(callScreen()!).getByRole('heading', { name: 'Ana' }), { key: 'Escape' });
-
-    const bar = screen.getByRole('region', { name: 'Llamada en curso' });
-    expect(settings.hasAttribute('inert')).toBe(false);
-    // Settings is `absolute inset-0` in its positioned box: the bar is outside that box.
-    const box = settings.parentElement!;
-    expect(box.classList.contains('relative')).toBe(true);
-    expect(box.contains(bar)).toBe(false);
-    expect(document.activeElement).toBe(within(bar).getByRole('button', { name: 'Volver a la llamada' }));
   });
 
   it('counts a contact as verified only by the mark of a call: one of 0.1.0 does not count', async () => {

@@ -77,8 +77,9 @@ describe('the right-click menu', () => {
     expect(seen).toEqual([false]);
   });
 
-  // The old chat's bubble opens its own menu and cancels the native one; that
-  // menu closes on the next right-click anywhere, so the event travels on.
+  // A component's own menu cancels the native one, as the old chat's bubble
+  // did and MC-2's menus will; such a menu closes on the next right-click
+  // anywhere, so the event travels on.
   it('leaves alone a right-click a component already handled', () => {
     const bubble = add('<div>Hola</div>');
     bubble.addEventListener('contextmenu', event => event.preventDefault());
