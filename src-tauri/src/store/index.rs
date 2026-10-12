@@ -1,0 +1,96 @@
+//! `index.bin`: the write counter of every file (design §4.5).
+//!
+//! It is sealed like any other file (kind 7), and its envelope's `seq` is the
+//! index's own `seq`. Each data file is listed by its logical name with the
+//! `seq` it was written with, so the store can tell an older copy, a missing
+//! file or one that was planted (design §4.6).
+
+use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
+use zeroize::Zeroizing;
+
+const INDEX_VERSION: u32 = 1;
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct Index {
+    pub(crate) v: u32,
+    /// The highest `seq` the index knows of.
+    pub(crate) seq: u64,
+    /// Each data file by its logical name, with the `seq` it was written
+    /// with.
+    pub(crate) files: BTreeMap<String, u64>,
+    /// Files being removed: noted before the removal and dropped after it,
+    /// so a cut in between is finished in silence instead of reported.
+    #[serde(default)]
+    pub(crate) deleting: Vec<String>,
+    /// The vault header last seen, and one being written (design §4.9;
+    /// CL-1b fills them).
+    #[serde(default)]
+    pub(crate) vault: Option<VaultHeader>,
+    #[serde(default)]
+    pub(crate) vault_pending: Option<VaultHeader>,
+    /// The migration from the legacy files (CL-1c, CL-2a).
+    #[serde(default)]
+    pub(crate) legacy: Legacy,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct VaultHeader {
+    pub(crate) version: u8,
+    pub(crate) flags: u8,
+    /// The salt, in hex.
+    pub(crate) salt: String,
+    /// The id of the signed prekey the vault held.
+    pub(crate) spk: u32,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct Legacy {
+    #[serde(default)]
+    pub(crate) migrated: bool,
+    #[serde(default)]
+    pub(crate) cleanup_pending: bool,
+    #[serde(default)]
+    pub(crate) prefs_imported: bool,
+}
+
+impl Index {
+    /// An empty index at `seq`.
+    pub(crate) fn new(seq: u64) -> Self {
+        Index {
+            v: INDEX_VERSION,
+            seq,
+            ..Index::default()
+        }
+    }
+
+    pub(crate) fn to_json(&self) -> Zeroizing<Vec<u8>> {
+        Zeroizing::new(serde_json::to_vec(self).expect("the index always serializes"))
+    }
+
+    /// The index in `json`, if it is one this version wrote.
+    pub(crate) fn from_json(json: &[u8]) -> Option<Index> {
+        serde_json::from_slice::<Index>(json)
+            .ok()
+            .filter(|index| index.v == INDEX_VERSION)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn an_index_round_trips_and_another_version_is_refused() {
+        let mut index = Index::new(12);
+        index.files.insert("account".into(), 11);
+        index.deleting.push("sticker:00".into());
+        index.legacy.migrated = true;
+        assert_eq!(Index::from_json(&index.to_json()), Some(index.clone()));
+
+        let mut newer = index;
+        newer.v = 2;
+        assert_eq!(Index::from_json(&newer.to_json()), None);
+        assert_eq!(Index::from_json(b"not json"), None);
+    }
+}
