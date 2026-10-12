@@ -5,7 +5,6 @@ import {
   useMemo,
   useReducer,
   useRef,
-  Component,
   type ComponentType,
   type CSSProperties,
   type ReactNode,
@@ -25,7 +24,6 @@ import {
   ChevronDown,
   ChevronLeft,
   Clock3,
-  Copy,
   Film,
   Fingerprint,
   Grid2X2,
@@ -55,10 +53,8 @@ import {
   UsersRound,
   X,
 } from 'lucide-react';
-import { QRCodeSVG } from 'qrcode.react';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { processFile, type ProcessedFile } from './lib/media';
-import { fromCompactCode, toCompactCode } from './lib/contact-code';
 import { decodeBody, encodeMeta } from './lib/message-body';
 import {
   INLINE_MEDIA_MAX_CHARS,
@@ -119,6 +115,7 @@ import {
   onGroupMessage,
   onGroupUpdated,
   onGroupInvite,
+  onHandshakeNeeded,
   onFileMessage,
   onCallSignal,
   onCallCloseRequested,
@@ -130,7 +127,6 @@ import {
   isCommandError,
   type NodeInfo,
   type GroupInfo,
-  type GroupInvite,
   type FileRef,
   type ProfileResponse,
   type StatusResponse,
@@ -151,6 +147,7 @@ import {
 import type { LockReason, OnboardingApi, OnboardingIntent, UnlockApi } from './screens/types';
 import { capabilities } from './app/capabilities';
 import { installBrowserChromeGuard } from './app/browser-chrome';
+import { useContacts, type ContactsEvents } from './app/contacts';
 import './App.css';
 
 const isMobile = /android|iphone|ipad|ipod/i.test(navigator.userAgent);
@@ -424,64 +421,6 @@ function App({ api: backend = BACKEND, windowApi = TAURI_WINDOW, Main = MainShel
   );
 }
 
-function BundleCopy({ json }: { json: string }) {
-  const t = useT();
-  const [copied, setCopied] = useState(false);
-  return (
-    <div className="rounded-md border border-bg-line bg-bg-deep p-3">
-      <pre className="max-h-24 overflow-y-auto whitespace-pre-wrap break-all font-mono text-[10px] leading-relaxed text-ink-muted">
-        {json}
-      </pre>
-      <button
-        className="term-button mt-3 text-xs"
-        onClick={async () => {
-          await navigator.clipboard.writeText(json);
-          setCopied(true);
-          setTimeout(() => setCopied(false), 1500);
-        }}
-      >
-        {copied ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
-        {copied ? t('common.copied') : t('common.copyBundle')}
-      </button>
-    </div>
-  );
-}
-
-// `truncate` shows long codes (e.g. trino1:…) on one line with an ellipsis:
-// nobody reads them, they copy them, and a scrolling block looked broken.
-function CopyBox({ label, value, truncate = false }: { label: string; value: string; truncate?: boolean }) {
-  const t = useT();
-  const [copied, setCopied] = useState(false);
-  return (
-    <div className="w-full rounded-md border border-bg-line bg-bg-deep p-3">
-      <div className="mb-1 text-[10px] uppercase tracking-[0.12em] text-ink-muted">{label}</div>
-      <div className="flex items-center gap-2">
-        <code
-          className={
-            truncate
-              ? 'min-w-0 flex-1 truncate text-[11px] text-ink-dim'
-              : 'max-h-16 flex-1 overflow-y-auto break-all text-[11px] text-ink-dim'
-          }
-          title={truncate ? value : undefined}
-        >
-          {value}
-        </code>
-        <button
-          className="icon-button border-bg-line"
-          onClick={async () => {
-            await navigator.clipboard.writeText(value);
-            setCopied(true);
-            setTimeout(() => setCopied(false), 1500);
-          }}
-          title={copied ? t('common.copied') : t('common.copy')}
-        >
-          {copied ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
-        </button>
-      </div>
-    </div>
-  );
-}
-
 function ding(): void {
   try {
     new Audio(
@@ -501,6 +440,9 @@ type SidebarView = 'chats' | 'groups';
 
 const groupUnreadKey = (gid: string) => `grp:${gid}`;
 
+/** The backend's events about contacts, for Contactos (src/app/contacts.tsx). */
+const CONTACT_EVENTS: ContactsEvents = { onGroupInvite, onHandshakeNeeded };
+
 function MainShell({ intent, onLock }: MainProps) {
   const t = useT();
   const [nodes, setNodes] = useState<NodeInfo[]>([]);
@@ -508,13 +450,8 @@ function MainShell({ intent, onLock }: MainProps) {
   const [sel, setSel] = useState<Selection>(null);
   const [msgsByHandle, setMsgsByHandle] = useState<Record<string, ChatMessage[]>>({});
   const [msgsByGroup, setMsgsByGroup] = useState<Record<string, ChatMessage[]>>({});
-  // "Agregar un contacto" at the end of the first run opens it once (I3 moves it to Contactos).
-  const [showAddNode, setShowAddNode] = useState(intent === 'add-contact');
-  const [showShare, setShowShare] = useState(false);
   const [showNewGroup, setShowNewGroup] = useState(false);
   const [showAddMember, setShowAddMember] = useState(false);
-  const [invites, setInvites] = useState<GroupInvite[]>([]);
-  const shownInvite = invites[0];
   const [showSettings, setShowSettings] = useState(false);
   const [showInspector, setShowInspector] = useState(false);
   const [callState, setCallState] = useState<CallState>('idle');
@@ -666,6 +603,21 @@ function MainShell({ intent, onLock }: MainProps) {
     }
   };
 
+  // Contactos (W4): "Agregar un contacto" at the end of the first run opens it
+  // on "Agregar", once. Group invitations wait there for an answer.
+  const contacts = useContacts({
+    api,
+    events: CONTACT_EVENTS,
+    intent,
+    onContactAdded: handle => {
+      void refreshNodes().then(() => setSel({ kind: 'node', id: handle }));
+    },
+    onGroupJoined: gid => {
+      void Promise.all([refreshGroups(), refreshNodes()]).then(() => setSel({ kind: 'group', id: gid }));
+    },
+    onGroupsChanged: () => void refreshGroups(),
+  });
+
   useEffect(() => {
     refreshNodes();
     refreshGroups();
@@ -760,21 +712,6 @@ function MainShell({ intent, onLock }: MainProps) {
       u2.then(u => u());
       u3.then(u => u());
       u4.then(u => u());
-    };
-  }, []);
-
-  // Group invitations: nothing is joined until the user accepts. Invites can
-  // arrive before this listener exists (catch-up on unlock), so also ask.
-  useEffect(() => {
-    api
-      .listGroupInvites()
-      .then(setInvites)
-      .catch(e => console.error(e));
-    const u = onGroupInvite(invite => {
-      setInvites(prev => [...prev.filter(i => i.gid !== invite.gid), invite]);
-    });
-    return () => {
-      u.then(fn => fn());
     };
   }, []);
 
@@ -1012,6 +949,15 @@ function MainShell({ intent, onLock }: MainProps) {
           </button>
         </nav>
 
+        {contacts.invites.length > 0 && (
+          <div className="px-3 pb-3">
+            <button type="button" className="term-button w-full text-xs" onClick={() => contacts.open('invites')}>
+              <UsersRound className="h-3.5 w-3.5" aria-hidden="true" />
+              {t('contacts.dialog.tabInvitesCount', { n: contacts.invites.length })}
+            </button>
+          </div>
+        )}
+
         <div className="sidebar-list-heading">
           <span>
             {sidebarView === 'chats' ? t('sidebar.recentChats') : t('sidebar.yourGroups')}
@@ -1021,7 +967,7 @@ function MainShell({ intent, onLock }: MainProps) {
             className="icon-button icon-button--accent"
             title={sidebarView === 'chats' ? t('sidebar.addContact') : t('sidebar.createGroup')}
             onClick={() => {
-              if (sidebarView === 'chats') setShowAddNode(true);
+              if (sidebarView === 'chats') contacts.open('add');
               else setShowNewGroup(true);
             }}
           >
@@ -1061,7 +1007,7 @@ function MainShell({ intent, onLock }: MainProps) {
                   {t('sidebar.noNodes')}
                 </div>
               </div>
-              <button className="term-button text-xs" onClick={() => setShowAddNode(true)}>
+              <button className="term-button text-xs" onClick={() => contacts.open('add')}>
                 <UserPlus className="h-3.5 w-3.5" />
                 {t('sidebar.addContact')}
               </button>
@@ -1158,7 +1104,7 @@ function MainShell({ intent, onLock }: MainProps) {
               type="button"
               title={t('sidebar.share')}
               className="icon-button"
-              onClick={() => setShowShare(true)}
+              onClick={() => contacts.open('share')}
             >
               <Share2 className="h-4 w-4" />
             </button>
@@ -1398,16 +1344,7 @@ function MainShell({ intent, onLock }: MainProps) {
       )}
       </div>
 
-      {showAddNode && (
-        <AddNodeModal
-          onClose={() => setShowAddNode(false)}
-          onAdded={async () => {
-            setShowAddNode(false);
-            await refreshNodes();
-          }}
-        />
-      )}
-      {showShare && <ShareModal onClose={() => setShowShare(false)} />}
+      {contacts.dialog}
       {showSettings && (
         <SettingsModal onClose={() => setShowSettings(false)} onSaved={() => setShowSettings(false)} />
       )}
@@ -1519,22 +1456,6 @@ function MainShell({ intent, onLock }: MainProps) {
           onAdded={async () => {
             setShowAddMember(false);
             await refreshGroups();
-          }}
-        />
-      )}
-      {shownInvite && (
-        <GroupInviteModal
-          key={shownInvite.gid}
-          invite={shownInvite}
-          // Closing only hides it for now; it stays pending until answered.
-          onClose={() => setInvites(prev => prev.slice(1))}
-          onAnswered={async (gid, joined) => {
-            setInvites(prev => prev.filter(i => i.gid !== gid));
-            if (joined) {
-              await refreshGroups();
-              await refreshNodes();
-              setSel({ kind: 'group', id: gid });
-            }
           }}
         />
       )}
@@ -1859,60 +1780,6 @@ function AddMemberModal({
         ))}
       </div>
       {error && <div className="text-crimson text-xs mt-3">{error}</div>}
-    </Modal>
-  );
-}
-
-function GroupInviteModal({
-  invite,
-  onClose,
-  onAnswered,
-}: {
-  invite: GroupInvite;
-  onClose: () => void;
-  onAnswered: (gid: string, joined: boolean) => void;
-}) {
-  const t = useT();
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const answer = async (accept: boolean) => {
-    setBusy(true);
-    setError(null);
-    try {
-      if (accept) await api.acceptGroupInvite(invite.gid);
-      else await api.declineGroupInvite(invite.gid);
-      onAnswered(invite.gid, accept);
-    } catch {
-      setError(t('group.inviteError'));
-      setBusy(false);
-    }
-  };
-  return (
-    <Modal onClose={onClose} title={t('group.inviteTitle')}>
-      <div className="text-phosphor text-sm mb-4">
-        {t('group.inviteText')
-          .replace('{handle}', invite.from_handle)
-          .replace('{name}', invite.name)}
-      </div>
-      {error && <div className="text-crimson text-xs mb-3">{error}</div>}
-      <div className="flex gap-2">
-        <button
-          type="button"
-          className="term-button flex-1"
-          disabled={busy}
-          onClick={() => answer(true)}
-        >
-          {t('group.inviteAccept')}
-        </button>
-        <button
-          type="button"
-          className="term-button flex-1"
-          disabled={busy}
-          onClick={() => answer(false)}
-        >
-          {t('group.inviteDecline')}
-        </button>
-      </div>
     </Modal>
   );
 }
@@ -4133,131 +4000,6 @@ function useFilePicker(
     />
   );
   return { input, open: () => ref.current?.click() };
-}
-
-function AddNodeModal({ onClose, onAdded }: { onClose: () => void; onAdded: () => void }) {
-  const t = useT();
-  const [bundleJson, setBundleJson] = useState('');
-  const [handle, setHandle] = useState('');
-  const [error, setError] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
-
-  const submit = async () => {
-    setError(null);
-    setBusy(true);
-    try {
-      const json = fromCompactCode(bundleJson) ?? bundleJson;
-      let h = handle.trim();
-      if (!h) {
-        try {
-          h = JSON.parse(json).handle || '';
-        } catch {
-          /* ignore */
-        }
-      }
-      await api.probeNode(json, h || t('contact.defaultName'));
-      onAdded();
-    } catch {
-      setError(t('contact.addError'));
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  return (
-    <Modal onClose={onClose} title={t('contact.addTitle')}>
-      <div className="text-xs text-phosphor-dim mb-3">
-        {t('contact.addDesc')}
-      </div>
-      <textarea
-        className="term-input w-full h-24 mb-3 font-mono text-xs"
-        value={bundleJson}
-        onChange={e => setBundleJson(e.target.value)}
-        placeholder="trino1:eyJ…"
-      />
-      <label className="text-xs text-phosphor-dim block mb-1">
-        {t('contact.nameOptional')}
-      </label>
-      <input
-        className="term-input w-full mb-4"
-        value={handle}
-        onChange={e => setHandle(e.target.value)}
-        placeholder={t('contact.namePlaceholder')}
-      />
-      {error && <div className="text-crimson text-xs mb-3">{error}</div>}
-      <div className="flex gap-2">
-        <button type="button" className="term-button flex-1" onClick={onClose}>
-          {t('common.cancel')}
-        </button>
-        <button type="button" className="term-button flex-1" disabled={busy} onClick={submit}>
-          {busy ? t('contact.adding') : t('contact.add')}
-        </button>
-      </div>
-    </Modal>
-  );
-}
-
-class QRBoundary extends Component<{ children: ReactNode; fallback: string }, { failed: boolean }> {
-  state = { failed: false };
-  static getDerivedStateFromError() {
-    return { failed: true };
-  }
-  render() {
-    if (this.state.failed) {
-      return (
-        <div className="text-crimson text-xs text-center px-4">
-          {this.props.fallback}
-        </div>
-      );
-    }
-    return this.props.children;
-  }
-}
-
-function ShareModal({ onClose }: { onClose: () => void }) {
-  const t = useT();
-  const [bundle, setBundle] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [showJson, setShowJson] = useState(false);
-
-  useEffect(() => {
-    api.shareBundle().then(setBundle).catch(() => setError(t('contact.shareError')));
-  }, [t]);
-
-  const code = bundle ? toCompactCode(bundle) : '';
-
-  return (
-    <Modal onClose={onClose} title={t('contact.shareTitle')}>
-      <div className="text-xs text-phosphor-dim mb-4">
-        {t('contact.shareDesc')}
-      </div>
-      {error && <div className="text-crimson text-xs mb-3">{error}</div>}
-      {bundle && (
-        <div className="flex flex-col items-center gap-4">
-          {code ? (
-            <div className="bg-white p-3 rounded-lg">
-              <QRBoundary fallback={t('contact.qrError')}>
-                <QRCodeSVG value={code} size={200} fgColor="#070a07" bgColor="#ffffff" level="L" />
-              </QRBoundary>
-            </div>
-          ) : (
-            <div className="text-crimson text-xs">{t('contact.codeError')}</div>
-          )}
-          {code && <CopyBox label={t('contact.codeLabel')} value={code} truncate />}
-          <button
-            className="text-phosphor-dim text-xs hover:text-phosphor"
-            onClick={() => setShowJson(v => !v)}
-          >
-            {showJson ? t('common.hide') : t('common.show')} {t('contact.fullData')}
-          </button>
-          {showJson && <BundleCopy json={bundle} />}
-        </div>
-      )}
-      <button type="button" className="term-button w-full mt-4" onClick={onClose}>
-        {t('common.close')}
-      </button>
-    </Modal>
-  );
 }
 
 function ChatInfoPanel({
