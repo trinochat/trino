@@ -12,6 +12,7 @@ mod commands;
 mod fsutil;
 mod passphrase;
 mod state;
+mod store;
 mod totp_enrollment;
 mod turn;
 // -- W7 --
