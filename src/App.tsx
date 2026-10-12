@@ -142,12 +142,14 @@ import {
   UnlockScreen,
   WindowTitlebar,
   phaseReducer,
+  type PhaseEvent,
   type WindowApi,
 } from './screens/auth';
 import type { LockReason, OnboardingApi, OnboardingIntent, UnlockApi } from './screens/types';
 import { capabilities } from './app/capabilities';
 import { installBrowserChromeGuard } from './app/browser-chrome';
 import { useContacts, type ContactsEvents } from './app/contacts';
+import { useAutoLock } from './app/useAutoLock';
 import './App.css';
 
 const isMobile = /android|iphone|ipad|ipod/i.test(navigator.userAgent);
@@ -219,6 +221,8 @@ export interface MainProps {
   intent: OnboardingIntent;
   /** "Bloquear": asks first while a call holds the microphone. */
   onLock(): void;
+  /** Settings saved a new auto-lock time: it applies at once. */
+  onAutolockChanged(minutes: number): void;
 }
 
 export interface AppProps {
@@ -331,29 +335,21 @@ function App({ api: backend = BACKEND, windowApi = TAURI_WINDOW, Main = MainShel
     };
   }, [backend, windowApi]);
 
-  // Auto-lock: seal the vault after N minutes of inactivity (0 = disabled).
-  // Never during a call: the timer re-arms until the call is over.
-  const unlocked = phase.kind === 'main';
-  useEffect(() => {
-    if (!unlocked) return;
-    const mins = Number(localStorage.getItem('autolock') ?? '5');
-    if (!mins) return;
-    let timer: ReturnType<typeof setTimeout>;
-    const reset = () => {
-      clearTimeout(timer);
-      timer = setTimeout(() => {
-        if (isCallBusy()) reset();
-        else lockNow({ kind: 'idle', minutes: mins });
-      }, mins * 60_000);
-    };
-    const events = ['mousedown', 'keydown', 'touchstart', 'mousemove', 'wheel'];
-    events.forEach(e => window.addEventListener(e, reset, { passive: true }));
-    reset();
-    return () => {
-      clearTimeout(timer);
-      events.forEach(e => window.removeEventListener(e, reset));
-    };
-  }, [unlocked]);
+  // The auto-lock (src/app/useAutoLock.ts): after the minutes saved in
+  // Settings without activity, never during a call, and on time from the
+  // tray. The time is read from this device each time the chats open, and a
+  // new one from Settings applies at once.
+  const [autolockMinutes, setAutolockMinutes] = useState(() => prefs.getAutolockMinutes());
+  const openChats = (event: PhaseEvent) => {
+    setAutolockMinutes(prefs.getAutolockMinutes());
+    dispatch(event);
+  };
+  useAutoLock({
+    enabled: phase.kind === 'main',
+    minutes: autolockMinutes,
+    isCallBusy,
+    onLock: minutes => lockNow({ kind: 'idle', minutes }),
+  });
 
   // "Borrar identidad" deleted the vault, the chats and the contacts. What
   // this device keeps beside them goes too, as the old screen did: the
@@ -383,7 +379,7 @@ function App({ api: backend = BACKEND, windowApi = TAURI_WINDOW, Main = MainShel
                     <OnboardingFlow
                       api={backend}
                       profileSync={capabilities.profileSync}
-                      onCreated={(_created, intent) => dispatch({ type: 'created', intent })}
+                      onCreated={(_created, intent) => openChats({ type: 'created', intent })}
                       onVaultExists={() => dispatch({ type: 'vaultExists' })}
                     />
                   ) : null}
@@ -393,14 +389,14 @@ function App({ api: backend = BACKEND, windowApi = TAURI_WINDOW, Main = MainShel
                       totpEnabled={phase.totpEnabled}
                       reason={phase.reason}
                       api={backend}
-                      onUnlocked={() => dispatch({ type: 'unlocked' })}
+                      onUnlocked={() => openChats({ type: 'unlocked' })}
                       onNoVault={() => dispatch({ type: 'noVault' })}
                       onWiped={wiped}
                     />
                   ) : null}
                   {phase.kind === 'main' ? (
                     <main className="h-full">
-                      <Main intent={phase.intent} onLock={requestLock} />
+                      <Main intent={phase.intent} onLock={requestLock} onAutolockChanged={setAutolockMinutes} />
                     </main>
                   ) : null}
                 </div>
@@ -443,7 +439,7 @@ const groupUnreadKey = (gid: string) => `grp:${gid}`;
 /** The backend's events about contacts, for Contactos (src/app/contacts.tsx). */
 const CONTACT_EVENTS: ContactsEvents = { onGroupInvite, onHandshakeNeeded };
 
-function MainShell({ intent, onLock }: MainProps) {
+function MainShell({ intent, onLock, onAutolockChanged }: MainProps) {
   const t = useT();
   const [nodes, setNodes] = useState<NodeInfo[]>([]);
   const [groups, setGroups] = useState<GroupInfo[]>([]);
@@ -1346,7 +1342,11 @@ function MainShell({ intent, onLock }: MainProps) {
 
       {contacts.dialog}
       {showSettings && (
-        <SettingsModal onClose={() => setShowSettings(false)} onSaved={() => setShowSettings(false)} />
+        <SettingsModal
+          onClose={() => setShowSettings(false)}
+          onSaved={() => setShowSettings(false)}
+          onAutolockChanged={onAutolockChanged}
+        />
       )}
       {showInspector && <RelayInspector onClose={() => setShowInspector(false)} />}
       {forwarding && (
@@ -1800,7 +1800,15 @@ function ThemePreview({ preset, accent }: { preset: ThemePreset; accent: string 
   );
 }
 
-function SettingsModal({ onClose, onSaved }: { onClose: () => void; onSaved: () => void }) {
+function SettingsModal({
+  onClose,
+  onSaved,
+  onAutolockChanged,
+}: {
+  onClose: () => void;
+  onSaved: () => void;
+  onAutolockChanged: (minutes: number) => void;
+}) {
   const t = useT();
   const { lang, setLang } = useLang();
   const { theme, setTheme } = useThemePreference();
@@ -1952,6 +1960,7 @@ function SettingsModal({ onClose, onSaved }: { onClose: () => void; onSaved: () 
         onChange={e => {
           setAutolock(e.target.value);
           localStorage.setItem('autolock', e.target.value);
+          onAutolockChanged(Number(e.target.value));
         }}
       >
         <option value="0">{t('time.off')}</option>

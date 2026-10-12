@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import App, { type AppApi, type MainProps } from './App';
 import type { ForgeResponse, StatusResponse, UnsealResponse } from './lib/api';
@@ -67,13 +67,25 @@ const fakeWindow = (): WindowApi => ({
   isMaximized: vi.fn(() => Promise.resolve(false)),
 });
 
-/** The chats, as far as App is concerned: how the first run ended, and the lock. */
-function FakeMain({ intent, onLock }: MainProps) {
+/**
+ * The chats, as far as App is concerned: how the first run ended, the lock,
+ * and a new auto-lock time saved as Settings saves it.
+ */
+function FakeMain({ intent, onLock, onAutolockChanged }: MainProps) {
   return (
     <section aria-label="Chats">
       <p>{`intent: ${intent}`}</p>
       <button type="button" onClick={onLock}>
         Bloquear ahora
+      </button>
+      <button
+        type="button"
+        onClick={() => {
+          localStorage.setItem('autolock', '1');
+          onAutolockChanged?.(1);
+        }}
+      >
+        Bloqueo automático al minuto
       </button>
     </section>
   );
@@ -89,17 +101,37 @@ const heading = (name: string) => screen.findByRole('heading', { level: 1, name 
 const click = (name: string) => fireEvent.click(screen.getByRole('button', { name }));
 const type = (label: string, value: string) => fireEvent.change(screen.getByLabelText(label), { target: { value } });
 
+/** The chats are on screen, and their effects ran, as they have before anyone can click. */
+async function chatsOpen() {
+  await screen.findByText('intent: chats', {}, WAIT);
+  await act(async () => {});
+}
+
 async function unlockWith(pass: string) {
   type('Contraseña', pass);
   click('Desbloquear');
-  await screen.findByText('intent: chats', {}, WAIT);
+  await chatsOpen();
 }
+
+const MINUTE = 60_000;
+/**
+ * Fake clocks for the auto-lock, which still move with real time so the
+ * screens' promises and the waits of these tests go on as usual.
+ */
+const fakeClock = () =>
+  vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval', 'Date'], shouldAdvanceTime: true });
+/** Minutes go by without anybody touching the app. */
+const idle = (ms: number) =>
+  act(async () => {
+    await vi.advanceTimersByTimeAsync(ms);
+  });
 
 beforeEach(() => {
   localStorage.setItem('lang', 'es');
 });
 afterEach(() => {
   cleanup();
+  vi.useRealTimers();
   localStorage.clear();
   vi.restoreAllMocks();
 });
@@ -189,6 +221,65 @@ describe('App', () => {
     expect(api.wipe).toHaveBeenCalledTimes(1);
     expect(localStorage.getItem('trino.consent')).toBeNull();
     expect(localStorage.getItem('verified:ana')).toBeNull();
+  });
+
+  // The auto-lock (useAutoLock): src/app/useAutoLock.test.ts has its cases.
+  it('locks after the minutes saved on this device, and says why', async () => {
+    fakeClock();
+    localStorage.setItem('autolock', '1');
+    renderApp(fakeApi(VAULT));
+    await heading('Hola de nuevo, Rechita');
+    await unlockWith(PASS);
+
+    await idle(MINUTE);
+    expect(await heading('Hola de nuevo, Rechita')).toBeTruthy();
+    expect(screen.getByText('Trino se bloqueó tras 1 minuto sin actividad.')).toBeTruthy();
+  });
+
+  // A beta tester: "automatic lock... no funciona". App read the setting only
+  // when the chats opened, so a new time waited for the next unlock.
+  it('applies a new auto-lock time at once, without locking and unlocking', async () => {
+    fakeClock();
+    localStorage.setItem('autolock', '15');
+    renderApp(fakeApi(VAULT));
+    await heading('Hola de nuevo, Rechita');
+    await unlockWith(PASS);
+
+    click('Bloqueo automático al minuto');
+    await idle(MINUTE);
+    expect(await heading('Hola de nuevo, Rechita')).toBeTruthy();
+    expect(screen.getByText('Trino se bloqueó tras 1 minuto sin actividad.')).toBeTruthy();
+  });
+
+  it('goes back to the 5 minutes of a new device after a wipe', async () => {
+    fakeClock();
+    localStorage.setItem('autolock', '1');
+    renderApp(fakeApi(VAULT));
+    await heading('Hola de nuevo, Rechita');
+    click('¿Olvidaste la contraseña?');
+    click('Borrar identidad y empezar de cero');
+    const dialog = await screen.findByRole('alertdialog', {}, WAIT);
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Borrar identidad y empezar de cero' }));
+    await heading('Te damos la bienvenida a Trino');
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Tengo 18 años o más' }));
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Leí y acepto cómo Trino trata mis datos' }));
+    click('Empezar');
+    type('Nombre', 'Rechita');
+    click('Continuar');
+    type('Contraseña', PASS);
+    type('Repite la contraseña', PASS);
+    click('Continuar');
+    await heading('Elige cómo se ve Trino');
+    click('Continuar');
+    click('Ahora no');
+    await heading('Todo listo');
+    click('Ir a mis chats');
+    await chatsOpen();
+
+    await idle(4 * MINUTE);
+    expect(screen.getByText('intent: chats')).toBeTruthy();
+    await idle(MINUTE);
+    expect(await screen.findByText('Trino se bloqueó tras 5 minutos sin actividad.', {}, WAIT)).toBeTruthy();
   });
 
   // MC-1 (David, 11 Oct): no browser menu outside the text fields and none of
