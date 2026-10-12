@@ -14,6 +14,7 @@ import type {
   NewChatSlotProps,
   SettingsSlotProps,
   ShellSlots,
+  VerifyContactSlotProps,
 } from '../types';
 import { ShellScreen, type ShellScreenProps } from './ShellScreen';
 import { appearanceHost, fakeApi, fakeEvents, fakePrefs } from './test-fakes';
@@ -63,7 +64,7 @@ function fakeSlots() {
     groupPanel: vi.fn((p: GroupPanelSlotProps) => <div data-testid="group-panel" data-layout={p.layout} />),
     settings: vi.fn((p: SettingsSlotProps) => <div data-testid="settings" data-section={p.section} />),
     contactDetails: vi.fn((p: ContactDetailsSlotProps) => <div data-testid="contact-details" data-layout={p.layout} />),
-    verifyContact: vi.fn(() => <div data-testid="verify" />),
+    verifyContact: vi.fn((_p: VerifyContactSlotProps) => <div data-testid="verify" />),
     newChat: vi.fn((p: NewChatSlotProps) => <div data-testid="new-chat" data-purpose={p.purpose} />),
   } satisfies ShellSlots;
 }
@@ -85,6 +86,7 @@ function setup(
   const call = {
     bar: <div data-testid="call-bar" />,
     layer: <div data-testid="call-layer" />,
+    covering: false,
     start: vi.fn(),
     activePeer: null,
   };
@@ -601,5 +603,27 @@ describe('ShellScreen: contacts, invitations and Settings', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Compartir mi código' }));
     expect(screen.getByTestId('contacts').getAttribute('data-tab')).toBe('share');
     await row('Ana');
+  });
+});
+
+describe('ShellScreen: verifying a contact', () => {
+  // The verify slot says whether the contact is verified (I5, 0f3758b), so
+  // its dialog tells a verified contact so instead of asking for a call
+  // again. Only the mark of a call with the fingerprint the contact still
+  // has counts (5fe6f70): a bare fingerprint of 0.1.0 does not.
+  it('tells the verify dialog whether the contact is verified, by the mark of a call only', async () => {
+    const { slots, storage } = setup();
+    storage.setItem('verified:Ana', 'call:fp-Ana');
+    storage.setItem('verified:Bea', 'fp-Bea');
+    const verify = async (name: string) => {
+      fireEvent.click(await row(name));
+      fireEvent.click(screen.getByRole('button', { name: 'Detalles' }));
+      act(() => lastProps(slots.contactDetails).onVerify());
+      return lastProps(slots.verifyContact);
+    };
+
+    expect(await verify('Ana')).toMatchObject({ peer: { handle: 'Ana' }, verified: true });
+    act(() => lastProps(slots.verifyContact).onClose());
+    expect(await verify('Bea')).toMatchObject({ peer: { handle: 'Bea' }, verified: false });
   });
 });

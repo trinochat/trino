@@ -530,6 +530,8 @@ export function ShellScreen(props: ShellScreenProps) {
         peer,
         // Without K7 there is no full fingerprint: the dialog shows no symbols then.
         myIdentityDigest: props.me.identityDigest ?? '',
+        // The mark of a call with the fingerprint the contact still has, and no key change since.
+        verified: conv.trust[peer.handle] === 'verified',
         onClose: closeOverlay,
         ...(callable(peer.handle) && {
           onCall: () => {

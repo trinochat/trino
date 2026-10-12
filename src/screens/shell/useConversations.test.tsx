@@ -202,8 +202,10 @@ describe('useConversations: what arrives', () => {
 });
 
 describe('useConversations: trust', () => {
-  it('is verified while the stored fingerprint is the contact’s, and keyChanged once its keys change', async () => {
-    const { hook, api, emit } = setup({}, { seed: { 'verified:Ana': 'fp-Ana' }, nodes: [node('Ana'), node('Bea')] });
+  // The mark of a call's "Coinciden" (I5, 5fe6f70): `call:` and the
+  // fingerprint the contact had then.
+  it('is verified while the call’s mark holds the contact’s fingerprint, and keyChanged once its keys change', async () => {
+    const { hook, api, emit } = setup({}, { seed: { 'verified:Ana': 'call:fp-Ana' }, nodes: [node('Ana'), node('Bea')] });
     await loaded(hook);
     expect(hook.result.current.trust).toEqual({ Ana: 'verified', Bea: 'unverified' });
 
@@ -213,6 +215,14 @@ describe('useConversations: trust', () => {
     await act(() => hook.result.current.acknowledgeKeyChange('Ana'));
     expect(api.acknowledgeKeyChange).toHaveBeenCalledWith('Ana');
     expect(hook.result.current.trust.Ana).toBe('verified');
+  });
+
+  // 0.1.0 stored the bare fingerprint after comparing the contact's emojis,
+  // too weak a check to verify: those marks no longer count (docs/sas-v2.md).
+  it('does not count a mark of 0.1.0, the bare fingerprint', async () => {
+    const { hook } = setup({}, { seed: { 'verified:Ana': 'fp-Ana' }, nodes: [node('Ana')] });
+    await loaded(hook);
+    expect(hook.result.current.trust).toEqual({ Ana: 'unverified' });
   });
 
   it('shows keyChanged for a contact the backend marks with a key change (K8)', async () => {
