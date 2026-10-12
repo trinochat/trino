@@ -1311,31 +1311,36 @@ pub async fn send_message(
     Ok(send_text(&state, &handle, text, ACK_WAIT).await?)
 }
 
-/// `send_message`, waiting up to `wait` for a relay's OK.
+/// `send_message`, waiting up to `wait` for a relay's OK. A lock meanwhile
+/// keeps nothing of it (`same_session`).
 async fn send_text(
     state: &AppState,
     handle: &str,
     text: String,
     wait: std::time::Duration,
 ) -> Result<SendReceipt, SendError> {
+    // Wiped whichever way this returns, unless they are kept.
+    let mut text = Zeroizing::new(text);
     if text.trim().is_empty() {
         return Err(SendError::Empty);
     }
     let id = new_msg_id();
-    let env = encode_envelope(&Envelope::Text {
-        body: text.clone(),
+    let mut env = Zeroizing::new(encode_envelope(&Envelope::Text {
+        body: text.to_string(),
         id: id.clone(),
-    });
-    let receipt = send_acked(state, handle, &env, unix_now(), wait).await?;
-    let mut inner = state.inner.lock().await;
-    remember_outgoing(&mut inner, handle, id, env);
+    }));
+    let session = session_key(&*state.inner.lock().await).ok_or(SendError::Sealed)?;
+    let sent = send_acked(state, handle, &env, unix_now(), wait).await;
+    let mut inner = same_session(state, session).await?;
+    let receipt = sent?;
+    remember_outgoing(&mut inner, handle, id, std::mem::take(&mut *env));
     record_history(
         &mut inner,
         handle.to_string(),
         HistItem {
             side: "me".into(),
             from: None,
-            text: Some(text),
+            text: Some(std::mem::take(&mut *text)),
             file: None,
             call: None,
             ts: receipt.ts,
@@ -1556,6 +1561,7 @@ pub async fn send_group_message(
 }
 
 /// `send_group_message`, waiting up to `wait` for each member's relay OK.
+/// A lock meanwhile keeps nothing of it (`same_session`).
 async fn send_group_text(
     state: &AppState,
     gid: &str,
@@ -1563,32 +1569,36 @@ async fn send_group_text(
     only: Option<&[String]>,
     wait: std::time::Duration,
 ) -> Result<GroupSendReceipt, SendError> {
+    // Wiped whichever way this returns, unless it is kept.
+    let mut text = Zeroizing::new(text);
     if text.trim().is_empty() {
         return Err(SendError::Empty);
     }
-    let (targets, env) = {
+    let (targets, env, session) = {
         let inner = state.inner.lock().await;
         let identity = inner.identity.as_ref().ok_or(SendError::Sealed)?;
         let my_ik = hex::encode(identity.ik_sign.pub_bytes);
         let roster = inner.groups.get(gid).ok_or(SendError::UnknownGroup)?;
-        let env = encode_envelope(&Envelope::Group {
+        let env = Zeroizing::new(encode_envelope(&Envelope::Group {
             gid: gid.to_string(),
             ep: roster.epoch,
-            body: text.clone(),
-        });
-        (member_handles(&inner, roster, &my_ik, only), env)
+            body: text.to_string(),
+        }));
+        let targets = member_handles(&inner, roster, &my_ik, only);
+        (targets, env, identity.nostr.pub_bytes)
     };
     crate::diag::note_with("group send", &[("members", &targets.len())]);
-    let receipt = fan_out(state, &targets, &env, unix_now(), wait).await?;
+    let sent = fan_out(state, &targets, &env, unix_now(), wait).await;
+    let mut inner = same_session(state, session).await?;
+    let receipt = sent?;
     if only.is_none() {
-        let mut inner = state.inner.lock().await;
         record_history(
             &mut inner,
             group_convo(gid),
             HistItem {
                 side: "me".into(),
                 from: None,
-                text: Some(text),
+                text: Some(std::mem::take(&mut *text)),
                 file: None,
                 call: None,
                 ts: receipt.ts,
@@ -1712,21 +1722,32 @@ pub async fn send_file(
 }
 
 /// `send_file` once the file is uploaded: announce it to `handle`, waiting
-/// up to `wait` for a relay's OK.
+/// up to `wait` for a relay's OK. A lock meanwhile keeps nothing of it
+/// (`same_session`) and wipes its key.
 async fn announce_file(
     state: &AppState,
     handle: &str,
-    file: FileRef,
+    mut file: FileRef,
     wait: std::time::Duration,
 ) -> Result<SentFile, SendError> {
-    let env = encode_envelope(&Envelope::File {
+    let env = Zeroizing::new(encode_envelope(&Envelope::File {
         file: file.clone(),
         gid: None,
         body: None,
-    });
-    ensure_session(state, handle).await?;
-    let receipt = send_acked(state, handle, &env, unix_now(), wait).await?;
-    let mut inner = state.inner.lock().await;
+    }));
+    let session = session_key(&*state.inner.lock().await).ok_or(SendError::Sealed)?;
+    let sent = match ensure_session(state, handle).await {
+        Ok(()) => send_acked(state, handle, &env, unix_now(), wait).await,
+        Err(error) => Err(error),
+    };
+    let mut inner = match same_session(state, session).await {
+        Ok(inner) => inner,
+        Err(ended) => {
+            zeroize_file_ref(&mut file);
+            return Err(ended);
+        }
+    };
+    let receipt = sent?;
     record_history(
         &mut inner,
         handle.to_string(),
@@ -1760,29 +1781,38 @@ pub async fn send_group_file(
 }
 
 /// `send_group_file` once the file is uploaded: announce it to the group as
-/// `send_group_text` sends a text.
+/// `send_group_text` sends a text. A lock meanwhile keeps nothing of it
+/// (`same_session`) and wipes its key.
 async fn announce_group_file(
     state: &AppState,
     gid: &str,
-    file: FileRef,
+    mut file: FileRef,
     only: Option<&[String]>,
     wait: std::time::Duration,
 ) -> Result<SentGroupFile, SendError> {
-    let (targets, env) = {
+    let (targets, env, session) = {
         let inner = state.inner.lock().await;
         let identity = inner.identity.as_ref().ok_or(SendError::Sealed)?;
         let my_ik = hex::encode(identity.ik_sign.pub_bytes);
         let roster = inner.groups.get(gid).ok_or(SendError::UnknownGroup)?;
-        let env = encode_envelope(&Envelope::File {
+        let env = Zeroizing::new(encode_envelope(&Envelope::File {
             file: file.clone(),
             gid: Some(gid.to_string()),
             body: None,
-        });
-        (member_handles(&inner, roster, &my_ik, only), env)
+        }));
+        let targets = member_handles(&inner, roster, &my_ik, only);
+        (targets, env, identity.nostr.pub_bytes)
     };
-    let receipt = fan_out(state, &targets, &env, unix_now(), wait).await?;
+    let sent = fan_out(state, &targets, &env, unix_now(), wait).await;
+    let mut inner = match same_session(state, session).await {
+        Ok(inner) => inner,
+        Err(ended) => {
+            zeroize_file_ref(&mut file);
+            return Err(ended);
+        }
+    };
+    let receipt = sent?;
     if only.is_none() {
-        let mut inner = state.inner.lock().await;
         record_history(
             &mut inner,
             group_convo(gid),
@@ -2550,6 +2580,38 @@ async fn first_acceptance(
         }
     }
     Err(SendError::NotAccepted)
+}
+
+/// The session a send starts in: its identity's Nostr key. `None` while
+/// the vault is locked.
+fn session_key(inner: &InnerState) -> Option<[u8; 32]> {
+    inner
+        .identity
+        .as_ref()
+        .map(|identity| identity.nostr.pub_bytes)
+}
+
+/// `state` locked again once a send has waited for its relays (K4), if the
+/// session it started in (`session_key`) is open; `NoSession` if not.
+///
+/// A lock during that wait ends the session: `lock_vault` saves the history
+/// without the message, wipes it, and leaves no history key to write with.
+/// So a message a relay accepted while its session was locked is not kept
+/// in the sender's history, nor in the outbox to replay, although its
+/// contact may receive it: the send answers `no_session` and wipes its
+/// text. An unlock of the same identity before the wait ends opens the
+/// session again, and the message is kept there. The name is not compared,
+/// so renaming this identity meanwhile loses nothing.
+async fn same_session(
+    state: &AppState,
+    session: [u8; 32],
+) -> Result<tokio::sync::MutexGuard<'_, InnerState>, SendError> {
+    let inner = state.inner.lock().await;
+    if session_key(&inner) == Some(session) {
+        Ok(inner)
+    } else {
+        Err(SendError::NoSession)
+    }
 }
 
 /// Whether any relay of the session is up.
@@ -5580,6 +5642,147 @@ mod tests {
                 failed: vec!["carol".to_string()],
             })
         );
+    }
+
+    // ---- B2: a lock while a message waits for its relays ----
+
+    /// What `lock_vault` does to the session, as a test can do it.
+    fn lock(inner: &mut InnerState) {
+        forget_session(inner, &TurnCache::default());
+    }
+
+    /// Me, with a session with bob, sending through a relay that holds its
+    /// OK until `release` is told; and that relay's client.
+    async fn held_ok_to_bob(
+        release: &Arc<tokio::sync::Notify>,
+    ) -> (Arc<AppState>, TestRelay, Arc<NostrClient>) {
+        let relay = TestRelay::start(Answer::AcceptWhenReleased(Arc::clone(release))).await;
+        let (me, bob) = (create_identity(), create_identity());
+        let client = relay.client().await;
+        let state = Arc::new(sending_state(&me, vec![Arc::clone(&client)]).await);
+        add_session(&mut *state.inner.lock().await, &me, &bob, "bob");
+        (state, relay, client)
+    }
+
+    /// The user locks just as the relay's OK comes in: `lock_vault` holds
+    /// the session when the send has its OK, and wipes it.
+    async fn lock_as_the_ok_comes_in(
+        state: &AppState,
+        relay: &TestRelay,
+        client: &NostrClient,
+        release: &tokio::sync::Notify,
+    ) {
+        use crate::nostr::test_relay::wait_until;
+        wait_until("the event to reach the relay", || relay.events().len() == 1).await;
+        let mut locking = state.inner.lock().await;
+        release.notify_one();
+        wait_until("the OK", || client.awaiting_ok() == 0).await;
+        lock(&mut locking);
+    }
+
+    /// What a locked session must not hold of a message sent during the lock.
+    async fn kept_nothing(state: &AppState) {
+        let inner = state.inner.lock().await;
+        assert!(inner.history.is_empty(), "in the locked session's history");
+        assert!(inner.outbox.is_empty(), "kept to replay");
+    }
+
+    #[tokio::test]
+    async fn a_message_a_relay_took_while_the_session_locked_is_not_kept() {
+        let release = Arc::new(tokio::sync::Notify::new());
+        let (state, relay, client) = held_ok_to_bob(&release).await;
+        let sending = tokio::spawn({
+            let state = Arc::clone(&state);
+            let wait = std::time::Duration::from_secs(5);
+            async move { send_text(&state, "bob", "texto secreto".to_string(), wait).await }
+        });
+
+        lock_as_the_ok_comes_in(&state, &relay, &client, &release).await;
+
+        assert_eq!(sending.await.unwrap().unwrap_err(), SendError::NoSession);
+        kept_nothing(&state).await;
+    }
+
+    #[tokio::test]
+    async fn a_file_a_relay_took_while_the_session_locked_is_not_kept() {
+        let release = Arc::new(tokio::sync::Notify::new());
+        let (state, relay, client) = held_ok_to_bob(&release).await;
+        let sending = tokio::spawn({
+            let state = Arc::clone(&state);
+            let wait = std::time::Duration::from_secs(5);
+            async move {
+                announce_file(&state, "bob", sample_file(), wait)
+                    .await
+                    .map(|sent| sent.receipt)
+            }
+        });
+
+        lock_as_the_ok_comes_in(&state, &relay, &client, &release).await;
+
+        assert_eq!(sending.await.unwrap().unwrap_err(), SendError::NoSession);
+        kept_nothing(&state).await;
+    }
+
+    /// Me in a group with bob, carol and dave, sending through a relay that
+    /// takes bob's and carol's events at once and never answers dave's.
+    async fn group_waiting_for_dave() -> (Arc<AppState>, String, TestRelay, Arc<NostrClient>) {
+        let me = create_identity();
+        let others = [create_identity(), create_identity(), create_identity()];
+        let relay = TestRelay::start(Answer::SilentTo(pub_hex(&others[2]))).await;
+        let client = relay.client().await;
+        let state = Arc::new(sending_state(&me, vec![Arc::clone(&client)]).await);
+        let gid = group_of_three(&state, &me, &others).await;
+        (state, gid, relay, client)
+    }
+
+    /// The user locks once bob's and carol's OKs are in, while the send
+    /// still waits for dave's.
+    async fn lock_while_waiting_for_dave(
+        state: &AppState,
+        relay: &TestRelay,
+        client: &NostrClient,
+    ) {
+        use crate::nostr::test_relay::wait_until;
+        wait_until("the three events", || relay.events().len() == 3).await;
+        wait_until("bob's and carol's OKs", || client.awaiting_ok() == 1).await;
+        lock(&mut *state.inner.lock().await);
+    }
+
+    #[tokio::test]
+    async fn a_group_message_members_took_while_the_session_locked_is_not_kept() {
+        let (state, gid, relay, client) = group_waiting_for_dave().await;
+        let sending = tokio::spawn({
+            let state = Arc::clone(&state);
+            let wait = std::time::Duration::from_secs(1);
+            async move {
+                let text = "texto secreto del grupo".to_string();
+                send_group_text(&state, &gid, text, None, wait).await
+            }
+        });
+
+        lock_while_waiting_for_dave(&state, &relay, &client).await;
+
+        assert_eq!(sending.await.unwrap().unwrap_err(), SendError::NoSession);
+        kept_nothing(&state).await;
+    }
+
+    #[tokio::test]
+    async fn a_group_file_members_took_while_the_session_locked_is_not_kept() {
+        let (state, gid, relay, client) = group_waiting_for_dave().await;
+        let sending = tokio::spawn({
+            let state = Arc::clone(&state);
+            let wait = std::time::Duration::from_secs(1);
+            async move {
+                announce_group_file(&state, &gid, sample_file(), None, wait)
+                    .await
+                    .map(|sent| sent.receipt)
+            }
+        });
+
+        lock_while_waiting_for_dave(&state, &relay, &client).await;
+
+        assert_eq!(sending.await.unwrap().unwrap_err(), SendError::NoSession);
+        kept_nothing(&state).await;
     }
 
     // ---- B1: what is kept under a contact's name stays with that contact ----

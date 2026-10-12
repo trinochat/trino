@@ -442,6 +442,12 @@ impl NostrClient {
         self.connected.load(Ordering::SeqCst)
     }
 
+    /// How many published events still wait for this relay's OK.
+    #[cfg(test)]
+    pub(crate) fn awaiting_ok(&self) -> usize {
+        lock_pending(&self.pending_ok).len()
+    }
+
     pub fn url(&self) -> &str {
         &self.url
     }
@@ -772,6 +778,10 @@ pub(crate) mod test_relay {
         Silent,
         /// Refuses the events addressed (`p`) to this pubkey, takes the rest.
         RejectTo(String),
+        /// Never answers the events addressed to this pubkey, takes the rest.
+        SilentTo(String),
+        /// Takes each event once it is told to, one `notify_one` each.
+        AcceptWhenReleased(Arc<Notify>),
     }
 
     pub(crate) struct TestRelay {
@@ -859,6 +869,12 @@ pub(crate) mod test_relay {
                             (false, "blocked: test")
                         }
                         Answer::RejectTo(_) => (true, ""),
+                        Answer::SilentTo(pubkey) if event.recipient() == Some(pubkey) => continue,
+                        Answer::SilentTo(_) => (true, ""),
+                        Answer::AcceptWhenReleased(release) => {
+                            release.notified().await;
+                            (true, "")
+                        }
                     };
                     Some(serde_json::json!(["OK", event.id, ok, message]))
                 }
