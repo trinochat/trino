@@ -1847,79 +1847,66 @@ pub async fn fetch_file(
 }
 
 /// Forward an already-uploaded file (its FileRef) to another chat or group,
-/// without re-encrypting or re-uploading the blob.
+/// without re-encrypting or re-uploading the blob. With no relay up it is
+/// `offline`, and nothing is sent or stored.
 #[tauri::command]
 pub async fn forward_file(
     state: State<'_, AppState>,
     target: String,
     is_group: bool,
     file: FileRef,
-) -> Result<(), String> {
+) -> Result<(), CommandError> {
+    Ok(forward_to(&state, &target, is_group, file).await?)
+}
+
+/// `forward_file`, to the contact or the group `target`. It waits for no
+/// relay's OK and is stored as forwarded at once, so it needs a relay that
+/// is up: otherwise it would only wait in the queues of relays that are
+/// down, and be lost if the session locked first.
+async fn forward_to(
+    state: &AppState,
+    target: &str,
+    is_group: bool,
+    file: FileRef,
+) -> Result<(), SendError> {
     let file = sanitize_file_ref(file);
-    if is_group {
-        let (targets, env) = {
-            let inner = state.inner.lock().await;
-            let identity = inner.identity.as_ref().ok_or("vault sealed")?.clone();
-            let my_ik = hex::encode(identity.ik_sign.pub_bytes);
-            let _roster = inner.groups.get(&target).ok_or("unknown group")?;
-            let env = encode_envelope(&Envelope::File {
-                file: file.clone(),
-                gid: Some(target.clone()),
-                body: None,
-            });
-            let targets: Vec<String> = _roster
-                .members
-                .iter()
-                .filter(|m| m.ik_sign_pub != my_ik)
-                .filter_map(|m| {
-                    inner
-                        .friends
-                        .values()
-                        .find(|f| f.bundle.ik_sign_pub == m.ik_sign_pub)
-                        .map(|f| f.handle.clone())
-                })
-                .collect();
-            (targets, env)
-        };
-        for handle in targets {
-            ensure_session_inner(&state, &handle).await?;
-            send_cipher_inner(&state, &handle, &env, None).await?;
+    let (handles, convo) = {
+        let inner = state.inner.lock().await;
+        let identity = inner.identity.as_ref().ok_or(SendError::Sealed)?;
+        if !inner.relays.iter().any(|relay| relay.is_connected()) {
+            return Err(SendError::Offline);
         }
-        let mut inner = state.inner.lock().await;
-        record_history(
-            &mut inner,
-            group_convo(&target),
-            HistItem {
-                side: "me".into(),
-                from: None,
-                text: None,
-                file: Some(file),
-                call: None,
-                ts: chrono::Utc::now().timestamp(),
-            },
-        );
-    } else {
-        let env = encode_envelope(&Envelope::File {
-            file: file.clone(),
-            gid: None,
-            body: None,
-        });
-        ensure_session_inner(&state, &target).await?;
-        send_cipher_inner(&state, &target, &env, None).await?;
-        let mut inner = state.inner.lock().await;
-        record_history(
-            &mut inner,
-            target,
-            HistItem {
-                side: "me".into(),
-                from: None,
-                text: None,
-                file: Some(file),
-                call: None,
-                ts: chrono::Utc::now().timestamp(),
-            },
-        );
+        if is_group {
+            let my_ik = hex::encode(identity.ik_sign.pub_bytes);
+            let roster = inner.groups.get(target).ok_or(SendError::UnknownGroup)?;
+            let handles = member_handles(&inner, roster, &my_ik, None);
+            (handles, group_convo(target))
+        } else {
+            (vec![target.to_string()], target.to_string())
+        }
+    };
+    let env = encode_envelope(&Envelope::File {
+        file: file.clone(),
+        gid: is_group.then(|| target.to_string()),
+        body: None,
+    });
+    for handle in &handles {
+        ensure_session(state, handle).await?;
+        publish_sealed(state, handle, &env, None).await?;
     }
+    let mut inner = state.inner.lock().await;
+    record_history(
+        &mut inner,
+        convo,
+        HistItem {
+            side: "me".into(),
+            from: None,
+            text: None,
+            file: Some(file),
+            call: None,
+            ts: unix_now(),
+        },
+    );
     Ok(())
 }
 
@@ -5783,6 +5770,53 @@ mod tests {
 
         assert_eq!(sending.await.unwrap().unwrap_err(), SendError::NoSession);
         kept_nothing(&state).await;
+    }
+
+    // ---- B2: what is shown as sent at once needs a relay up ----
+
+    #[tokio::test]
+    async fn a_forward_with_no_relay_up_answers_offline_and_keeps_nothing() {
+        let me = create_identity();
+        let others = [create_identity(), create_identity(), create_identity()];
+        let state = sending_state(&me, vec![unreachable_client(Arc::default())]).await;
+        let gid = group_of_three(&state, &me, &others).await;
+
+        for (target, is_group) in [("bob", false), (gid.as_str(), true)] {
+            let error = forward_to(&state, target, is_group, sample_file())
+                .await
+                .unwrap_err();
+
+            assert_eq!(error, SendError::Offline, "{target}");
+            assert_eq!(CommandError::from(error).code, ErrorCode::Offline);
+        }
+        assert!(
+            state.inner.lock().await.history.is_empty(),
+            "shown as forwarded"
+        );
+        assert!(
+            no_session_moved_on(&state, &["bob", "carol", "dave"]).await,
+            "sealed to wait in a queue"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_forward_goes_to_the_contact_or_every_member_and_is_kept() {
+        use crate::nostr::test_relay::wait_until;
+        let me = create_identity();
+        let others = [create_identity(), create_identity(), create_identity()];
+        let relay = TestRelay::start(Answer::Accept).await;
+        let state = sending_state(&me, vec![relay.client().await]).await;
+        let gid = group_of_three(&state, &me, &others).await;
+
+        forward_to(&state, "bob", false, sample_file())
+            .await
+            .unwrap();
+        forward_to(&state, &gid, true, sample_file()).await.unwrap();
+
+        wait_until("bob's and the group's", || relay.events().len() == 4).await;
+        let inner = state.inner.lock().await;
+        assert_eq!(inner.history["bob"].len(), 1);
+        assert_eq!(inner.history[&group_convo(&gid)].len(), 1);
     }
 
     // ---- B1: what is kept under a contact's name stays with that contact ----

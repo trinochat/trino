@@ -435,6 +435,8 @@ export const api = {
   // `profile_invalid` over the limits of K12.
   updateProfile: (handle: string, avatar: string | null, about?: string): Promise<void> =>
     invoke('update_profile', about === undefined ? { handle, avatar } : { handle, avatar, about }),
+  // Rejects with a `CommandError` (it used to be a string): `offline` when no
+  // relay is up, and then nothing is sent or stored.
   forwardFile: (target: string, isGroup: boolean, file: FileRef): Promise<void> =>
     invoke('forward_file', { target, isGroup, file }),
   removeNode: (handle: string): Promise<void> => invoke('remove_node', { handle }),

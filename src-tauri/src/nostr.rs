@@ -5,7 +5,7 @@ use secp256k1::{schnorr::Signature, Keypair, Message as SecpMessage, Secp256k1, 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::{HashMap, HashSet};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex as StdMutex};
 use std::time::Duration;
 use thiserror::Error;
@@ -293,22 +293,38 @@ pub const RECONNECTION: Backoff = Backoff {
     max: Duration::from_secs(30),
 };
 
+/// How long one attempt to connect may take, TLS and WebSocket handshakes
+/// included. A captive portal, or a NAT mapping that died across sleep, can
+/// take the TCP connection and never finish the handshake: past this, the
+/// attempt counts as failed and the next one is tried.
+pub const CONNECT_DEADLINE: Duration = Duration::from_secs(15);
+
+/// The most events a client keeps for a relay while it is down. Kept
+/// events go out once it is back (K3); past this many, `publish` refuses
+/// more until it is, so a relay down for a whole session does not hold
+/// every handshake, call signal and roster sent meanwhile. The relays that
+/// are up get them anyway.
+pub const MAX_QUEUED_WHILE_DOWN: usize = 256;
+
 /// How a client connects, and whom it tells.
 #[derive(Clone)]
 pub struct ClientOptions {
     pub connector: Connector,
     pub first_connection: Backoff,
     pub reconnection: Backoff,
+    /// How long one attempt to connect may take.
+    pub connect_deadline: Duration,
     pub on_state: Option<StateHandler>,
 }
 
 impl ClientOptions {
-    /// The real WebSocket and the pauses above.
+    /// The real WebSocket and the pauses and deadline above.
     pub fn new(on_state: Option<StateHandler>) -> Self {
         ClientOptions {
             connector: websocket_connector(),
             first_connection: FIRST_CONNECTION,
             reconnection: RECONNECTION,
+            connect_deadline: CONNECT_DEADLINE,
             on_state,
         }
     }
@@ -341,6 +357,8 @@ pub struct NostrClient {
     /// The events `publish_acked` waits on (K4); the connection task hands
     /// each relay OK to its event.
     pending_ok: PendingOks,
+    /// Events published and not yet taken by the connection task.
+    queued: Arc<AtomicUsize>,
 }
 
 /// What a relay answered to an event (NIP-01 `OK`).
@@ -390,15 +408,21 @@ impl NostrClient {
     /// A client whose first connection must succeed, so the caller learns
     /// the relay is up: the network inspector's. A drop later is retried.
     pub async fn connect(url: &str, on_event: EventHandler) -> Result<Arc<Self>, NostrError> {
-        let (ws, _) = connect_async(url)
+        Self::connect_with(url, on_event, ClientOptions::new(None)).await
+    }
+
+    /// `connect`, with `options`: given up at its connect deadline.
+    async fn connect_with(
+        url: &str,
+        on_event: EventHandler,
+        options: ClientOptions,
+    ) -> Result<Arc<Self>, NostrError> {
+        let attempt = (options.connector)(url.to_string());
+        let ws = tokio::time::timeout(options.connect_deadline, attempt)
             .await
-            .map_err(|e| NostrError::Connect(e.to_string()))?;
-        Ok(Self::spawn(
-            url,
-            on_event,
-            Some(ws),
-            ClientOptions::new(None),
-        ))
+            .map_err(|_| NostrError::Connect("timeout".to_string()))?
+            .map_err(NostrError::Connect)?;
+        Ok(Self::spawn(url, on_event, Some(ws), options))
     }
 
     /// A messaging client (K3). It never fails: it keeps trying to connect,
@@ -419,11 +443,13 @@ impl NostrClient {
         let (closed, closed_rx) = watch::channel(false);
         let connected = Arc::new(AtomicBool::new(false));
         let pending_ok = PendingOks::default();
+        let queued = Arc::new(AtomicUsize::new(0));
         let connection = Connection {
             url: url.to_string(),
             on_event,
             pending_ok: Arc::clone(&pending_ok),
             connected: Arc::clone(&connected),
+            queued: Arc::clone(&queued),
             options,
         };
         tokio::spawn(connection.run(first, receiver, closed_rx));
@@ -434,6 +460,7 @@ impl NostrClient {
             connected,
             closed,
             pending_ok,
+            queued,
         })
     }
 
@@ -452,11 +479,22 @@ impl NostrClient {
         &self.url
     }
 
+    /// Send `event`, or keep it until the relay is up again: at most
+    /// `MAX_QUEUED_WHILE_DOWN` of them while it is down.
     pub async fn publish(&self, event: &NostrEvent) -> Result<(), NostrError> {
+        if !self.is_connected() && self.queued.load(Ordering::SeqCst) >= MAX_QUEUED_WHILE_DOWN {
+            return Err(NostrError::Send(
+                "the relay is down and keeps no more events".to_string(),
+            ));
+        }
         let payload = serde_json::json!(["EVENT", event]).to_string();
+        self.queued.fetch_add(1, Ordering::SeqCst);
         self.sender
             .send(ClientCommand::Send(payload))
-            .map_err(|e| NostrError::Send(e.to_string()))?;
+            .map_err(|e| {
+                self.queued.fetch_sub(1, Ordering::SeqCst);
+                NostrError::Send(e.to_string())
+            })?;
         Ok(())
     }
 
@@ -533,6 +571,8 @@ struct Connection {
     on_event: EventHandler,
     pending_ok: PendingOks,
     connected: Arc<AtomicBool>,
+    /// `NostrClient::queued`: one less for each event taken from the queue.
+    queued: Arc<AtomicUsize>,
     options: ClientOptions,
 }
 
@@ -586,7 +626,8 @@ impl Connection {
     }
 
     /// Connect, pausing between attempts as `backoff` says, until it works;
-    /// `None` once the client is closed.
+    /// `None` once the client is closed. An attempt still going at the
+    /// connect deadline counts as failed.
     async fn connect_with_retries(
         &self,
         backoff: Backoff,
@@ -604,18 +645,23 @@ impl Connection {
                 pause = backoff.after(pause);
             }
             wait = true;
+            let deadline = self.options.connect_deadline;
             let attempt = tokio::select! {
-                attempt = (self.options.connector)(self.url.clone()) => attempt,
+                attempt = tokio::time::timeout(deadline, (self.options.connector)(self.url.clone())) => attempt,
                 () = until_closed(closed) => return None,
             };
             match attempt {
-                Ok(ws) => {
+                Ok(Ok(ws)) => {
                     dlog("WS connected");
                     return Some(ws);
                 }
-                Err(_) => {
+                Ok(Err(_)) => {
                     crate::diag::note_with("WS connection failed", &[("retry_s", &pause.as_secs())])
                 }
+                Err(_) => crate::diag::note_with(
+                    "WS connection timed out",
+                    &[("retry_s", &pause.as_secs())],
+                ),
             }
         }
     }
@@ -660,6 +706,7 @@ impl Connection {
                 },
                 cmd = receiver.recv() => match cmd {
                     Some(ClientCommand::Send(text)) => {
+                        self.queued.fetch_sub(1, Ordering::SeqCst);
                         if write.send(Message::Text(text)).await.is_err() {
                             return false; // socket dead → reconnect
                         }
@@ -900,6 +947,9 @@ pub(crate) mod test_relay {
             connector: websocket_connector(),
             first_connection: QUICK,
             reconnection: QUICK,
+            // Short, yet long enough for a loaded machine to finish a
+            // handshake on 127.0.0.1.
+            connect_deadline: Duration::from_secs(1),
             on_state,
         }
     }
@@ -1318,6 +1368,106 @@ mod tests {
 
         wait_until("the queued event to arrive", || relay.events().len() == 1).await;
         assert_eq!(relay.events()[0].id, event.id);
+        client.close();
+    }
+
+    // ---- B2: a handshake that never ends, and a relay that stays down ----
+
+    /// A connector whose attempts never end, counting them: a captive
+    /// portal, or a NAT mapping that died across sleep, takes the TCP
+    /// connection and never finishes the handshake.
+    fn stalled_connector(attempts: Arc<AtomicUsize>) -> Connector {
+        Arc::new(move |_url| {
+            attempts.fetch_add(1, Ordering::SeqCst);
+            Box::pin(futures_util::future::pending())
+        })
+    }
+
+    #[tokio::test]
+    async fn a_connection_that_never_completes_is_given_up_and_tried_again() {
+        let attempts = Arc::new(AtomicUsize::new(0));
+        let options = ClientOptions {
+            connector: stalled_connector(Arc::clone(&attempts)),
+            ..quick_options(None)
+        };
+
+        let client = NostrClient::start("ws://127.0.0.1:9", ignore_events(), options);
+
+        wait_until("a second attempt", || attempts.load(Ordering::SeqCst) >= 2).await;
+        assert!(!client.is_connected());
+        client.close();
+    }
+
+    #[tokio::test]
+    async fn the_inspectors_connection_gives_up_at_its_deadline() {
+        let options = ClientOptions {
+            connector: stalled_connector(Arc::default()),
+            ..quick_options(None)
+        };
+
+        let connecting = NostrClient::connect_with("ws://127.0.0.1:9", ignore_events(), options);
+
+        let connected = tokio::time::timeout(Duration::from_secs(5), connecting)
+            .await
+            .expect("still connecting after 5 s: no deadline");
+        assert!(matches!(connected, Err(NostrError::Connect(_))));
+    }
+
+    #[test]
+    fn a_real_connection_is_given_fifteen_seconds() {
+        assert_eq!(
+            ClientOptions::new(None).connect_deadline,
+            Duration::from_secs(15)
+        );
+    }
+
+    #[tokio::test]
+    async fn a_relay_that_stays_down_keeps_only_so_many_events() {
+        let client = unreachable_client(Arc::default());
+        for _ in 0..MAX_QUEUED_WHILE_DOWN {
+            client.publish(&some_event()).await.unwrap();
+        }
+
+        let past_the_bound = client.publish(&some_event()).await;
+
+        assert!(past_the_bound.is_err(), "kept past the bound");
+        client.close();
+    }
+
+    #[tokio::test]
+    async fn the_events_kept_for_a_relay_free_their_places_once_they_go_out() {
+        let relay = TestRelay::start(Answer::Accept).await;
+        let allowed = Arc::new(AtomicBool::new(false));
+        let (gate, real) = (Arc::clone(&allowed), websocket_connector());
+        let connector: Connector = Arc::new(move |url| {
+            if gate.load(Ordering::SeqCst) {
+                real(url)
+            } else {
+                Box::pin(async { Err("refused".to_string()) })
+            }
+        });
+        let options = ClientOptions {
+            connector,
+            ..quick_options(None)
+        };
+        let client = NostrClient::start(&relay.url, ignore_events(), options);
+        for _ in 0..MAX_QUEUED_WHILE_DOWN {
+            client.publish(&some_event()).await.unwrap();
+        }
+        allowed.store(true, Ordering::SeqCst);
+        wait_until("the kept events", || {
+            relay.events().len() == MAX_QUEUED_WHILE_DOWN
+        })
+        .await;
+
+        // Down again: there is room for as many as before, and no more.
+        allowed.store(false, Ordering::SeqCst);
+        relay.kick();
+        wait_until("the drop", || !client.is_connected()).await;
+        for _ in 0..MAX_QUEUED_WHILE_DOWN {
+            client.publish(&some_event()).await.unwrap();
+        }
+        assert!(client.publish(&some_event()).await.is_err());
         client.close();
     }
 
