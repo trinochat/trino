@@ -12,8 +12,13 @@
  *   deletes is red and bold, after a separator: the colour is never the only
  *   sign. The item under the focus is marked by its background, and under
  *   forced colours, which drop backgrounds, by an outline in Highlight.
+ * - **A choice:** items with `checked` choose one of several, such as the
+ *   microphone of a call. They are `menuitemradio`, and the chosen one has
+ *   `aria-checked` and a check in the place of the icon, a shape that does
+ *   not rest on colour; the others keep that place empty, so the labels line
+ *   up.
  */
-import type { LucideIcon } from 'lucide-react';
+import { Check, type LucideIcon } from 'lucide-react';
 import type { KeyboardEvent as ReactKeyboardEvent } from 'react';
 import { iconSize } from '../../design/type';
 import { cx } from '../cx';
@@ -32,6 +37,8 @@ export interface MenuItem {
   onSelect: () => void;
   /** The footnote explains this item: screen readers read it as the item's description. */
   describedByFootnote?: boolean;
+  /** Set on every item of a menu that chooses one of several: whether this one is the chosen. */
+  checked?: boolean;
 }
 
 /** A line between groups of items, such as before the ones that delete. */
@@ -43,6 +50,9 @@ export interface MenuSeparator {
 export type MenuEntry = MenuItem | MenuSeparator;
 
 export const isSeparator = (entry: MenuEntry): entry is MenuSeparator => 'separator' in entry;
+
+/** The items of a menu, whether they act or choose. */
+export const MENU_ITEMS = '[role="menuitem"], [role="menuitemradio"]';
 
 /** The box of a menu: its surface, border, shadow and padding. */
 export const MENU_BOX =
@@ -71,17 +81,25 @@ export function MenuEntries({ entries, onSelect, footnoteId }: MenuEntriesProps)
         }
         const Icon = entry.icon;
         const danger = entry.tone === 'danger';
+        const choice = entry.checked !== undefined;
         return (
           <button
             key={entry.id}
             type="button"
-            role="menuitem"
+            role={choice ? 'menuitemradio' : 'menuitem'}
+            aria-checked={choice ? entry.checked : undefined}
             tabIndex={-1}
             aria-keyshortcuts={entry.shortcut?.keys}
             aria-describedby={footnoteId && entry.describedByFootnote ? footnoteId : undefined}
             onClick={() => onSelect(entry)}
             className={cx(MENU_ITEM, danger ? 'font-semibold text-ui-danger' : 'text-ui-ink')}
           >
+            {choice &&
+              (entry.checked ? (
+                <Check {...iconSize('md', 'shrink-0 text-ui-accent-text')} aria-hidden="true" />
+              ) : (
+                <span data-check-space="" aria-hidden="true" className="size-[1rem] shrink-0" />
+              ))}
             {Icon && <Icon {...iconSize('md', danger ? 'shrink-0' : 'shrink-0 text-ui-muted')} aria-hidden="true" />}
             <span className="min-w-0 flex-1">{entry.label}</span>
             {entry.shortcut && (
@@ -102,7 +120,7 @@ export function MenuEntries({ entries, onSelect, footnoteId }: MenuEntriesProps)
  * key was one of them.
  */
 export function moveInMenu(event: ReactKeyboardEvent, menu: HTMLElement | null): boolean {
-  const list = Array.from(menu?.querySelectorAll<HTMLElement>('[role="menuitem"]') ?? []);
+  const list = Array.from(menu?.querySelectorAll<HTMLElement>(MENU_ITEMS) ?? []);
   const index = list.findIndex(element => element === document.activeElement);
   let next: HTMLElement | undefined;
   switch (event.key) {

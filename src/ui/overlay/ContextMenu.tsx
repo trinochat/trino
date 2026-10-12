@@ -27,7 +27,7 @@ import {
 import { createPortal } from 'react-dom';
 import { cx } from '../cx';
 import { isEditableTarget } from '../editable';
-import { MENU_BOX, MenuEntries, isSeparator, moveInMenu, type MenuEntry, type MenuItem } from './menu-parts';
+import { MENU_BOX, MENU_ITEMS, MenuEntries, isSeparator, moveInMenu, type MenuEntry, type MenuItem } from './menu-parts';
 
 export interface ContextMenuRequest {
   /** The menu's accessible name, such as "Opciones del mensaje". */
@@ -172,7 +172,7 @@ export function useContextMenu(build: ContextMenuBuild): ContextMenuHandle {
     const { left, top } = placeMenu(open.anchor, { width, height }, { width: window.innerWidth, height: window.innerHeight });
     popup.style.left = `${left}px`;
     popup.style.top = `${top}px`;
-    menuRef.current?.querySelector<HTMLElement>('[role="menuitem"]')?.focus();
+    menuRef.current?.querySelector<HTMLElement>(MENU_ITEMS)?.focus();
   }, [open]);
 
   // `close` reads the open menu through `latest`, so these listeners only follow `open`.

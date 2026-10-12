@@ -202,3 +202,51 @@ describe('Menu', () => {
     expect(classesOf(box)).toEqual(expect.arrayContaining(['border-ui-line', 'terminal:border-ui-control-line']));
   });
 });
+
+// A menu that chooses one of several, such as the microphone of a call (12 Oct 2026): each item is a
+// menuitemradio, the chosen one checked with a mark that does not rest on colour, and the menu opens
+// on it.
+describe('Menu: a choice', () => {
+  const choices = (onSelect: (id: string) => void = () => {}): MenuItem[] => [
+    { id: 'a', label: 'Micrófono del portátil', checked: false, onSelect: () => onSelect('a') },
+    { id: 'b', label: 'Audífonos USB', checked: true, onSelect: () => onSelect('b') },
+    { id: 'c', label: 'Micrófono 3', checked: false, onSelect: () => onSelect('c') },
+  ];
+  const radio = (name: string) => screen.getByRole('menuitemradio', { name });
+
+  it('marks the chosen item with aria-checked and a check, and keeps every label in line', () => {
+    render(<Menu label="Elegir micrófono" items={choices()} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Elegir micrófono' }));
+    expect(screen.queryAllByRole('menuitem')).toHaveLength(0);
+    expect(radio('Audífonos USB').getAttribute('aria-checked')).toBe('true');
+    expect(radio('Micrófono 3').getAttribute('aria-checked')).toBe('false');
+    expect(radio('Audífonos USB').querySelector('svg.lucide-check')).not.toBeNull();
+    expect(radio('Micrófono 3').querySelector('svg.lucide-check')).toBeNull();
+    // The unchosen keep a 16 px space where the check goes, so the labels line up.
+    expect(radio('Micrófono 3').querySelector('[data-check-space]')).not.toBeNull();
+  });
+
+  it('opens on the chosen item, moves through the choices and selects one', () => {
+    const onSelect = vi.fn();
+    render(<Menu label="Elegir micrófono" items={choices(onSelect)} />);
+    const button = screen.getByRole('button', { name: 'Elegir micrófono' });
+    fireEvent.click(button);
+    expect(document.activeElement).toBe(radio('Audífonos USB'));
+    press('ArrowDown');
+    expect(document.activeElement).toBe(radio('Micrófono 3'));
+    press('Home');
+    expect(document.activeElement).toBe(radio('Micrófono del portátil'));
+    fireEvent.click(radio('Micrófono 3'));
+    expect(onSelect).toHaveBeenCalledWith('c');
+    expect(screen.queryByRole('menu')).toBeNull();
+    expect(document.activeElement).toBe(button);
+  });
+
+  it('can leave the shape of its trigger to the screen', () => {
+    render(<Menu label="Elegir micrófono" items={choices()} triggerStyle="bare" triggerClassName="rounded-full" />);
+    const classes = classesOf(screen.getByRole('button', { name: 'Elegir micrófono' }));
+    expect(classes).toEqual(expect.arrayContaining(['min-h-11', 'min-w-11', 'rounded-full']));
+    expect(classes).not.toContain('rounded-ui');
+    expect(classes).not.toContain('px-2');
+  });
+});

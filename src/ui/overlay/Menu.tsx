@@ -18,7 +18,7 @@ import { Ellipsis } from 'lucide-react';
 import { iconSize } from '../../design/type';
 import { cx } from '../cx';
 import { FOCUS_RING } from '../focus';
-import { MENU_BOX, MenuEntries, isSeparator, moveInMenu, type MenuEntry, type MenuItem } from './menu-parts';
+import { MENU_BOX, MENU_ITEMS, MenuEntries, isSeparator, moveInMenu, type MenuEntry, type MenuItem } from './menu-parts';
 
 export type { MenuEntry, MenuItem, MenuSeparator } from './menu-parts';
 
@@ -35,13 +35,28 @@ export interface MenuProps {
   align?: 'start' | 'end';
   /** Extra classes for the trigger. */
   triggerClassName?: string;
+  /**
+   * `bare` keeps only the trigger's 44 px target and focus ring, and leaves its
+   * shape and colours to `triggerClassName`, such as a chevron in the pill of
+   * a call's control. Default `ghost`.
+   */
+  triggerStyle?: 'ghost' | 'bare';
   /** Extra classes for the wrapper. */
   className?: string;
 }
 
 type Edge = 'first' | 'last';
 
-export function Menu({ label, trigger, items, footnote, align = 'end', triggerClassName, className }: MenuProps) {
+export function Menu({
+  label,
+  trigger,
+  items,
+  footnote,
+  align = 'end',
+  triggerClassName,
+  triggerStyle = 'ghost',
+  className,
+}: MenuProps) {
   const [open, setOpen] = useState(false);
   const [above, setAbove] = useState(false);
   const wrapperRef = useRef<HTMLDivElement>(null);
@@ -55,10 +70,12 @@ export function Menu({ label, trigger, items, footnote, align = 'end', triggerCl
   const hasFootnote = footnote != null;
   const footnoteHasItem = items.some(item => !isSeparator(item) && item.describedByFootnote);
 
-  const menuItems = () => Array.from(menuRef.current?.querySelectorAll<HTMLElement>('[role="menuitem"]') ?? []);
+  const menuItems = () => Array.from(menuRef.current?.querySelectorAll<HTMLElement>(MENU_ITEMS) ?? []);
+  // A choice opens on the chosen item; ArrowUp still goes to the last one.
   const focusEdge = (edge: Edge) => {
     const list = menuItems();
-    (edge === 'first' ? list[0] : list[list.length - 1])?.focus();
+    const chosen = list.find(element => element.getAttribute('aria-checked') === 'true');
+    (edge === 'first' ? (chosen ?? list[0]) : list[list.length - 1])?.focus();
   };
   const openAt = (edge: Edge) => {
     if (open) {
@@ -131,7 +148,8 @@ export function Menu({ label, trigger, items, footnote, align = 'end', triggerCl
         onClick={() => (open ? close(true) : openAt('first'))}
         onKeyDown={onTriggerKeyDown}
         className={cx(
-          'inline-flex min-h-11 min-w-11 items-center justify-center gap-1 rounded-ui px-2 text-ui-muted hover:bg-ui-raised hover:text-ui-ink',
+          'inline-flex min-h-11 min-w-11 items-center justify-center gap-1',
+          triggerStyle === 'ghost' && 'rounded-ui px-2 text-ui-muted hover:bg-ui-raised hover:text-ui-ink',
           FOCUS_RING,
           triggerClassName,
         )}
