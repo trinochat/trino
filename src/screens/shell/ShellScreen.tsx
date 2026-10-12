@@ -30,6 +30,7 @@ import { convoKey } from '../../lib/convo';
 import { useT } from '../../lib/i18n';
 import { prefs as devicePrefs } from '../../lib/prefs';
 import { Banner, Button, cx } from '../../ui';
+import { NoChatSelected } from '../chat/NoChatSelected';
 import { buildInboxItems } from '../inbox/inbox-model';
 import type { CallFilter } from '../inbox/call-history-model';
 import type { CallRowView } from '../inbox/CallRow';
@@ -437,7 +438,6 @@ export function ShellScreen(props: ShellScreenProps) {
     chat = <Fragment key={key}>{slots.chat(chatProps)}</Fragment>;
   }
 
-  const empty = <p className="m-auto max-w-[20rem] px-4 text-center text-ui-md text-ui-muted">{t('shell.empty')}</p>;
   const mainContent =
     main === 'settings'
       ? slots.settings({
@@ -464,7 +464,8 @@ export function ShellScreen(props: ShellScreenProps) {
             ...(single && { onBack: back }),
             now: conv.now,
           })
-        : (chat ?? empty);
+        : // No chat open: the chat's own empty pane (W3).
+          (chat ?? <NoChatSelected />);
 
   /** What the main pane shows: its name when it takes the focus. */
   const mainLabel =

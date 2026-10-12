@@ -223,7 +223,8 @@ describe('ShellScreen: layout', () => {
   it('shows both panes from 47.5 rem, the chat with no Atrás', async () => {
     setup({ width: 760 });
     expect(sidebar()).not.toBeNull();
-    expect(within(screen.getByRole('main')).getByText('Elige un chat para empezar a escribir.')).toBeTruthy();
+    // With no chat open, the chat's own empty pane (W3's NoChatSelected).
+    expect(within(screen.getByRole('main')).getByText('Elige un chat o un grupo para ver sus mensajes.')).toBeTruthy();
     fireEvent.click(await row('Ana'));
     expect(sidebar()).not.toBeNull();
     expect(screen.queryByRole('button', { name: 'Atrás' })).toBeNull();

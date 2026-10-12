@@ -56,7 +56,6 @@ const KEYS: string[] = [
   // The shell around the panes.
   'shell.nav',
   'shell.details',
-  'shell.empty',
   'shell.error.history',
   'shell.error.reconnect',
   'shell.error.forward',

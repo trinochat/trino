@@ -5,8 +5,9 @@ import type { CallLogWire, HistItem, NodeInfo } from '../../lib/api';
 import { makeT } from '../../lib/i18n';
 import { encodeMeta } from '../../lib/message-body';
 import type { ProcessedFile } from '../../lib/media';
+import { STICKER_INLINE_MAX } from '../chat/composer/sticker-limits';
 import { fakeApi, fakeEvents, fakePrefs, sentFile } from './test-fakes';
-import { STICKER_INLINE_MAX, useConversations, type ConversationsOptions } from './useConversations';
+import { useConversations, type ConversationsOptions } from './useConversations';
 
 afterEach(() => {
   cleanup();
@@ -325,16 +326,30 @@ describe('useConversations: sending', () => {
     expect(msg?.file).not.toHaveProperty('accepted_by');
   });
 
-  it('sends a sticker as a file, with its picture inline only while the event stays small', async () => {
+  // One rule for a sticker's inline picture, the chat's (W3's sticker-limits,
+  // which works out the relays' 64 KB): a JPEG, PNG, GIF or WebP up to its
+  // limit, else none, and the contact downloads the sticker.
+  it('sends a sticker as a file, with its picture inline only while it is a safe picture that keeps the event small', async () => {
     const { hook, api } = setup();
     await loaded(hook);
     const small = { id: 's1', mime: 'image/png', data_url: 'data:image/png;base64,QUFB' };
     await act(() => hook.result.current.sendSticker(ANA, small));
     expect(api.sendFile).toHaveBeenLastCalledWith('Ana', 'sticker::s1.png', 'image/png', 'QUFB', small.data_url);
 
-    const big = { id: 's2', mime: 'image/webp', data_url: `data:image/webp;base64,${'A'.repeat(STICKER_INLINE_MAX)}` };
-    await act(() => hook.result.current.sendSticker(FAMILIA, big));
-    expect(api.sendGroupFile).toHaveBeenLastCalledWith('g1', 'sticker::s2.webp', 'image/webp', 'A'.repeat(STICKER_INLINE_MAX), null);
+    const prefix = 'data:image/webp;base64,';
+    const fits = 'A'.repeat(STICKER_INLINE_MAX - prefix.length);
+    const atLimit = { id: 's2', mime: 'image/webp', data_url: prefix + fits };
+    await act(() => hook.result.current.sendSticker(FAMILIA, atLimit));
+    expect(api.sendGroupFile).toHaveBeenLastCalledWith('g1', 'sticker::s2.webp', 'image/webp', fits, atLimit.data_url);
+
+    const over = { id: 's3', mime: 'image/webp', data_url: `${prefix}${fits}A` };
+    await act(() => hook.result.current.sendSticker(FAMILIA, over));
+    expect(api.sendGroupFile).toHaveBeenLastCalledWith('g1', 'sticker::s3.webp', 'image/webp', `${fits}A`, null);
+
+    // The backend refuses any other inline picture, and the whole sticker with it.
+    const svg = { id: 's4', mime: 'image/svg+xml', data_url: 'data:image/svg+xml;base64,PHN2Zy8+' };
+    await act(() => hook.result.current.sendSticker(ANA, svg));
+    expect(api.sendFile.mock.lastCall?.[4]).toBeNull();
   });
 
   it('forwards a text by sending it again, and a file without uploading it again', async () => {

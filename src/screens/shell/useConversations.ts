@@ -24,6 +24,7 @@ import { convoKey } from '../../lib/convo';
 import type { TFunction } from '../../lib/i18n';
 import type { ProcessedFile } from '../../lib/media';
 import { decodeBody, encodeMeta } from '../../lib/message-body';
+import { stickerThumb } from '../chat/composer/sticker-limits';
 import type { ConvoRef, Msg, Notifier, ReplyRef, SendFailure, Trust } from '../types';
 import {
   EMPTY_CONVERSATIONS,
@@ -35,16 +36,6 @@ import {
 } from './conversations';
 import { listenAll, nowSeconds } from './listen';
 import type { ShellApi, ShellCapabilities, ShellEvents, ShellPrefs } from './shell-api';
-
-/**
- * A sticker's picture goes inline in its message only below this many
- * characters of data URL. The relays drop events over 64 KB without a word
- * (trino-rediseno.md:154), and the inline picture travels inside the
- * encrypted envelope, which about doubles it; App.tsx's 60 000 went past
- * that. A larger sticker shows once it is fetched. The chat unit (W3) keeps
- * its own STICKER_INLINE_MAX for its limits; the integration makes them one.
- */
-export const STICKER_INLINE_MAX = 24_000;
 
 /** How often disappearing messages are cleaned up, here and in the backend. */
 export const PRUNE_EVERY_MS = 10_000;
@@ -422,7 +413,9 @@ export function useConversations(options: ConversationsOptions): ConversationsSt
       name: `sticker::${sticker.id}.${extension}`,
       mime: sticker.mime,
       dataB64: comma >= 0 ? sticker.data_url.slice(comma + 1) : '',
-      thumb: sticker.data_url.length < STICKER_INLINE_MAX ? sticker.data_url : null,
+      // The chat's rule (W3): inline only a safe picture that keeps the event
+      // under the relays' 64 KB; otherwise the contact downloads the sticker.
+      thumb: stickerThumb(sticker),
     });
   };
 
