@@ -205,6 +205,21 @@ describe('AddContactPanel', () => {
     expect(document.activeElement).toBe(screen.getByRole('textbox', { name: 'Guardar como' }));
   });
 
+  it('announces a name the backend refuses as a name, and takes you to the name field', async () => {
+    const { api, onContactAdded } = mount();
+    api.probeNode.mockRejectedValueOnce(commandError('invalid_name'));
+    paste(CODE);
+    fireEvent.click(await screen.findByRole('button', { name: 'Agregar a Ana Torres' }));
+    expect((await screen.findByRole('alert')).textContent).toContain(
+      'Ese nombre no se puede usar: está reservado o tiene caracteres que no se ven. Escribe otro.',
+    );
+    const field = screen.getByRole('textbox', { name: 'Guardar como' });
+    expect(field.getAttribute('aria-invalid')).toBe('true');
+    expect(document.activeElement).toBe(field);
+    expect(screen.queryByText('No se pudo agregar el contacto. Inténtalo de nuevo.')).toBeNull();
+    expect(onContactAdded).not.toHaveBeenCalled();
+  });
+
   it('announces as an alert that a contact already holds the keys of the code', async () => {
     const { api, onContactAdded } = mount();
     api.probeNode.mockRejectedValueOnce(commandError('already_contact', { handle: 'Anita' }));

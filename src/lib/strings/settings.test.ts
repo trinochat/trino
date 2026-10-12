@@ -279,6 +279,7 @@ const CONTACT_INFO = [
   'contactInfo.useProfileName',
   'contactInfo.errNameTaken',
   'contactInfo.errNameReserved',
+  'contactInfo.errNameInvalid',
   'contactInfo.rename',
   'contactInfo.renameTitle',
   'contactInfo.renameLabel',

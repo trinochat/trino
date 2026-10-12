@@ -23,8 +23,21 @@ export interface AddContactCard {
   editingName: boolean;
 }
 
-/** Why adding failed: the name is someone else's, the keys already are a contact, or anything else. */
-export type AddFailure = { code: 'name_taken' } | { code: 'already_contact'; handle: string } | { code: 'other' };
+/**
+ * Why adding failed: the name is someone else's, the name cannot be a
+ * contact's (`invalid_name`: the channel's or a group's key, or characters
+ * that do not show), the keys already are a contact, or anything else.
+ */
+export type AddFailure =
+  | { code: 'name_taken' }
+  | { code: 'invalid_name' }
+  | { code: 'already_contact'; handle: string }
+  | { code: 'other' };
+
+/** A failure that only another name can get past: the name field opens and the add button waits. */
+export function isNameFailure(error: AddFailure | undefined): boolean {
+  return error?.code === 'name_taken' || error?.code === 'invalid_name';
+}
 
 export interface AddRequest {
   bundleJson: string;
@@ -106,7 +119,7 @@ export function conflictOf(state: AddContactState): AddConflict | null {
 export function addRequest(state: AddContactState): AddRequest | null {
   if (state.kind !== 'ready') return null;
   const handle = state.card.name.trim();
-  if (handle === '' || state.error?.code === 'name_taken' || state.error?.code === 'already_contact') return null;
+  if (handle === '' || isNameFailure(state.error) || state.error?.code === 'already_contact') return null;
   const conflict = conflictOf(state);
   if (conflict?.kind === 'known' || conflict?.kind === 'sharesKeys') return null;
   if (conflict?.kind === 'nameTaken') {
@@ -119,6 +132,7 @@ export function addRequest(state: AddContactState): AddRequest | null {
 export function addFailureOf(error: unknown): AddFailure {
   if (isCommandError(error)) {
     if (error.code === 'name_taken') return { code: 'name_taken' };
+    if (error.code === 'invalid_name') return { code: 'invalid_name' };
     if (error.code === 'already_contact') return { code: 'already_contact', handle: error.handle ?? '' };
   }
   return { code: 'other' };
@@ -169,7 +183,7 @@ export function addContactReducer(state: AddContactState, event: AddContactEvent
       if (state.kind !== 'adding') return state;
       return {
         kind: 'ready',
-        card: { ...state.card, editingName: state.card.editingName || event.error.code === 'name_taken' },
+        card: { ...state.card, editingName: state.card.editingName || isNameFailure(event.error) },
         error: event.error,
       };
     case 'reset':

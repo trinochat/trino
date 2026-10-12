@@ -2,7 +2,9 @@
  * Renaming a contact: the name you gave them, which changes on this device
  * only. Empty is not a name, neither is one that stands for a group or the
  * channel, and the backend refuses one another contact already has
- * (`name_taken`, K8).
+ * (`name_taken`, K8) and one that cannot be a contact's (`invalid_name`:
+ * besides those keys, characters that do not show, such as control and
+ * bidi characters).
  */
 import { useState, type FormEvent } from 'react';
 import { isCommandError } from '../../lib/api';
@@ -23,6 +25,13 @@ import { capScalars, countScalars } from '../settings/scalars';
  */
 export function isContactName(name: string): boolean {
   return name.length > 0 && parseConvoKey(name).kind === 'contact' && countScalars(name) <= NAME_MAX;
+}
+
+/** The text for what rename_node rejected with: a taken name, a name that cannot be one, or anything else. */
+export function renameErrorOf(cause: unknown): string {
+  if (isCommandError(cause) && cause.code === 'name_taken') return 'contactInfo.errNameTaken';
+  if (isCommandError(cause) && cause.code === 'invalid_name') return 'contactInfo.errNameInvalid';
+  return 'contactInfo.errRename';
 }
 
 export interface RenameContactDialogProps {
@@ -61,9 +70,7 @@ export function RenameContactDialog({ name, rename, onClose, onRenamed }: Rename
       await rename(name, next);
       onRenamed(next);
     } catch (cause) {
-      setError(
-        isCommandError(cause) && cause.code === 'name_taken' ? 'contactInfo.errNameTaken' : 'contactInfo.errRename',
-      );
+      setError(renameErrorOf(cause));
       setBusy(false);
     }
   };

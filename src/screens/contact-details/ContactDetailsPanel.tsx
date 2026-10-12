@@ -20,7 +20,6 @@
  */
 import { Ban, Pencil, Trash2, X } from 'lucide-react';
 import { useEffect, useId, useRef, useState, type ReactNode } from 'react';
-import { isCommandError } from '../../lib/api';
 import { convoKey } from '../../lib/convo';
 import { useT } from '../../lib/i18n';
 import { identityInitials } from '../../lib/initials';
@@ -28,7 +27,7 @@ import { prefs as devicePrefs, type Prefs } from '../../lib/prefs';
 import { Avatar, Button, Dialog, Field, iconSize, IconButton, Select, Textarea, TrustBadge } from '../../ui';
 import { ErrorLine } from '../settings/ErrorLine';
 import type { ContactDetailsSlotProps, Trust } from '../types';
-import { isContactName, RenameContactDialog } from './RenameContactDialog';
+import { isContactName, RenameContactDialog, renameErrorOf } from './RenameContactDialog';
 
 export interface ContactDetailsApi {
   renameNode(oldHandle: string, newHandle: string): Promise<void>;
@@ -119,7 +118,7 @@ export function ContactDetailsPanel({
       // "Usar este nombre" goes away once the name is theirs.
       renameButton.current?.focus();
     } catch (cause) {
-      setError(isCommandError(cause) && cause.code === 'name_taken' ? 'contactInfo.errNameTaken' : 'contactInfo.errRename');
+      setError(renameErrorOf(cause));
     } finally {
       setBusy(null);
     }

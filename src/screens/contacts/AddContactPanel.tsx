@@ -173,13 +173,18 @@ function PreviewCard({ state, card, dispatch, onSubmit, onCancel }: PreviewCardP
   // What the backend refused is an error, read out (accesibilidad.md §3.2);
   // what the preview showed before anything was sent is a banner.
   const refused = error?.code === 'already_contact';
-  const nameTaken = error?.code === 'name_taken';
+  const nameError =
+    error?.code === 'name_taken'
+      ? 'contacts.add.nameTakenError'
+      : error?.code === 'invalid_name'
+        ? 'contacts.add.nameInvalidError'
+        : null;
 
-  // A taken name leaves the add button disabled: the next step is the name field.
+  // A name the backend refused leaves the add button disabled: the next step is the name field.
   const nameRef = useRef<HTMLInputElement>(null);
   useEffect(() => {
-    if (nameTaken) nameRef.current?.focus();
-  }, [nameTaken]);
+    if (nameError) nameRef.current?.focus();
+  }, [nameError]);
 
   return (
     <section aria-labelledby={titleId} className={CARD}>
@@ -211,7 +216,7 @@ function PreviewCard({ state, card, dispatch, onSubmit, onCancel }: PreviewCardP
         <Field
           label={t('contacts.add.nameLabel')}
           hint={card.name.trim() === '' ? t('contacts.add.nameEmpty') : undefined}
-          error={nameTaken ? <span role="alert">{t('contacts.add.nameTakenError')}</span> : undefined}
+          error={nameError ? <span role="alert">{t(nameError)}</span> : undefined}
         >
           <Input
             ref={nameRef}

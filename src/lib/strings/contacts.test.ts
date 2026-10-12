@@ -40,6 +40,7 @@ const KEYS: string[] = [
   'contacts.add.replace',
   'contacts.add.replaceHint',
   'contacts.add.nameTakenError',
+  'contacts.add.nameInvalidError',
   'contacts.add.failed',
   'contacts.add.added',
   // Under the add and share panels: no messages from strangers in this batch.

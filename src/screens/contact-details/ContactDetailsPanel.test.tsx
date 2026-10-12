@@ -159,6 +159,33 @@ describe('ContactDetailsPanel', () => {
     expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Cambiar nombre' }));
   });
 
+  // rename_node refuses names with control, bidi or nothing visible, which
+  // the dialog lets through (invalid_name, B1).
+  it('says so when the backend refuses the new name as a name', async () => {
+    const renameNode = vi.fn<ContactDetailsApi['renameNode']>().mockRejectedValueOnce(commandError('invalid_name'));
+    const { props } = setup({ api: { renameNode } });
+    fireEvent.click(screen.getByRole('button', { name: 'Cambiar nombre' }));
+    const dialog = screen.getByRole('dialog', { name: 'Cambiar el nombre de ana' });
+    fireEvent.change(within(dialog).getByRole('textbox', { name: 'Nombre' }), { target: { value: 'Ana‮' } });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Guardar' }));
+    expect((await within(dialog).findByRole('alert')).textContent).toContain(
+      'Ese nombre no se puede usar: está reservado o tiene caracteres que no se ven. Escribe otro.',
+    );
+    expect(props.onRenamed).not.toHaveBeenCalled();
+  });
+
+  it('says so when the backend refuses the name in their profile as a name', async () => {
+    const { props } = setup({
+      contact: node('ana', { profile_name: 'Ana​' }),
+      api: { renameNode: vi.fn(async () => Promise.reject(commandError('invalid_name'))) },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Usar este nombre' }));
+    expect((await screen.findByRole('alert')).textContent).toContain(
+      'Ese nombre no se puede usar: está reservado o tiene caracteres que no se ven. Escribe otro.',
+    );
+    expect(props.onRenamed).not.toHaveBeenCalled();
+  });
+
   it('refuses to rename the contact to a name that stands for a group or the channel', async () => {
     const { api } = setup({ stored: { 'ttl:ana': '30', 'ttl:grp:g1': '3600' } });
     fireEvent.click(screen.getByRole('button', { name: 'Cambiar nombre' }));

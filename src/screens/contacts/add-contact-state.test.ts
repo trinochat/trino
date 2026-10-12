@@ -191,6 +191,18 @@ describe('addContactReducer', () => {
     expect(addRequest(other)).toMatchObject({ handle: 'Ana Torres' });
   });
 
+  // probe_node refuses "channel", "grp:…" and names with control, bidi or
+  // nothing visible (invalid_name, B1): the same name cannot go again.
+  it('opens the name when the backend refuses it as a name, and waits for another one', () => {
+    const adding = run([{ type: 'submit' }], previewed());
+    const invalid = run([{ type: 'addFailed', error: { code: 'invalid_name' } }], adding);
+    expect(invalid).toMatchObject({ kind: 'ready', error: { code: 'invalid_name' }, card: { editingName: true } });
+    expect(addRequest(invalid)).toBeNull();
+    const renamed = run([{ type: 'rename', name: 'Ana 2' }], invalid);
+    expect(renamed.kind === 'ready' && renamed.error).toBeUndefined();
+    expect(addRequest(renamed)).toMatchObject({ handle: 'Ana 2' });
+  });
+
   it('starts over on reset', () => {
     expect(run([{ type: 'reset' }], previewed())).toEqual({ kind: 'idle' });
   });
@@ -203,6 +215,7 @@ describe('addFailureOf', () => {
       code: 'already_contact',
       handle: 'Anita',
     });
+    expect(addFailureOf({ code: 'invalid_name', message: 'x' })).toEqual({ code: 'invalid_name' });
     expect(addFailureOf({ code: 'io', message: 'x' })).toEqual({ code: 'other' });
     expect(addFailureOf('bundle signature invalid')).toEqual({ code: 'other' });
   });
