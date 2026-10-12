@@ -420,6 +420,50 @@ describe('ShellScreen: where the focus goes', () => {
     expect(document.activeElement).toBe(await row('Ana'));
   });
 
+  // A render that takes React more than its 5 ms slice leaves its effects for
+  // a task of their own, and React runs any that are still pending before it
+  // renders a click. Under load, the full run of I7 hit that with the test
+  // above: the focus stayed on the body.
+  it('moves the focus with the panes even when an earlier render still has its effects to run', async () => {
+    let setSlow: (n: number) => void = () => {};
+    /** The call bar, made to take 20 ms to render once `n` grows: longer than React's slice. */
+    function SlowBar() {
+      const [n, setN] = useState(0);
+      setSlow = setN;
+      const until = n > 0 ? performance.now() + 20 : 0;
+      while (performance.now() < until) {
+        // Busy, as a render on a loaded machine.
+      }
+      return <div data-testid="call-bar" data-n={n} />;
+    }
+    const call = { bar: <SlowBar />, layer: <div data-testid="call-layer" />, covering: false, start: vi.fn(), activePeer: null };
+    const { emit } = setup({ width: 759, call });
+    /** A turn of Node's setImmediate queue, where React's scheduler runs its tasks under vitest. */
+    const nextTurn = () =>
+      new Promise<void>(resolve => (globalThis as unknown as { setImmediate(run: () => void): void }).setImmediate(resolve));
+    /** A render of the shell outside act, slow enough that React runs its effects in a later task. */
+    const slowRender = async (n: number) => {
+      emit.connectionChanged({ up: n, total: 3, relays: [] });
+      setSlow(n);
+      // One turn for React's render, and one that lands right after it: the
+      // render is on the page, and its effects wait for the next turn.
+      await nextTurn();
+      await nextTurn();
+      expect(screen.getByTestId('call-bar').dataset.n).toBe(String(n));
+    };
+    const ana = await row('Ana');
+    await act(async () => {});
+
+    await slowRender(1);
+    press(ana);
+    expect(document.activeElement).toBe(screen.getByRole('main', { name: 'Ana' }));
+
+    await act(async () => {});
+    await slowRender(2);
+    press(screen.getByRole('button', { name: 'Atrás' }));
+    expect(document.activeElement).toBe(await row('Ana'));
+  });
+
   it('gives the focus back to the call when the chat was opened from the log', async () => {
     const answered: CallLogWire = {
       peer: 'Bea',

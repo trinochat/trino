@@ -149,10 +149,16 @@ export function ShellScreen(props: ShellScreenProps) {
   /**
    * Set by a change that can take the focused control off the page: one pane
    * swaps the list and the conversation, and a closing panel takes its
-   * buttons along. Applied after the next render, and only if the focus fell
-   * to the page: a dialog that gave it back to its opener keeps it there.
+   * buttons along. Applied after the render that makes the change, and only
+   * if the focus fell to the page: a dialog that gave it back to its opener
+   * keeps it there. It is state, a new object each time, so only the effect
+   * of that render applies it. React runs any effects still pending from an
+   * earlier render (one that took longer than its slice) before it renders
+   * a click; as a ref, the request was taken there, with the control still
+   * on the page, and the focus then fell to the page.
    */
-  const focusNext = useRef<FocusTarget | null>(null);
+  const [focusNext, setFocusNext] = useState<{ target: FocusTarget } | null>(null);
+  const moveFocus = (target: FocusTarget) => setFocusNext({ target });
 
   // The call screen came up over the shell (W6): the shell's dialogs and
   // the details shown as a dialog close in this very render. They are
@@ -262,9 +268,8 @@ export function ShellScreen(props: ShellScreenProps) {
   // conversation that one pane opened, back to the row it came from, or
   // back to Ajustes. A row that is gone leaves it on the sidebar itself.
   useEffect(() => {
-    const target = focusNext.current;
-    focusNext.current = null;
-    if (!target) return;
+    if (!focusNext) return;
+    const { target } = focusNext;
     const active = document.activeElement;
     if (active && active !== document.body && active.isConnected) return;
     const nav = navRef.current;
@@ -278,7 +283,7 @@ export function ShellScreen(props: ShellScreenProps) {
       );
       (row?.querySelector('button') ?? nav)?.focus();
     }
-  });
+  }, [focusNext]);
 
   // The call screen went, minimized or ended. The bar of a minimized call
   // and an end card take the focus as they show (W6, child effects that ran
@@ -311,22 +316,22 @@ export function ShellScreen(props: ShellScreenProps) {
     setDetails(false);
     setFromCall(null);
     setKept(null);
-    focusNext.current = 'main';
+    moveFocus('main');
   };
   /** Atrás on one pane: the list, with the focus on the row of the conversation that was open. */
   const back = () => {
     setPane('list');
-    focusNext.current = { row: tab === 'calls' && selectedCallKey ? selectedCallKey : openKey };
+    moveFocus({ row: tab === 'calls' && selectedCallKey ? selectedCallKey : openKey });
   };
   const forgetOpen = () => {
     setOpen(null);
     setDetails(false);
     setPane('list');
-    focusNext.current = { row: null };
+    moveFocus({ row: null });
   };
   const closeDetails = () => {
     setDetails(false);
-    focusNext.current = 'main';
+    moveFocus('main');
   };
 
   const renameContact = (from: string, to: string) => {
@@ -446,7 +451,7 @@ export function ShellScreen(props: ShellScreenProps) {
           onClose: () => {
             setMain('convo');
             if (single) setPane('list');
-            focusNext.current = 'settings';
+            moveFocus('settings');
           },
           onLockNow: props.onLock,
           // A contact unblocked there is blocked no more in its chat.
@@ -686,7 +691,7 @@ export function ShellScreen(props: ShellScreenProps) {
                 setMain('settings');
                 setPane('main');
                 setDetails(false);
-                focusNext.current = 'main';
+                moveFocus('main');
               }}
               settingsRef={settingsRef}
               hasContacts={!conv.nodesLoaded || conv.nodes.length > 0 || conv.groups.length > 0}
