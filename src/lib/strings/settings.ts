@@ -33,7 +33,8 @@ export const settings: AreaStrings = {
     'settings2.profile.qrRow': 'Tu código QR',
     'settings2.profile.qrRowBody': 'Para que te agreguen sin escribir nada.',
     'settings2.profile.saved': 'Perfil guardado.',
-    'settings2.profile.errInvalid': 'No se pudo guardar: tu nombre, tu foto o «Sobre mí» pasan del límite.',
+    'settings2.profile.errInvalid':
+      'No se pudo guardar: tu nombre, tu foto o «Sobre mí» pasan del límite o tienen caracteres que no se ven.',
     'settings2.profile.errSave': 'No se pudo guardar tu perfil. Inténtalo de nuevo.',
     'settings2.profile.errPhoto': 'No se pudo usar esa imagen. Prueba con otra foto.',
     'settings2.profile.errName': 'Escribe tu nombre.',
@@ -331,7 +332,8 @@ export const settings: AreaStrings = {
     'settings2.profile.qrRow': 'Your QR code',
     'settings2.profile.qrRowBody': 'So people can add you without typing anything.',
     'settings2.profile.saved': 'Profile saved.',
-    'settings2.profile.errInvalid': 'Couldn’t save: your name, your photo or “About me” is over the limit.',
+    'settings2.profile.errInvalid':
+      'Couldn’t save: your name, your photo or “About me” is over the limit or has characters that don’t show.',
     'settings2.profile.errSave': 'Your profile couldn’t be saved. Try again.',
     'settings2.profile.errPhoto': 'That picture couldn’t be used. Try another photo.',
     'settings2.profile.errName': 'Write your name.',
@@ -619,7 +621,8 @@ export const settings: AreaStrings = {
     'settings2.profile.qrRow': 'Seu código QR',
     'settings2.profile.qrRowBody': 'Para que adicionem você sem digitar nada.',
     'settings2.profile.saved': 'Perfil salvo.',
-    'settings2.profile.errInvalid': 'Não foi possível salvar: seu nome, sua foto ou “Sobre mim” passa do limite.',
+    'settings2.profile.errInvalid':
+      'Não foi possível salvar: seu nome, sua foto ou “Sobre mim” passa do limite ou tem caracteres que não aparecem.',
     'settings2.profile.errSave': 'Não foi possível salvar seu perfil. Tente novamente.',
     'settings2.profile.errPhoto': 'Não foi possível usar essa imagem. Tente outra foto.',
     'settings2.profile.errName': 'Escreva seu nome.',

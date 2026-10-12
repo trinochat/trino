@@ -128,12 +128,16 @@ describe('ProfileSection without the shared profile', () => {
 });
 
 describe('ProfileSection, always', () => {
-  it('shows a profile over its limits as an alert', async () => {
+  // profile_invalid also stands for control, format or bidi characters, and
+  // for a name that shows nothing (B1), so the text names both.
+  it('shows a profile over its limits, or with characters that do not show, as an alert', async () => {
     const { api } = setup();
     vi.mocked(api.updateProfile).mockRejectedValueOnce(commandError('profile_invalid'));
     fireEvent.click(screen.getByRole('button', { name: 'Guardar' }));
     const alert = await screen.findByRole('alert');
-    expect(alert.textContent).toContain('pasan del límite');
+    expect(alert.textContent).toContain(
+      'No se pudo guardar: tu nombre, tu foto o «Sobre mí» pasan del límite o tienen caracteres que no se ven.',
+    );
   });
 
   it('shows any other failure as an alert too, and calls nothing saved', async () => {
