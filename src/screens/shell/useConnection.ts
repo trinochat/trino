@@ -1,5 +1,5 @@
 /**
- * The connection chip's state (Main:73-76), only from what the backend says
+ * The connection's state, only from what the backend says
  * (K3): `connection_status` at first, then `connection-changed`. Never a
  * fixed "connected", as App.tsx had, and nothing about Tor, which the app
  * does not have.
@@ -7,8 +7,9 @@
  * With no relay up, it says "Conectando…" for a while after unlocking, when
  * the relays are still answering, and "Sin conexión · reintentando" once
  * that time passed or after the connection it had was lost (the backend
- * keeps retrying, K3). Null hides the chip: without the capability, or when
- * the backend cannot say.
+ * keeps retrying, K3). The inbox shows a notice only while offline (David,
+ * 12 Oct 2026). Null says nothing: without the capability, or when the
+ * backend cannot say.
  */
 import { useEffect, useState } from 'react';
 import type { ConnectionStatus } from '../../lib/api';

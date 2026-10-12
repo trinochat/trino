@@ -266,23 +266,38 @@ describe('InboxPanel: the chats', () => {
 });
 
 describe('InboxPanel: the head and the foot', () => {
-  it('labels the connection starting with its state', () => {
-    const { rerender } = renderEs(<InboxPanel {...props()} />);
-    expect(screen.getByRole('status').textContent).toBe('Conectado · 3 de 3 servidores');
-    const again = (connection: InboxPanelProps['connection']) =>
-      rerender(
-        <LangCtx.Provider value={{ lang: 'es', setLang: () => {} }}>
-          <I18nContext.Provider value={makeT('es')}>
-            <InboxPanel {...props({ connection })} />
-          </I18nContext.Provider>
-        </LangCtx.Provider>,
-      );
-    again({ status: 'connecting' });
-    expect(screen.getByRole('status').textContent).toBe('Conectando…');
-    again({ status: 'offline', up: 0, total: 3 });
-    expect(screen.getByRole('status').textContent).toBe('Sin conexión · reintentando');
-    again(null);
-    expect(screen.queryByRole('status')).toBeNull();
+  // David, 12 Oct 2026: no line about the servers above the chats while all is well; a notice only when
+  // no relay is up, read out politely, that goes away when the connection comes back.
+  const OFFLINE = 'Sin conexión con los servidores. Trino sigue intentando conectarse.';
+  const again = (rerender: (ui: ReactElement) => void, connection: InboxPanelProps['connection']) =>
+    rerender(
+      <LangCtx.Provider value={{ lang: 'es', setLang: () => {} }}>
+        <I18nContext.Provider value={makeT('es')}>
+          <InboxPanel {...props({ connection })} />
+        </I18nContext.Provider>
+      </LangCtx.Provider>,
+    );
+
+  it('says nothing about the connection while it is up, or still connecting', () => {
+    const { container, rerender } = renderEs(<InboxPanel {...props()} />);
+    expect(container.textContent).not.toMatch(/Conectad|servidores|Conectando/);
+    expect(screen.getByRole('status').textContent).toBe('');
+    again(rerender, { status: 'connecting' });
+    expect(screen.getByRole('status').textContent).toBe('');
+    again(rerender, null);
+    expect(container.textContent).not.toMatch(/Sin conexión/);
+  });
+
+  it('tells when no server is reachable, and stops when it reconnects', () => {
+    const { rerender } = renderEs(<InboxPanel {...props({ connection: { status: 'offline', up: 0, total: 3 } })} />);
+    const status = screen.getByRole('status');
+    expect(status.textContent).toBe(OFFLINE);
+    expect(status.querySelector('svg')?.getAttribute('class')).toContain('lucide-wifi-off');
+    again(rerender, { status: 'connected', up: 1, total: 3 });
+    // The same live region, now empty: a screen reader hears the change, and nothing is left on screen.
+    expect(screen.getByRole('status')).toBe(status);
+    expect(status.textContent).toBe('');
+    expect(screen.queryByText(OFFLINE)).toBeNull();
   });
 
   it('shows a notice with its action', () => {
@@ -414,12 +429,12 @@ describe('InboxPanel: room for large text', () => {
   };
 
   it('scrolls everything between the head and the foot as one region, the chats keeping a height of their own', () => {
-    renderEs(<InboxPanel {...props({ notice: NOTICE })} />);
+    renderEs(<InboxPanel {...props({ notice: NOTICE, connection: { status: 'offline', up: 0, total: 3 } })} />);
     const region = scrollerOf(screen.getByRole('tablist', { name: 'Ver' }));
     expect(region).not.toBeNull();
     expect(classesOf(region)).toEqual(expect.arrayContaining(['min-h-0', 'flex-1']));
     for (const part of [
-      screen.getByText('Conectado · 3 de 3 servidores'),
+      screen.getByText('Sin conexión con los servidores. Trino sigue intentando conectarse.'),
       screen.getByText(NOTICE.text),
       screen.getByRole('searchbox', { name: 'Buscar chats' }),
       screen.getByRole('group', { name: 'Filtrar chats' }),

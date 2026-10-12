@@ -25,9 +25,8 @@ const KEYS: string[] = [
   // The head of the sidebar, its search and its chips.
   'inbox.newChat',
   'inbox.newCall',
-  'inbox.connection.connected',
-  'inbox.connection.connecting',
-  'inbox.connection.offline',
+  // Only while no server is reachable (12 Oct 2026).
+  'inbox.offline',
   'inbox.search.label',
   'inbox.search.placeholder',
   'inbox.filter.label',
@@ -77,7 +76,6 @@ const KEYS: string[] = [
 const PLACEHOLDERS: Record<string, string[]> = {
   'inbox.preview.you': ['text'],
   'inbox.preview.file': ['name'],
-  'inbox.connection.connected': ['up', 'total'],
   'inbox.noMatch': ['q'],
   'inbox.rowMenu': ['name'],
   'inbox.tabs.callsMissed': ['n'],

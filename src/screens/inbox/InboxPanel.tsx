@@ -1,8 +1,9 @@
 /**
  * The sidebar of the shell (Main:68-121, PropLlamadas:41-103): the wordmark
  * and one button, "Nuevo chat" in Chats or "Nueva llamada" in Calls (it
- * replaces the old "+" menu); the connection chip, only with real data; a
- * notice of invitations or of a stranger; the tabs "Chats | Llamadas · N";
+ * replaces the old "+" menu); a notice only while no server is reachable
+ * (David, 12 Oct 2026: no connection line while all is well); a notice of
+ * invitations or of a stranger; the tabs "Chats | Llamadas · N";
  * and your profile at the foot. Chats has the search, the chips and the
  * chats; Calls has its chips, the log and its note. Without the call log
  * (K13) there are no tabs, only the chats.
@@ -12,10 +13,10 @@
  * at 200 % in a small window: #root cuts off whatever overflows
  * (accesibilidad.md §4.7, rule 9), so nothing there may only shrink.
  */
-import { PhoneOutgoing, Plus, Search } from 'lucide-react';
+import { PhoneOutgoing, Plus, Search, WifiOff } from 'lucide-react';
 import { useId, type Ref } from 'react';
-import { useT, type TFunction } from '../../lib/i18n';
-import { Banner, Button, ConnectionChip, IconButton, Input, iconSize } from '../../ui';
+import { useT } from '../../lib/i18n';
+import { Banner, Button, IconButton, Input, cx, iconSize } from '../../ui';
 import type { Connection, ConvoRef, InboxFilter, InboxItem } from '../types';
 import type { CallFilter } from './call-history-model';
 import { CallHistoryList } from './CallHistoryList';
@@ -38,7 +39,7 @@ export interface InboxPanelProps {
   search: string;
   onSearchChange(query: string): void;
   searchRef?: Ref<HTMLInputElement>;
-  /** Null hides the chip. */
+  /** Offline shows the notice; null (no capability, or no answer) shows nothing. */
   connection: Connection | null;
   me: { handle: string; avatarSrc?: string };
   onNewChat(): void;
@@ -86,18 +87,12 @@ const FILTER_LABELS: Readonly<Record<InboxFilter, string>> = {
   groups: 'inbox.filter.groups',
 };
 
-function connectionLabel(connection: Connection, t: TFunction): string {
-  if (connection.status === 'connected') {
-    return t('inbox.connection.connected', { up: connection.up, total: connection.total });
-  }
-  return t(connection.status === 'connecting' ? 'inbox.connection.connecting' : 'inbox.connection.offline');
-}
-
 export function InboxPanel(props: InboxPanelProps) {
   const t = useT();
   const searchId = useId();
   const { connection, calls, tab, notice } = props;
   const onCalls = calls !== null && tab === 'calls';
+  const offline = connection?.status === 'offline';
 
   const visible = filterItems(props.items, props.filter, props.search, props.keepKey ?? null);
   const chats = (
@@ -161,9 +156,26 @@ export function InboxPanel(props: InboxPanelProps) {
       </div>
       {/* Its padding, edge to edge, keeps the focus rings inside what it clips. */}
       <div className="-mx-3 -my-1 flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto px-3 py-1">
-        {connection && (
-          <ConnectionChip status={connection.status} label={connectionLabel(connection, t)} className="mx-1 self-start" />
-        )}
+        {/*
+          * One live region, always there and empty while connected (or still connecting after unlocking:
+          * useConnection waits before it says offline), so a screen reader hears the notice come and go.
+          * Out of the flow while empty, so it adds no gap.
+          */}
+        <div
+          role="status"
+          className={cx(
+            offline
+              ? 'flex items-center gap-2 rounded-ui bg-ui-warn-bg px-3 py-2 text-ui-md leading-[1.45] text-ui-ink'
+              : 'sr-only',
+          )}
+        >
+          {offline && (
+            <>
+              <WifiOff {...iconSize('md', 'shrink-0 text-ui-warn')} aria-hidden="true" />
+              <span className="min-w-0">{t('inbox.offline')}</span>
+            </>
+          )}
+        </div>
         {notice && (
           <Banner
             tone="info"
