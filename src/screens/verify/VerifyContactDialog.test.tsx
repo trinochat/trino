@@ -1,10 +1,11 @@
 // @vitest-environment jsdom
 import { cleanup, fireEvent, screen, within } from '@testing-library/react';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, expectTypeOf, it, vi } from 'vitest';
 import type { NodeInfo } from '../../lib/api';
 import { contactSas } from '../../lib/sas';
 import { sasWords } from '../../lib/sas-symbols';
 import { renderIn } from '../call/test-support';
+import type { VerifyContactSlotProps } from '../types';
 import { VerifyContactDialog, type VerifyContactDialogProps } from './VerifyContactDialog';
 
 afterEach(cleanup);
@@ -28,12 +29,17 @@ function show(props: Partial<VerifyContactDialogProps> = {}) {
 }
 
 describe('VerifyContactDialog', () => {
-  // VerifyContactSlotProps carries no trust (types.ts). Left out, `verified` would ask every verified
-  // contact to verify again, so it is required and the integration has to pass it (review of W6).
+  // Left out, `verified` would ask every verified contact to verify again, so it is required and
+  // the shell has to pass it (review of W6).
   it('has to be told whether the contact is verified', () => {
-    // @ts-expect-error `verified` is required: the slot's props alone do not say it.
+    // @ts-expect-error `verified` is required.
     const dialog = <VerifyContactDialog peer={ANA} myIdentityDigest={ME} onClose={() => {}} />;
     expect(dialog.props).not.toHaveProperty('verified');
+  });
+
+  // VerifyContactSlotProps says it since I5, so the dialog takes exactly the slot's props.
+  it('takes exactly the props of the slot', () => {
+    expectTypeOf<VerifyContactDialogProps>().toEqualTypeOf<VerifyContactSlotProps>();
   });
 
   it('is titled "Verificar a {name}"', () => {

@@ -257,6 +257,12 @@ export interface ContactDetailsSlotProps {
 export interface VerifyContactSlotProps {
   peer: NodeInfo;
   myIdentityDigest: string;
+  /**
+   * Verified on this device: by "They match" on a call, with the fingerprint
+   * the contact still has (`prefs.isVerified`). The dialog then says so
+   * instead of asking to verify again.
+   */
+  verified: boolean;
   onClose(): void;
   onCall?(): void;
 }
@@ -265,9 +271,15 @@ export interface CallSlot {
   bar: ReactNode | null;
   /**
    * The call screen, the incoming call, the question of calling directly
-   * when the call cannot be protected, the end card and the audio sink.
+   * when the call cannot be protected, the end card and the audio sink. The
+   * shell mounts it in a positioned box over its panes, below the title bar.
    */
   layer: ReactNode;
+  /**
+   * The call screen covers the panes: the shell makes them inert meanwhile,
+   * so nothing hidden behind it keeps or takes the focus.
+   */
+  covering: boolean;
   start(handle: string, video: boolean): void;
   activePeer: string | null;
 }

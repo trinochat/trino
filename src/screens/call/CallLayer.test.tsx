@@ -178,7 +178,7 @@ describe('callSlot', () => {
     expect(slot.activePeer).toBe('ana');
   });
 
-  // For the shell to make its panes inert meanwhile (I5 adds the flag to CallSlot).
+  // For the shell to make its panes inert meanwhile: CallSlot.covering (I5).
   it('says when the call screen covers the shell', () => {
     for (const view of ['ringing-out', 'connecting', 'connected'] as const) {
       expect(callCoversShell(fakeController({ view }))).toBe(true);
@@ -186,6 +186,16 @@ describe('callSlot', () => {
     }
     for (const view of ['idle', 'incoming', 'ended'] as const) {
       expect(callCoversShell(fakeController({ view, activePeer: view === 'incoming' ? 'ana' : null }))).toBe(false);
+    }
+  });
+
+  it('tells the shell when the call screen covers it, as the screen shows', () => {
+    for (const view of ['ringing-out', 'connecting', 'connected'] as const) {
+      expect(callSlot(fakeController({ view })).covering).toBe(true);
+      expect(callSlot(fakeController({ view, minimized: true })).covering).toBe(false);
+    }
+    for (const view of ['idle', 'incoming', 'ended'] as const) {
+      expect(callSlot(fakeController({ view, activePeer: view === 'incoming' ? 'ana' : null })).covering).toBe(false);
     }
   });
 

@@ -127,6 +127,16 @@ describe('the screen contracts', () => {
     expectTypeOf<VerifyContactSlotProps['onCall']>().toEqualTypeOf<(() => void) | undefined>();
   });
 
+  // Left out, the dialog would ask every verified contact to verify again (review of W6).
+  it('tell the contact dialog whether the contact is verified', () => {
+    expectTypeOf<VerifyContactSlotProps['verified']>().toEqualTypeOf<boolean>();
+  });
+
+  // The call screen covers the shell's panes, which go inert meanwhile (review of W6).
+  it('tell the shell when the call screen covers it', () => {
+    expectTypeOf<CallSlot['covering']>().toEqualTypeOf<boolean>();
+  });
+
   // "Tu código QR" in Settings is the share panel of the contacts unit (W4).
   it('let Settings show the QR code through the panel of the contacts unit', () => {
     expectTypeOf<SettingsSlotProps['renderShareCode']>().toEqualTypeOf<() => ReactNode>();

@@ -3,8 +3,9 @@
  * "Coinciden" on the call's SAS. So this dialog shows the contact's 7
  * symbols as a quick check, which never verifies and has no "Coinciden"
  * (its derivation falls to about 2^21 offline work, docs/sas-v2.md), and
- * offers the call that does. A contact verified in a call says so. Without
- * both identity digests (K7) there are no symbols to show.
+ * offers the call that does. A contact verified in a call says so
+ * ("Verificaste a {name} en una llamada.") instead of the way to verify.
+ * Without both identity digests (K7) there are no symbols to show.
  */
 import { Phone } from 'lucide-react';
 import { useEffect, useId, useState } from 'react';
@@ -14,15 +15,7 @@ import { contactSas } from '../../lib/sas';
 import type { VerifyContactSlotProps } from '../types';
 import { Button, Dialog, TrustBadge, iconSize } from '../../ui';
 
-export interface VerifyContactDialogProps extends VerifyContactSlotProps {
-  /**
-   * Verified on this device: "Verificaste a {name} en una llamada." instead
-   * of the way to verify. Required, because VerifyContactSlotProps does not
-   * carry the contact's trust yet: the integration passes it
-   * (`trust[peer.handle] === 'verified'`) until the slot's props do.
-   */
-  verified: boolean;
-}
+export type VerifyContactDialogProps = VerifyContactSlotProps;
 
 export function VerifyContactDialog({ peer, myIdentityDigest, onClose, onCall, verified }: VerifyContactDialogProps) {
   const t = useT();
