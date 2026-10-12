@@ -151,6 +151,18 @@ describe('ShellScreen: the chat of each conversation', () => {
     expect(message().value).toBe('hola Ana');
   });
 
+  // W3's composer clears what it sent itself and keeps what was typed
+  // meanwhile, such as during an upload (its review fix): clearing the
+  // draft here as well could wipe that text.
+  it('leaves the draft to the chat when a text is sent', async () => {
+    const { slots, api } = setup();
+    fireEvent.click(await row('Ana'));
+    fireEvent.change(message(), { target: { value: 'hola Ana' } });
+    act(() => lastProps(slots.chat).onSendText('hola'));
+    await waitFor(() => expect(api.sendMessage).toHaveBeenCalledWith('Ana', expect.any(String)));
+    expect(message().value).toBe('hola Ana');
+  });
+
   it('gives the chat what it needs from the shell', async () => {
     const { slots, api } = setup({}, { nodes: [node('Ana'), node('Bea', { blocked: true })] });
     fireEvent.click(await row('Ana'));

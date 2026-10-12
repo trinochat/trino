@@ -418,10 +418,8 @@ export function ShellScreen(props: ShellScreenProps) {
       maxTextLength: MAX_TEXT_LENGTH,
       draft: drafts.get(key) ?? '',
       onDraftChange: text => setDraft(key, text),
-      onSendText: (text, reply) => {
-        conv.sendText(ref, text, reply);
-        setDraft(key, '');
-      },
+      // The composer clears what it sent, and keeps what was typed meanwhile (W3).
+      onSendText: (text, reply) => conv.sendText(ref, text, reply),
       onRetry: msgKey => conv.retry(ref, msgKey),
       onSendFiles: files => conv.sendFiles(ref, files),
       onSendSticker: sticker => conv.sendSticker(ref, sticker),
