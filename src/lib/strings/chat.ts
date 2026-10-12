@@ -94,7 +94,8 @@ export const chat: AreaStrings = {
     'msg2.notSentOffline': 'No se envió: no hay conexión.',
     'msg2.notSentRejected': 'No se envió: ningún servidor lo aceptó.',
     'msg2.notSentTooLong': 'No se envió: es demasiado largo.',
-    'msg2.notSentNoSession': 'No se envió: todavía no hay una conexión cifrada con este contacto.',
+    'msg2.notSentNoSession':
+      'No se envió o no se pudo confirmar: todavía no hay una conexión cifrada con este contacto, o Trino se bloqueó mientras esperaba al servidor. Si se bloqueó, puede que sí le haya llegado.',
     'msg2.partial': 'No les llegó a: {names}.',
     'msg2.you': 'Tú',
     'msg2.byYou': 'Tú:',
@@ -242,7 +243,8 @@ export const chat: AreaStrings = {
     'msg2.notSentOffline': 'Not sent: there is no connection.',
     'msg2.notSentRejected': 'Not sent: no server took it.',
     'msg2.notSentTooLong': 'Not sent: it is too long.',
-    'msg2.notSentNoSession': 'Not sent: there is no encrypted connection with this contact yet.',
+    'msg2.notSentNoSession':
+      'Not sent, or not confirmed: there is no encrypted connection with this contact yet, or Trino locked while waiting for the server. If it locked, the message may still have reached them.',
     'msg2.partial': 'It did not reach: {names}.',
     'msg2.you': 'You',
     'msg2.byYou': 'You:',
@@ -391,7 +393,8 @@ export const chat: AreaStrings = {
     'msg2.notSentOffline': 'Não foi enviada: sem conexão.',
     'msg2.notSentRejected': 'Não foi enviada: nenhum servidor a aceitou.',
     'msg2.notSentTooLong': 'Não foi enviada: é longa demais.',
-    'msg2.notSentNoSession': 'Não foi enviada: ainda não há uma conexão cifrada com este contato.',
+    'msg2.notSentNoSession':
+      'Não foi enviada ou não deu para confirmar: ainda não há uma conexão cifrada com este contato, ou o Trino foi bloqueado enquanto esperava o servidor. Se foi bloqueado, pode ser que tenha chegado.',
     'msg2.partial': 'Não chegou para: {names}.',
     'msg2.you': 'Você',
     'msg2.byYou': 'Você:',

@@ -1,4 +1,4 @@
-import { describe, it } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import { chat } from './chat';
 import { expectAreaContract } from './contract-test-utils';
 
@@ -189,5 +189,22 @@ const PLACEHOLDERS: Record<string, string[]> = {
 describe('chat strings', () => {
   it('have exactly the keys of their screens, in every language', () => {
     expectAreaContract(chat, { keys: KEYS, placeholders: PLACEHOLDERS });
+  });
+});
+
+// `no_session` has two meanings since B2: there is no encrypted session with
+// the contact yet, or Trino locked (or another identity opened) while the
+// send waited for a relay's OK. In the second case a relay may have taken
+// the message, so the copy must not promise that it never left.
+describe('msg2.notSentNoSession', () => {
+  it.each([
+    ['es', /conexión cifrada/, /se bloqueó/, /puede que sí le haya llegado/],
+    ['en', /encrypted connection/, /locked/, /may still have reached/],
+    ['pt', /conexão cifrada/, /foi bloqueado/, /pode ser que tenha chegado/],
+  ] as const)('in %s covers both meanings of no_session', (lang, noSession, locked, mayHaveArrived) => {
+    const text = chat[lang]['msg2.notSentNoSession'];
+    expect(text).toMatch(noSession);
+    expect(text).toMatch(locked);
+    expect(text).toMatch(mayHaveArrived);
   });
 });
