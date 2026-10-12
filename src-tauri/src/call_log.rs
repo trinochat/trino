@@ -70,7 +70,8 @@ const MAX_TTL_SECS: i64 = 31_536_000;
 const OLDEST_START_SECS: i64 = 7 * 86_400;
 const NEWEST_START_SECS: i64 = 300;
 
-/// Why a call cannot be recorded: the caller's mistake.
+/// Why a call cannot be recorded: the caller's mistake, or a chat that
+/// cannot keep it.
 #[derive(Clone, Copy, Debug, Error, PartialEq, Eq)]
 pub enum InvalidCall {
     #[error("the call id must be 16 to 64 letters, digits, '-' or '_'")]
@@ -81,6 +82,10 @@ pub enum InvalidCall {
     StartedAt,
     #[error("the ttl must be 1 s to a year")]
     Ttl,
+    /// The chat holds `HISTORY_CAP` items, all newer than the call: the
+    /// cap would drop it as soon as it went in.
+    #[error("the chat keeps only messages newer than the call")]
+    OlderThanTheChat,
 }
 
 /// Check a call before it is recorded. The id follows the rule of the call
@@ -129,7 +134,9 @@ impl Recorded {
 
 /// Put `call`, started at `started_at`, into `peer`'s chat in `inner`, in
 /// order of time, and save the history (encrypted). The same id twice
-/// answers with the call already there and changes nothing.
+/// answers with the call already there and changes nothing. A call older
+/// than everything a full chat keeps is refused (`OlderThanTheChat`), and
+/// nothing changes: the cap would drop it at once.
 pub fn record(
     inner: &mut InnerState,
     peer: &str,
@@ -170,6 +177,12 @@ pub fn record(
     // After whatever has the same time: messages written during the call
     // come after it.
     let at = items.partition_point(|other| other.ts <= started_at);
+    // The cap then drops the oldest: those before index `dropped`.
+    let dropped = (items.len() + 1).saturating_sub(crate::commands::HISTORY_CAP);
+    if at < dropped {
+        let older = InvalidCall::OlderThanTheChat;
+        return Err(CommandError::internal(older.to_string()));
+    }
     items.insert(at, item);
     if items.len() > crate::commands::HISTORY_CAP {
         let excess = items.len() - crate::commands::HISTORY_CAP;
@@ -219,7 +232,9 @@ pub fn expired(item: &HistItem, now: i64) -> bool {
 /// Record a call that ended in its contact's chat, at the time it started
 /// (epoch seconds), and answer with the log entry (K13). A new call is also
 /// sent to the UI as `call-logged`; the same `id` again answers with the
-/// call already recorded. Invalid input is `internal`.
+/// call already recorded. Invalid input is `internal`, and so is a call
+/// older than everything its full chat keeps: then nothing is stored and
+/// no `call-logged` goes out.
 #[tauri::command]
 pub async fn record_call(
     app: AppHandle,
@@ -500,6 +515,27 @@ mod tests {
     }
 
     #[test]
+    fn a_call_older_than_all_a_full_chat_keeps_is_not_recorded() {
+        // The cap would drop it at once, while the UI heard it was logged.
+        let mut inner = session_with(&["ana"]);
+        let full: Vec<HistItem> = (0..crate::commands::HISTORY_CAP as i64)
+            .map(|n| text(NOW - 500 + n, "x"))
+            .collect();
+        inner.history.insert("ana".to_string(), full);
+
+        let first = record(&mut inner, "ana", missed(ID), NOW - 3_600, NOW).unwrap_err();
+        let again = record(&mut inner, "ana", missed(ID), NOW - 3_600, NOW).unwrap_err();
+
+        assert_eq!(first.code, ErrorCode::Internal);
+        assert_eq!(first.message, InvalidCall::OlderThanTheChat.to_string());
+        assert_eq!(again, first, "the same id answers the same");
+        let chat = &inner.history["ana"];
+        assert_eq!(chat.len(), crate::commands::HISTORY_CAP);
+        assert!(calls_of(chat).is_empty());
+        assert_eq!(chat[0].ts, NOW - 500, "a message made room for nothing");
+    }
+
+    #[test]
     fn a_call_is_only_recorded_for_a_contact_of_an_open_session() {
         let mut sealed = InnerState::default();
         let error = record(&mut sealed, "ana", missed(ID), NOW, NOW).unwrap_err();
@@ -693,28 +729,36 @@ mod tests {
     #[test]
     fn a_recorded_call_travels_inside_the_encrypted_history() {
         use crate::fsutil::scratch::ScratchDir;
+        // Recorded without a history key, so nothing reaches the real data
+        // directory; then written as `save_history` writes history.bin, to
+        // a scratch path.
         let mut inner = session_with(&["ana"]);
         record(&mut inner, "ana", missed(ID), NOW, NOW).unwrap();
-        // history.bin as `save_history` frames it: nonce, then AES-GCM.
         let key = [7u8; 32];
-        let json = serde_json::to_vec(&inner.history).unwrap();
-        let (ct, nonce) = crate::crypto::aes_gcm_encrypt(&key, &json, None).unwrap();
-        let blob = [nonce.as_slice(), ct.as_slice()].concat();
-        assert!(
-            !blob.windows(ID.len()).any(|w| w == ID.as_bytes()),
-            "the call id is in clear"
-        );
+        inner.history_key = Some(key);
         let scratch = ScratchDir::new("call-log-history");
         let path = scratch.path().join("history.bin");
-        std::fs::write(&path, &blob).unwrap();
 
+        crate::commands::write_history(&inner, &path).unwrap();
+
+        let written = std::fs::read(&path).unwrap();
+        assert!(
+            !written.windows(ID.len()).any(|w| w == ID.as_bytes()),
+            "the call id is in clear"
+        );
         let mut reloaded = InnerState {
             history_key: Some(key),
             ..InnerState::default()
         };
         crate::commands::load_history(&mut reloaded, &path);
-
         assert_eq!(list(&reloaded.history, None), list(&inner.history, None));
         assert_eq!(list(&reloaded.history, None).len(), 1);
+        // Read with another key, it is nothing.
+        let mut stranger = InnerState {
+            history_key: Some([8u8; 32]),
+            ..InnerState::default()
+        };
+        crate::commands::load_history(&mut stranger, &path);
+        assert!(stranger.history.is_empty());
     }
 }

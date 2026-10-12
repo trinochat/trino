@@ -2006,7 +2006,9 @@ fn prune_history(history: &mut HashMap<String, Vec<HistItem>>, now: i64) -> bool
                 v.get("d").and_then(|d| d.as_i64())
             });
             match ttl {
-                Some(ttl) if ttl > 0 => it.ts + ttl > now,
+                // `ts` and `ttl` are the contact's to choose: a timer that
+                // would end past the last second there is never ends.
+                Some(ttl) if ttl > 0 => it.ts.saturating_add(ttl) > now,
                 _ => true,
             }
         });
@@ -3557,7 +3559,7 @@ pub(crate) fn save_history(inner: &InnerState) {
 
 /// Encrypt the history with the history key and replace `path` with it,
 /// `nonce ‖ ciphertext`. Without a key (no session) nothing is written.
-fn write_history(inner: &InnerState, path: &Path) -> std::io::Result<()> {
+pub(crate) fn write_history(inner: &InnerState, path: &Path) -> std::io::Result<()> {
     let Some(key) = inner.history_key else {
         return Ok(());
     };
@@ -6254,5 +6256,35 @@ mod tests {
             "the timed text went too, as before"
         );
         assert!(!prune_history(&mut history, NOW), "nothing left to drop");
+    }
+
+    #[test]
+    fn a_timer_a_contact_chose_never_overflows_the_pruning() {
+        // `ts` is the event's created_at and `d` comes from the contact's
+        // `trm1:` text: both are theirs to choose.
+        let timed = |ts: i64, d: i64| HistItem {
+            side: "them".to_string(),
+            from: None,
+            text: Some(format!(
+                "trm1:{}",
+                base64::engine::general_purpose::URL_SAFE_NO_PAD
+                    .encode(format!(r#"{{"d":{d},"t":"hola"}}"#))
+            )),
+            file: None,
+            call: None,
+            ts,
+        };
+        let mut history = HashMap::from([(
+            "ana".to_string(),
+            vec![
+                timed(NOW, i64::MAX),
+                timed(i64::MAX, 1),
+                timed(i64::MAX - 10, 60),
+            ],
+        )]);
+
+        // Each would end past the last second there is: none has ended.
+        assert!(!prune_history(&mut history, NOW));
+        assert_eq!(history["ana"].len(), 3);
     }
 }
