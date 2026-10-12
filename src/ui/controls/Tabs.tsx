@@ -30,6 +30,12 @@ export type TabsProps<T extends string> = TabsName & {
  * under 3:1 against the track. A border, not a background: forced colours
  * keep it. They would also draw the clear border of the other tabs, so those
  * drop it there.
+ *
+ * Reflow (accesibilidad.md §4.7): the row never grows past its box, so
+ * nothing scrolls sideways from 20 rem. Tabs that do not fit side by side, at
+ * their longest word, go on to another row; each row shares its width out
+ * equally, as one row does when they fit. A label breaks inside a word only
+ * when that word alone is wider than the row.
  */
 export function Tabs<T extends string>(props: TabsProps<T>) {
   const { items, value, onValueChange, className, panelClassName } = props;
@@ -49,7 +55,7 @@ export function Tabs<T extends string>(props: TabsProps<T>) {
         role="tablist"
         aria-label={props['aria-label']}
         aria-labelledby={props['aria-labelledby']}
-        className="flex gap-1 rounded-ui-lg bg-ui-raised p-1"
+        className="flex flex-wrap gap-1 rounded-ui-lg bg-ui-raised p-1"
       >
         {items.map((item, index) => {
           const selected = index === selectedIndex;
@@ -66,7 +72,7 @@ export function Tabs<T extends string>(props: TabsProps<T>) {
               onClick={() => select(index)}
               onKeyDown={onItemKeyDown(index)}
               className={cx(
-                'relative inline-flex min-h-11 flex-1 items-center justify-center rounded-ui px-2.5 text-center font-ui text-sm font-semibold',
+                'relative inline-flex min-h-11 max-w-full flex-1 items-center justify-center rounded-ui px-2.5 text-center font-ui text-sm font-semibold',
                 'transition-colors reduce-motion:transition-none',
                 'border-b-2',
                 selected
@@ -75,7 +81,7 @@ export function Tabs<T extends string>(props: TabsProps<T>) {
                 FOCUS_RING,
               )}
             >
-              {item.label}
+              <span className="min-w-0 break-words">{item.label}</span>
             </button>
           );
         })}

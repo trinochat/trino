@@ -108,4 +108,24 @@ describe('Tabs', () => {
     // Forced colours paint a transparent border too: the others drop theirs.
     expect(other.classList).toContain('forced-colors:border-b-0');
   });
+
+  // Reflow (accesibilidad.md §4.7): nothing scrolls sideways from 20 rem, the
+  // width of a 640×480 window at 200 % text. There, "Agregar", "Mi código" and
+  // "Invitaciones" did not fit in Contactos (review of W4): measured in Edge
+  // with the bundled fonts, the last tab stuck out of the row by 35 px in
+  // Spanish and by 7 to 10 px in Portuguese.
+  it('wraps its tabs onto another row, and a label onto another line, before the row grows past its box', () => {
+    render(<ContactTabs />);
+    expect(screen.getByRole('tablist').classList).toContain('flex-wrap');
+    for (const tab of tabs()) {
+      // Each tab keeps its longest word on one row, but is never wider than the row.
+      expect(tab.classList).toContain('max-w-full');
+      expect(tab.classList).not.toContain('min-w-0');
+      // A word longer than the whole row breaks inside its label.
+      const label = tab.firstElementChild;
+      expect(label?.textContent).toBe(tab.textContent);
+      expect(label?.classList).toContain('min-w-0');
+      expect(label?.classList).toContain('break-words');
+    }
+  });
 });
