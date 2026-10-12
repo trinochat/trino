@@ -11,10 +11,9 @@
 use crate::command_error::{CommandError, ErrorCode};
 use crate::commands::{open_vault, submitted_code};
 use crate::fsutil;
-use crate::identity::Identity;
 use crate::passphrase::validate_passphrase;
 use crate::state::{vault_path, AppState, InnerState};
-use crate::vault::{encode_vault, seal_vault};
+use crate::vault::{encode_vault, seal_vault, UnsealedVault};
 use std::path::Path;
 use tauri::State;
 use zeroize::{Zeroize, Zeroizing};
@@ -149,11 +148,11 @@ fn enable_totp(
     write: impl FnOnce(&[u8]) -> std::io::Result<()>,
 ) -> Result<(), CommandError> {
     // Without a code, only a vault that has TOTP asks for one.
-    let (identity, _) = open_vault(vault, passphrase, None).map_err(|error| match error.code {
+    let opened = open_vault(vault, passphrase, None).map_err(|error| match error.code {
         ErrorCode::TotpRequired => CommandError::internal("TOTP is on already"),
         _ => error,
     })?;
-    seal_and_write(&identity, Some(secret), passphrase, write)
+    seal_and_write(&opened, Some(secret), passphrase, write)
 }
 
 /// Seal the vault at `vault` again without its TOTP secret, once
@@ -168,11 +167,11 @@ fn disable_totp(
     let code = submitted_code(Some(code)).ok_or_else(|| {
         CommandError::new(ErrorCode::TotpRequired, "turning TOTP off needs a code")
     })?;
-    let (identity, secret) = open_vault(vault, passphrase, Some(code))?;
-    if secret.map(Zeroizing::new).is_none() {
+    let mut opened = open_vault(vault, passphrase, Some(code))?;
+    if opened.totp_secret.take().map(Zeroizing::new).is_none() {
         return Ok(());
     }
-    seal_and_write(&identity, None, passphrase, write)
+    seal_and_write(&opened, None, passphrase, write)
 }
 
 /// Seal the vault at `vault` with `next` instead of `current`, keeping its
@@ -187,20 +186,23 @@ fn reseal_with_new_passphrase(
     write: impl FnOnce(&[u8]) -> std::io::Result<()>,
 ) -> Result<(), CommandError> {
     validate_passphrase(next)?;
-    let (identity, secret) = open_vault(vault, current, submitted_code(code))?;
-    let secret = secret.map(Zeroizing::new);
-    seal_and_write(&identity, secret.as_deref().map(Vec::as_slice), next, write)
+    let mut opened = open_vault(vault, current, submitted_code(code))?;
+    let secret = opened.totp_secret.take().map(Zeroizing::new);
+    seal_and_write(&opened, secret.as_deref().map(Vec::as_slice), next, write)
 }
 
-/// Seal `identity` with `passphrase` and, if given, `secret`, and save it
-/// with `write`.
+/// Seal the identity and the app data of `opened` with `passphrase` and, if
+/// given, `secret`, and save it with `write`. The app data always goes back
+/// in: trino-core seals only what it is given, and it holds the key to
+/// everything in store/.
 fn seal_and_write(
-    identity: &Identity,
+    opened: &UnsealedVault,
     secret: Option<&[u8]>,
     passphrase: &str,
     write: impl FnOnce(&[u8]) -> std::io::Result<()>,
 ) -> Result<(), CommandError> {
-    let sealed = seal_vault(identity, secret, passphrase)?;
+    let app = opened.app.as_deref().map(Vec::as_slice);
+    let sealed = seal_vault(&opened.identity, secret, app, passphrase)?;
     write(&encode_vault(&sealed)).map_err(|e| CommandError::io(&e))
 }
 
@@ -272,18 +274,23 @@ mod tests {
 
     use crate::commands::open_vault;
     use crate::fsutil::{self, scratch::ScratchDir};
-    use crate::identity::{create_identity, Identity};
+    use crate::identity::create_identity;
     use crate::state::InnerState;
     use crate::totp::{generate_totp_secret, totp_code, totp_now};
-    use crate::vault::{encode_vault, seal_vault, vault_requires_totp};
+    use crate::vault::{encode_vault, seal_vault, vault_requires_totp, UnsealedVault};
     use std::path::{Path, PathBuf};
 
     const PASSPHRASE: &str = "correct horse battery staple";
 
     /// A vault in `scratch`, sealed with `PASSPHRASE` and, if given, `secret`.
     fn vault_with(scratch: &ScratchDir, secret: Option<&[u8]>) -> PathBuf {
+        vault_with_app(scratch, secret, None)
+    }
+
+    /// Like `vault_with`, carrying `app` as its app data.
+    fn vault_with_app(scratch: &ScratchDir, secret: Option<&[u8]>, app: Option<&[u8]>) -> PathBuf {
         let vault = scratch.path().join("vault.bin");
-        let sealed = seal_vault(&create_identity(), secret, PASSPHRASE).unwrap();
+        let sealed = seal_vault(&create_identity(), secret, app, PASSPHRASE).unwrap();
         fsutil::atomic_write(&vault, &encode_vault(&sealed)).unwrap();
         vault
     }
@@ -313,7 +320,7 @@ mod tests {
         vault: &Path,
         passphrase: &str,
         secret: &[u8],
-    ) -> Result<(Identity, Option<Vec<u8>>), CommandError> {
+    ) -> Result<UnsealedVault, CommandError> {
         with_fresh_code(secret, |code| open_vault(vault, passphrase, Some(code)))
     }
 
@@ -344,10 +351,10 @@ mod tests {
             vault_requires_totp(&bytes_of(&vault)).unwrap(),
             "the header"
         );
-        let error = open_vault(&vault, PASSPHRASE, None).unwrap_err();
+        let error = open_vault(&vault, PASSPHRASE, None).map(drop).unwrap_err();
         assert_eq!(error.code, ErrorCode::TotpRequired);
-        let (_, sealed) = open_with_code(&vault, PASSPHRASE, &secret).unwrap();
-        assert_eq!(sealed.as_deref(), Some(secret.as_slice()));
+        let opened = open_with_code(&vault, PASSPHRASE, &secret).unwrap();
+        assert_eq!(opened.totp_secret.as_deref(), Some(secret.as_slice()));
     }
 
     #[test]
@@ -432,8 +439,8 @@ mod tests {
             !vault_requires_totp(&bytes_of(&vault)).unwrap(),
             "the header"
         );
-        let (_, sealed) = open_vault(&vault, PASSPHRASE, None).unwrap();
-        assert_eq!(sealed, None);
+        let opened = open_vault(&vault, PASSPHRASE, None).unwrap();
+        assert_eq!(opened.totp_secret, None);
     }
 
     #[test]
@@ -476,10 +483,10 @@ mod tests {
         reseal_with_new_passphrase(&vault, PASSPHRASE, NEW_PASSPHRASE, None, save_to(&vault))
             .unwrap();
 
-        let old = open_vault(&vault, PASSPHRASE, None).unwrap_err();
+        let old = open_vault(&vault, PASSPHRASE, None).map(drop).unwrap_err();
         assert_eq!(old.code, ErrorCode::WrongPassphrase);
-        let (_, secret) = open_vault(&vault, NEW_PASSPHRASE, None).unwrap();
-        assert_eq!(secret, None, "TOTP stays off");
+        let opened = open_vault(&vault, NEW_PASSPHRASE, None).unwrap();
+        assert_eq!(opened.totp_secret, None, "TOTP stays off");
     }
 
     #[test]
@@ -517,9 +524,9 @@ mod tests {
             vault_requires_totp(&bytes_of(&vault)).unwrap(),
             "the header"
         );
-        let (_, sealed) = open_with_code(&vault, NEW_PASSPHRASE, &secret).unwrap();
+        let opened = open_with_code(&vault, NEW_PASSPHRASE, &secret).unwrap();
         assert_eq!(
-            sealed.as_deref(),
+            opened.totp_secret.as_deref(),
             Some(secret.as_slice()),
             "the same secret"
         );
@@ -579,5 +586,37 @@ mod tests {
             before,
             "the old passphrase still opens it"
         );
+    }
+
+    // ---- The app data (cifrado local): every re-seal carries it ----
+
+    #[test]
+    fn every_reseal_of_the_settings_keeps_the_app_data() {
+        // trino-core seals only what it is given: a re-seal that left the
+        // app data out would lose the key to everything in store/.
+        let scratch = ScratchDir::new("reseal-app");
+        let app: &[u8] = b"the key to the local data";
+        let vault = vault_with_app(&scratch, None, Some(app));
+        let secret = generate_totp_secret();
+
+        enable_totp(&vault, PASSPHRASE, &secret, save_to(&vault)).unwrap();
+        with_fresh_code(&secret, |code| {
+            reseal_with_new_passphrase(
+                &vault,
+                PASSPHRASE,
+                NEW_PASSPHRASE,
+                Some(code),
+                save_to(&vault),
+            )
+        })
+        .unwrap();
+        with_fresh_code(&secret, |code| {
+            disable_totp(&vault, NEW_PASSPHRASE, code, save_to(&vault))
+        })
+        .unwrap();
+
+        let opened = open_vault(&vault, NEW_PASSPHRASE, None).unwrap();
+        assert_eq!(opened.totp_secret, None, "TOTP went off last");
+        assert_eq!(opened.app.as_deref().map(Vec::as_slice), Some(app));
     }
 }

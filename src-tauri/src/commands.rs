@@ -24,7 +24,9 @@ use crate::state::{
 };
 use crate::totp_enrollment::TotpBeginResponse;
 use crate::turn::TurnCache;
-use crate::vault::{decode_vault, encode_vault, seal_vault, unseal_vault, vault_requires_totp};
+use crate::vault::{
+    decode_vault, encode_vault, seal_vault, unseal_vault, vault_requires_totp, UnsealedVault,
+};
 use crate::x3dh::{initiate, respond, InitialMessage, X3dhError};
 use base64::Engine;
 use serde::{Deserialize, Serialize};
@@ -579,7 +581,9 @@ fn create_account(
     validate_passphrase(passphrase)?;
 
     let identity = create_identity();
-    let sealed = seal_vault(&identity, totp_secret, passphrase)?;
+    // No app data yet: the key to store/ joins the vault with the store
+    // itself (cifrado local, CL-1b).
+    let sealed = seal_vault(&identity, totp_secret, None, passphrase)?;
     let config = ConfigFile {
         handle: handle.to_string(),
         nostr_pub: hex::encode(identity.nostr.pub_bytes),
@@ -608,13 +612,15 @@ fn create_account(
 }
 
 /// Open the vault at `vault` with `passphrase` and, if it holds a TOTP
-/// secret, `totp_code`. Returns the identity and that secret. The settings
-/// open it too, to seal it again (security_cmds.rs).
+/// secret, `totp_code`. Returns what it holds: the identity, that secret and
+/// the app data. The settings open it too, to seal it again
+/// (security_cmds.rs); every re-seal gives the app data back, since
+/// trino-core seals only what it is given.
 pub(crate) fn open_vault(
     vault: &Path,
     passphrase: &str,
     totp_code: Option<&str>,
-) -> Result<(Identity, Option<Vec<u8>>), CommandError> {
+) -> Result<UnsealedVault, CommandError> {
     let bytes = std::fs::read(vault).map_err(|error| match error.kind() {
         std::io::ErrorKind::NotFound => {
             CommandError::new(ErrorCode::NoVault, "there is no identity on this device")
@@ -626,9 +632,9 @@ pub(crate) fn open_vault(
 }
 
 /// Rotate the signed prekey if it has aged out and expire retired ones; if
-/// that changed anything, seal the vault again, with the same passphrase and
-/// the same TOTP secret or lack of one, and save it with `write`. `None` when
-/// nothing was due.
+/// that changed anything, seal the vault again, with the same passphrase, the
+/// same TOTP secret or lack of one and the same app data, and save it with
+/// `write`. `None` when nothing was due.
 ///
 /// Without rotation, one leaked signed prekey would expose every initial
 /// message ever sent to us; retention is what keeps peers holding an older
@@ -638,6 +644,7 @@ pub(crate) fn open_vault(
 fn reseal_if_rotated(
     identity: &mut Identity,
     totp_secret: Option<&[u8]>,
+    app: Option<&[u8]>,
     passphrase: &str,
     now: i64,
     write: impl FnOnce(&[u8]) -> std::io::Result<()>,
@@ -646,7 +653,7 @@ fn reseal_if_rotated(
         return None;
     }
     Some(
-        seal_vault(identity, totp_secret, passphrase)
+        seal_vault(identity, totp_secret, app, passphrase)
             .map_err(CommandError::from)
             .and_then(|sealed| write(&encode_vault(&sealed)).map_err(|e| CommandError::io(&e))),
     )
@@ -1046,13 +1053,18 @@ pub async fn unseal(
 
     let (identity, totp_secret) = tokio::task::spawn_blocking(move || {
         let code = submitted_code(totp_code.as_deref().map(String::as_str));
-        let (mut identity, totp_secret) = open_vault(&vault, &passphrase, code)?;
+        let UnsealedVault {
+            mut identity,
+            totp_secret,
+            app,
+        } = open_vault(&vault, &passphrase, code)?;
         let totp_secret = totp_secret.map(Zeroizing::new);
         if !session_open {
             let now = chrono::Utc::now().timestamp();
             let save = |bytes: &[u8]| fsutil::atomic_write(&vault, bytes);
             let secret = totp_secret.as_deref().map(Vec::as_slice);
-            match reseal_if_rotated(&mut identity, secret, &passphrase, now, save) {
+            let app = app.as_deref().map(Vec::as_slice);
+            match reseal_if_rotated(&mut identity, secret, app, &passphrase, now, save) {
                 None => {}
                 Some(Ok(())) => crate::diag::note_with(
                     "signed prekey rotated",
@@ -3898,7 +3910,7 @@ mod tests {
     use crate::identity::{ed25519_sign, generate_nostr_keypair, generate_x25519, Identity};
     use crate::passphrase::MIN_PASSPHRASE_CHARS;
     use crate::totp::{generate_totp_secret, totp_now};
-    use crate::vault::SealedVault;
+    use crate::vault::{SealedVault, UnsealedVault};
 
     const NOW: i64 = 1_760_000_000;
 
@@ -4706,10 +4718,7 @@ mod tests {
     /// Open `vault` with a code from `secret`, computed just before. The code
     /// is only checked after the slow key derivation; should that take it past
     /// its window, a fresh code gets one more try.
-    fn open_with_code(
-        vault: &Path,
-        secret: &[u8],
-    ) -> Result<(Identity, Option<Vec<u8>>), CommandError> {
+    fn open_with_code(vault: &Path, secret: &[u8]) -> Result<UnsealedVault, CommandError> {
         match open_vault(vault, PASSPHRASE, Some(&totp_now(secret))) {
             Err(error) if error.code == ErrorCode::InvalidTotp => {
                 open_vault(vault, PASSPHRASE, Some(&totp_now(secret)))
@@ -4737,7 +4746,9 @@ mod tests {
             (header(1, 0b00), Some(true)),
             (header(1, 0b01), Some(false)),
             (header(1, 0b10), None),
-            (header(2, 0b00), None),
+            (header(2, 0b00), Some(true)),
+            (header(2, 0b01), Some(false)),
+            (header(3, 0b00), None),
             (b"not a vault".to_vec(), None),
         ] {
             fsutil::atomic_write(&vault, &bytes).unwrap();
@@ -4777,11 +4788,16 @@ mod tests {
 
         assert_eq!(read_config(&files).handle, "ana");
         assert_eq!(totp_hint(&files.vault), Some(true));
-        let error = open_vault(&files.vault, PASSPHRASE, None).unwrap_err();
+        let error = open_vault(&files.vault, PASSPHRASE, None)
+            .map(drop)
+            .unwrap_err();
         assert_eq!(error.code, ErrorCode::TotpRequired);
-        let (opened, sealed_secret) = open_with_code(&files.vault, &secret).unwrap();
-        assert_eq!(opened.ik_sign.pub_bytes, identity.ik_sign.pub_bytes);
-        assert_eq!(sealed_secret.as_deref(), Some(secret.as_slice()));
+        let opened = open_with_code(&files.vault, &secret).unwrap();
+        assert_eq!(
+            opened.identity.ik_sign.pub_bytes,
+            identity.ik_sign.pub_bytes
+        );
+        assert_eq!(opened.totp_secret.as_deref(), Some(secret.as_slice()));
     }
 
     #[test]
@@ -4793,9 +4809,12 @@ mod tests {
             create_account(&files, "ana", PASSPHRASE, None, fsutil::atomic_write).unwrap();
 
         assert_eq!(totp_hint(&files.vault), Some(false));
-        let (opened, sealed_secret) = open_vault(&files.vault, PASSPHRASE, None).unwrap();
-        assert_eq!(opened.ik_sign.pub_bytes, identity.ik_sign.pub_bytes);
-        assert_eq!(sealed_secret, None);
+        let opened = open_vault(&files.vault, PASSPHRASE, None).unwrap();
+        assert_eq!(
+            opened.identity.ik_sign.pub_bytes,
+            identity.ik_sign.pub_bytes
+        );
+        assert_eq!(opened.totp_secret, None);
     }
 
     #[test]
@@ -4835,10 +4854,10 @@ mod tests {
     fn opening_tells_a_missing_vault_from_a_damaged_one() {
         let scratch = ScratchDir::new("open-missing");
         let vault = scratch.path().join("vault.bin");
-        let missing = open_vault(&vault, PASSPHRASE, None).unwrap_err();
+        let missing = open_vault(&vault, PASSPHRASE, None).map(drop).unwrap_err();
         assert_eq!(missing.code, ErrorCode::NoVault);
         fsutil::atomic_write(&vault, b"not a vault").unwrap();
-        let damaged = open_vault(&vault, PASSPHRASE, None).unwrap_err();
+        let damaged = open_vault(&vault, PASSPHRASE, None).map(drop).unwrap_err();
         assert_eq!(damaged.code, ErrorCode::Internal);
     }
 
@@ -4848,12 +4867,37 @@ mod tests {
         totp_secret: Option<&[u8]>,
         now: i64,
     ) -> (Option<Result<(), CommandError>>, Option<Vec<u8>>) {
+        reseal_capturing_with_app(identity, totp_secret, None, now)
+    }
+
+    fn reseal_capturing_with_app(
+        identity: &mut Identity,
+        totp_secret: Option<&[u8]>,
+        app: Option<&[u8]>,
+        now: i64,
+    ) -> (Option<Result<(), CommandError>>, Option<Vec<u8>>) {
         let mut saved = None;
-        let outcome = reseal_if_rotated(identity, totp_secret, PASSPHRASE, now, |bytes| {
+        let outcome = reseal_if_rotated(identity, totp_secret, app, PASSPHRASE, now, |bytes| {
             saved = Some(bytes.to_vec());
             Ok(())
         });
         (outcome, saved)
+    }
+
+    #[test]
+    fn a_prekey_rotation_keeps_the_app_data() {
+        // The app data is the key to store/: a rotation that sealed the
+        // vault without it would lose every contact and chat.
+        let mut identity = create_identity();
+        let due = identity.signed_prekey.created_at + crate::identity::SPK_ROTATION_SECS;
+        let app: &[u8] = b"the key to the local data";
+
+        let (outcome, saved) = reseal_capturing_with_app(&mut identity, None, Some(app), due);
+
+        assert_eq!(outcome, Some(Ok(())));
+        let saved = decode_vault(&saved.expect("the rotated vault was saved")).unwrap();
+        let opened = crate::vault::unseal_vault(&saved, PASSPHRASE, None).unwrap();
+        assert_eq!(opened.app.as_deref().map(Vec::as_slice), Some(app));
     }
 
     #[test]

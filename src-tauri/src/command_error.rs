@@ -137,6 +137,7 @@ impl From<VaultError> for CommandError {
             VaultError::Corrupted
             | VaultError::BadMagic
             | VaultError::BadPayload
+            | VaultError::InvalidAppData(_)
             | VaultError::Crypto(_)
             | VaultError::Identity(_) => ErrorCode::Internal,
         };
