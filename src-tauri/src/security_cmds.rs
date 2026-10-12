@@ -42,17 +42,19 @@ pub async fn totp_enable(
     let passphrase = Zeroizing::new(passphrase);
     let _gate = state.session_gate.lock().await;
     let secret = confirmed_secret(&*state.inner.lock().await)?;
-    let kept = secret.to_vec();
     let vault = vault_path();
-    run_blocking(move || {
+    // The worker hands the secret back only once the vault holds it; on
+    // any other way out it is dropped there, and wiped.
+    let mut secret = run_blocking(move || {
         enable_totp(&vault, &passphrase, &secret, |bytes| {
             fsutil::atomic_write(&vault, bytes)
-        })
+        })?;
+        Ok(secret)
     })
     .await?;
     let mut inner = state.inner.lock().await;
     inner.totp_enrollment.clear();
-    replace_secret(&mut inner, Some(kept));
+    replace_secret(&mut inner, Some(std::mem::take(&mut *secret)));
     Ok(())
 }
 
@@ -129,9 +131,9 @@ fn replace_secret(inner: &mut InnerState, secret: Option<Vec<u8>>) {
 }
 
 /// Run `work`, a key derivation, off the async workers, as `unseal` does.
-async fn run_blocking(
-    work: impl FnOnce() -> Result<(), CommandError> + Send + 'static,
-) -> Result<(), CommandError> {
+async fn run_blocking<T: Send + 'static>(
+    work: impl FnOnce() -> Result<T, CommandError> + Send + 'static,
+) -> Result<T, CommandError> {
     tokio::task::spawn_blocking(work)
         .await
         .map_err(|_| CommandError::internal("vault worker failed"))?
@@ -238,9 +240,29 @@ mod tests {
     fn the_policy_is_checked_before_any_identity_exists() {
         // The first-run screens ask before `forge`: no vault, no session and
         // no data directory are needed. The command takes no state, so it
-        // cannot read or write one.
+        // cannot read or write one, and it still refuses what the policy
+        // refuses.
         let check: fn(String) -> Result<(), crate::command_error::CommandError> = check_passphrase;
+        let refused = |passphrase: &str| check(passphrase.to_string()).unwrap_err().code;
+        assert_eq!(refused("corta"), ErrorCode::PassphraseTooShort);
+        assert_eq!(refused("1234567890"), ErrorCode::PassphraseTooCommon);
         assert!(check("una frase larga y rara".to_string()).is_ok());
+    }
+
+    #[test]
+    fn turning_totp_on_keeps_no_plain_copy_of_the_secret() {
+        // A plain Vec of it would stay in freed memory whenever sealing
+        // fails: a wrong passphrase, TOTP on already, a disk error.
+        let code = include_str!("security_cmds.rs")
+            .split("#[cfg(test)]")
+            .next()
+            .unwrap();
+        let body = code
+            .split("pub async fn totp_enable(")
+            .nth(1)
+            .and_then(|rest| rest.split("\n}").next())
+            .unwrap();
+        assert!(!body.contains("to_vec()"), "a plain copy:{body}");
     }
 
     // ---- K5: TOTP on and off from the settings ----

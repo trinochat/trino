@@ -16,6 +16,7 @@
 //! may be to guess.
 
 use thiserror::Error;
+use zeroize::Zeroizing;
 
 /// Fewest characters a new passphrase may have, counted as Unicode scalar
 /// values (what `str::chars` yields), not bytes or UTF-16 units.
@@ -97,13 +98,14 @@ pub fn validate_passphrase(passphrase: &str) -> Result<(), PassphraseError> {
 }
 
 /// The passphrase as the checks after the length see it: in lower case and
-/// without spaces, so neither can hide a common password.
-fn normalize(passphrase: &str) -> Vec<char> {
-    passphrase
-        .to_lowercase()
-        .chars()
-        .filter(|c| !c.is_whitespace())
-        .collect()
+/// without spaces, so neither can hide a common password. Both copies made
+/// here are wiped when dropped: the first-run screens check every edit.
+fn normalize(passphrase: &str) -> Zeroizing<Vec<char>> {
+    let lower = Zeroizing::new(passphrase.to_lowercase());
+    // Sized up front, so the copy is never moved and left behind.
+    let mut chars = Zeroizing::new(Vec::with_capacity(lower.chars().count()));
+    chars.extend(lower.chars().filter(|c| !c.is_whitespace()));
+    chars
 }
 
 /// One block of up to `MAX_REPEATED_BLOCK` characters typed over and over,
@@ -139,8 +141,9 @@ fn runs_along(chars: &[char], sequence: &[char]) -> bool {
 }
 
 fn is_listed(chars: &[char]) -> bool {
-    let normalized: String = chars.iter().collect();
-    COMMON_PASSPHRASES.contains(&normalized.as_str())
+    COMMON_PASSPHRASES
+        .iter()
+        .any(|common| common.chars().eq(chars.iter().copied()))
 }
 
 #[cfg(test)]
@@ -267,12 +270,34 @@ mod tests {
     }
 
     #[test]
+    fn the_normalized_copy_is_wiped_when_dropped() {
+        let normalized: Zeroizing<Vec<char>> = normalize("Correct Horse");
+        assert_eq!(normalized.iter().collect::<String>(), "correcthorse");
+    }
+
+    #[test]
+    fn a_check_compares_with_the_list_in_place() {
+        // A String of the normalized passphrase would be one more copy of
+        // it left in freed memory after every check.
+        let code = include_str!("passphrase.rs")
+            .split("#[cfg(test)]")
+            .next()
+            .unwrap();
+        let is_listed = code
+            .split("fn is_listed(")
+            .nth(1)
+            .and_then(|rest| rest.split("\n}").next())
+            .unwrap();
+        assert!(!is_listed.contains("collect"), "a copy:{is_listed}");
+    }
+
+    #[test]
     fn the_list_holds_only_what_the_rules_miss() {
         let mut seen = HashSet::new();
         for entry in COMMON_PASSPHRASES {
             let chars: Vec<char> = entry.chars().collect();
             assert_eq!(
-                normalize(entry),
+                *normalize(entry),
                 chars,
                 "{entry:?} is not written normalized"
             );
