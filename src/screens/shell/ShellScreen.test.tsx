@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
-import { useState, type ReactElement } from 'react';
+import { useLayoutEffect, useState, type ReactElement } from 'react';
 import { afterEach, describe, expect, it, vi, type Mock } from 'vitest';
 import { AppearanceProvider } from '../../design/useAppearance';
 import type { CallLogWire, GroupInfo, GroupInvite, NodeInfo } from '../../lib/api';
@@ -280,6 +280,102 @@ describe('ShellScreen: layout', () => {
     const root = container.firstElementChild!;
     expect(classesOf(root)).toContain('relative');
     expect(screen.getByTestId('call-layer').parentElement).toBe(root);
+  });
+});
+
+/**
+ * W6's call screen covers the shell (`CallSlot.covering`, I5): nothing hidden
+ * behind it may keep or take the focus. The panes, the banners, the call bar's
+ * row and the details beside the chat go inert, never the call layer. The
+ * shell's dialogs are portals above the call screen, where `inert` does not
+ * reach: they close in the render the call screen comes up in.
+ */
+describe('ShellScreen: under the call screen', () => {
+  const covering = (props: ShellScreenProps, on: boolean) => ({ call: { ...props.call, covering: on } });
+  const inert = (element: Element) => element.closest('[inert]') !== null;
+
+  it('makes the panes, the banners, the call bar and the details beside the chat inert while it covers them', async () => {
+    const api = fakeApi();
+    api.listNodes.mockResolvedValue([node('Ana')]);
+    api.getHistory.mockRejectedValue(new Error('no history'));
+    const { props, rerenderWith } = setup({ api, width: 1280 });
+    fireEvent.click(await row('Ana'));
+    fireEvent.click(screen.getByRole('button', { name: 'Detalles' }));
+    const covered = [
+      sidebar()!,
+      screen.getByRole('main'),
+      screen.getByRole('complementary', { name: 'Detalles del chat' }),
+      await screen.findByText('No se pudo cargar el historial de tus chats.'),
+      screen.getByTestId('call-bar'),
+    ];
+    expect(covered.filter(inert)).toEqual([]);
+
+    rerenderWith(covering(props, true));
+    expect(covered.filter(element => !inert(element))).toEqual([]);
+    expect(inert(screen.getByTestId('call-layer'))).toBe(false);
+
+    rerenderWith(covering(props, false));
+    expect(covered.filter(inert)).toEqual([]);
+  });
+
+  it('closes its dialogs in the render the call screen comes up in, and they stay closed', async () => {
+    /** Whether a commit ever had a dialog of the shell together with the call screen. */
+    let overCall = false;
+    function FakeDialog({ testId }: { testId: string }) {
+      useLayoutEffect(() => {
+        if (document.querySelector('[data-testid="call-layer"][data-covering="true"]')) overCall = true;
+      });
+      return <div role="dialog" data-testid={testId} />;
+    }
+    const slots = {
+      ...fakeSlots(),
+      newChat: vi.fn((p: NewChatSlotProps) => <FakeDialog testId={`new-chat-${p.purpose}`} />),
+      contactDetails: vi.fn((p: ContactDetailsSlotProps) => <FakeDialog testId={`details-${p.layout}`} />),
+    };
+    const { props, rerenderWith } = setup({ slots, width: 1024 });
+    const callWith = (on: boolean) => ({
+      call: { ...props.call, covering: on, layer: <div data-testid="call-layer" data-covering={String(on)} /> },
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Nuevo chat' }));
+    expect(screen.getByTestId('new-chat-chat')).toBeTruthy();
+    rerenderWith(callWith(true));
+    expect(screen.queryByTestId('new-chat-chat')).toBeNull();
+    rerenderWith(callWith(false));
+    expect(screen.queryByTestId('new-chat-chat')).toBeNull();
+
+    fireEvent.click(await row('Ana'));
+    fireEvent.click(screen.getByRole('button', { name: 'Detalles' }));
+    expect(screen.getByTestId('details-dialog')).toBeTruthy();
+    rerenderWith(callWith(true));
+    expect(screen.queryByTestId('details-dialog')).toBeNull();
+    rerenderWith(callWith(false));
+    expect(screen.queryByTestId('details-dialog')).toBeNull();
+
+    expect(overCall).toBe(false);
+  });
+
+  // Ctrl+K would swap the panes hidden under the call screen and reach for
+  // a search box that is inert.
+  it('leaves Ctrl+K alone while it covers the shell', async () => {
+    const { props, rerenderWith } = setup({ width: 759 });
+    fireEvent.click(await row('Ana'));
+    rerenderWith(covering(props, true));
+    fireEvent.keyDown(window, { key: 'k', ctrlKey: true });
+    expect(sidebar()).toBeNull();
+    expect(screen.getByRole('main', { name: 'Ana' })).toBeTruthy();
+  });
+
+  // The call screen took the focus (W6); as it goes, without the bar or an
+  // end card to take it, the focus would fall to the page.
+  it('gives the focus to the conversation when the call screen goes and the focus fell to the page', async () => {
+    const { props, rerenderWith } = setup({ width: 1024 });
+    fireEvent.click(await row('Ana'));
+    rerenderWith(covering(props, true));
+    (document.activeElement as HTMLElement | null)?.blur();
+    expect(document.activeElement).toBe(document.body);
+    rerenderWith(covering(props, false));
+    expect(document.activeElement).toBe(screen.getByRole('main', { name: 'Ana' }));
   });
 });
 

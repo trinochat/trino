@@ -7,6 +7,11 @@
  * the details of a contact or a group sit beside the chat from 70 rem and in
  * a dialog below. Under 47.5 rem there is one pane, with Atrás.
  *
+ * While the call screen covers the shell (`call.covering`), all of it but the
+ * call layer is inert: the bar's row, the banners, the panes and the details
+ * beside the chat. The shell's dialogs close as the call screen comes up, and
+ * as it goes the conversation takes a focus that fell to the page.
+ *
  * The focus follows the panes. A pane that leaves takes its focused control
  * with it, so the conversation one pane opens takes the focus (the main
  * pane, named for what it shows), and Atrás gives it back to the row the
@@ -140,6 +145,20 @@ export function ShellScreen(props: ShellScreenProps) {
    */
   const focusNext = useRef<FocusTarget | null>(null);
 
+  // The call screen came up over the shell (W6): the shell's dialogs and
+  // the details shown as a dialog close in this very render. They are
+  // portals above the call screen, where `inert` does not reach, and closed
+  // any later they would show over it and give the focus back behind it.
+  // The details beside the chat stay, inert with the panes.
+  const [covered, setCovered] = useState(call.covering);
+  if (covered !== call.covering) {
+    setCovered(call.covering);
+    if (call.covering) {
+      setOverlay(null);
+      if (layout !== 'double-aside') setDetails(false);
+    }
+  }
+
   const openKey = open ? convoKey(open) : null;
   const listShown = !single || pane === 'list';
   const mainShown = !single || pane === 'main';
@@ -205,7 +224,8 @@ export function ShellScreen(props: ShellScreenProps) {
   }, [markRead, markSeen]);
 
   // Ctrl+K and Ctrl+L, from anywhere. Ctrl+K leaves an open dialog alone,
-  // which keeps the keyboard; locking always goes.
+  // which keeps the keyboard, and the call screen, under which the panes are
+  // inert; locking always goes.
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       if (!(event.ctrlKey || event.metaKey) || event.altKey || event.isComposing) return;
@@ -213,7 +233,7 @@ export function ShellScreen(props: ShellScreenProps) {
       if (key === 'l') {
         event.preventDefault();
         latest.current.onLock();
-      } else if (key === 'k' && !document.querySelector('[aria-modal="true"]')) {
+      } else if (key === 'k' && !latest.current.call.covering && !document.querySelector('[aria-modal="true"]')) {
         event.preventDefault();
         setTab('chats');
         setPane('list');
@@ -248,6 +268,19 @@ export function ShellScreen(props: ShellScreenProps) {
       (row?.querySelector('button') ?? nav)?.focus();
     }
   });
+
+  // The call screen went, minimized or ended. The bar of a minimized call
+  // and an end card take the focus as they show (W6, child effects that ran
+  // first); when neither did, it fell to the page: the conversation takes it.
+  const wasCovering = useRef(call.covering);
+  useEffect(() => {
+    const was = wasCovering.current;
+    wasCovering.current = call.covering;
+    if (!was || call.covering) return;
+    const active = document.activeElement;
+    if (active && active !== document.body && active.isConnected) return;
+    (mainRef.current ?? navRef.current)?.focus();
+  }, [call.covering]);
 
   const nodeOf = (handle: string) => conv.nodes.find(node => node.handle === handle);
   const groupOf = (gid: string) => conv.groups.find(group => group.gid === gid);
@@ -437,7 +470,8 @@ export function ShellScreen(props: ShellScreenProps) {
 
   const detailsLayout: PanelLayout = layout === 'double-aside' ? 'aside' : 'dialog';
   let detailsPanel: ReactNode = null;
-  if (details && open && main === 'convo' && mainShown) {
+  // A dialog never shows over the call screen, not even one the layout turned the aside into.
+  if (details && open && main === 'convo' && mainShown && !(call.covering && detailsLayout === 'dialog')) {
     if (open.kind === 'contact') {
       const node = nodeOf(open.handle);
       if (node) {
@@ -472,9 +506,11 @@ export function ShellScreen(props: ShellScreenProps) {
   }
 
   let overlayContent: ReactNode = null;
-  if (overlay?.kind === 'contacts') {
+  /** The shell's dialog on screen: none under the call screen. */
+  const shown = call.covering ? null : overlay;
+  if (shown?.kind === 'contacts') {
     overlayContent = slots.contacts({
-      tab: overlay.tab,
+      tab: shown.tab,
       onTabChange: next => setOverlay({ kind: 'contacts', tab: next }),
       onClose: closeOverlay,
       onContactAdded: handle => {
@@ -496,7 +532,7 @@ export function ShellScreen(props: ShellScreenProps) {
       },
       strangerAttempts: strangers,
     });
-  } else if (overlay?.kind === 'newGroup') {
+  } else if (shown?.kind === 'newGroup') {
     overlayContent = slots.newGroup({
       contacts: conv.nodes,
       onClose: closeOverlay,
@@ -506,9 +542,9 @@ export function ShellScreen(props: ShellScreenProps) {
         openConvo({ kind: 'group', gid });
       },
     });
-  } else if (overlay?.kind === 'newChat') {
+  } else if (shown?.kind === 'newChat') {
     overlayContent = slots.newChat({
-      purpose: overlay.purpose,
+      purpose: shown.purpose,
       contacts: conv.nodes,
       trust: conv.trust,
       onClose: closeOverlay,
@@ -523,8 +559,8 @@ export function ShellScreen(props: ShellScreenProps) {
       onNewGroup: () => setOverlay({ kind: 'newGroup' }),
       onAddWithCode: () => setOverlay({ kind: 'contacts', tab: 'add' }),
     });
-  } else if (overlay?.kind === 'verify') {
-    const peer = nodeOf(overlay.handle);
+  } else if (shown?.kind === 'verify') {
+    const peer = nodeOf(shown.handle);
     if (peer) {
       overlayContent = slots.verifyContact({
         peer,
@@ -541,8 +577,8 @@ export function ShellScreen(props: ShellScreenProps) {
         }),
       });
     }
-  } else if (overlay?.kind === 'forward') {
-    const { from, key } = overlay;
+  } else if (shown?.kind === 'forward') {
+    const { from, key } = shown;
     overlayContent = (
       <ForwardDialog
         open
@@ -562,10 +598,12 @@ export function ShellScreen(props: ShellScreenProps) {
 
   return (
     // Relative: the call layer (W6) is absolute and fills the shell, not the window under the title bar.
+    // While the call screen covers the shell, everything else in it is inert: never the layer, and never
+    // the window's title bar, which is outside the shell.
     <div ref={rootRef} className="relative flex h-full min-h-0 flex-col bg-ui-bg font-ui text-ui-ink">
-      {call.bar}
+      {call.bar ? <div inert={call.covering}>{call.bar}</div> : null}
       {(conv.historyFailed || error) && (
-        <div className="flex flex-col gap-2 px-3 pt-3">
+        <div inert={call.covering} className="flex flex-col gap-2 px-3 pt-3">
           {conv.historyFailed && (
             <Banner tone="danger" action={<Button onClick={() => void conv.reloadHistory()}>{t('common2.retry')}</Button>}>
               {t('shell.error.history')}
@@ -585,7 +623,7 @@ export function ShellScreen(props: ShellScreenProps) {
           )}
         </div>
       )}
-      <div className="flex min-h-0 flex-1">
+      <div inert={call.covering} className="flex min-h-0 flex-1">
         {listShown && (
           <nav
             ref={navRef}
