@@ -460,8 +460,14 @@ export function useConversations(options: ConversationsOptions): ConversationsSt
     if (!msg || msg.call) return;
     const convo = convoKey(ref);
     const text = msg.file ? null : (bodyOf(store.current, convo, key) ?? msg.text ?? null);
+    const sha256 = msg.file?.sha256 ?? null;
+    // The sender of a group message from others, as the history keeps it,
+    // tells apart two members who sent the same in the same second (K11).
+    const from = ref.kind === 'group' && msg.side === 'them' ? msg.from : undefined;
     try {
-      await latest.current.api.deleteHistoryItem(convo, msg.ts, msg.side, text, msg.file?.sha256 ?? null);
+      await (from === undefined
+        ? latest.current.api.deleteHistoryItem(convo, msg.ts, msg.side, text, sha256)
+        : latest.current.api.deleteHistoryItem(convo, msg.ts, msg.side, text, sha256, from));
     } catch (error) {
       // Never saved there (a send that failed): it only has to leave the screen.
       if (!(isCommandError(error) && error.code === 'not_found')) throw error;

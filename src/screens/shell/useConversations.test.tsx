@@ -389,6 +389,31 @@ describe('useConversations: deleting and expiring', () => {
     expect(hook.result.current.messages.Ana).toEqual([]);
   });
 
+  // Two members can send the same in the same second: K11 tells them apart
+  // by the sender, which the history keeps for a group message from others.
+  it('names the sender when deleting a group message someone else sent', async () => {
+    const grp: Record<string, HistItem[]> = {
+      'grp:g1': [
+        { side: 'them', from: 'Papá', text: 'ok', ts: T0 },
+        { side: 'them', from: 'Mamá', text: 'ok', ts: T0 },
+        { side: 'them', from: 'Mamá', file: sentFile('foto.jpg'), ts: T0 + 1 },
+        { side: 'me', text: 'listo', ts: T0 + 2 },
+      ],
+    };
+    const { hook, api } = setup({}, { history: grp });
+    await waitFor(() => expect(hook.result.current.messages['grp:g1']).toHaveLength(4));
+    const [papa, mama, foto, mine] = hook.result.current.messages['grp:g1']!;
+    expect([papa?.from, mama?.from]).toEqual(['Papá', 'Mamá']);
+    await act(() => hook.result.current.deleteForMe(FAMILIA, mama!.key));
+    expect(api.deleteHistoryItem).toHaveBeenLastCalledWith('grp:g1', T0, 'them', 'ok', null, 'Mamá');
+    await act(() => hook.result.current.deleteForMe(FAMILIA, foto!.key));
+    expect(api.deleteHistoryItem).toHaveBeenLastCalledWith('grp:g1', T0 + 1, 'them', null, 'sha-foto.jpg', 'Mamá');
+    // Your own messages have no sender to name, as before.
+    await act(() => hook.result.current.deleteForMe(FAMILIA, mine!.key));
+    expect(api.deleteHistoryItem).toHaveBeenLastCalledWith('grp:g1', T0 + 2, 'me', 'listo', null);
+    expect(hook.result.current.messages['grp:g1']?.map(m => m.from)).toEqual(['Papá']);
+  });
+
   it('keeps the message when deleting fails, unless the backend never had it', async () => {
     const { hook, api } = setup({}, { history });
     await waitFor(() => expect(hook.result.current.messages.Ana).toHaveLength(2));
