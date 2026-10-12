@@ -11,6 +11,18 @@ export interface Capabilities {
   profileSync: boolean;
   /** K13: calls are kept in the encrypted chat history ("Llamadas", the call events). */
   callLog: boolean;
+  /** K3: the real state of each relay (Settings > Avanzado). */
+  relayStatus: boolean;
+  /** K5: turning two-step verification on and off (Settings > Cuenta y seguridad). */
+  totp: boolean;
+  /** K6: a new password for the vault (Settings > Cuenta y seguridad). */
+  changePassphrase: boolean;
+  /**
+   * The backend writes trino-gui.log on this device, and Settings > Avanzado
+   * says so. After T3 (W7) only a debug build does: `tauri dev`, which runs
+   * with Vite's dev server. The exe writes none.
+   */
+  diagnosticLog: boolean;
   /** Invitation links (INV, supplement §8): built now, turned on with Tor. */
   inviteLinks: boolean;
   /** Message requests from people who are not contacts yet (R6b): with Tor. */
@@ -22,6 +34,10 @@ export interface Capabilities {
 export const capabilities: Readonly<Capabilities> = Object.freeze({
   profileSync: true,
   callLog: true,
+  relayStatus: true,
+  totp: true,
+  changePassphrase: true,
+  diagnosticLog: import.meta.env.DEV,
   inviteLinks: false,
   messageRequests: false,
   names: false,

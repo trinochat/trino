@@ -96,6 +96,12 @@ describe('phaseReducer', () => {
     expect(run(main, LOCKED_BY_HAND, { type: 'status', status: status() })).toEqual({ kind: 'onboarding' });
   });
 
+  // Settings > "Borrar todo de este equipo" erases the identity with the
+  // chats open (I2): the first run follows, as after "¿Olvidaste?".
+  it('goes to the first run when the identity is erased from the chats', () => {
+    expect(run(main, { type: 'noVault' })).toEqual({ kind: 'onboarding' });
+  });
+
   // A late status, or an event of another screen, changes nothing.
   it('ignores what does not belong to the phase', () => {
     const onboarding = run(INITIAL_PHASE, { type: 'status', status: status() });

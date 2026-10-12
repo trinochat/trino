@@ -6,16 +6,14 @@ import {
   useReducer,
   useRef,
   type ComponentType,
-  type CSSProperties,
   type ReactNode,
 } from 'react';
 import { createPortal } from 'react-dom';
 import type { UnlistenFn } from '@tauri-apps/api/event';
-import { I18nContext, makeT, detectLang, useT, LANGS, type Lang } from './lib/i18n';
-import { LangCtx, useDocumentLang, useLang } from './lib/i18n-context';
-import { ThemeCtx, useThemePreference } from './lib/theme-context';
+import { I18nContext, makeT, detectLang, useT, type Lang } from './lib/i18n';
+import { LangCtx, useDocumentLang } from './lib/i18n-context';
+import { ThemeCtx } from './lib/theme-context';
 import {
-  Activity,
   ArrowDown,
   Ban,
   Bell,
@@ -35,7 +33,6 @@ import {
   Megaphone,
   MessageCircle,
   MoreVertical,
-  Palette,
   Paperclip,
   Pencil,
   Plus,
@@ -67,12 +64,10 @@ import {
 import { identityInitials } from './lib/initials';
 import { prefs } from './lib/prefs';
 import {
-  ACCENT_OPTIONS,
   applyThemePreference,
   loadThemePreference,
   saveThemePreference,
   type ThemePreference,
-  type ThemePreset,
 } from './lib/theme';
 import {
   BUNDLED_ANNOUNCEMENTS,
@@ -122,13 +117,11 @@ import {
   onCallQuitRequested,
   onResyncNeeded,
   onSessionEstablished,
-  onRelayEvent,
   openLink,
   isCommandError,
   type NodeInfo,
   type GroupInfo,
   type FileRef,
-  type ProfileResponse,
   type StatusResponse,
   type StickerInfo,
 } from './lib/api';
@@ -149,6 +142,7 @@ import type { LockReason, OnboardingApi, OnboardingIntent, UnlockApi } from './s
 import { capabilities } from './app/capabilities';
 import { installBrowserChromeGuard } from './app/browser-chrome';
 import { useContacts, type ContactsEvents } from './app/contacts';
+import { settingsBackend, useSettings } from './app/settings';
 import { useAutoLock } from './app/useAutoLock';
 import './App.css';
 
@@ -223,6 +217,8 @@ export interface MainProps {
   onLock(): void;
   /** Settings saved a new auto-lock time: it applies at once. */
   onAutolockChanged(minutes: number): void;
+  /** Settings erased the identity: what this device keeps goes too, and the first run starts. */
+  onWiped(): void;
 }
 
 export interface AppProps {
@@ -351,9 +347,10 @@ function App({ api: backend = BACKEND, windowApi = TAURI_WINDOW, Main = MainShel
     onLock: minutes => lockNow({ kind: 'idle', minutes }),
   });
 
-  // "Borrar identidad" deleted the vault, the chats and the contacts. What
-  // this device keeps beside them goes too, as the old screen did: the
-  // consent record, the verified marks, the notes and the settings.
+  // "Borrar identidad" on the unlock screen, or "Borrar todo de este equipo"
+  // in Settings, deleted the vault, the chats and the contacts. What this
+  // device keeps beside them goes too, as the old screen did: the consent
+  // record, the verified marks, the notes and the settings.
   const wiped = () => {
     try {
       localStorage.clear();
@@ -396,7 +393,12 @@ function App({ api: backend = BACKEND, windowApi = TAURI_WINDOW, Main = MainShel
                   ) : null}
                   {phase.kind === 'main' ? (
                     <main className="h-full">
-                      <Main intent={phase.intent} onLock={requestLock} onAutolockChanged={setAutolockMinutes} />
+                      <Main
+                        intent={phase.intent}
+                        onLock={requestLock}
+                        onAutolockChanged={setAutolockMinutes}
+                        onWiped={wiped}
+                      />
                     </main>
                   ) : null}
                 </div>
@@ -439,7 +441,7 @@ const groupUnreadKey = (gid: string) => `grp:${gid}`;
 /** The backend's events about contacts, for Contactos (src/app/contacts.tsx). */
 const CONTACT_EVENTS: ContactsEvents = { onGroupInvite, onHandshakeNeeded };
 
-function MainShell({ intent, onLock, onAutolockChanged }: MainProps) {
+function MainShell({ intent, onLock, onAutolockChanged, onWiped }: MainProps) {
   const t = useT();
   const [nodes, setNodes] = useState<NodeInfo[]>([]);
   const [groups, setGroups] = useState<GroupInfo[]>([]);
@@ -448,8 +450,6 @@ function MainShell({ intent, onLock, onAutolockChanged }: MainProps) {
   const [msgsByGroup, setMsgsByGroup] = useState<Record<string, ChatMessage[]>>({});
   const [showNewGroup, setShowNewGroup] = useState(false);
   const [showAddMember, setShowAddMember] = useState(false);
-  const [showSettings, setShowSettings] = useState(false);
-  const [showInspector, setShowInspector] = useState(false);
   const [callState, setCallState] = useState<CallState>('idle');
   const [callPeer, setCallPeer] = useState<string | null>(null);
   const [callVideo, setCallVideo] = useState(false);
@@ -540,7 +540,8 @@ function MainShell({ intent, onLock, onAutolockChanged }: MainProps) {
     return () => unlisten?.();
   }, []);
 
-  useEffect(() => {
+  // Your name and photo in the sidebar, read again once Settings saved them.
+  const refreshProfile = () =>
     api
       .getProfile()
       .then(p => {
@@ -549,6 +550,8 @@ function MainShell({ intent, onLock, onAutolockChanged }: MainProps) {
         setMyHandle(p.handle ?? '');
       })
       .catch(() => {});
+  useEffect(() => {
+    void refreshProfile();
   }, []);
 
   // Ctrl/Cmd+K focuses the chat search (desktop convenience).
@@ -612,6 +615,17 @@ function MainShell({ intent, onLock, onAutolockChanged }: MainProps) {
       void Promise.all([refreshGroups(), refreshNodes()]).then(() => setSel({ kind: 'group', id: gid }));
     },
     onGroupsChanged: () => void refreshGroups(),
+  });
+
+  // Ajustes (W5): a layer over the whole shell until I6, which makes the
+  // shell's panes inert while it is open (src/app/settings.tsx).
+  const settings = useSettings({
+    api: settingsBackend,
+    onLockNow: onLock,
+    onIdentityWiped: onWiped,
+    onAutolockChanged,
+    onProfileChanged: () => void refreshProfile(),
+    onContactsChanged: () => void refreshNodes(),
   });
 
   useEffect(() => {
@@ -866,11 +880,12 @@ function MainShell({ intent, onLock, onAutolockChanged }: MainProps) {
   };
 
   return (
-    <div className="app-shell h-full overflow-hidden">
+    <div className="app-shell relative h-full overflow-hidden">
       <aside
+        inert={settings.isOpen}
         className={`sidebar-shell flex-col h-full w-full md:w-auto ${
           sel ? 'hidden md:flex' : 'flex'
-        }`}
+        }${settings.isOpen ? ' isolate' : ''}`}
       >
         <header className="sidebar-brand">
           <TrinoLogo size={36} decorative className="text-phosphor-dim" />
@@ -1106,17 +1121,9 @@ function MainShell({ intent, onLock, onAutolockChanged }: MainProps) {
             </button>
             <button
               type="button"
-              title={t('sidebar.inspector')}
-              className="icon-button"
-              onClick={() => setShowInspector(true)}
-            >
-              <Activity className="h-4 w-4" />
-            </button>
-            <button
-              type="button"
               title={t('sidebar.settings')}
               className="icon-button"
-              onClick={() => setShowSettings(true)}
+              onClick={() => settings.open()}
             >
               <Settings className="h-4 w-4" />
             </button>
@@ -1133,7 +1140,10 @@ function MainShell({ intent, onLock, onAutolockChanged }: MainProps) {
         </footer>
       </aside>
 
-      <div className={`h-full min-h-0 w-full ${sel ? 'block' : 'hidden md:block'}`}>
+      <div
+        inert={settings.isOpen}
+        className={`h-full min-h-0 w-full ${sel ? 'block' : 'hidden md:block'}${settings.isOpen ? ' isolate' : ''}`}
+      >
       {sel?.kind === 'system' ? (
         <SystemChatView
           onBack={() => setSel(null)}
@@ -1340,15 +1350,8 @@ function MainShell({ intent, onLock, onAutolockChanged }: MainProps) {
       )}
       </div>
 
+      {settings.layer}
       {contacts.dialog}
-      {showSettings && (
-        <SettingsModal
-          onClose={() => setShowSettings(false)}
-          onSaved={() => setShowSettings(false)}
-          onAutolockChanged={onAutolockChanged}
-        />
-      )}
-      {showInspector && <RelayInspector onClose={() => setShowInspector(false)} />}
       {forwarding && (
         <ForwardModal
           nodes={nodes}
@@ -1780,262 +1783,6 @@ function AddMemberModal({
         ))}
       </div>
       {error && <div className="text-crimson text-xs mt-3">{error}</div>}
-    </Modal>
-  );
-}
-
-function ThemePreview({ preset, accent }: { preset: ThemePreset; accent: string }) {
-  return (
-    <span
-      className={`theme-preview theme-preview--${preset}`}
-      style={{ '--preview-accent': accent } as CSSProperties}
-      aria-hidden="true"
-    >
-      <span className="theme-preview__rail" />
-      <span className="theme-preview__content">
-        <span />
-        <span />
-      </span>
-    </span>
-  );
-}
-
-function SettingsModal({
-  onClose,
-  onSaved,
-  onAutolockChanged,
-}: {
-  onClose: () => void;
-  onSaved: () => void;
-  onAutolockChanged: (minutes: number) => void;
-}) {
-  const t = useT();
-  const { lang, setLang } = useLang();
-  const { theme, setTheme } = useThemePreference();
-  const [profile, setProfile] = useState<ProfileResponse | null>(null);
-  const [handle, setHandle] = useState('');
-  const [avatar, setAvatar] = useState<string | null>(null);
-  const [autolock, setAutolock] = useState(() => localStorage.getItem('autolock') ?? '5');
-  const [autostart, setAutostart] = useState(false);
-  const [busy, setBusy] = useState(false);
-  useEffect(() => {
-    if (!isMobile) api.getAutostart().then(setAutostart).catch(() => {});
-  }, []);
-  const [error, setError] = useState<string | null>(null);
-  const [confirmWipe, setConfirmWipe] = useState(false);
-  const [wiping, setWiping] = useState(false);
-  const picker = useFilePicker(
-    p => {
-      if (p.thumb) setAvatar(p.thumb);
-    },
-    () => setError(t('settings.invalidPhoto')),
-  );
-
-  const doWipe = async () => {
-    setWiping(true);
-    try {
-      await api.wipe();
-      localStorage.clear();
-      window.location.reload();
-    } catch {
-      setError(t('settings.deleteError'));
-      setWiping(false);
-    }
-  };
-
-  useEffect(() => {
-    api
-      .getProfile()
-      .then(p => {
-        setProfile(p);
-        setHandle(p.handle);
-        setAvatar(p.avatar);
-      })
-      .catch(() => setError(t('settings.loadError')));
-  }, []);
-
-  const save = async () => {
-    setBusy(true);
-    setError(null);
-    try {
-      await api.updateProfile(handle.trim() || profile?.handle || 'anon', avatar);
-      onSaved();
-    } catch {
-      setError(t('settings.saveError'));
-      setBusy(false);
-    }
-  };
-
-  return (
-    <Modal onClose={onClose} title={t('settings.title')}>
-      <div className="flex items-center gap-4 mb-5">
-        <Avatar src={avatar} name={handle} size={72} />
-        <div className="flex flex-col gap-2">
-          {picker.input}
-          <button type="button" className="text-cyan text-sm hover:underline text-left" onClick={picker.open}>
-            {t('settings.changePhoto')}
-          </button>
-          {avatar && (
-            <button
-              className="text-crimson text-xs hover:underline text-left"
-              onClick={() => setAvatar(null)}
-              type="button"
-            >
-              {t('settings.removePhoto')}
-            </button>
-          )}
-        </div>
-      </div>
-      <label className="text-xs text-phosphor-dim block mb-1">{t('settings.name')}</label>
-      <input
-        className="term-input w-full mb-4"
-        value={handle}
-        maxLength={40}
-        onChange={e => setHandle(e.target.value)}
-        onKeyDown={e => e.key === 'Enter' && save()}
-      />
-      <label className="text-xs text-phosphor-dim block mb-1">{t('settings.language')}</label>
-      <select
-        className="term-input w-full mb-4"
-        value={lang}
-        onChange={e => setLang(e.target.value as Lang)}
-      >
-        {LANGS.map(l => (
-          <option key={l.code} value={l.code}>
-            {l.label}
-          </option>
-        ))}
-      </select>
-      <div className="settings-section-label">
-        <Palette className="h-3.5 w-3.5" />
-        {t('settings.appearance')}
-      </div>
-      <div className="theme-preset-grid">
-        {(['trino', 'corporate', 'simple'] as ThemePreset[]).map(preset => (
-          <button
-            key={preset}
-            type="button"
-            className={`theme-preset ${theme.preset === preset ? 'theme-preset--active' : ''}`}
-            aria-pressed={theme.preset === preset}
-            onClick={() => setTheme({ ...theme, preset })}
-          >
-            <ThemePreview preset={preset} accent={theme.accent} />
-            <span>{t(`theme.${preset}`)}</span>
-          </button>
-        ))}
-      </div>
-      <div className="mt-3 text-[10px] text-ink-muted">{t('settings.accentColor')}</div>
-      <div className="theme-swatches" role="group" aria-label={t('settings.accentColor')}>
-        {ACCENT_OPTIONS.map(accent => (
-          <button
-            key={accent}
-            type="button"
-            className={`theme-swatch ${theme.accent === accent ? 'theme-swatch--active' : ''}`}
-            style={{ '--swatch-color': accent } as CSSProperties}
-            aria-label={t('settings.chooseAccent')}
-            aria-pressed={theme.accent === accent}
-            onClick={() => setTheme({ ...theme, accent })}
-          >
-            {theme.accent === accent && <Check className="h-3.5 w-3.5" />}
-          </button>
-        ))}
-        <label
-          className="theme-swatch theme-swatch--custom"
-          title={t('settings.customAccent')}
-          style={{ '--swatch-color': theme.accent } as CSSProperties}
-        >
-          <Palette className="h-3.5 w-3.5" />
-          <input
-            type="color"
-            value={theme.accent}
-            aria-label={t('settings.customAccent')}
-            onChange={event => setTheme({ ...theme, accent: event.target.value })}
-          />
-        </label>
-      </div>
-      <label className="text-xs text-phosphor-dim block mb-1">{t('settings.autoLock')}</label>
-      <select
-        className="term-input w-full mb-4"
-        value={autolock}
-        onChange={e => {
-          setAutolock(e.target.value);
-          localStorage.setItem('autolock', e.target.value);
-          onAutolockChanged(Number(e.target.value));
-        }}
-      >
-        <option value="0">{t('time.off')}</option>
-        <option value="1">{t('time.minute1')}</option>
-        <option value="5">{t('time.minutes5')}</option>
-        <option value="15">{t('time.minutes15')}</option>
-        <option value="30">{t('time.minutes30')}</option>
-        <option value="60">{t('time.hour1')}</option>
-      </select>
-      {!isMobile && (
-        <label className="flex items-center gap-2 mb-4 cursor-pointer text-sm text-phosphor">
-          <input
-            type="checkbox"
-            checked={autostart}
-            onChange={e => {
-              const v = e.target.checked;
-              setAutostart(v);
-              api.setAutostart(v).catch(() => setAutostart(!v));
-            }}
-          />
-          {t('settings.startWithWindows')}
-        </label>
-      )}
-      {profile && (
-        <div className="text-phosphor-dim text-[11px] mb-4 space-y-1">
-          <div>
-            {t('settings.securityFingerprint')}: <span className="text-phosphor">{profile.fingerprint}</span>
-          </div>
-          <div className="truncate">{t('settings.networkKey')}: {profile.nostr_pub.slice(0, 24)}…</div>
-        </div>
-      )}
-      <div className="text-phosphor-dim text-[10px] mb-4">
-        {t('settings.shareHelp')}
-      </div>
-      {error && <div className="text-crimson text-xs mb-3">{error}</div>}
-      <button type="button" className="term-button w-full" disabled={busy} onClick={save}>
-        {busy ? t('common.saving') : t('common.save')}
-      </button>
-
-      <div className="mt-6 pt-4 border-t border-crimson/30">
-        <div className="text-crimson text-[10px] uppercase tracking-widest mb-2 flex items-center gap-1">
-          {t('settings.dangerTitle')}
-        </div>
-        <div className="text-phosphor-dim text-[11px] mb-3 leading-relaxed">
-          {t('settings.dangerDesc')}
-        </div>
-        {!confirmWipe ? (
-          <button
-            className="w-full border border-crimson/50 text-crimson px-4 py-2 rounded hover:bg-crimson/10 transition-colors text-sm"
-            onClick={() => setConfirmWipe(true)}
-            type="button"
-          >
-            {t('settings.deleteAll')}
-          </button>
-        ) : (
-          <div className="flex gap-2">
-            <button
-              className="flex-1 border border-bg-line text-phosphor-dim px-4 py-2 rounded hover:text-phosphor text-sm"
-              disabled={wiping}
-              onClick={() => setConfirmWipe(false)}
-              type="button"
-            >
-              {t('common.cancel')}
-            </button>
-            <button
-              className="flex-1 border border-crimson bg-crimson/10 text-crimson px-4 py-2 rounded hover:bg-crimson/20 text-sm animate-flicker"
-              disabled={wiping}
-              onClick={doWipe}
-              type="button"
-            >
-              {wiping ? t('unlock2.wiping') : t('settings.confirmDeleteAll')}
-            </button>
-          </div>
-        )}
-      </div>
     </Modal>
   );
 }
@@ -3984,33 +3731,6 @@ function ViewerBtn({
   );
 }
 
-// Open a file picker, strip metadata + build a thumbnail, hand the result to `onPick`.
-function useFilePicker(
-  onPick: (p: ProcessedFile) => void,
-  onError: (error: unknown) => void,
-) {
-  const ref = useRef<HTMLInputElement>(null);
-  const input = (
-    <input
-      type="file"
-      ref={ref}
-      className="hidden"
-      accept="image/*,video/*,*/*"
-      onChange={async e => {
-        const f = e.target.files?.[0];
-        e.target.value = '';
-        if (!f) return;
-        try {
-          onPick(await processFile(f));
-        } catch (err) {
-          onError(err);
-        }
-      }}
-    />
-  );
-  return { input, open: () => ref.current?.click() };
-}
-
 function ChatInfoPanel({
   handle,
   avatar,
@@ -4482,116 +4202,6 @@ function ForwardModal({
         {nodes.length === 0 && groups.length === 0 && (
           <div className="text-phosphor-dim text-sm p-2">{t('message.noForwardTargets')}</div>
         )}
-      </div>
-    </Modal>
-  );
-}
-
-interface RelayEvt {
-  id: string;
-  from: string;
-  to: string;
-  size: number;
-  time: string;
-  mineFrom: boolean;
-  mineTo: boolean;
-}
-function RelayInspector({ onClose }: { onClose: () => void }) {
-  const t = useT();
-  const [events, setEvents] = useState<RelayEvt[]>([]);
-  const [statusKey, setStatusKey] = useState('inspector.connecting');
-  const [myPub, setMyPub] = useState('');
-  const [relays, setRelays] = useState<string[]>([]);
-  useEffect(() => {
-    // The observation happens in Rust, over the relays this device is actually
-    // connected to. Opening a WebSocket here would only ever see whatever host
-    // the CSP happens to allow, which is not the same thing.
-    let mine = '';
-    let unlisten: (() => void) | undefined;
-    let cancelled = false;
-
-    (async () => {
-      try {
-        const profile = await api.getProfile();
-        mine = profile.nostr_pub || '';
-        if (!cancelled) setMyPub(mine);
-      } catch {
-        /* the inspector still works without highlighting our own key */
-      }
-
-      try {
-        unlisten = await onRelayEvent(obs => {
-          setEvents(prev =>
-            [
-              {
-                id: obs.id,
-                from: obs.from.slice(0, 12),
-                to: obs.to ? obs.to.slice(0, 12) : '——',
-                size: obs.size,
-                time: new Date(obs.created_at * 1000).toLocaleTimeString(),
-                mineFrom: !!mine && obs.from === mine,
-                mineTo: !!mine && obs.to === mine,
-              },
-              ...prev.filter(e => e.id !== obs.id),
-            ].slice(0, 80),
-          );
-        });
-
-        const connected = await api.relayInspectStart();
-        if (cancelled) return;
-        setRelays(connected);
-        setStatusKey('inspector.connected');
-      } catch {
-        if (!cancelled) setStatusKey('inspector.connectionError');
-      }
-    })();
-
-    return () => {
-      cancelled = true;
-      unlisten?.();
-      void api.relayInspectStop();
-    };
-  }, []);
-
-  const label = (pub: string, mine: boolean) =>
-    mine ? <span className="text-magenta font-bold">{t('message.you').toUpperCase()}</span> : <span>{pub}…</span>;
-
-  return (
-    <Modal onClose={onClose} title={t('inspector.title')}>
-      <div className="text-xs text-phosphor-dim mb-2">{t(statusKey)}</div>
-      <div className="border border-bg-line bg-bg-deep rounded p-2 text-[11px] leading-relaxed mb-3">
-        {t('inspector.description')}
-      </div>
-      {relays.length > 0 && (
-        <div className="text-phosphor-dim text-[10px] font-mono mb-2">
-          {t('inspector.relays')}: {relays.join(' · ')}
-        </div>
-      )}
-      <div className="max-h-80 overflow-y-auto font-mono text-[11px] space-y-0.5">
-        {events.length === 0 ? (
-          <div className="text-phosphor-dim p-2">{t('inspector.waiting')}</div>
-        ) : (
-          events.map(ev => (
-            <div
-              key={ev.id}
-              className={`flex items-center gap-2 px-1 py-0.5 rounded ${
-                ev.mineFrom || ev.mineTo ? 'bg-phosphor/5' : ''
-              }`}
-            >
-              <span className="text-phosphor-dim shrink-0">{ev.time}</span>
-              <span className="shrink-0">🔒</span>
-              <span className="text-cyan truncate">{label(ev.from, ev.mineFrom)}</span>
-              <span className="text-crimson shrink-0">→</span>
-              <span className="text-cyan truncate">{label(ev.to, ev.mineTo)}</span>
-              <span className="text-phosphor-dim shrink-0 ml-auto">
-                {ev.size} B {t('inspector.encrypted')}
-              </span>
-            </div>
-          ))
-        )}
-      </div>
-      <div className="text-phosphor-dim text-[10px] mt-2">
-        {myPub ? `${t('inspector.yourKey')}: ${myPub.slice(0, 16)}…` : ''}
       </div>
     </Modal>
   );

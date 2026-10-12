@@ -69,14 +69,18 @@ const fakeWindow = (): WindowApi => ({
 
 /**
  * The chats, as far as App is concerned: how the first run ended, the lock,
- * and a new auto-lock time saved as Settings saves it.
+ * a new auto-lock time saved as Settings saves it, and Settings' wipe once
+ * the backend erased the identity.
  */
-function FakeMain({ intent, onLock, onAutolockChanged }: MainProps) {
+function FakeMain({ intent, onLock, onAutolockChanged, onWiped }: MainProps) {
   return (
     <section aria-label="Chats">
       <p>{`intent: ${intent}`}</p>
       <button type="button" onClick={onLock}>
         Bloquear ahora
+      </button>
+      <button type="button" onClick={() => onWiped?.()}>
+        Borrar todo de este equipo
       </button>
       <button
         type="button"
@@ -221,6 +225,27 @@ describe('App', () => {
     expect(api.wipe).toHaveBeenCalledTimes(1);
     expect(localStorage.getItem('trino.consent')).toBeNull();
     expect(localStorage.getItem('verified:ana')).toBeNull();
+  });
+
+  // Settings > "Borrar todo de este equipo" (I2) with the chats open: the
+  // backend erased the identity, and App clears what this device keeps, as
+  // the old settings modal did, then starts the first run.
+  it('starts the first run once Settings erased the identity, without this device’s data', async () => {
+    localStorage.setItem('trino.consent', '{"format":1}');
+    localStorage.setItem('verified:ana', 'ab12cd34');
+    localStorage.setItem('note:ana', 'la del trabajo');
+    const api = fakeApi(VAULT);
+    renderApp(api);
+    await heading('Hola de nuevo, Rechita');
+    await unlockWith(PASS);
+
+    click('Borrar todo de este equipo');
+    expect(await heading('Te damos la bienvenida a Trino')).toBeTruthy();
+    expect(screen.queryByText('intent: chats')).toBeNull();
+    expect(localStorage.getItem('trino.consent')).toBeNull();
+    expect(localStorage.getItem('verified:ana')).toBeNull();
+    expect(localStorage.getItem('note:ana')).toBeNull();
+    expect(api.status).toHaveBeenCalledTimes(1);
   });
 
   // The auto-lock (useAutoLock): src/app/useAutoLock.test.ts has its cases.

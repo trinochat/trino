@@ -29,7 +29,10 @@ export type PhaseEvent =
   /** The first run found an identity on this device. */
   | { type: 'vaultExists' }
   | { type: 'unlocked' }
-  /** The unlock screen found no identity: deleted, by hand or by "Borrar identidad". */
+  /**
+   * The identity is gone: the unlock screen found none (deleted by hand, or
+   * by "Borrar identidad"), or Settings erased it with the chats open.
+   */
   | { type: 'noVault' }
   | { type: 'locked'; reason: LockReason };
 
@@ -62,6 +65,8 @@ export function phaseReducer(phase: AppPhase, event: PhaseEvent): AppPhase {
       if (event.type === 'noVault') return { kind: 'onboarding' };
       return phase;
     case 'main':
-      return event.type === 'locked' ? { kind: 'loading', then: event.reason } : phase;
+      if (event.type === 'locked') return { kind: 'loading', then: event.reason };
+      if (event.type === 'noVault') return { kind: 'onboarding' };
+      return phase;
   }
 }
