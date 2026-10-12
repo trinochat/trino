@@ -7,24 +7,21 @@ import { call } from './call';
 import { chat } from './chat';
 import { common } from './common';
 import { contacts } from './contacts';
-import { legacy } from './legacy';
 import { settings } from './settings';
 import { shell } from './shell';
 import type { AreaStrings } from './types';
 
 export type { AreaStrings } from './types';
 
-export const AREAS = { legacy, common, auth, shell, chat, contacts, settings, call } as const;
+export const AREAS = { common, auth, shell, chat, contacts, settings, call } as const;
 
 export type AreaName = keyof typeof AREAS;
 
 /**
  * The key prefixes (the text before the first dot) each area may use, so two
- * units never write the same key. `legacy` kept the prefixes of the old
- * screens until I6 removed the last of them; I7 removes the area.
+ * units never write the same key.
  */
 export const NAMESPACES: Readonly<Record<AreaName, readonly string[]>> = {
-  legacy: [],
   common: ['common2', 'time2', 'callEvent'],
   auth: ['onb', 'unlock2', 'start', 'titlebar'],
   shell: ['shell', 'inbox', 'forward'],

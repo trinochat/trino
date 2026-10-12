@@ -6,21 +6,20 @@ import type { AreaStrings } from './types';
 
 type AreaName = keyof typeof AREAS;
 const AREA_NAMES = Object.keys(AREAS) as AreaName[];
-/** The areas of the redesign: everything but the texts of the old screens. */
-const NEW_AREAS = AREA_NAMES.filter(name => name !== 'legacy');
 
 const prefixOf = (key: string) => key.slice(0, key.indexOf('.'));
 
 /** Every key of an area, in any of its languages. */
 const keysOf = (area: AreaStrings) => [...new Set(LANG_CODES.flatMap(lang => Object.keys(area[lang])))];
 
-/** The entries of every new area in one language, as [area, key, text]. */
-const newEntries = (lang: Lang) =>
-  NEW_AREAS.flatMap(name => Object.entries(AREAS[name][lang]).map(([key, text]) => [name, key, text] as const));
+/** The entries of every area in one language, as [area, key, text]. */
+const entries = (lang: Lang) =>
+  AREA_NAMES.flatMap(name => Object.entries(AREAS[name][lang]).map(([key, text]) => [name, key, text] as const));
 
 describe('the string areas', () => {
-  it('are the old screens, the shared words and one area per unit of the redesign', () => {
-    expect(AREA_NAMES).toEqual(['legacy', 'common', 'auth', 'shell', 'chat', 'contacts', 'settings', 'call']);
+  // The old screens' area (legacy) went once I6 had removed its last texts (I7).
+  it('are the shared words and one area per unit of the redesign', () => {
+    expect(AREA_NAMES).toEqual(['common', 'auth', 'shell', 'chat', 'contacts', 'settings', 'call']);
     expect(Object.keys(NAMESPACES).sort()).toEqual([...AREA_NAMES].sort());
   });
 
@@ -85,25 +84,25 @@ describe('mergeAreas', () => {
   });
 });
 
-// Rules for the copy of the redesign. The old screens' texts (legacy) are
-// lowercase and are deleted screen by screen, so they are left out.
-describe.each(LANG_CODES)('the new copy in %s', lang => {
+// Rules for the copy of the redesign, now every area. They left out the old
+// screens' texts, which were lowercase, until I7 removed their empty area.
+describe.each(LANG_CODES)('the copy in %s', lang => {
   it('starts every text with a capital letter', () => {
-    const lower = newEntries(lang)
+    const lower = entries(lang)
       .filter(([, , text]) => !startsWithCapital(text))
       .map(([name, key]) => `${name}: ${key}`);
     expect(lower).toEqual([]);
   });
 
   it('promises neither message requests nor trino2 codes, which do not exist yet', () => {
-    const promises = newEntries(lang)
+    const promises = entries(lang)
       .filter(([, , text]) => /solicitud|solicitaç|request|trino2/i.test(text))
       .map(([name, key]) => `${name}: ${key}`);
     expect(promises).toEqual([]);
   });
 
   it('does not say that contacts will see the photo, which stays on this device', () => {
-    const seesPhoto = newEntries(lang)
+    const seesPhoto = entries(lang)
       .filter(([, , text]) => promisesPhotoToOthers(text))
       .map(([name, key]) => `${name}: ${key}`);
     expect(seesPhoto).toEqual([]);
