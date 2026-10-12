@@ -399,6 +399,7 @@ impl TurnClient {
         let client = crate::net::client(crate::net::Deadlines {
             connect: self.timeout,
             total: self.timeout,
+            idle: None,
         })
         .map_err(|error| TurnError::Network(error.to_string()))?;
         let mut response = client

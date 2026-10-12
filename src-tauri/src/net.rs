@@ -14,11 +14,16 @@
 use std::time::Duration;
 use thiserror::Error;
 
-/// How long a client waits: to connect, and for the whole exchange.
+/// How long a client waits: to connect, for the whole exchange and, if
+/// given, between two reads.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct Deadlines {
     pub(crate) connect: Duration,
     pub(crate) total: Duration,
+    /// reqwest's read timeout: it starts with the request and runs, never
+    /// reset, until the answer begins, and then between two reads of it.
+    /// So it bounds sending a body too, and an upload must not have one.
+    pub(crate) idle: Option<Duration>,
 }
 
 #[derive(Clone, Debug, Error, PartialEq, Eq)]
@@ -45,13 +50,17 @@ pub(crate) fn reason(error: &reqwest::Error) -> &'static str {
 
 /// An HTTP client with the rules above.
 pub(crate) fn client(deadlines: Deadlines) -> Result<reqwest::Client, NetError> {
-    reqwest::Client::builder()
+    let builder = reqwest::Client::builder()
         .use_rustls_tls()
         .connect_timeout(deadlines.connect)
         .timeout(deadlines.total)
-        .redirect(reqwest::redirect::Policy::none())
-        .build()
-        .map_err(|_| NetError::Build)
+        .redirect(reqwest::redirect::Policy::none());
+    match deadlines.idle {
+        Some(idle) => builder.read_timeout(idle),
+        None => builder,
+    }
+    .build()
+    .map_err(|_| NetError::Build)
 }
 
 /// The body of `response`, refused as soon as it passes `max` bytes:
@@ -213,6 +222,7 @@ mod tests {
     const QUICK: Deadlines = Deadlines {
         connect: Duration::from_secs(2),
         total: Duration::from_millis(500),
+        idle: None,
     };
 
     /// Fails the test instead of hanging when a request has no deadline.

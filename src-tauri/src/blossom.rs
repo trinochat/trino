@@ -26,11 +26,14 @@ pub const DEFAULT_BLOSSOM: &[&str] = &["https://blossom.primal.net", "https://bl
 const AUTH_CLOCK_MARGIN_SECS: i64 = 60;
 /// How long an authorization stays valid, from now.
 const AUTH_LIFETIME_SECS: i64 = 3_600;
-/// Up to 25 MB each way on a slow line: generous, but never forever.
-const TRANSFER: Deadlines = Deadlines {
-    connect: Duration::from_secs(10),
-    total: Duration::from_secs(120),
-};
+/// However small a blob, its transfer gets two minutes.
+const TRANSFER_FLOOR: Duration = Duration::from_secs(120);
+/// And as long again as the blob takes at 32 KiB/s, about 256 kbit/s: a
+/// fixed two minutes failed every large file below 1.75 Mbit/s.
+const SLOWEST_BYTES_PER_SEC: u64 = 32 * 1024;
+/// How long a download may receive nothing, so a server that stalls does
+/// not hold it for the whole deadline of the largest blob.
+const DOWNLOAD_IDLE: Duration = Duration::from_secs(30);
 /// The largest blob there can be: the largest attachment
 /// (`MAX_ATTACHMENT_BYTES` in commands.rs), its 12-byte nonce and its
 /// 16-byte tag. A download past it is refused.
@@ -125,13 +128,34 @@ fn build_auth(identity: &Identity, verb: &str, sha256_hex: &str) -> Result<Strin
     Ok(base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(json))
 }
 
+/// The deadlines of a transfer of `bytes`: `TRANSFER_FLOOR`, plus what it
+/// takes at `SLOWEST_BYTES_PER_SEC`. 25 MiB get 920 s.
+fn transfer_deadlines(bytes: usize) -> Deadlines {
+    let at_the_slowest = Duration::from_secs(bytes as u64 / SLOWEST_BYTES_PER_SEC);
+    Deadlines {
+        connect: Duration::from_secs(10),
+        total: TRANSFER_FLOOR + at_the_slowest,
+        idle: None,
+    }
+}
+
+/// A download's size is only known once it arrives: the deadlines of the
+/// largest blob, and `DOWNLOAD_IDLE` between two reads.
+fn download_deadlines() -> Deadlines {
+    Deadlines {
+        idle: Some(DOWNLOAD_IDLE),
+        ..transfer_deadlines(MAX_BLOB_BYTES)
+    }
+}
+
 /// Upload ciphertext to the first Blossom server that accepts it. Returns the URL.
 pub async fn upload(
     identity: &Identity,
     blob: &[u8],
     sha256_hex: &str,
 ) -> Result<String, BlossomError> {
-    upload_to(DEFAULT_BLOSSOM, TRANSFER, identity, blob, sha256_hex).await
+    let deadlines = transfer_deadlines(blob.len());
+    upload_to(DEFAULT_BLOSSOM, deadlines, identity, blob, sha256_hex).await
 }
 
 /// `upload` to `servers`, in order, each with `deadlines`. When all fail,
@@ -202,25 +226,31 @@ fn announceable(url: &str) -> bool {
 }
 
 /// `http <status>`, followed by the server's `X-Reason` when it gives one,
-/// stripped of control characters and cut short.
+/// as `reason_text` cleans it.
 fn http_failure(response: &reqwest::Response) -> String {
     let status = response.status().as_u16();
     let reason: String = response
         .headers()
         .get("x-reason")
         .and_then(|value| value.to_str().ok())
-        .map(|value| {
-            value
-                .chars()
-                .filter(|c| !c.is_control())
-                .take(MAX_REASON_CHARS)
-                .collect::<String>()
-        })
+        .map(reason_text)
         .unwrap_or_default();
     match reason.trim() {
         "" => format!("http {status}"),
         reason => format!("http {status}: {reason}"),
     }
+}
+
+/// What the UI may show of a server's `X-Reason`: printable ASCII only, so
+/// no control, format or bidi character can hide or reorder the error, and
+/// at most `MAX_REASON_CHARS`. `HeaderValue::to_str` already refuses a
+/// header with bytes past ASCII; this holds whatever reads the header.
+fn reason_text(value: &str) -> String {
+    value
+        .chars()
+        .filter(|c| c.is_ascii_graphic() || *c == ' ')
+        .take(MAX_REASON_CHARS)
+        .collect()
 }
 
 /// A sha256 in lower-case hex, the only thing that goes into a download URL:
@@ -239,7 +269,8 @@ fn is_sha256_hex(value: &str) -> bool {
 /// deanonymization). Blossom is content-addressed, so we refetch the blob by
 /// hash from OUR OWN known servers only — never a host the peer chose.
 pub async fn download(_url: &str, sha256_hex: &str) -> Result<Vec<u8>, BlossomError> {
-    download_from(DEFAULT_BLOSSOM, TRANSFER, MAX_BLOB_BYTES, sha256_hex).await
+    let deadlines = download_deadlines();
+    download_from(DEFAULT_BLOSSOM, deadlines, MAX_BLOB_BYTES, sha256_hex).await
 }
 
 /// `download` from `servers`, in order, each with `deadlines` and at most
@@ -338,6 +369,7 @@ mod tests {
     const QUICK: Deadlines = Deadlines {
         connect: Duration::from_secs(2),
         total: Duration::from_millis(500),
+        idle: None,
     };
 
     fn sha_of(blob: &[u8]) -> String {
@@ -588,6 +620,95 @@ mod tests {
             );
         }
         assert!(seen.lock().unwrap().is_empty());
+    }
+
+    // ---- B2: deadlines that fit the blob, and what a reason may show ----
+
+    #[test]
+    fn a_transfer_gets_two_minutes_and_what_it_takes_at_256_kbit_s() {
+        // The largest attachment: 120 s, plus 25 MiB at 32 KiB/s.
+        assert_eq!(
+            transfer_deadlines(25 * 1024 * 1024).total,
+            Duration::from_secs(120 + 800)
+        );
+        assert_eq!(
+            transfer_deadlines(MAX_BLOB_BYTES).total,
+            Duration::from_secs(920)
+        );
+        // A small file gets the two minutes every transfer had.
+        assert_eq!(transfer_deadlines(0).total, Duration::from_secs(120));
+        // 20 MB on a 1 Mbit/s uplink takes 160 s.
+        assert!(transfer_deadlines(20_000_000).total > Duration::from_secs(160));
+        // reqwest's read deadline also counts while the blob is sent, so an
+        // upload has none.
+        assert_eq!(transfer_deadlines(1).idle, None);
+        assert_eq!(transfer_deadlines(1).connect, Duration::from_secs(10));
+        // A download may be the largest blob, and stalls for 30 s at most.
+        assert_eq!(
+            download_deadlines(),
+            Deadlines {
+                idle: Some(Duration::from_secs(30)),
+                ..transfer_deadlines(MAX_BLOB_BYTES)
+            }
+        );
+    }
+
+    #[tokio::test]
+    async fn a_download_gives_up_on_a_server_that_sends_nothing_for_too_long() {
+        // A slow line needs a long total deadline; a server that stalls
+        // must not hold the download for all of it.
+        let blob = b"the encrypted file".to_vec();
+        let sha = sha_of(&blob);
+        let (silent, _) = mock::serve(|_| vec![Reply::Never]).await;
+        let (working, _) = mock::serve(|_| vec![mock::response("200 OK", "", &blob)]).await;
+        let patient = Deadlines {
+            total: Duration::from_secs(60),
+            idle: Some(Duration::from_millis(300)),
+            ..QUICK
+        };
+
+        let got = within(download_from(&[&silent, &working], patient, 1024, &sha))
+            .await
+            .unwrap();
+
+        assert_eq!(got, blob);
+    }
+
+    #[test]
+    fn a_reason_shows_only_printable_ascii() {
+        // Format and bidi characters would hide or reorder the error shown.
+        assert_eq!(reason_text("blob\u{202E}gib oot"), "blobgib oot");
+        assert_eq!(
+            reason_text("a\u{200B}b\u{2066}c\u{2069}d\u{FEFF}e\u{AD}f"),
+            "abcdef"
+        );
+        assert_eq!(reason_text("tab\there, line\nbreak"), "tabhere, linebreak");
+        assert_eq!(reason_text("máximo 10 MB"), "mximo 10 MB");
+        assert_eq!(reason_text(&"x".repeat(200)), "x".repeat(MAX_REASON_CHARS));
+    }
+
+    #[tokio::test]
+    async fn a_reason_with_bytes_past_ascii_never_reaches_the_ui() {
+        // HeaderValue::to_str refuses such a header whole.
+        let me = create_identity();
+        let blob = b"ciphertext".to_vec();
+        let (server, _) = mock::serve(|_| {
+            vec![mock::response(
+                "413 Payload Too Large",
+                "X-Reason: blob \u{202E}gib oot\r\n",
+                b"",
+            )]
+        })
+        .await;
+
+        let error = within(upload_to(&[&server], QUICK, &me, &blob, &sha_of(&blob)))
+            .await
+            .unwrap_err();
+
+        let BlossomError::AllFailed { servers } = error else {
+            panic!("expected AllFailed, got {error:?}");
+        };
+        assert_eq!(servers[0].reason, "http 413");
     }
 
     #[test]
