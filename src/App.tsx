@@ -116,7 +116,7 @@ import {
 import type { LockReason, OnboardingApi, OnboardingIntent, UnlockApi } from './screens/types';
 import { capabilities } from './app/capabilities';
 import { installBrowserChromeGuard } from './app/browser-chrome';
-import { useCalls, type CallGate } from './app/calls';
+import { OldShellFrame, useCalls, type CallGate } from './app/calls';
 import { useContacts, type ContactsEvents } from './app/contacts';
 import { useGroups, type GroupsEvents } from './app/groups';
 import { settingsBackend, useSettings } from './app/settings';
@@ -640,8 +640,8 @@ function MainShell({ intent, onLock, onAutolockChanged, onWiped, onCallGate }: M
     onContactsChanged: () => void refreshNodes(),
     covered: calls.slot.covering,
   });
-  // What covers the panes, which go inert and isolated beneath it, so nothing
-  // of theirs takes the focus or paints over it (the old sticker panel is z-40).
+  // Settings or the call screen covers the panes, which the frame makes inert
+  // and isolated beneath them (OldShellFrame, src/app/calls.tsx).
   const panesCovered = settings.isOpen || calls.slot.covering;
 
   // Groups (W4): "Nuevo grupo" from the groups' "+", and the details of the
@@ -885,17 +885,18 @@ function MainShell({ intent, onLock, onAutolockChanged, onWiped, onCallGate }: M
   };
 
   return (
-    // The shell's positioned box under the title bar: Settings and the call
-    // are layers over it (absolute), and the bar of a minimized call sits
-    // above both panes.
-    <div ref={groupScreens.shellRef} className="relative flex h-full flex-col overflow-hidden">
-      {calls.slot.bar}
-      <div className="app-shell min-h-0 flex-1 overflow-hidden">
+    <div ref={groupScreens.shellRef} className="flex h-full flex-col overflow-hidden">
+      {/*
+        The bar of a minimized call above both panes, then the positioned box
+        under the title bar where Settings and the call lie over the panes,
+        which are inert beneath them (src/app/calls.tsx).
+      */}
+      <OldShellFrame bar={calls.slot.bar} covered={panesCovered} settings={settings.layer} call={calls.slot.layer}>
+      <div className="app-shell h-full">
       <aside
-        inert={panesCovered}
         className={`sidebar-shell flex-col h-full w-full md:w-auto ${
           sel ? 'hidden md:flex' : 'flex'
-        }${panesCovered ? ' isolate' : ''}`}
+        }`}
       >
         <header className="sidebar-brand">
           <TrinoLogo size={36} decorative className="text-phosphor-dim" />
@@ -1150,10 +1151,7 @@ function MainShell({ intent, onLock, onAutolockChanged, onWiped, onCallGate }: M
         </footer>
       </aside>
 
-      <div
-        inert={panesCovered}
-        className={`h-full min-h-0 w-full ${sel ? 'block' : 'hidden md:block'}${panesCovered ? ' isolate' : ''}`}
-      >
+      <div className={`h-full min-h-0 w-full ${sel ? 'block' : 'hidden md:block'}`}>
       {sel?.kind === 'system' ? (
         <SystemChatView
           onBack={() => setSel(null)}
@@ -1366,14 +1364,8 @@ function MainShell({ intent, onLock, onAutolockChanged, onWiped, onCallGate }: M
       )}
       </div>
       </div>
+      </OldShellFrame>
 
-      {/*
-        Both are boxes over the panes at z-30: the call comes after Settings,
-        so a call answered over Settings covers it (src/app/calls.test.tsx).
-        Its dialogs, the incoming call first, go over everything (z-40).
-      */}
-      {settings.layer}
-      {calls.slot.layer}
       {contacts.dialog}
       {groupScreens.dialogs}
       {legacyMarksNotice}

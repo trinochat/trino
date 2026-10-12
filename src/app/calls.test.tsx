@@ -7,7 +7,7 @@ import type { CallEventWire, CallSignalEvent } from '../lib/api';
 import { FakePc, STUN, TURN_DOWN, fakeStream, sdp, settle, turnOk } from '../lib/call-test-support';
 import type { CallSounds } from '../screens/call';
 import { fakeApi, fakeHost, memoryPrefs, node, withLang } from '../screens/settings/test-utils';
-import { useCalls, type CallGate, type CallsBackend, type CallsOptions } from './calls';
+import { OldShellFrame, useCalls, type CallGate, type CallsBackend, type CallsOptions } from './calls';
 import { useSettings } from './settings';
 
 // Calls in the old chats (plan §4, I5; plan-cambios-11oct §7, I5): W6's
@@ -134,18 +134,22 @@ function mount({ stored = {}, over = {} }: MountOptions = {}) {
       covered: ui.slot.covering,
     });
     gate.current = ui.gate;
-    const covered = settings.isOpen || ui.slot.covering;
+    // As MainShell mounts them: its frame, with the old shell's panes inside.
     return (
-      <div className="relative">
-        {ui.slot.bar}
-        <div data-testid="panes" inert={covered}>
-          <button type="button" onClick={() => ui.slot.start('Ana', false)}>
-            Llamar a Ana
-          </button>
-          <button type="button" title="ajustes" onClick={() => settings.open()} />
-        </div>
-        {settings.layer}
-        {ui.slot.layer}
+      <div className="flex h-full flex-col">
+        <OldShellFrame
+          bar={ui.slot.bar}
+          covered={settings.isOpen || ui.slot.covering}
+          settings={settings.layer}
+          call={ui.slot.layer}
+        >
+          <div data-testid="panes">
+            <button type="button" onClick={() => ui.slot.start('Ana', false)}>
+              Llamar a Ana
+            </button>
+            <button type="button" title="ajustes" onClick={() => settings.open()} />
+          </div>
+        </OldShellFrame>
       </div>
     );
   }
@@ -163,6 +167,8 @@ function mount({ stored = {}, over = {} }: MountOptions = {}) {
 
 const callScreen = (name = 'Ana') => screen.queryByRole('region', { name: `Llamada en curso con ${name}` });
 const panes = () => screen.getByTestId('panes');
+/** The panes are inert, as the frame makes them under Settings or the call screen. */
+const panesInert = () => panes().closest('[inert]') !== null;
 /** Every signal call.ts handed to the backend, parsed. */
 const sent = () =>
   backend.sendCallSignal.mock.calls.map(([to, payload]) => ({ to: to as string, signal: JSON.parse(payload as string) }));
@@ -191,13 +197,13 @@ describe('calls in the old shell', () => {
     await placeCall();
     const call = callScreen()!;
     expect(call).not.toBeNull();
-    expect(panes().hasAttribute('inert')).toBe(true);
+    expect(panesInert()).toBe(true);
     expect(call.contains(document.activeElement)).toBe(true);
 
     fireEvent.keyDown(document.activeElement!, { key: 'Escape' });
     expect(callScreen()).toBeNull();
     const bar = screen.getByRole('region', { name: 'Llamada en curso' });
-    expect(panes().hasAttribute('inert')).toBe(false);
+    expect(panesInert()).toBe(false);
     expect(bar.compareDocumentPosition(panes()) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(document.activeElement).toBe(within(bar).getByRole('button', { name: 'Volver a la llamada' }));
   });
@@ -271,10 +277,29 @@ describe('calls in the old shell', () => {
     const call = callScreen()!;
     expect(call).not.toBeNull();
     expect(settings.hasAttribute('inert')).toBe(true);
-    expect(panes().hasAttribute('inert')).toBe(true);
+    expect(panesInert()).toBe(true);
     expect(call.closest('[inert]')).toBeNull();
     expect(settings.compareDocumentPosition(call) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(call.contains(document.activeElement)).toBe(true);
+  });
+
+  // Settings covers the box of the panes, never the bar above it: a call minimized over Settings
+  // stays in sight and in reach, and so does the focus the bar takes (WCAG 2.4.11).
+  it('keeps the bar of a call minimized over Settings above it, where Settings does not reach', async () => {
+    const { signal } = mount();
+    fireEvent.click(screen.getByRole('button', { name: 'ajustes' }));
+    const settings = screen.getByRole('region', { name: 'Ajustes' });
+    await signal('Ana', { t: 'offer', callId: newOfferId(), sdp: sdp('offer', false), video: false });
+    await press(within(screen.getByRole('alertdialog', { name: 'Ana' })).getByRole('button', { name: 'Contestar' }));
+    fireEvent.keyDown(within(callScreen()!).getByRole('heading', { name: 'Ana' }), { key: 'Escape' });
+
+    const bar = screen.getByRole('region', { name: 'Llamada en curso' });
+    expect(settings.hasAttribute('inert')).toBe(false);
+    // Settings is `absolute inset-0` in its positioned box: the bar is outside that box.
+    const box = settings.parentElement!;
+    expect(box.classList.contains('relative')).toBe(true);
+    expect(box.contains(bar)).toBe(false);
+    expect(document.activeElement).toBe(within(bar).getByRole('button', { name: 'Volver a la llamada' }));
   });
 
   it('counts a contact as verified only by the mark of a call: one of 0.1.0 does not count', async () => {
