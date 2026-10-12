@@ -41,6 +41,12 @@ export const PREF_DEFAULTS = Object.freeze({
   muteGroupsByDefault: false,
   /** Terminal dark's scan lines; Settings > Appearance switches them off. */
   scanLines: true,
+  /**
+   * Keep the window out of screenshots, recordings and screen sharing (SC-1;
+   * David, 12 Oct: on by default, and it can be turned off). Read before
+   * unlocking, like the appearance: main.tsx applies it as the app starts.
+   */
+  blockCaptures: true,
 });
 
 /** Minutes without activity before Trino locks; 0 never locks. */
@@ -130,6 +136,12 @@ export interface Prefs {
    */
   getScanLines(): boolean;
   setScanLines(on: boolean): boolean;
+  /**
+   * Keep the window out of screenshots, recordings and screen sharing. Only
+   * the choice: src/app/capture-protection.ts applies it to the window.
+   */
+  getBlockCaptures(): boolean;
+  setBlockCaptures(on: boolean): boolean;
 }
 
 /**
@@ -251,6 +263,8 @@ export function createPrefs(storage?: PrefsStorage): Prefs {
     setGroupMuted: (gid, muted) => writeFlag(PREF + 'groupMuted:' + gid, muted),
     getScanLines: () => readFlag(PREF + 'scanLines', PREF_DEFAULTS.scanLines),
     setScanLines: on => writeFlag(PREF + 'scanLines', on),
+    getBlockCaptures: () => readFlag(PREF + 'blockCaptures', PREF_DEFAULTS.blockCaptures),
+    setBlockCaptures: on => writeFlag(PREF + 'blockCaptures', on),
   };
 }
 

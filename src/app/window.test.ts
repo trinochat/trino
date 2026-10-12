@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import capability from '../../src-tauri/capabilities/default.json';
 import tauriConfig from '../../src-tauri/tauri.conf.json';
 import { TEXT_SCALES } from '../design/accessibility';
 import { layoutFor } from '../design/layout';
@@ -26,5 +27,21 @@ describe('the main window', () => {
     expect([main.minWidth, main.minHeight]).toEqual([640, 480]);
     expect(main.minWidth / (ROOT_PX * LARGEST_TEXT)).toBe(20);
     expect(layoutFor(main.minWidth, ROOT_PX)).toBe('single');
+  });
+});
+
+// SC-1 (David, 12 Oct: on by default, and it can be turned off): the window
+// is kept out of screenshots, recordings and screen sharing from the moment
+// it exists, so the unlock screen is covered too before any script runs.
+// main.tsx then applies the stored choice, and Settings › Privacidad changes
+// it at once, both through setContentProtected.
+describe('protection from screen capture', () => {
+  it('is on from the creation of the window, before the unlock screen', () => {
+    expect(main.contentProtected).toBe(true);
+  });
+
+  it('can be changed from the app, for the stored choice and the switch', () => {
+    expect(capability.windows).toContain(main.label);
+    expect(capability.permissions).toContain('core:window:allow-set-content-protected');
   });
 });

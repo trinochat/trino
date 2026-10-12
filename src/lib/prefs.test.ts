@@ -215,6 +215,7 @@ const MEMBERS = [
   'getRingtone', 'setRingtone', 'getRingVolume', 'setRingVolume',
   'getMuteGroupsByDefault', 'setMuteGroupsByDefault', 'getGroupMuted', 'setGroupMuted',
   'getScanLines', 'setScanLines',
+  'getBlockCaptures', 'setBlockCaptures',
 ] as const;
 
 // With TURN the contact never sees your IP, so the warning "once per
@@ -253,6 +254,8 @@ describe('preferences of the redesign', () => {
     expect(prefs.getGroupMuted('9f3a')).toBe(false);
     expect(prefs.getScanLines()).toBe(true);
     expect(prefs.getCallsSeenAt()).toBe(0);
+    // SC-1 (David, 12 Oct): screenshots are blocked unless you turn it off.
+    expect(prefs.getBlockCaptures()).toBe(true);
     expect(PREF_DEFAULTS).toEqual({
       notifPreview: 'name',
       messageSound: true,
@@ -261,6 +264,7 @@ describe('preferences of the redesign', () => {
       ringVolume: 60,
       muteGroupsByDefault: false,
       scanLines: true,
+      blockCaptures: true,
     });
   });
 
@@ -276,6 +280,7 @@ describe('preferences of the redesign', () => {
     prefs.setGroupMuted('9f3a', true);
     prefs.setScanLines(false);
     prefs.setCallsSeenAt(1760000000);
+    prefs.setBlockCaptures(false);
     expect(Object.fromEntries(data)).toEqual({
       'trino.pref.notifPreview': 'full',
       'trino.pref.messageSound': '0',
@@ -286,6 +291,7 @@ describe('preferences of the redesign', () => {
       'trino.pref.groupMuted:9f3a': '1',
       'trino.pref.scanLines': '0',
       'trino.pref.callsSeenAt': '1760000000',
+      'trino.pref.blockCaptures': '0',
     });
     expect(prefs.getNotifPreview()).toBe('full');
     expect(prefs.getMessageSound()).toBe(false);
@@ -296,6 +302,7 @@ describe('preferences of the redesign', () => {
     expect(prefs.getGroupMuted('9f3a')).toBe(true);
     expect(prefs.getScanLines()).toBe(false);
     expect(prefs.getCallsSeenAt()).toBe(1760000000);
+    expect(prefs.getBlockCaptures()).toBe(false);
   });
 
   it('fall back to the default for a value they do not know', () => {
@@ -307,6 +314,7 @@ describe('preferences of the redesign', () => {
         'trino.pref.scanLines': 'off',
         'trino.pref.messageSound': 'yes',
         'trino.pref.callsSeenAt': 'later',
+        'trino.pref.blockCaptures': 'no',
       }).storage,
     );
     expect(prefs.getNotifPreview()).toBe('name');
@@ -315,6 +323,7 @@ describe('preferences of the redesign', () => {
     expect(prefs.getScanLines()).toBe(true);
     expect(prefs.getMessageSound()).toBe(true);
     expect(prefs.getCallsSeenAt()).toBe(0);
+    expect(prefs.getBlockCaptures()).toBe(true);
   });
 
   // W2 counts the missed calls after this moment ("Llamadas · N"); opening
@@ -383,6 +392,8 @@ describe('storage that fails', () => {
       const prefs = createPrefs();
       expect(prefs.getScanLines()).toBe(true);
       expect(prefs.setScanLines(false)).toBe(false);
+      // Without storage the window stays protected.
+      expect(prefs.getBlockCaptures()).toBe(true);
     } finally {
       if (original) Object.defineProperty(globalThis, 'localStorage', original);
       else delete (globalThis as { localStorage?: unknown }).localStorage;

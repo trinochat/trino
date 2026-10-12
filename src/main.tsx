@@ -3,6 +3,7 @@ import ReactDOM from "react-dom/client";
 import "./design/fonts";
 import "./design/base.css";
 import App from "./App";
+import { applyStoredCaptureProtection } from "./app/capture-protection";
 import { initAppearance } from "./design/apply";
 import { api } from "./lib/api";
 
@@ -13,6 +14,11 @@ import { api } from "./lib/api";
 // size) keeps following it. Ctrl + and Ctrl - change the text size, and
 // Ctrl 0 follows Windows' again.
 initAppearance(window, { readSystemTextScale: api.systemTextScale });
+
+// The window is created out of screenshots, recordings and screen sharing
+// (tauri.conf.json, contentProtected); this applies the choice stored in
+// Settings › Privacidad before anything is drawn, the unlock screen included.
+void applyStoredCaptureProtection();
 
 ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
   <React.StrictMode>
