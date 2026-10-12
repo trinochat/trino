@@ -221,7 +221,15 @@ export function SettingsScreen({
           </SettingsSection>
         );
       case 'privacy':
-        return <PrivacySection autoFocus={autoFocus} api={api} onContactsChanged={onContactsChanged} />;
+        return (
+          <PrivacySection
+            autoFocus={autoFocus}
+            api={api}
+            prefs={prefs}
+            platform={platform}
+            onContactsChanged={onContactsChanged}
+          />
+        );
       case 'notifications':
         return <NotificationsSection autoFocus={autoFocus} api={api} prefs={prefs} platform={platform} />;
       case 'security':

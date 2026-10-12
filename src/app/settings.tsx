@@ -7,11 +7,12 @@ import { getVersion } from '@tauri-apps/api/app';
 import { api, notify, onRelayEvent } from '../lib/api';
 import type { ContactsApi } from '../screens/contacts';
 import type { SettingsApi, SettingsPlatform } from '../screens/settings';
+import { appWindow } from './capture-protection';
 
 /** What Settings asks of the backend, and the code it shares as "Tu código QR". */
 export type SettingsBackend = SettingsApi & Pick<ContactsApi, 'shareBundle'>;
 
-/** The real backend: src/lib/api.ts, and the app's version from Tauri. */
+/** The real backend: src/lib/api.ts, the app's version from Tauri, and its window. */
 export const settingsBackend: SettingsBackend = {
   getProfile: api.getProfile,
   updateProfile: api.updateProfile,
@@ -33,6 +34,7 @@ export const settingsBackend: SettingsBackend = {
   listNodes: api.listNodes,
   blockNode: api.blockNode,
   shareBundle: api.shareBundle,
+  setContentProtected: appWindow.setContentProtected,
 };
 
 /**

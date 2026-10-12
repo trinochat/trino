@@ -39,6 +39,12 @@ export interface SettingsApi {
   /** For the blocked contacts and for who does not get your profile yet. */
   listNodes(): Promise<NodeInfo[]>;
   blockNode(handle: string, blocked: boolean): Promise<void>;
+  /**
+   * Keeps the window out of screenshots, recordings and screen sharing, or
+   * lets them see it, at once (SC-1): Tauri's `setContentProtected` on the
+   * app's window (src/app/capture-protection.ts).
+   */
+  setContentProtected(protect: boolean): Promise<void>;
 }
 
 /**

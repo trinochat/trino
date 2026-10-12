@@ -112,6 +112,17 @@ describe('SettingsScreen', () => {
     }
   });
 
+  // SC-1: Privacidad gets this device's preferences and the platform, for
+  // the block of screen captures, and changes the window through the API.
+  it('gives Privacidad the device’s preferences and the window, for the block of captures', async () => {
+    const { api } = setup({ initial: 'privacy' });
+    await sectionHeading('Privacidad');
+    const toggle = screen.getByRole('switch', { name: 'Bloquear capturas de pantalla' });
+    expect(toggle.getAttribute('aria-checked')).toBe('true');
+    fireEvent.click(toggle);
+    await waitFor(() => expect(api.setContentProtected).toHaveBeenCalledWith(false));
+  });
+
   it('puts Accesibilidad between Apariencia and Idioma, in named groups', async () => {
     setup();
     const groups = ['Cuenta', 'Uso', 'Más'].map(name => screen.getByRole('list', { name }));

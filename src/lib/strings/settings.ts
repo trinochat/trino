@@ -78,6 +78,14 @@ export const settings: AreaStrings = {
     'settings2.privacy.back': 'Volver a Privacidad',
     'settings2.privacy.callsLine':
       'Tus llamadas pasan por un servidor de Cloudflare: tu contacto no ve tu IP, pero Cloudflare sí. Si una llamada no se puede proteger, Trino te pregunta antes de llamar directo.',
+    // The block of screen captures (SC-1). The Windows names: Recortes, Impr Pant, Lupa.
+    'settings2.privacy.captures': 'Bloquear capturas de pantalla',
+    'settings2.privacy.capturesBody':
+      'En capturas, grabaciones y al compartir pantalla (Recortes, Impr Pant, OBS, Zoom, Meet), la ventana de Trino sale en negro o no aparece. No evita que alguien le tome una foto a la pantalla con otro celular. Si usas la Lupa de Windows o necesitas compartir tu pantalla, apágalo.',
+    'settings2.privacy.capturesBodyMac':
+      'Trino le pide a macOS que no lo muestre en capturas, grabaciones ni al compartir pantalla, pero algunas apps de grabación no lo respetan. No evita que alguien le tome una foto a la pantalla con otro celular. Si necesitas compartir tu pantalla, apágalo.',
+    'settings2.privacy.errCaptures': 'No se pudo cambiar la protección de la ventana. Sigue como estaba.',
+    'settings2.privacy.errCapturesSave': 'No se pudo guardar en este equipo: el cambio dura hasta que cierres Trino.',
 
     // Notificaciones (Settings:50-113).
     'settings2.notif.title': 'Notificaciones',
@@ -376,6 +384,13 @@ export const settings: AreaStrings = {
     'settings2.privacy.back': 'Back to Privacy',
     'settings2.privacy.callsLine':
       'Your calls go through a Cloudflare server: your contact doesn’t see your IP, but Cloudflare does. If a call can’t be protected, Trino asks you before calling directly.',
+    'settings2.privacy.captures': 'Block screenshots',
+    'settings2.privacy.capturesBody':
+      'In screenshots, recordings and screen sharing (Snipping Tool, Print Screen, OBS, Zoom, Meet), the Trino window comes out black or does not appear. It does not stop someone from taking a photo of the screen with another phone. If you use Windows Magnifier or need to share your screen, turn it off.',
+    'settings2.privacy.capturesBodyMac':
+      'Trino asks macOS to keep it out of screenshots, recordings and screen sharing, but some recording apps ignore this. It does not stop someone from taking a photo of the screen with another phone. If you need to share your screen, turn it off.',
+    'settings2.privacy.errCaptures': 'The window’s protection couldn’t be changed. It stays as it was.',
+    'settings2.privacy.errCapturesSave': 'It couldn’t be saved on this device: the change lasts until you close Trino.',
 
     'settings2.notif.title': 'Notifications',
     'settings2.notif.level': 'What a notification shows',
@@ -667,6 +682,13 @@ export const settings: AreaStrings = {
     'settings2.privacy.back': 'Voltar para Privacidade',
     'settings2.privacy.callsLine':
       'Suas chamadas passam por um servidor da Cloudflare: seu contato não vê seu IP, mas a Cloudflare vê. Se uma chamada não puder ser protegida, o Trino pergunta antes de ligar diretamente.',
+    'settings2.privacy.captures': 'Bloquear capturas de tela',
+    'settings2.privacy.capturesBody':
+      'Em capturas, gravações e no compartilhamento de tela (Ferramenta de Captura, Print Screen, OBS, Zoom, Meet), a janela do Trino fica preta ou não aparece. Não impede que alguém tire uma foto da tela com outro celular. Se você usa a Lupa do Windows ou precisa compartilhar sua tela, desative.',
+    'settings2.privacy.capturesBodyMac':
+      'O Trino pede ao macOS que não o mostre em capturas, gravações e no compartilhamento de tela, mas alguns apps de gravação não respeitam isso. Não impede que alguém tire uma foto da tela com outro celular. Se você precisa compartilhar sua tela, desative.',
+    'settings2.privacy.errCaptures': 'Não foi possível mudar a proteção da janela. Ela continua como estava.',
+    'settings2.privacy.errCapturesSave': 'Não foi possível salvar neste dispositivo: a mudança dura até você fechar o Trino.',
 
     'settings2.notif.title': 'Notificações',
     'settings2.notif.level': 'O que aparece na notificação',

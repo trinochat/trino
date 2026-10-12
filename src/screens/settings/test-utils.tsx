@@ -76,6 +76,7 @@ export function fakeApi(overrides: Partial<SettingsApi> = {}): SettingsApi {
     getVersion: vi.fn(async () => '0.1.0'),
     listNodes: vi.fn(async () => []),
     blockNode: vi.fn(async () => {}),
+    setContentProtected: vi.fn(async () => {}),
     ...overrides,
   };
 }

@@ -76,6 +76,11 @@ const PRIVACY = [
   'settings2.privacy.loading',
   'settings2.privacy.back',
   'settings2.privacy.callsLine',
+  'settings2.privacy.captures',
+  'settings2.privacy.capturesBody',
+  'settings2.privacy.capturesBodyMac',
+  'settings2.privacy.errCaptures',
+  'settings2.privacy.errCapturesSave',
 ];
 
 /** Settings > Notificaciones (NotificationsSection.tsx). */
