@@ -32,6 +32,7 @@ const PROFILE = [
   'settings2.profile.saved',
   'settings2.profile.errInvalid',
   'settings2.profile.errSave',
+  'settings2.profile.errIo',
   'settings2.profile.errPhoto',
   'settings2.profile.errName',
 ];

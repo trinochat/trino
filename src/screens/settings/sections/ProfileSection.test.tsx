@@ -148,6 +148,22 @@ describe('ProfileSection, always', () => {
     expect(props.onSaved).not.toHaveBeenCalled();
   });
 
+  // `io` is what the backend answers while profiles.bin could not be read at
+  // unlock (B1): this session will not write it, so saving again now fails
+  // the same way. The next unlock reads it again, so the text says to lock
+  // and unlock, and not "Inténtalo de nuevo".
+  it('says to lock and unlock, not to try again, when the backend answers io', async () => {
+    const { api, props } = setup();
+    vi.mocked(api.updateProfile).mockRejectedValueOnce(commandError('io'));
+    fireEvent.click(screen.getByRole('button', { name: 'Guardar' }));
+    const text = (await screen.findByRole('alert')).textContent ?? '';
+    expect(text).toContain(
+      'No se pudo guardar tu perfil en este equipo. Bloquea Trino, desbloquéalo y vuelve a guardar: al desbloquear, Trino lee tu perfil de nuevo.',
+    );
+    expect(text).not.toContain('Inténtalo de nuevo');
+    expect(props.onSaved).not.toHaveBeenCalled();
+  });
+
   it('makes the picked photo with makeAvatar and saves what it gives', async () => {
     const { api, props, container } = setup();
     const file = new File([new Uint8Array([1, 2, 3])], 'yo.png', { type: 'image/png' });

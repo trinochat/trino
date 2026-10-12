@@ -42,13 +42,26 @@ export interface ProfileSectionProps {
   autoFocus?: boolean;
 }
 
-type ProfileError = 'invalid' | 'save' | 'photo';
+type ProfileError = 'invalid' | 'io' | 'save' | 'photo';
 
 const ERROR_KEYS: Record<ProfileError, string> = {
   invalid: 'settings2.profile.errInvalid',
+  io: 'settings2.profile.errIo',
   save: 'settings2.profile.errSave',
   photo: 'settings2.profile.errPhoto',
 };
+
+/**
+ * Why a save failed. `io` is what the backend answers while profiles.bin
+ * could not be read at unlock (B1): this session will not write it, and the
+ * next unlock reads it again, so its text says to lock and unlock instead
+ * of trying again.
+ */
+function errorOf(cause: unknown): ProfileError {
+  if (!isCommandError(cause)) return 'save';
+  if (cause.code === 'profile_invalid') return 'invalid';
+  return cause.code === 'io' ? 'io' : 'save';
+}
 
 export function ProfileSection({ api, profile, profileSync, makeAvatar, onOpenQr, onSaved, autoFocus }: ProfileSectionProps) {
   const t = useT();
@@ -111,7 +124,7 @@ export function ProfileSection({ api, profile, profileSync, makeAvatar, onOpenQr
       setSaved(true);
       onSaved();
     } catch (cause) {
-      setError(isCommandError(cause) && cause.code === 'profile_invalid' ? 'invalid' : 'save');
+      setError(errorOf(cause));
     } finally {
       setBusy(false);
     }
