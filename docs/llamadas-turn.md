@@ -123,9 +123,13 @@ bloqueada), la UI pregunta:
 - Si la llamada termina mientras la pregunta está abierta (el otro cuelga, se
   bloquea Trino…), la pregunta se cierra y un clic tardío no hace nada.
 
-Durante la llamada, la línea de estado dice "0:42 · Conexión protegida" o
-"0:42 · Conexión directa". Es texto simple, sin pastilla; el rediseño (L2b) lo
-cambiará de estilo.
+Durante la llamada, la pantalla de llamada dice después de la duración
+"03:21 · Conexión protegida" o "03:21 · Conexión directa", en texto gris y sin
+pastilla (L2b, `src/screens/call/ConnectionModeLine.tsx`). Es un botón que
+despliega qué significa: protegida, "Tu contacto no ve tu IP. La llamada pasa
+por un servidor de Cloudflare, que sí la ve."; directa, "Tu contacto puede ver
+tu IP.". Mientras suena no dice nada, y la barra de una llamada minimizada no
+lo repite.
 
 Si un lado está protegido y el otro aceptó ir directo, la IP del lado protegido
 sigue oculta. La del lado directo la ve el otro, que es justo a lo que esa
@@ -181,17 +185,22 @@ trabajo y los límites diarios existen por eso.
     tamaño, límite de tiempo y reloj desfasado;
   - la caché: renovación a mitad de vida, bloqueo con una petición en curso;
   - el mapeo de errores.
-- Frontend: `src/lib/call.test.ts`, con un `RTCPeerConnection` falso, y
-  `src/lib/ice-privacy.test.ts`. Cubren:
+- Frontend: `src/lib/call.test.ts`, con un `RTCPeerConnection` falso
+  (`src/lib/call-test-support.ts`), y `src/lib/ice-privacy.test.ts`. Cubren:
   - la configuración y el filtro solo relay;
   - el consentimiento sin vuelta silenciosa;
   - la interacción con la caché y el camino de quien contesta;
   - colgar antes de enviar nada;
   - la renovación de credenciales durante la llamada.
-- `src/call-confirm-dialog.test.tsx`: el lector de pantalla anuncia el aviso
-  de la IP, no solo el título, y los textos de la llamada protegida existen en
-  los tres idiomas. Están en `src/lib/strings/legacy.ts`, con los de la
-  pantalla de llamada actual.
+- `src/screens/call/DirectCallConsentDialog.test.tsx`: el lector de pantalla
+  anuncia el aviso de la IP, no solo el título; el botón seguro tiene el foco
+  y Escape cancela, al llamar y al contestar.
+- `src/lib/strings/call.test.ts`: los textos de la llamada protegida
+  (`call2.consent.*` y `call2.mode.*`, en `src/lib/strings/call.ts`) existen en
+  los tres idiomas, y la pregunta en español es la cita de esta página.
+- `src/app/calls.test.tsx`: con el mismo `RTCPeerConnection` falso y la
+  pantalla de llamada, la pregunta sale con TURN caído y Cancelar enfocado, y
+  un "sí" no la salta en la llamada siguiente.
 
 ## Pendiente
 

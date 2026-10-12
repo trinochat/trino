@@ -59,7 +59,8 @@ describe('call strings', () => {
     expectAreaContract(call, { keys: KEYS, placeholders: PLACEHOLDERS });
   });
 
-  // What src/call-confirm-dialog.test.tsx checks for the old keys until I5 deletes them.
+  // What src/call-confirm-dialog.test.tsx checked of the old keys (PROTECTED_CALL_KEYS), until I5
+  // took them away with the old call screen.
   it('ask in Spanish, before a direct call, what docs/llamadas-turn.md quotes', () => {
     const title = call.es['call2.consent.title'];
     const body = call.es['call2.consent.bodyOutgoing'];

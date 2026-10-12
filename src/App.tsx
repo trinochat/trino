@@ -1,7 +1,7 @@
 import {
   useState,
+  useCallback,
   useEffect,
-  useId,
   useLayoutEffect,
   useMemo,
   useReducer,
@@ -76,33 +76,7 @@ import {
   type Announcement,
   type AnnouncementFeed,
 } from './lib/announcements';
-import {
-  initCall,
-  handleSignal,
-  startCall,
-  acceptIncoming,
-  rejectIncoming,
-  hangup,
-  hangupAndWait,
-  teardownCall,
-  isCallBusy,
-  callHoldsMedia,
-  toggleMute,
-  toggleCamera,
-  answerDirectConsent,
-  type CallErrorCode,
-  type CallState,
-  type ConnectionMode,
-  type DirectConsentRequest,
-  type MediaState,
-} from './lib/call';
-import {
-  startRingback,
-  startRingtone,
-  stopRinging,
-  blipConnect,
-  blipEnd,
-} from './lib/sfx';
+import { teardownCall, isCallBusy } from './lib/call';
 import {
   api,
   notify,
@@ -114,7 +88,6 @@ import {
   onGroupInvite,
   onHandshakeNeeded,
   onFileMessage,
-  onCallSignal,
   onCallCloseRequested,
   onCallQuitRequested,
   onResyncNeeded,
@@ -143,6 +116,7 @@ import {
 import type { LockReason, OnboardingApi, OnboardingIntent, UnlockApi } from './screens/types';
 import { capabilities } from './app/capabilities';
 import { installBrowserChromeGuard } from './app/browser-chrome';
+import { useCalls, type CallGate } from './app/calls';
 import { useContacts, type ContactsEvents } from './app/contacts';
 import { useGroups, type GroupsEvents } from './app/groups';
 import { settingsBackend, useSettings } from './app/settings';
@@ -223,6 +197,12 @@ export interface MainProps {
   onAutolockChanged(minutes: number): void;
   /** Settings erased the identity: what this device keeps goes too, and the first run starts. */
   onWiped(): void;
+  /**
+   * The chats hand App the gate of their calls as they open, and null as
+   * they go (src/app/calls.tsx): locking, closing the window and quitting
+   * from the tray end a call through it.
+   */
+  onCallGate(gate: CallGate | null): void;
 }
 
 export interface AppProps {
@@ -287,8 +267,18 @@ function App({ api: backend = BACKEND, windowApi = TAURI_WINDOW, Main = MainShel
     };
   }, [loading, backend]);
 
-  // A call in progress asks before the window is closed or the vault locked.
-  const [callConfirm, setCallConfirm] = useState<'close' | 'lock' | null>(null);
+  // The calls live with the chats (src/app/calls.tsx), which hand App their
+  // gate while they are open. Locking, closing the window and quitting go
+  // through it: during a call, locking and closing ask first and hang up on
+  // yes, and quitting hangs up; the bye goes out (and the call's record, when
+  // the chats keep a call log) before the vault and its keys close. Without
+  // the chats there is no call.
+  const callGate = useRef<CallGate | null>(null);
+  const registerCallGate = useCallback((gate: CallGate | null) => {
+    callGate.current = gate;
+  }, []);
+  const endCallFor = (reason: 'lock' | 'close' | 'quit'): Promise<boolean> =>
+    callGate.current?.confirmEnd(reason) ?? Promise.resolve(true);
 
   // Every lock path releases the microphone and camera before sealing. The
   // chats go at once, also when sealing fails.
@@ -300,15 +290,9 @@ function App({ api: backend = BACKEND, windowApi = TAURI_WINDOW, Main = MainShel
     dispatch({ type: 'locked', reason });
   };
   const requestLock = () => {
-    if (isCallBusy()) setCallConfirm('lock');
-    else lockNow({ kind: 'manual' });
-  };
-  const confirmCallAction = async () => {
-    const action = callConfirm;
-    setCallConfirm(null);
-    await hangupAndWait(); // the bye goes out before the vault (and its keys) closes
-    if (action === 'lock') lockNow({ kind: 'manual' });
-    else if (action === 'close') windowApi.close();
+    void endCallFor('lock').then(ok => {
+      if (ok) lockNow({ kind: 'manual' });
+    });
   };
 
   // Ctrl+L locks from anywhere in the chats, as Settings says ("También con
@@ -333,27 +317,29 @@ function App({ api: backend = BACKEND, windowApi = TAURI_WINDOW, Main = MainShel
   }, [chatsShown]);
 
   // The backend asks before hiding the window or quitting while a call holds
-  // the microphone (see `set_call_active` and the tray "Salir").
+  // the microphone (see `set_call_active` and the tray "Salir"): the call's
+  // gate answers. Quitting does not ask, since the backend exits after a
+  // short grace anyway: the call hangs up at once.
   useEffect(() => {
     // A reload in the middle of a call must not leave a stale flag behind.
     backend.setCallActive(false).catch(() => {});
     const close = backend.onCallCloseRequested(() => {
-      if (callHoldsMedia()) {
-        setCallConfirm('close');
-      } else {
+      void endCallFor('close').then(ok => {
+        if (!ok) return;
         backend
           .setCallActive(false)
           .then(() => windowApi.close())
           .catch(() => {});
-      }
+      });
     });
     const quit = backend.onCallQuitRequested(() => {
-      void hangupAndWait().finally(() => backend.setCallActive(false).catch(() => {}));
+      void endCallFor('quit').finally(() => backend.setCallActive(false).catch(() => {}));
     });
     return () => {
       close.then(fn => fn());
       quit.then(fn => fn());
     };
+    // endCallFor reads the gate when the backend asks, whatever render made it.
   }, [backend, windowApi]);
 
   // The auto-lock (src/app/useAutoLock.ts): after the minutes saved in
@@ -423,18 +409,11 @@ function App({ api: backend = BACKEND, windowApi = TAURI_WINDOW, Main = MainShel
                         onLock={requestLock}
                         onAutolockChanged={setAutolockMinutes}
                         onWiped={wiped}
+                        onCallGate={registerCallGate}
                       />
                     </main>
                   ) : null}
                 </div>
-                {callConfirm && (
-                  <CallConfirmDialog
-                    message={t(callConfirm === 'close' ? 'call.closeHangsUp' : 'call.lockHangsUp')}
-                    confirmLabel={t(callConfirm === 'close' ? 'call.hangupAndClose' : 'call.hangupAndLock')}
-                    onConfirm={() => void confirmCallAction()}
-                    onCancel={() => setCallConfirm(null)}
-                  />
-                )}
               </div>
             </ToastProvider>
           </AppearanceProvider>
@@ -468,30 +447,16 @@ const CONTACT_EVENTS: ContactsEvents = { onGroupInvite, onHandshakeNeeded };
 /** The backend's events about groups, for their screens (src/app/groups.tsx). */
 const GROUP_EVENTS: GroupsEvents = { onGroupRemoved };
 
-function MainShell({ intent, onLock, onAutolockChanged, onWiped }: MainProps) {
+function MainShell({ intent, onLock, onAutolockChanged, onWiped, onCallGate }: MainProps) {
   const t = useT();
   const [nodes, setNodes] = useState<NodeInfo[]>([]);
   const [groups, setGroups] = useState<GroupInfo[]>([]);
   const [sel, setSel] = useState<Selection>(null);
   const [msgsByHandle, setMsgsByHandle] = useState<Record<string, ChatMessage[]>>({});
   const [msgsByGroup, setMsgsByGroup] = useState<Record<string, ChatMessage[]>>({});
-  const [callState, setCallState] = useState<CallState>('idle');
-  const [callPeer, setCallPeer] = useState<string | null>(null);
-  const [callVideo, setCallVideo] = useState(false);
-  const [localStream, setLocalStream] = useState<MediaStream | null>(null);
-  const [remoteStream, setRemoteStream] = useState<MediaStream | null>(null);
-  const [callSas, setCallSas] = useState('');
-  const [callError, setCallError] = useState('');
-  const [callMode, setCallMode] = useState<ConnectionMode | null>(null);
-  const [directConsent, setDirectConsent] = useState<DirectConsentRequest | null>(null);
-  const [callMedia, setCallMedia] = useState<MediaState>({
-    muted: false,
-    cameraOn: false,
-    hasVideo: false,
-  });
-  const [sealing, setSealing] = useState(false);
   const [forwarding, setForwarding] = useState<ChatMessage | null>(null);
   const [myFingerprint, setMyFingerprint] = useState('');
+  const [myIdentityDigest, setMyIdentityDigest] = useState<string | null>(null);
   const [myAvatar, setMyAvatar] = useState<string | null>(null);
   const [myHandle, setMyHandle] = useState('');
   const [search, setSearch] = useState('');
@@ -565,12 +530,14 @@ function MainShell({ intent, onLock, onAutolockChanged, onWiped }: MainProps) {
     return () => unlisten?.();
   }, []);
 
-  // Your name and photo in the sidebar, read again once Settings saved them.
+  // Your name and photo in the sidebar, read again once Settings saved them,
+  // and your identity digest (K7), which a call's SAS is made from.
   const refreshProfile = () =>
     api
       .getProfile()
       .then(p => {
         setMyFingerprint(p.fingerprint);
+        setMyIdentityDigest(p.identity_digest ?? null);
         setMyAvatar(p.avatar ?? null);
         setMyHandle(p.handle ?? '');
       })
@@ -642,8 +609,28 @@ function MainShell({ intent, onLock, onAutolockChanged, onWiped }: MainProps) {
     onGroupsChanged: () => void refreshGroups(),
   });
 
+  // Calls (W6): the controller over call.ts, with the call screen, the
+  // incoming call, the question of calling directly, the end card and the
+  // sound in a layer over the shell, and the bar of a minimized call above
+  // both panes (src/app/calls.tsx). Until I6 the old chat cannot show a call
+  // as a line of its chat, so calls are not recorded (K13) yet: the end card
+  // would say "Queda registrada en el chat." of a chat that does not show it.
+  // A call that rings while Trino is not in front is notified, as a message is.
+  const calls = useCalls({
+    contacts: nodes,
+    myIdentityDigest,
+    isWindowVisible: () => windowFocusedRef.current,
+    callLog: false,
+  });
+  // Locking, closing the window and quitting end a call through its gate.
+  useEffect(() => {
+    onCallGate(calls.gate);
+    return () => onCallGate(null);
+  }, [calls.gate, onCallGate]);
+
   // Ajustes (W5): a layer over the whole shell until I6, which makes the
-  // shell's panes inert while it is open (src/app/settings.tsx).
+  // shell's panes inert while it is open (src/app/settings.tsx). A call
+  // screen covers it too, and it is inert meanwhile.
   const settings = useSettings({
     api: settingsBackend,
     onLockNow: onLock,
@@ -651,7 +638,11 @@ function MainShell({ intent, onLock, onAutolockChanged, onWiped }: MainProps) {
     onAutolockChanged,
     onProfileChanged: () => void refreshProfile(),
     onContactsChanged: () => void refreshNodes(),
+    covered: calls.slot.covering,
   });
+  // What covers the panes, which go inert and isolated beneath it, so nothing
+  // of theirs takes the focus or paints over it (the old sticker panel is z-40).
+  const panesCovered = settings.isOpen || calls.slot.covering;
 
   // Groups (W4): "Nuevo grupo" from the groups' "+", and the details of the
   // group on screen from its header, beside the chat on a wide window and a
@@ -795,61 +786,6 @@ function MainShell({ intent, onLock, onAutolockChanged, onWiped }: MainProps) {
     };
   }, []);
 
-  // WebRTC call wiring: drive the call manager from React state. The STUN/TURN
-  // configuration is loaded by the call module itself, from the backend.
-  useEffect(() => {
-    initCall({
-      onState: (s, info) => {
-        setCallState(s);
-        if (info.peer) setCallPeer(info.peer);
-        setCallVideo(info.video);
-        if (s === 'ringing-out') startRingback();
-        else if (s === 'ringing-in') startRingtone();
-        else if (s === 'connecting') stopRinging();
-        else if (s === 'connected') {
-          stopRinging();
-          blipConnect();
-          setSealing(true);
-          setTimeout(() => setSealing(false), 1700);
-        } else if (s === 'ended') {
-          stopRinging();
-          blipEnd();
-          setLocalStream(null);
-          setRemoteStream(null);
-          setCallMedia({ muted: false, cameraOn: false, hasVideo: false });
-          // Only settle to idle if nothing new started (e.g. a retry offer
-          // can flip us to ringing-in right after an 'ended').
-          setTimeout(() => setCallState(c => (c === 'ended' ? 'idle' : c)), 500);
-        } else if (s === 'rejected') {
-          // Stay on a "rejected" screen (close / retry) — don't auto-close.
-          stopRinging();
-          blipEnd();
-          setLocalStream(null);
-          setRemoteStream(null);
-          setCallMedia({ muted: false, cameraOn: false, hasVideo: false });
-        }
-      },
-      onLocalStream: setLocalStream,
-      onRemoteStream: setRemoteStream,
-      onSas: setCallSas,
-      onMedia: setCallMedia,
-      onConnectionMode: setCallMode,
-      onDirectConsent: setDirectConsent,
-      onError: (code: CallErrorCode) => {
-        console.error('call failed', code);
-        setCallError(`call.error.${code}`);
-        setTimeout(() => setCallError(''), 4000);
-      },
-    });
-    const u = onCallSignal(e => handleSignal(e.from_handle, e.payload));
-    return () => {
-      u.then(fn => fn());
-      // Leaving the main view (lock, reload) must never leave the microphone
-      // or camera running behind it.
-      teardownCall();
-    };
-  }, []);
-
   // Auto-heal: the backend cleared a desynced session and asks us to
   // re-handshake. connectNode re-initiates X3DH; the tie-break reconverges;
   // then we replay buffered outgoing so nothing sent during the desync is lost.
@@ -949,12 +885,17 @@ function MainShell({ intent, onLock, onAutolockChanged, onWiped }: MainProps) {
   };
 
   return (
-    <div ref={groupScreens.shellRef} className="app-shell relative h-full overflow-hidden">
+    // The shell's positioned box under the title bar: Settings and the call
+    // are layers over it (absolute), and the bar of a minimized call sits
+    // above both panes.
+    <div ref={groupScreens.shellRef} className="relative flex h-full flex-col overflow-hidden">
+      {calls.slot.bar}
+      <div className="app-shell min-h-0 flex-1 overflow-hidden">
       <aside
-        inert={settings.isOpen}
+        inert={panesCovered}
         className={`sidebar-shell flex-col h-full w-full md:w-auto ${
           sel ? 'hidden md:flex' : 'flex'
-        }${settings.isOpen ? ' isolate' : ''}`}
+        }${panesCovered ? ' isolate' : ''}`}
       >
         <header className="sidebar-brand">
           <TrinoLogo size={36} decorative className="text-phosphor-dim" />
@@ -1210,8 +1151,8 @@ function MainShell({ intent, onLock, onAutolockChanged, onWiped }: MainProps) {
       </aside>
 
       <div
-        inert={settings.isOpen}
-        className={`h-full min-h-0 w-full ${sel ? 'block' : 'hidden md:block'}${settings.isOpen ? ' isolate' : ''}`}
+        inert={panesCovered}
+        className={`h-full min-h-0 w-full ${sel ? 'block' : 'hidden md:block'}${panesCovered ? ' isolate' : ''}`}
       >
       {sel?.kind === 'system' ? (
         <SystemChatView
@@ -1237,7 +1178,7 @@ function MainShell({ intent, onLock, onAutolockChanged, onWiped }: MainProps) {
           myFingerprint={myFingerprint}
           blocked={nodes.find(n => n.handle === sel.id)?.blocked ?? false}
           onBlockChanged={refreshNodes}
-          onCall={video => startCall(sel.id, video).catch(e => console.error('call failed', e))}
+          onCall={video => calls.slot.start(sel.id, video)}
           messages={msgsByHandle[sel.id] ?? []}
           onSend={async (text, reply) => {
             const handle = sel.id;
@@ -1424,8 +1365,15 @@ function MainShell({ intent, onLock, onAutolockChanged, onWiped }: MainProps) {
         <EmptyChat />
       )}
       </div>
+      </div>
 
+      {/*
+        Both are boxes over the panes at z-30: the call comes after Settings,
+        so a call answered over Settings covers it (src/app/calls.test.tsx).
+        Its dialogs, the incoming call first, go over everything (z-40).
+      */}
       {settings.layer}
+      {calls.slot.layer}
       {contacts.dialog}
       {groupScreens.dialogs}
       {legacyMarksNotice}
@@ -1469,55 +1417,6 @@ function MainShell({ intent, onLock, onAutolockChanged, onWiped }: MainProps) {
           }}
         />
       )}
-      {callState === 'ringing-in' && (
-        <IncomingCall
-          peer={callPeer}
-          video={callVideo}
-          avatar={callPeer ? avatarOf(callPeer) : undefined}
-          onAccept={() => acceptIncoming().catch(e => console.error('accept failed', e))}
-          onReject={() => rejectIncoming()}
-        />
-      )}
-      {(callState === 'starting' ||
-        callState === 'ringing-out' ||
-        callState === 'connecting' ||
-        callState === 'connected') && (
-        <CallOverlay
-          state={callState}
-          peer={callPeer}
-          video={callVideo}
-          sas={callSas}
-          localStream={localStream}
-          remoteStream={remoteStream}
-          media={callMedia}
-          error={callError}
-          mode={callMode}
-          avatar={callPeer ? avatarOf(callPeer) : undefined}
-        />
-      )}
-      {directConsent && (
-        // TURN failed. Cancel is the default (focused, Escape); see call.ts.
-        <CallConfirmDialog
-          title={t('call.unprotected.title')}
-          message={t('call.unprotected.body')}
-          confirmLabel={t('call.callDirect')}
-          onConfirm={() => answerDirectConsent(true)}
-          onCancel={() => answerDirectConsent(false)}
-        />
-      )}
-      {callState === 'rejected' && (
-        <RejectedCall
-          peer={callPeer}
-          avatar={callPeer ? avatarOf(callPeer) : undefined}
-          onClose={() => setCallState('idle')}
-          onRetry={() => {
-            const p = callPeer;
-            const v = callVideo;
-            if (p) startCall(p, v).catch(e => console.error('retry failed', e));
-          }}
-        />
-      )}
-      {sealing && <LockSeal />}
       {activityError && (
         <div
           role="alert"
@@ -1740,424 +1639,6 @@ function GroupChatView({
         placeholder={t('composer.placeholderGroup')}
       />
     </section>
-  );
-}
-
-function RadarPing({ active, children }: { active: boolean; children: React.ReactNode }) {
-  return (
-    <div className="relative grid place-items-center">
-      {active && (
-        <>
-          <span className="absolute inset-0 rounded-full border-2 border-phosphor/50 animate-radar" />
-          <span
-            className="absolute inset-0 rounded-full border-2 border-phosphor/50 animate-radar"
-            style={{ animationDelay: '0.6s' }}
-          />
-          <span
-            className="absolute inset-0 rounded-full border-2 border-phosphor/50 animate-radar"
-            style={{ animationDelay: '1.2s' }}
-          />
-        </>
-      )}
-      {children}
-    </div>
-  );
-}
-
-function Scanlines() {
-  return (
-    <div className="pointer-events-none absolute inset-0 overflow-hidden">
-      <div className="absolute inset-0 opacity-[0.06] bg-[repeating-linear-gradient(0deg,transparent,transparent_2px,#22ff66_3px)]" />
-      <div className="absolute left-0 right-0 h-24 bg-gradient-to-b from-transparent via-phosphor/10 to-transparent animate-scan-sweep" />
-    </div>
-  );
-}
-
-function LockSeal() {
-  const t = useT();
-  return (
-    <div className="fixed inset-0 z-[60] bg-bg-deep/92 backdrop-blur-md grid place-items-center animate-fade-in">
-      <Scanlines />
-      <div className="flex flex-col items-center gap-5">
-        <svg viewBox="0 0 120 120" className="w-40 h-40 text-phosphor animate-seal-glow">
-          <rect x="34" y="58" width="52" height="48" rx="8" fill="none" stroke="currentColor" strokeWidth="5" />
-          <circle cx="60" cy="76" r="6" fill="currentColor" />
-          <rect x="57" y="80" width="6" height="14" rx="2" fill="currentColor" />
-          <path
-            d="M 45 60 V 46 A 15 15 0 0 1 75 46 V 60"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="5"
-            strokeLinecap="round"
-            className="animate-shackle-close"
-            style={{ transformOrigin: '60px 58px' }}
-          />
-        </svg>
-        <div className="text-phosphor tracking-[0.45em] uppercase text-sm animate-seal-pop glow">
-          {t('security.encrypted')} ✓
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function CallIcon({ d }: { d: string }) {
-  return (
-    <svg
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth={2}
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      className="w-5 h-5"
-    >
-      <path d={d} />
-    </svg>
-  );
-}
-const CALL_ICONS = {
-  mic: 'M12 2a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3zM5 10v1a7 7 0 0 0 14 0v-1M12 19v3',
-  micOff: 'M1 1l22 22M9 9v2a3 3 0 0 0 5.1 2.1M15 9.3V5a3 3 0 0 0-5.9-.6M17 17A7 7 0 0 1 5 12v-1m14 0v1M12 19v3',
-  cam: 'M23 7l-7 5 7 5V7zM1 5h13a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H1z',
-  camOff: 'M1 1l22 22M16 16v1a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2h1m5 0h5a2 2 0 0 1 2 2v3',
-};
-
-function CircleBtn({
-  on,
-  onClick,
-  title,
-  children,
-}: {
-  on: boolean;
-  onClick: () => void;
-  title: string;
-  children: React.ReactNode;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      title={title}
-      className={`w-11 h-11 rounded-full grid place-items-center transition-colors ${
-        on ? 'bg-white text-bg-deep' : 'bg-white/10 text-white hover:bg-white/20'
-      }`}
-    >
-      {children}
-    </button>
-  );
-}
-
-function CallOverlay({
-  state,
-  peer,
-  video,
-  sas,
-  localStream,
-  remoteStream,
-  media,
-  error,
-  mode,
-  avatar,
-}: {
-  state: CallState;
-  peer: string | null;
-  video: boolean;
-  sas: string;
-  localStream: MediaStream | null;
-  remoteStream: MediaStream | null;
-  media: MediaState;
-  error: string;
-  mode: ConnectionMode | null;
-  avatar?: string | null;
-}) {
-  const t = useT();
-  const remoteRef = useRef<HTMLVideoElement>(null);
-  const localRef = useRef<HTMLVideoElement>(null);
-  const showVideo = video || media.hasVideo;
-  const [elapsed, setElapsed] = useState(0);
-  const connectedAtRef = useRef<number | null>(null);
-  useEffect(() => {
-    if (remoteRef.current) remoteRef.current.srcObject = remoteStream;
-  }, [remoteStream]);
-  // The local preview unmounts while the camera is off (its track is stopped),
-  // so re-attach the stream whenever it mounts again.
-  useEffect(() => {
-    if (localRef.current) localRef.current.srcObject = localStream;
-  }, [localStream, media.hasVideo]);
-  useEffect(() => {
-    if (state !== 'connected') {
-      connectedAtRef.current = null;
-      setElapsed(0);
-      return;
-    }
-    if (connectedAtRef.current == null) connectedAtRef.current = Date.now();
-    const iv = setInterval(
-      () => setElapsed(Math.floor((Date.now() - (connectedAtRef.current ?? Date.now())) / 1000)),
-      500,
-    );
-    return () => clearInterval(iv);
-  }, [state]);
-  const status =
-    state === 'connected'
-      ? `${Math.floor(elapsed / 60)}:${String(elapsed % 60).padStart(2, '0')}`
-      : state === 'ringing-out' || state === 'starting'
-        ? t('call.calling')
-        : t('call.connecting');
-
-  return (
-    <div className="fixed inset-0 z-50 bg-bg-deep flex flex-col animate-fade-in">
-      {/* remote video fills the screen for video calls; voice shows the avatar.
-          the element stays mounted either way so remote audio always plays. */}
-      <video
-        ref={remoteRef}
-        autoPlay
-        playsInline
-        className={showVideo ? 'absolute inset-0 w-full h-full object-cover bg-black' : 'hidden'}
-      />
-      {!showVideo && (
-        <div className="flex-1 flex flex-col items-center justify-center gap-5 px-6">
-          <RadarPing active={state !== 'connected'}>
-            <Avatar src={avatar} name={peer ?? '?'} size={120} />
-          </RadarPing>
-          <div className="text-phosphor-bright text-2xl glow">{peer}</div>
-          <div className="text-phosphor-dim text-xs tracking-[0.3em] uppercase">{status}</div>
-          {sas && (
-            <div className="flex flex-col items-center gap-1 mt-3">
-              <div className="text-2xl tracking-[0.3em] select-all">{sas}</div>
-              <div className="text-phosphor-dim text-[10px]">
-                {t('call.securityCodeHelp')}
-              </div>
-            </div>
-          )}
-        </div>
-      )}
-
-      {showVideo && sas && (
-        <div className="absolute left-1/2 top-5 -translate-x-1/2 rounded-md border border-white/15 bg-black/65 px-3 py-2 text-center backdrop-blur-md">
-          <div className="text-base text-white">{sas}</div>
-          <div className="mt-0.5 text-[9px] text-white/60">
-            {t('call.securityCodeHelp')}
-          </div>
-        </div>
-      )}
-
-      {media.hasVideo && (
-        <video
-          ref={localRef}
-          autoPlay
-          playsInline
-          muted
-          className={`absolute top-4 right-4 w-28 rounded-xl border border-white/15 shadow-xl bg-black ${
-            media.cameraOn ? '' : 'opacity-30'
-          }`}
-        />
-      )}
-
-      {error && (
-        <div className="absolute top-6 left-1/2 -translate-x-1/2 px-4 py-2 rounded-full bg-crimson/20 border border-crimson/40 text-crimson text-xs animate-fade-in">
-          {t(error)}
-        </div>
-      )}
-
-      {/* Telegram-style control bar */}
-      <div
-        className="absolute left-3 right-3 flex items-center gap-2.5 rounded-2xl bg-black/70 backdrop-blur-md border border-white/10 px-4 py-3"
-        style={{ bottom: 'calc(env(safe-area-inset-bottom) + 1rem)' }}
-      >
-        <div className="flex items-center gap-3 min-w-0 flex-1">
-          <Avatar src={avatar} name={peer ?? '?'} size={38} />
-          <div className="min-w-0 leading-tight">
-            <div className="text-white font-medium truncate">{peer}</div>
-            {/* Plain text on purpose; the redesign restyles it (L2b). */}
-            <div
-              className="text-white/50 text-xs truncate"
-              title={mode === 'direct' ? t('call.mode.directHelp') : undefined}
-            >
-              {mode ? `${status} · ${t(`call.mode.${mode}`)}` : status}
-            </div>
-          </div>
-        </div>
-        <CircleBtn
-          on={media.muted}
-          onClick={() => toggleMute()}
-          title={media.muted ? t('call.unmute') : t('call.mute')}
-        >
-          <CallIcon d={media.muted ? CALL_ICONS.micOff : CALL_ICONS.mic} />
-        </CircleBtn>
-        <CircleBtn
-          on={media.cameraOn}
-          onClick={() => toggleCamera()}
-          title={media.cameraOn ? t('call.cameraOff') : t('call.cameraOn')}
-        >
-          <CallIcon d={media.cameraOn ? CALL_ICONS.cam : CALL_ICONS.camOff} />
-        </CircleBtn>
-        <button
-          type="button"
-          onClick={() => hangup()}
-          className="ml-1 h-11 px-5 rounded-full bg-crimson text-white font-medium hover:brightness-110 transition-all"
-        >
-          {t('call.hangup')}
-        </button>
-      </div>
-    </div>
-  );
-}
-
-function IncomingCall({
-  peer,
-  video,
-  avatar,
-  onAccept,
-  onReject,
-}: {
-  peer: string | null;
-  video: boolean;
-  avatar?: string | null;
-  onAccept: () => void;
-  onReject: () => void;
-}) {
-  const t = useT();
-  return (
-    <div className="fixed inset-0 bg-bg-deep/90 backdrop-blur-sm z-50 grid place-items-center animate-fade-in overflow-hidden">
-      <Scanlines />
-      <div className="term-card flex flex-col items-center gap-4 p-8 animate-pop-in relative">
-        <RadarPing active>
-          <Avatar src={avatar} name={peer ?? '?'} size={90} />
-        </RadarPing>
-        <div className="text-phosphor-bright text-lg glow">{peer}</div>
-        <div className="text-phosphor text-xs tracking-[0.3em] uppercase animate-flicker">
-          {video ? t('call.incomingVideo') : t('call.incoming')}
-        </div>
-        <div className="flex gap-5 mt-2">
-          <button
-            type="button"
-            onClick={onReject}
-            className="w-14 h-14 rounded-full bg-crimson text-bg grid place-items-center hover:scale-110 transition-transform"
-            title={t('call.reject')}
-          >
-            <IconPhone className="w-6 h-6 rotate-[135deg]" />
-          </button>
-          <button
-            type="button"
-            onClick={onAccept}
-            className="w-14 h-14 rounded-full bg-phosphor text-bg grid place-items-center hover:scale-110 transition-transform"
-            title={t('call.accept')}
-          >
-            {video ? <IconVideo className="w-6 h-6" /> : <IconPhone className="w-6 h-6" />}
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-// Asked before an action that would end the call in progress (closing the
-// window, locking the vault), or before an unprotected call. Sits above the
-// call overlay; Cancel is focused and Escape cancels.
-export function CallConfirmDialog({
-  title,
-  message,
-  confirmLabel,
-  onConfirm,
-  onCancel,
-}: {
-  title?: string;
-  message: string;
-  confirmLabel: string;
-  onConfirm: () => void;
-  onCancel: () => void;
-}) {
-  const t = useT();
-  const heading = title ?? t('call.inProgress');
-  const headingId = useId();
-  const messageId = useId(); // read out with the title: the consent hinges on it
-  useEffect(() => {
-    const onKey = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') onCancel();
-    };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [onCancel]);
-  return (
-    <div className="fixed inset-0 z-[70] grid place-items-center bg-bg-deep/85 p-4 backdrop-blur-md animate-fade-in">
-      <div
-        role="alertdialog"
-        aria-modal="true"
-        aria-labelledby={headingId}
-        aria-describedby={messageId}
-        className="term-card flex w-full max-w-sm flex-col gap-4 p-6 animate-pop-in"
-      >
-        <div id={headingId} className="text-sm font-semibold text-ink">
-          {heading}
-        </div>
-        <div id={messageId} className="text-xs leading-relaxed text-ink-muted">
-          {message}
-        </div>
-        <div className="flex gap-2">
-          <button
-            type="button"
-            autoFocus
-            className="flex-1 rounded border border-bg-line px-4 py-2 text-sm text-phosphor-dim hover:text-phosphor"
-            onClick={onCancel}
-          >
-            {t('common.cancel')}
-          </button>
-          <button
-            type="button"
-            className="flex-1 rounded border border-crimson bg-crimson/10 px-4 py-2 text-sm text-crimson hover:bg-crimson/20"
-            onClick={onConfirm}
-          >
-            {confirmLabel}
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function RejectedCall({
-  peer,
-  avatar,
-  onClose,
-  onRetry,
-}: {
-  peer: string | null;
-  avatar?: string | null;
-  onClose: () => void;
-  onRetry: () => void;
-}) {
-  const t = useT();
-  return (
-    <div className="fixed inset-0 bg-bg-deep/90 backdrop-blur-sm z-50 grid place-items-center animate-fade-in overflow-hidden">
-      <Scanlines />
-      <div className="term-card flex flex-col items-center gap-4 p-8 animate-pop-in relative">
-        <div className="opacity-60 grayscale">
-          <Avatar src={avatar} name={peer ?? '?'} size={90} />
-        </div>
-        <div className="text-phosphor-bright text-lg glow">{peer}</div>
-        <div className="text-crimson text-xs tracking-[0.3em] uppercase">
-          {t('call.rejected')}
-        </div>
-        <div className="flex gap-4 mt-2">
-          <button
-            type="button"
-            onClick={onClose}
-            className="px-5 py-2.5 rounded-full bg-bg-line text-phosphor hover:bg-bg-panel transition-colors text-sm"
-          >
-            {t('common.close')}
-          </button>
-          <button
-            type="button"
-            onClick={onRetry}
-            className="px-5 py-2.5 rounded-full bg-phosphor text-bg grid place-items-center gap-2 hover:scale-105 transition-transform text-sm font-semibold flex items-center"
-          >
-            <IconPhone className="w-4 h-4" />
-            {t('common.retry')}
-          </button>
-        </div>
-      </div>
-    </div>
   );
 }
 

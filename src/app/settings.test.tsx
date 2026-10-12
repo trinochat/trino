@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { getVersion } from '@tauri-apps/api/app';
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { useState } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { holdAccessibility, holdAppearance, holdScanLines } from '../design/apply';
 import { AppearanceProvider } from '../design/useAppearance';
@@ -68,6 +69,8 @@ function setup({
   };
 
   function OldShell() {
+    // The call screen of I5, which covers the shell and Settings with it.
+    const [callCovering, setCallCovering] = useState(false);
     const settings = useSettings({
       api: backend,
       ...spies,
@@ -75,6 +78,7 @@ function setup({
       ...(capabilities && { capabilities }),
       prefs,
       makeAvatar: async () => 'data:image/jpeg;base64,AAAA',
+      covered: callCovering,
     });
     return (
       <div className="relative">
@@ -82,6 +86,9 @@ function setup({
           <button type="button" title="ajustes" onClick={() => settings.open()} />
         </div>
         {settings.layer}
+        <button type="button" onClick={() => setCallCovering(covering => !covering)}>
+          una llamada cubre la ventana
+        </button>
       </div>
     );
   }
@@ -101,7 +108,8 @@ function setup({
     fireEvent.click(opener);
     return screen.getByRole('region', { name: 'Ajustes' });
   };
-  return { backend, spies, storage, panes, opener, open };
+  const toggleCall = () => fireEvent.click(screen.getByRole('button', { name: 'una llamada cubre la ventana' }));
+  return { backend, spies, storage, panes, opener, open, toggleCall };
 }
 
 const sectionHeading = (name: string) => screen.findByRole('heading', { level: 2, name });
@@ -126,6 +134,20 @@ describe('useSettings', () => {
     expect(screen.queryByRole('region', { name: 'Ajustes' })).toBeNull();
     expect(panes.hasAttribute('inert')).toBe(false);
     expect(document.activeElement).toBe(opener);
+  });
+
+  // A call answered while Settings is open covers it (I5): nothing hidden under the call screen
+  // keeps the focus, so the layer goes inert like the panes, and comes back when the call goes.
+  it('goes inert while a call screen covers it', async () => {
+    const { open, toggleCall } = setup();
+    const layer = open();
+    await sectionHeading('Perfil');
+    expect(layer.hasAttribute('inert')).toBe(false);
+
+    toggleCall();
+    expect(layer.hasAttribute('inert')).toBe(true);
+    toggleCall();
+    expect(layer.hasAttribute('inert')).toBe(false);
   });
 
   // The layer itself has the focus as it opens, outside the screen that

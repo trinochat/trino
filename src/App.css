@@ -139,10 +139,6 @@
     @apply opacity-40 cursor-not-allowed;
   }
 
-  .glow {
-    text-shadow: 0 0 6px currentColor;
-  }
-
   .modal-panel {
     @apply rounded-md border border-bg-line bg-bg-panel;
     box-shadow: 0 22px 60px rgba(0, 0, 0, 0.45);

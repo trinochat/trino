@@ -8,6 +8,8 @@
  *   takes the focus as it opens. Closed (its button or Escape, which the
  *   layer hears too while it has the focus), it gives the focus back to what
  *   had it, once the shell's panes are no longer inert.
+ * - A call screen answered meanwhile covers it too (I5): the layer is inert
+ *   while `covered`, as the panes are.
  * - "Tu código QR" is Contactos' share panel (W4), not a second QR.
  * - What only the app can do goes up: locking, the wipe (which clears what
  *   this device keeps), a new auto-lock time; and the shell reads your
@@ -87,6 +89,8 @@ export interface SettingsOptions {
   makeAvatar?(file: File): Promise<string>;
   /** Saves the QR's PNG; the webview's download unless a test brings its own. */
   download?(name: string, blob: Blob): void;
+  /** A call screen covers the shell, and this layer with it: the layer is inert meanwhile. */
+  covered?: boolean;
 }
 
 export interface Settings {
@@ -136,6 +140,7 @@ export function useSettings(options: SettingsOptions): Settings {
       ref={layerRef}
       aria-label={t('settings2.nav.title')}
       tabIndex={-1}
+      inert={options.covered === true}
       // The screen hears Escape from inside it; here, from the layer itself,
       // which has the focus as Settings opens.
       onKeyDown={event => {

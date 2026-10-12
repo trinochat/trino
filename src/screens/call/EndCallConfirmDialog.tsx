@@ -2,7 +2,7 @@
  * Asked before locking Trino or closing its window during a call, which
  * hangs up and turns the microphone and camera off. Cancel is the default:
  * it has the focus and Escape gives it. The controller opens it from
- * `confirmEnd` and hangs up on yes; it replaces the old screen's
+ * `confirmEnd` and hangs up on yes; it replaced the old screen's
  * CallConfirmDialog in that use (I5).
  */
 import { PhoneOff } from 'lucide-react';

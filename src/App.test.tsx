@@ -1,7 +1,9 @@
 // @vitest-environment jsdom
 import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react';
+import { useEffect } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import App, { type AppApi, type MainProps } from './App';
+import type { CallGate } from './app/calls';
 import type { ForgeResponse, StatusResponse, UnsealResponse } from './lib/api';
 import type { WindowApi } from './screens/auth';
 
@@ -36,6 +38,8 @@ const CREATED: ForgeResponse = { ...UNSEALED, bundle_json: JSON.stringify({ hand
 function fakeApi(...answers: Array<StatusResponse | Error>) {
   const calls: string[] = [];
   let next = 0;
+  /** What the backend's `call-close-requested` and `call-quit-requested` reach. */
+  const requested: { close: (() => void) | null; quit: (() => void) | null } = { close: null, quit: null };
   const api = {
     status: vi.fn(() => {
       calls.push('status');
@@ -46,9 +50,15 @@ function fakeApi(...answers: Array<StatusResponse | Error>) {
       calls.push('lockVault');
       return Promise.resolve();
     }),
-    setCallActive: vi.fn(() => Promise.resolve()),
-    onCallCloseRequested: vi.fn(() => Promise.resolve(() => {})),
-    onCallQuitRequested: vi.fn(() => Promise.resolve(() => {})),
+    setCallActive: vi.fn((_active: boolean) => Promise.resolve()),
+    onCallCloseRequested: vi.fn((cb: () => void) => {
+      requested.close = cb;
+      return Promise.resolve(() => {});
+    }),
+    onCallQuitRequested: vi.fn((cb: () => void) => {
+      requested.quit = cb;
+      return Promise.resolve(() => {});
+    }),
     checkPassphrase: vi.fn(() => Promise.resolve()),
     totpBegin: vi.fn(() => Promise.reject(new Error('2FA is not set up in these tests'))),
     totpVerify: vi.fn(() => Promise.resolve(false)),
@@ -57,7 +67,7 @@ function fakeApi(...answers: Array<StatusResponse | Error>) {
     unseal: vi.fn(() => Promise.resolve(UNSEALED)),
     wipe: vi.fn(() => Promise.resolve()),
   } satisfies AppApi;
-  return { ...api, calls };
+  return { ...api, calls, requested };
 }
 
 const fakeWindow = (): WindowApi => ({
@@ -67,12 +77,19 @@ const fakeWindow = (): WindowApi => ({
   isMaximized: vi.fn(() => Promise.resolve(false)),
 });
 
+/** The gate of the chats' calls (src/app/calls.tsx) in the tests of a call in progress; null otherwise. */
+let callGate: CallGate | null = null;
+
 /**
  * The chats, as far as App is concerned: how the first run ended, the lock,
- * a new auto-lock time saved as Settings saves it, and Settings' wipe once
- * the backend erased the identity.
+ * a new auto-lock time saved as Settings saves it, Settings' wipe once the
+ * backend erased the identity, and the gate of their calls.
  */
-function FakeMain({ intent, onLock, onAutolockChanged, onWiped }: MainProps) {
+function FakeMain({ intent, onLock, onAutolockChanged, onWiped, onCallGate }: MainProps) {
+  useEffect(() => {
+    onCallGate?.(callGate);
+    return () => onCallGate?.(null);
+  }, [onCallGate]);
   return (
     <section aria-label="Chats">
       <p>{`intent: ${intent}`}</p>
@@ -135,6 +152,7 @@ beforeEach(() => {
 });
 afterEach(() => {
   cleanup();
+  callGate = null;
   vi.useRealTimers();
   localStorage.clear();
   vi.restoreAllMocks();
@@ -357,5 +375,93 @@ describe('App', () => {
     unmount();
     expect(fireEvent.contextMenu(document.body)).toBe(true);
     expect(fireEvent.keyDown(document.body, { key: 'F5' })).toBe(true);
+  });
+});
+
+// The chats hand App the gate of their calls (src/app/calls.tsx): locking,
+// closing the window and quitting from the tray end a call through it, so
+// the call asks first, sends its bye and keeps its record (plan §4, I5).
+describe('App during a call', () => {
+  /** A call is on: each question the gate gets waits for the test's answer. */
+  function callInProgress() {
+    const asked: { reason: string; answer(ok: boolean): Promise<void> }[] = [];
+    const confirmEnd = vi.fn(
+      (reason: 'lock' | 'close' | 'quit') =>
+        new Promise<boolean>(resolve => {
+          asked.push({ reason, answer: ok => act(async () => resolve(ok)) });
+        }),
+    );
+    callGate = { confirmEnd };
+    return { asked, confirmEnd };
+  }
+
+  it('asks the call before locking, from "Bloquear" and from Ctrl+L, and locks only on yes', async () => {
+    const { asked } = callInProgress();
+    const api = fakeApi(VAULT, { ...VAULT, handle: 'Rechi' });
+    renderApp(api);
+    await heading('Hola de nuevo, Rechita');
+    await unlockWith(PASS);
+
+    click('Bloquear ahora');
+    expect(asked.map(question => question.reason)).toEqual(['lock']);
+    await asked[0]!.answer(false);
+    expect(screen.getByText('intent: chats')).toBeTruthy();
+    expect(api.lockVault).not.toHaveBeenCalled();
+
+    fireEvent.keyDown(screen.getByText('intent: chats'), { key: 'l', ctrlKey: true });
+    expect(asked.map(question => question.reason)).toEqual(['lock', 'lock']);
+    await asked[1]!.answer(true);
+    expect(await heading('Hola de nuevo, Rechi')).toBeTruthy();
+    expect(api.calls).toEqual(['status', 'lockVault', 'status']);
+  });
+
+  it('closes the window during a call only once the call lets it, after clearing the call flag', async () => {
+    const { asked } = callInProgress();
+    const api = fakeApi(VAULT);
+    const windowApi = fakeWindow();
+    render(<App api={api} windowApi={windowApi} Main={FakeMain} />);
+    await heading('Hola de nuevo, Rechita');
+    await unlockWith(PASS);
+    api.setCallActive.mockClear();
+
+    act(() => api.requested.close!());
+    expect(asked.map(question => question.reason)).toEqual(['close']);
+    await asked[0]!.answer(false);
+    expect(windowApi.close).not.toHaveBeenCalled();
+    expect(api.setCallActive).not.toHaveBeenCalled();
+
+    act(() => api.requested.close!());
+    await asked[1]!.answer(true);
+    expect(api.setCallActive).toHaveBeenCalledWith(false);
+    expect(windowApi.close).toHaveBeenCalledTimes(1);
+  });
+
+  it('hangs the call up before quitting from the tray, then clears the call flag', async () => {
+    const { asked } = callInProgress();
+    const api = fakeApi(VAULT);
+    renderApp(api);
+    await heading('Hola de nuevo, Rechita');
+    await unlockWith(PASS);
+    api.setCallActive.mockClear();
+
+    act(() => api.requested.quit!());
+    expect(asked.map(question => question.reason)).toEqual(['quit']);
+    expect(api.setCallActive).not.toHaveBeenCalled();
+    await asked[0]!.answer(true);
+    expect(api.setCallActive).toHaveBeenCalledWith(false);
+  });
+
+  // Locked, the chats and their calls are gone: a close request (a flag left behind) just closes.
+  it('closes at once when the chats are not open', async () => {
+    const { confirmEnd } = callInProgress();
+    const api = fakeApi(VAULT);
+    const windowApi = fakeWindow();
+    render(<App api={api} windowApi={windowApi} Main={FakeMain} />);
+    await heading('Hola de nuevo, Rechita');
+
+    await act(async () => api.requested.close!());
+    expect(confirmEnd).not.toHaveBeenCalled();
+    expect(api.setCallActive).toHaveBeenLastCalledWith(false);
+    expect(windowApi.close).toHaveBeenCalledTimes(1);
   });
 });

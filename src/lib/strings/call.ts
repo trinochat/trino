@@ -1,7 +1,7 @@
 /**
  * The texts of calls and verification (W6), under `call2.*` and `verify.*`.
- * Its contract is call.test.ts. The old call screen's `call.*` texts stay in
- * legacy.ts until the integration (I5) deletes them with that screen.
+ * Its contract is call.test.ts. The old call screen's `call.*` texts went
+ * with that screen (I5).
  */
 import type { AreaStrings } from './types';
 
