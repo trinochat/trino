@@ -55,7 +55,6 @@ const KEYS: string[] = [
   'inbox.profile.settings',
   // The shell around the panes.
   'shell.nav',
-  'shell.details',
   'shell.error.history',
   'shell.error.reconnect',
   'shell.error.forward',

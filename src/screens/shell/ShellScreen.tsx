@@ -708,12 +708,11 @@ export function ShellScreen(props: ShellScreenProps) {
           </main>
         )}
         {detailsLayout === 'aside' && detailsPanel && (
-          <aside
-            aria-label={t('shell.details')}
-            className="flex min-h-0 w-[21.25rem] shrink-0 flex-col border-s border-ui-line bg-ui-surface"
-          >
+          // A column, no landmark: the panel beside the chat is one itself, an
+          // <aside> named for the contact or the group (W4, W5).
+          <div className="flex min-h-0 w-[21.25rem] shrink-0 flex-col border-s border-ui-line bg-ui-surface">
             {detailsPanel}
-          </aside>
+          </div>
         )}
       </div>
       {/*

@@ -363,11 +363,12 @@ describe('MainScreen: the chats', () => {
     const { resize } = setup({ width: 1280 });
     fireEvent.click(await row('Familia'));
     fireEvent.click(screen.getByRole('button', { name: 'Detalles del grupo' }));
-    const aside = screen.getByRole('complementary', { name: 'Detalles del chat' });
-    expect(within(aside).getByRole('heading', { name: 'Familia' })).toBeTruthy();
+    // One landmark beside the chat, the panel's own, named for the group.
+    const asides = screen.getAllByRole('complementary');
+    expect(asides).toEqual([screen.getByRole('complementary', { name: 'Familia' })]);
 
     resize(1024);
-    expect(screen.queryByRole('complementary', { name: 'Detalles del chat' })).toBeNull();
+    expect(screen.queryByRole('complementary')).toBeNull();
     expect(await screen.findByRole('dialog', { name: 'Familia' })).toBeTruthy();
   });
 

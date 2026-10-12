@@ -242,11 +242,16 @@ describe('ShellScreen: layout', () => {
     fireEvent.click(await row('Ana'));
     fireEvent.click(screen.getByRole('button', { name: 'Detalles' }));
     expect(lastProps(slots.contactDetails).layout).toBe('aside');
-    expect(within(screen.getByRole('complementary', { name: 'Detalles del chat' })).getByTestId('contact-details')).toBeTruthy();
+    // Beside the chat, in a column that is no landmark of its own: the panel
+    // is the landmark, named for the contact or the group (W4, W5).
+    const main = screen.getByRole('main');
+    const panel = screen.getByTestId('contact-details');
+    expect(main.contains(panel)).toBe(false);
+    expect(main.compareDocumentPosition(panel) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(screen.queryByRole('complementary')).toBeNull();
 
     rerenderWith({ width: 1119 });
     expect(lastProps(slots.contactDetails).layout).toBe('dialog');
-    expect(screen.queryByRole('complementary', { name: 'Detalles del chat' })).toBeNull();
 
     fireEvent.click(await row('Familia'));
     fireEvent.click(screen.getByRole('button', { name: 'Detalles' }));
@@ -317,7 +322,7 @@ describe('ShellScreen: under the call screen', () => {
     const covered = [
       sidebar()!,
       screen.getByRole('main'),
-      screen.getByRole('complementary', { name: 'Detalles del chat' }),
+      screen.getByTestId('contact-details'),
       await screen.findByText('No se pudo cargar el historial de tus chats.'),
       screen.getByTestId('call-bar'),
     ];
@@ -455,7 +460,7 @@ describe('ShellScreen: where the focus goes', () => {
     press(await row('Ana'));
     fireEvent.click(screen.getByRole('button', { name: 'Detalles' }));
     press(screen.getByRole('button', { name: 'Cerrar detalles' }));
-    expect(screen.queryByRole('complementary', { name: 'Detalles del chat' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Cerrar detalles' })).toBeNull();
     expect(document.activeElement).toBe(screen.getByRole('main', { name: 'Ana' }));
   });
 
