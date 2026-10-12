@@ -24,9 +24,11 @@ const KEYS: string[] = [
   'call2.endConfirm.lockConfirm', 'call2.endConfirm.closeConfirm',
   // The call screen (Call:81-164).
   'call2.screen.label', 'call2.screen.calling', 'call2.screen.connecting', 'call2.screen.back',
-  'call2.screen.controls', 'call2.screen.mute', 'call2.screen.camera', 'call2.screen.output',
-  'call2.screen.outputUnnamed', 'call2.screen.hangup', 'call2.screen.remoteVideo', 'call2.screen.localVideo',
-  'call2.screen.cameraError',
+  'call2.screen.controls', 'call2.screen.mute', 'call2.screen.camera', 'call2.screen.hangup',
+  'call2.screen.remoteVideo', 'call2.screen.localVideo', 'call2.screen.cameraError', 'call2.screen.microphoneError',
+  // The menus of the call's devices, beside each control (12 Oct 2026).
+  'call2.screen.chooseMicrophone', 'call2.screen.chooseOutput', 'call2.screen.chooseCamera',
+  'call2.screen.microphoneUnnamed', 'call2.screen.outputUnnamed', 'call2.screen.cameraUnnamed',
   // The SAS v2 of the call: the key at the top and the comparison (Call:112-153).
   'call2.sas.pill', 'call2.sas.pillVerified', 'call2.sas.verified', 'call2.sas.title', 'call2.sas.body',
   'call2.sas.list', 'call2.sas.match', 'call2.sas.mismatch', 'call2.sas.mismatchAlert',
@@ -42,7 +44,9 @@ const KEYS: string[] = [
 const PLACEHOLDERS = {
   'call2.consent.bodyIncoming': ['name'],
   'call2.screen.label': ['name'],
+  'call2.screen.microphoneUnnamed': ['n'],
   'call2.screen.outputUnnamed': ['n'],
+  'call2.screen.cameraUnnamed': ['n'],
   'call2.screen.remoteVideo': ['name'],
   'call2.sas.pill': ['words'],
   'call2.sas.pillVerified': ['words'],

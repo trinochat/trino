@@ -9,28 +9,32 @@
  * It covers the shell, so it takes the focus as it shows (the contact's
  * name): nothing hidden behind it keeps the focus, and Escape works at once.
  *
- * CallLayer lays it over the shell's area and passes the audio outputs.
+ * CallLayer lays it over the shell's area and passes the devices: each
+ * control is a pill with a chevron that chooses its microphone, output or
+ * camera (David, 12 Oct 2026, instead of the output's dropdown).
  */
 import { Mic, MicOff, Minimize2, Video, VideoOff } from 'lucide-react';
 import { useEffect, useRef } from 'react';
 import { identityInitials } from '../../lib/initials';
 import { useT } from '../../lib/i18n';
-import { Avatar, Banner, IconButton, Select, iconSize } from '../../ui';
+import { Avatar, Banner, IconButton, iconSize } from '../../ui';
+import type { CallDevices } from './CallMediaSink';
 import { callClock, useNow } from './call-view-model';
 import { ConnectionModeLine } from './ConnectionModeLine';
-import { CallToggle, HangUpButton } from './controls';
+import { CallControlPill, CallToggle, DeviceMenu, HangUpButton, SpeakerControl, deviceChoices } from './controls';
 import { SasKey } from './SasKey';
 import type { CallController } from './useCallController';
 
 export interface CallScreenProps {
   controller: CallController;
-  /** The audio outputs to choose from; the choice shows only with more than one. */
-  outputs: readonly MediaDeviceInfo[];
+  /** The devices to choose from; a kind with none has no chevron, and no outputs no speaker. */
+  devices: CallDevices;
+  /** The audio output chosen; undefined is the system's ("default"). */
   sinkId: string | undefined;
   onSinkChange(deviceId: string): void;
 }
 
-export function CallScreen({ controller: call, outputs, sinkId, onSinkChange }: CallScreenProps) {
+export function CallScreen({ controller: call, devices, sinkId, onSinkChange }: CallScreenProps) {
   const t = useT();
   const now = useNow(call.connectedAt !== null);
   const name = call.peer?.name ?? '';
@@ -145,36 +149,53 @@ export function CallScreen({ controller: call, outputs, sinkId, onSinkChange }: 
         </div>
 
         {call.notice === 'camera' && <Banner tone="danger">{t('call2.screen.cameraError')}</Banner>}
+        {call.notice === 'microphone' && <Banner tone="danger">{t('call2.screen.microphoneError')}</Banner>}
 
         <div role="group" aria-label={t('call2.screen.controls')} className="flex flex-wrap items-center justify-center gap-3">
-          <CallToggle
-            label={t('call2.screen.mute')}
-            pressed={call.media.muted}
-            icons={{ pressed: MicOff, idle: Mic }}
-            size="screen"
-            onClick={call.toggleMute}
-          />
-          <CallToggle
-            label={t('call2.screen.camera')}
-            pressed={call.media.cameraOn}
-            icons={{ pressed: Video, idle: VideoOff }}
-            size="screen"
-            onClick={call.toggleCamera}
-          />
-          {outputs.length > 1 && (
-            <Select
-              aria-label={t('call2.screen.output')}
-              value={sinkId ?? outputs[0]!.deviceId}
-              onChange={event => onSinkChange(event.target.value)}
-              className="max-w-full"
-            >
-              {outputs.map((device, i) => (
-                <option key={device.deviceId} value={device.deviceId}>
-                  {device.label || t('call2.screen.outputUnnamed', { n: i + 1 })}
-                </option>
-              ))}
-            </Select>
+          <CallControlPill>
+            <CallToggle
+              label={t('call2.screen.mute')}
+              pressed={call.media.muted}
+              icons={{ pressed: MicOff, idle: Mic }}
+              size="screen"
+              onClick={call.toggleMute}
+              inPill
+            />
+            {devices.microphones.length > 0 && (
+              <DeviceMenu
+                label={t('call2.screen.chooseMicrophone')}
+                devices={deviceChoices(devices.microphones, n => t('call2.screen.microphoneUnnamed', { n }))}
+                selectedId={call.media.microphoneId}
+                onSelect={id => void call.selectMicrophone(id)}
+              />
+            )}
+          </CallControlPill>
+          {devices.outputs.length > 0 && (
+            <SpeakerControl
+              label={t('call2.screen.chooseOutput')}
+              devices={deviceChoices(devices.outputs, n => t('call2.screen.outputUnnamed', { n }))}
+              selectedId={sinkId ?? 'default'}
+              onSelect={onSinkChange}
+            />
           )}
+          <CallControlPill>
+            <CallToggle
+              label={t('call2.screen.camera')}
+              pressed={call.media.cameraOn}
+              icons={{ pressed: Video, idle: VideoOff }}
+              size="screen"
+              onClick={call.toggleCamera}
+              inPill
+            />
+            {devices.cameras.length > 0 && (
+              <DeviceMenu
+                label={t('call2.screen.chooseCamera')}
+                devices={deviceChoices(devices.cameras, n => t('call2.screen.cameraUnnamed', { n }))}
+                selectedId={call.media.cameraId}
+                onSelect={id => void call.selectCamera(id)}
+              />
+            )}
+          </CallControlPill>
           <HangUpButton label={t('call2.screen.hangup')} size="screen" onClick={call.hangup} />
         </div>
       </div>

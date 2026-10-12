@@ -15,7 +15,7 @@ import { useEffect, useRef, useState } from 'react';
 import type { CallSlot } from '../types';
 import { CallBar } from './CallBar';
 import { CallEndedCard } from './CallEndedCard';
-import { CallMediaSink, useAudioOutputs } from './CallMediaSink';
+import { CallMediaSink, useCallDevices } from './CallMediaSink';
 import { CallScreen } from './CallScreen';
 import { useNow } from './call-view-model';
 import { DirectCallConsentDialog } from './DirectCallConsentDialog';
@@ -38,11 +38,12 @@ export function callCoversShell(call: Pick<CallController, 'view' | 'minimized'>
 
 export function CallLayer({ controller: call }: CallLayerProps) {
   const [sinkId, setSinkId] = useState<string>();
-  const outputs = useAudioOutputs(call.activePeer !== null);
+  // The names come with the permission: ask again once the call opens its microphone or its camera.
+  const devices = useCallDevices(call.activePeer !== null, `${call.localStream?.id ?? ''}:${call.media.hasVideo}`);
   return (
     <>
       <CallMediaSink stream={call.remoteStream} sinkId={sinkId} />
-      {callCoversShell(call) && <CallScreen controller={call} outputs={outputs} sinkId={sinkId} onSinkChange={setSinkId} />}
+      {callCoversShell(call) && <CallScreen controller={call} devices={devices} sinkId={sinkId} onSinkChange={setSinkId} />}
       <IncomingCallDialog
         open={call.view === 'incoming'}
         name={call.peer?.name ?? ''}

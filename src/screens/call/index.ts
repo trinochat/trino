@@ -11,6 +11,7 @@ export {
   type CallControllerDeps,
   type CallEndCard,
   type CallEngine,
+  type CallNotice,
   type CallPeer,
   type CallSas,
   type CallSounds,
@@ -20,7 +21,7 @@ export { ActiveCallBar, CallLayer, callCoversShell, callSlot, type CallLayerProp
 export { CallBar, type CallBarProps } from './CallBar';
 export { CallScreen, type CallScreenProps } from './CallScreen';
 export { CallEndedCard, type CallEndedCardProps } from './CallEndedCard';
-export { CallMediaSink, canChooseOutput, useAudioOutputs, type CallMediaSinkProps } from './CallMediaSink';
+export { CallMediaSink, canChooseOutput, useCallDevices, type CallDevices, type CallMediaSinkProps } from './CallMediaSink';
 export { ConnectionModeLine, type ConnectionModeLineProps } from './ConnectionModeLine';
 export { DirectCallConsentDialog, type DirectCallConsentDialogProps } from './DirectCallConsentDialog';
 export { EndCallConfirmDialog, type EndCallConfirmDialogProps } from './EndCallConfirmDialog';

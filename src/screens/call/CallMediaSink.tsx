@@ -4,9 +4,9 @@
  * call is minimized to its bar or its screen is closed. The call screen's
  * videos are muted: the sound plays only here.
  *
- * Where the system lets the app choose (`setSinkId`) and there is more than
- * one output, the call screen offers them by their real names
- * (`useAudioOutputs`), and the sound goes to the one chosen.
+ * Where the system lets the app choose (`setSinkId`), the call screen offers
+ * the outputs by their real names in the speaker's menu (`useCallDevices`),
+ * and the sound goes to the one chosen.
  */
 import { useEffect, useRef, useState } from 'react';
 
@@ -39,35 +39,55 @@ export function canChooseOutput(): boolean {
   );
 }
 
+/** The devices a call can use, each kind in the order the system lists them. */
+export interface CallDevices {
+  microphones: MediaDeviceInfo[];
+  /** Empty where the output cannot be chosen (no `setSinkId`). */
+  outputs: MediaDeviceInfo[];
+  cameras: MediaDeviceInfo[];
+}
+
+const NONE: CallDevices = { microphones: [], outputs: [], cameras: [] };
+
 /**
- * The audio outputs while `active` (a call is on), kept up to date when a
- * device comes or goes; none where the output cannot be chosen.
+ * The microphones, audio outputs and cameras while `active` (a call is on),
+ * for the call screen's menus, kept up to date when a device comes or goes.
+ * A device with no id is left out: Chromium lists one per kind before that
+ * kind's permission, and there is nothing to choose in it. The names come
+ * with the permission too, so a change of `refresh` (the call opening its
+ * microphone or camera) asks the system again.
  */
-export function useAudioOutputs(active: boolean): MediaDeviceInfo[] {
-  const [outputs, setOutputs] = useState<MediaDeviceInfo[]>([]);
+export function useCallDevices(active: boolean, refresh?: unknown): CallDevices {
+  const [devices, setDevices] = useState<CallDevices>(NONE);
   useEffect(() => {
-    const devices = typeof navigator === 'undefined' ? undefined : navigator.mediaDevices;
-    if (!active || !canChooseOutput() || !devices?.enumerateDevices) {
-      setOutputs([]);
+    const media = typeof navigator === 'undefined' ? undefined : navigator.mediaDevices;
+    if (!active || !media?.enumerateDevices) {
+      setDevices(NONE);
       return;
     }
     let current = true;
     const load = () => {
-      devices
+      media
         .enumerateDevices()
         .then(list => {
-          if (current) setOutputs(list.filter(device => device.kind === 'audiooutput'));
+          if (!current) return;
+          const of = (kind: MediaDeviceKind) => list.filter(device => device.kind === kind && device.deviceId !== '');
+          setDevices({
+            microphones: of('audioinput'),
+            outputs: canChooseOutput() ? of('audiooutput') : [],
+            cameras: of('videoinput'),
+          });
         })
         .catch(() => {
-          if (current) setOutputs([]);
+          if (current) setDevices(NONE);
         });
     };
     load();
-    devices.addEventListener?.('devicechange', load);
+    media.addEventListener?.('devicechange', load);
     return () => {
       current = false;
-      devices.removeEventListener?.('devicechange', load);
+      media.removeEventListener?.('devicechange', load);
     };
-  }, [active]);
-  return outputs;
+  }, [active, refresh]);
+  return devices;
 }

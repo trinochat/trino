@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
-import { cleanup, render, renderHook, waitFor } from '@testing-library/react';
+import { act, cleanup, render, renderHook, waitFor } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { CallMediaSink, useAudioOutputs } from './CallMediaSink';
+import { CallMediaSink, useCallDevices } from './CallMediaSink';
 
 afterEach(() => {
   cleanup();
@@ -37,7 +37,7 @@ describe('CallMediaSink', () => {
   });
 });
 
-describe('useAudioOutputs', () => {
+describe('useCallDevices', () => {
   function devices(list: Array<Partial<MediaDeviceInfo>>) {
     const listeners = new Set<() => void>();
     const mediaDevices = {
@@ -46,41 +46,68 @@ describe('useAudioOutputs', () => {
       removeEventListener: vi.fn((_: string, fn: () => void) => listeners.delete(fn)),
     };
     vi.stubGlobal('navigator', { mediaDevices });
-    return { mediaDevices, listeners };
+    return { mediaDevices, listeners, list };
   }
 
-  const OUTPUTS = [
-    { kind: 'audiooutput', deviceId: 'default', label: 'Parlantes (Realtek)' },
-    { kind: 'audioinput', deviceId: 'mic', label: 'Micrófono' },
-    { kind: 'audiooutput', deviceId: 'usb', label: 'Audífonos USB' },
+  const DEVICES = [
+    { kind: 'audiooutput', deviceId: 'default', label: 'Predeterminado - Parlantes (Realtek)' },
+    { kind: 'audioinput', deviceId: 'default', label: 'Predeterminado - Micrófono (Realtek)' },
+    { kind: 'audioinput', deviceId: 'usb', label: 'Micrófono USB' },
+    { kind: 'videoinput', deviceId: 'cam-1', label: 'Cámara integrada' },
+    { kind: 'audiooutput', deviceId: 'usb-out', label: 'Audífonos USB' },
   ] as const;
 
-  it('lists the real audio outputs while a call is on, when the output can be chosen', async () => {
+  const labels = (list: readonly MediaDeviceInfo[]) => list.map(d => d.label);
+
+  it('lists the microphones, the audio outputs and the cameras while a call is on', async () => {
     Object.defineProperty(HTMLMediaElement.prototype, 'setSinkId', { value: vi.fn(), configurable: true, writable: true });
-    const { mediaDevices } = devices([...OUTPUTS]);
-    const { result } = renderHook(() => useAudioOutputs(true));
-    await waitFor(() => expect(result.current.map(d => d.label)).toEqual(['Parlantes (Realtek)', 'Audífonos USB']));
+    const { mediaDevices } = devices([...DEVICES]);
+    const { result } = renderHook(() => useCallDevices(true));
+    await waitFor(() =>
+      expect(labels(result.current.microphones)).toEqual(['Predeterminado - Micrófono (Realtek)', 'Micrófono USB']),
+    );
+    expect(labels(result.current.outputs)).toEqual(['Predeterminado - Parlantes (Realtek)', 'Audífonos USB']);
+    expect(labels(result.current.cameras)).toEqual(['Cámara integrada']);
     expect(mediaDevices.addEventListener).toHaveBeenCalledWith('devicechange', expect.any(Function));
   });
 
-  it('lists nothing where the output cannot be chosen', async () => {
-    const { mediaDevices } = devices([...OUTPUTS]);
-    const { result } = renderHook(() => useAudioOutputs(true));
-    await new Promise(resolve => setTimeout(resolve, 10));
-    expect(result.current).toEqual([]);
-    expect(mediaDevices.enumerateDevices).not.toHaveBeenCalled();
+  it('lists no outputs where the output cannot be chosen, and still the microphones and cameras', async () => {
+    devices([...DEVICES]);
+    const { result } = renderHook(() => useCallDevices(true));
+    await waitFor(() => expect(result.current.microphones).toHaveLength(2));
+    expect(result.current.outputs).toEqual([]);
+    expect(result.current.cameras).toHaveLength(1);
+  });
+
+  // Before the permission of its kind, Chromium lists a device with an empty id: nothing to choose.
+  it('leaves out the devices it cannot name by id', async () => {
+    devices([...DEVICES, { kind: 'videoinput', deviceId: '', label: '' }]);
+    const { result } = renderHook(() => useCallDevices(true));
+    await waitFor(() => expect(result.current.cameras).toHaveLength(1));
+  });
+
+  it('follows a device that comes or goes, and asks again when the call opens its media', async () => {
+    const { mediaDevices, listeners, list } = devices([...DEVICES]);
+    const { result, rerender } = renderHook(({ key }) => useCallDevices(true, key), { initialProps: { key: 'a' } });
+    await waitFor(() => expect(result.current.cameras).toHaveLength(1));
+    (list as Array<Partial<MediaDeviceInfo>>).push({ kind: 'videoinput', deviceId: 'cam-2', label: 'Cámara USB' });
+    act(() => listeners.forEach(fn => fn()));
+    await waitFor(() => expect(labels(result.current.cameras)).toEqual(['Cámara integrada', 'Cámara USB']));
+    const asked = mediaDevices.enumerateDevices.mock.calls.length;
+    rerender({ key: 'b' });
+    await waitFor(() => expect(mediaDevices.enumerateDevices.mock.calls.length).toBeGreaterThan(asked));
   });
 
   it('lists nothing without a call, and stops listening after it', async () => {
-    Object.defineProperty(HTMLMediaElement.prototype, 'setSinkId', { value: vi.fn(), configurable: true, writable: true });
-    const { mediaDevices, listeners } = devices([...OUTPUTS]);
-    const { result, rerender } = renderHook(({ on }) => useAudioOutputs(on), { initialProps: { on: false } });
-    expect(result.current).toEqual([]);
+    const { mediaDevices, listeners } = devices([...DEVICES]);
+    const { result, rerender } = renderHook(({ on }) => useCallDevices(on), { initialProps: { on: false } });
+    expect(result.current.microphones).toEqual([]);
     expect(mediaDevices.enumerateDevices).not.toHaveBeenCalled();
     rerender({ on: true });
-    await waitFor(() => expect(result.current).toHaveLength(2));
+    await waitFor(() => expect(result.current.microphones).toHaveLength(2));
     rerender({ on: false });
     expect(listeners.size).toBe(0);
-    expect(result.current).toEqual([]);
+    expect(result.current.microphones).toEqual([]);
+    expect(result.current.cameras).toEqual([]);
   });
 });
