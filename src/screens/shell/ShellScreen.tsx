@@ -18,7 +18,8 @@
  * conversation came from. Under "No leídos" the chat just opened stays
  * listed, read, until the chip or the chat changes.
  *
- * Ctrl+K goes back to Chats and to the search; Ctrl+L locks.
+ * Ctrl+K goes back to Chats and to the search. Ctrl+L, which locks, is the
+ * app's (App.tsx), as is the lock itself.
  */
 import { Fragment, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { THEMES } from '../../design/tokens';
@@ -236,17 +237,13 @@ export function ShellScreen(props: ShellScreenProps) {
     return () => window.removeEventListener('focus', onFocus);
   }, [markRead, markSeen]);
 
-  // Ctrl+K and Ctrl+L, from anywhere. Ctrl+K leaves an open dialog alone,
-  // which keeps the keyboard, and the call screen, under which the panes are
-  // inert; locking always goes.
+  // Ctrl+K, from anywhere. It leaves an open dialog alone, which keeps the
+  // keyboard, and the call screen, under which the panes are inert. Ctrl+L
+  // is App's: it locks from anywhere in the chats, asking first during a call.
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       if (!(event.ctrlKey || event.metaKey) || event.altKey || event.isComposing) return;
-      const key = event.key.toLowerCase();
-      if (key === 'l') {
-        event.preventDefault();
-        latest.current.onLock();
-      } else if (key === 'k' && !latest.current.call.covering && !document.querySelector('[aria-modal="true"]')) {
+      if (event.key.toLowerCase() === 'k' && !latest.current.call.covering && !document.querySelector('[aria-modal="true"]')) {
         event.preventDefault();
         setTab('chats');
         setPane('list');

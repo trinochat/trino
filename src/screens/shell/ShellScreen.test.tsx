@@ -518,10 +518,14 @@ describe('ShellScreen: keyboard', () => {
     await waitFor(() => expect(document.activeElement).toBe(screen.getByRole('searchbox', { name: 'Buscar chats' })));
   });
 
-  it('locks with Ctrl+L', () => {
+  // App locks with Ctrl+L from anywhere in the chats, and asks first during
+  // a call (I2). A second handler here would be one lock too many.
+  it('leaves Ctrl+L to the app, which locks with it', () => {
     const { props } = setup();
-    fireEvent.keyDown(window, { key: 'l', ctrlKey: true });
-    expect(props.onLock).toHaveBeenCalledTimes(1);
+    const press = new KeyboardEvent('keydown', { key: 'l', ctrlKey: true, bubbles: true, cancelable: true });
+    window.dispatchEvent(press);
+    expect(props.onLock).not.toHaveBeenCalled();
+    expect(press.defaultPrevented).toBe(false);
   });
 });
 
