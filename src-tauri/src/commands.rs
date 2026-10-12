@@ -5534,6 +5534,35 @@ mod tests {
         assert_eq!(file.thumb, Some(preview_of(8_000)));
     }
 
+    #[test]
+    fn every_preview_the_app_makes_fits_an_announcement() {
+        // fitThumb (src/lib/media.ts) shrinks a photo's or a video's preview
+        // until its data URL is at most THUMB_MAX_CHARS, and a sticker goes
+        // with its picture inline only up to the same length
+        // (sticker-limits.ts). Should that drift past what an announcement
+        // holds, send_file would answer message_too_long for every such file
+        // before its upload, and the composer offers to try again.
+        let media = include_str!("../../src/lib/media.ts");
+        let max: usize = media
+            .lines()
+            .find_map(|line| line.trim().strip_prefix("export const THUMB_MAX_CHARS = "))
+            .and_then(|value| value.trim_end().strip_suffix(';'))
+            .map(|value| value.trim().replace('_', "").parse().expect("a number"))
+            .expect("THUMB_MAX_CHARS in media.ts");
+        // The longest name a file system gives (255 UTF-16 units, 3 bytes
+        // each here), a long type, a file of 25 MiB and a group.
+        let name = "字".repeat(255);
+        let mime = "application/vnd.openxmlformats-officedocument.presentationml.presentation";
+        let data = "A".repeat(25 * 1024 * 1024 / 3 * 4 + 4);
+        let gid = "ab".repeat(32);
+        let fits = |chars: usize| {
+            announcement_fits(&name, mime, &data, Some(&"t".repeat(chars)), Some(&gid))
+        };
+        assert!(fits(max), "a preview of {max} characters");
+        // The check can fail: a preview a fifth longer does not fit.
+        assert!(!fits(max * 6 / 5));
+    }
+
     #[tokio::test]
     async fn the_largest_frame_of_a_message_bounds_the_event_sealed_for_it() {
         let relay = TestRelay::start(Answer::Accept).await;
