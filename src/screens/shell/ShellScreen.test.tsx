@@ -813,3 +813,46 @@ describe('ShellScreen: verifying a contact', () => {
     expect(await verify('Bea')).toMatchObject({ peer: { handle: 'Bea' }, verified: false });
   });
 });
+
+describe('ShellScreen: the right-click menu of the chats', () => {
+  const rightClick = (element: Element) => fireEvent.contextMenu(element, { clientX: 40, clientY: 50 });
+
+  it('mutes a group from its row, and the row says so at once', async () => {
+    const { storage } = setup();
+    rightClick(await row('Familia'));
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Silenciar' }));
+    expect((await row('Familia')).textContent).toContain('Silenciado');
+    expect(storage.getItem('trino.pref.groupMuted:g1')).not.toBeNull();
+    rightClick(await row('Familia'));
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Activar sonido' }));
+    expect((await row('Familia')).textContent).not.toContain('Silenciado');
+  });
+
+  it('opens the details of a group or a contact from its row', async () => {
+    const { slots } = setup({ width: 1120 });
+    rightClick(await row('Familia'));
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Ver detalles' }));
+    expect(lastProps(slots.chat).convo).toEqual({ kind: 'group', gid: 'g1' });
+    expect(lastProps(slots.groupPanel)).toMatchObject({ group: FAMILIA, layout: 'aside' });
+    rightClick(await row('Ana'));
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Ver detalles' }));
+    expect(lastProps(slots.chat).convo).toEqual({ kind: 'contact', handle: 'Ana' });
+    expect(screen.getByTestId('contact-details')).toBeTruthy();
+  });
+
+  it('calls a contact from its row, with voice or video, and never one you blocked', async () => {
+    const { call } = setup({}, { nodes: [node('Ana'), node('Bea', { blocked: true })] });
+    rightClick(await row('Ana'));
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Videollamada' }));
+    expect(call.start).toHaveBeenCalledWith('Ana', true);
+    rightClick(await row('Bea'));
+    expect(screen.getAllByRole('menuitem').map(item => item.textContent)).toEqual(['Ver detalles']);
+  });
+
+  it('mutes Novedades from its row', async () => {
+    setup();
+    rightClick(await row('Novedades'));
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Silenciar' }));
+    expect((await row('Novedades')).textContent).toContain('Silenciado');
+  });
+});

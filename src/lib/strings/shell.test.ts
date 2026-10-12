@@ -13,6 +13,13 @@ const KEYS: string[] = [
   'inbox.unread',
   'inbox.group',
   'inbox.muted',
+  // The right-click menu of a row (MC-2).
+  'inbox.rowMenu',
+  'inbox.mute',
+  'inbox.unmute',
+  'inbox.details',
+  'inbox.voiceCall',
+  'inbox.videoCall',
   'inbox.trust.verified',
   'inbox.trust.keyChanged',
   // The head of the sidebar, its search and its chips.
@@ -72,6 +79,7 @@ const PLACEHOLDERS: Record<string, string[]> = {
   'inbox.preview.file': ['name'],
   'inbox.connection.connected': ['up', 'total'],
   'inbox.noMatch': ['q'],
+  'inbox.rowMenu': ['name'],
   'inbox.tabs.callsMissed': ['n'],
   'inbox.tabs.callsMissedA11y': ['n'],
   'inbox.calls.callTo': ['name'],

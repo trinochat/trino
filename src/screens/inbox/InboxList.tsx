@@ -13,13 +13,32 @@
  *
  * Each item carries its chat's key (data-row-key), for the shell to give
  * the focus back to the row when one pane returns to the list.
+ *
+ * A right-click on a row, or Shift + F10 or the menu key on it, opens its
+ * menu (MC-2, PropMenuContextual case 6), with what the chat already offers
+ * elsewhere: a group, Silenciar or Activar sonido and Ver detalles; a
+ * contact, Llamada de voz and Videollamada when you can call them, and Ver
+ * detalles; Novedades, Silenciar or Activar sonido. A contact cannot be
+ * muted. The row stays marked while its menu is open.
  */
-import { BellOff } from 'lucide-react';
+import { Bell, BellOff, Info, Phone, Video } from 'lucide-react';
+import { useState } from 'react';
 import { rowTime } from '../../lib/dates';
 import { useT } from '../../lib/i18n';
 import { useLang } from '../../lib/i18n-context';
-import { ChatRow, cx, iconSize, type ChatRowProps } from '../../ui';
+import { ChatRow, cx, iconSize, useContextMenu, type ChatRowProps, type MenuEntry } from '../../ui';
 import type { ConvoRef, InboxItem } from '../types';
+
+/** What the menu of a row does; the shell owns each action. */
+export interface InboxRowActions {
+  /** Silenciar or Activar sonido, for a group or Novedades. */
+  onToggleMuted(ref: ConvoRef): void;
+  /** Opens the chat with its details, for a contact or a group. */
+  onOpenDetails(ref: ConvoRef): void;
+  /** Whether a contact can be called: not one you blocked. */
+  canCall(handle: string): boolean;
+  onCall(handle: string, video: boolean): void;
+}
 
 export interface InboxListProps {
   items: readonly InboxItem[];
@@ -30,15 +49,50 @@ export interface InboxListProps {
   'aria-label': string;
   /** What the list says when it has no rows. */
   emptyText: string;
+  /** The actions of the rows' right-click menu; without them, no row has one. */
+  rowActions?: InboxRowActions;
 }
 
 /** The parts that are there, joined as the rows join them: "Grupo · Papá: Hola". */
 const joined = (...parts: ReadonlyArray<string | undefined>): string | undefined =>
   parts.filter(part => part).join(' · ') || undefined;
 
-export function InboxList({ items, selectedKey, onSelect, now, emptyText, ...name }: InboxListProps) {
+/** The menu of a row: what the chat offers for it elsewhere. */
+function rowEntries(item: InboxItem, actions: InboxRowActions, t: (key: string) => string): MenuEntry[] {
+  const { ref } = item;
+  const entries: MenuEntry[] = [];
+  if (ref.kind === 'contact' && actions.canCall(ref.handle)) {
+    entries.push(
+      { id: 'voice', label: t('inbox.voiceCall'), icon: Phone, onSelect: () => actions.onCall(ref.handle, false) },
+      { id: 'video', label: t('inbox.videoCall'), icon: Video, onSelect: () => actions.onCall(ref.handle, true) },
+    );
+  }
+  if (ref.kind !== 'contact') {
+    entries.push(
+      item.muted
+        ? { id: 'unmute', label: t('inbox.unmute'), icon: Bell, onSelect: () => actions.onToggleMuted(ref) }
+        : { id: 'mute', label: t('inbox.mute'), icon: BellOff, onSelect: () => actions.onToggleMuted(ref) },
+    );
+  }
+  if (ref.kind !== 'channel') {
+    entries.push({ id: 'details', label: t('inbox.details'), icon: Info, onSelect: () => actions.onOpenDetails(ref) });
+  }
+  return entries;
+}
+
+export function InboxList({ items, selectedKey, onSelect, now, emptyText, rowActions, ...name }: InboxListProps) {
   const t = useT();
   const { lang } = useLang();
+  /** The row whose menu was asked for; it is marked while the menu is open. */
+  const [menuKey, setMenuKey] = useState<string | null>(null);
+  const contextMenu = useContextMenu(target => {
+    const key = target.closest<HTMLElement>('[data-row-key]')?.dataset.rowKey;
+    const item = items.find(candidate => candidate.key === key);
+    if (!rowActions || !item) return null;
+    setMenuKey(item.key);
+    return { label: t('inbox.rowMenu', { name: item.name }), entries: rowEntries(item, rowActions, t) };
+  });
+  const marked = contextMenu.open ? menuKey : null;
   if (items.length === 0) return <p className="m-2 text-ui-md text-ui-muted">{emptyText}</p>;
 
   const trustOf = (item: InboxItem): ChatRowProps['trust'] => {
@@ -56,6 +110,7 @@ export function InboxList({ items, selectedKey, onSelect, now, emptyText, ...nam
 
   return (
     <ul
+      {...contextMenu.triggerProps}
       aria-label={name['aria-label']}
       className="-mx-1 flex min-h-[8rem] grow basis-0 flex-col gap-0.5 overflow-y-auto px-1"
     >
@@ -70,7 +125,11 @@ export function InboxList({ items, selectedKey, onSelect, now, emptyText, ...nam
             trust={trustOf(item)}
             selected={item.key === selectedKey}
             onClick={() => onSelect(item.ref)}
-            className={cx(item.unread > 0 && 'font-bold', item.muted && 'pe-10')}
+            className={cx(
+              item.unread > 0 && 'font-bold',
+              item.muted && 'pe-10',
+              item.key === marked && item.key !== selectedKey && 'bg-ui-raised',
+            )}
           />
           {item.muted && (
             <span
@@ -82,6 +141,7 @@ export function InboxList({ items, selectedKey, onSelect, now, emptyText, ...nam
           )}
         </li>
       ))}
+      {contextMenu.menu}
     </ul>
   );
 }

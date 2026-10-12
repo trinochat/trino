@@ -84,6 +84,7 @@ export type ShellPrefs = Pick<
   | 'isVerified'
   | 'getTtl'
   | 'getGroupMuted'
+  | 'setGroupMuted'
   | 'getUpdatesMuted'
   | 'setUpdatesMuted'
   | 'getUpdatesLastRead'

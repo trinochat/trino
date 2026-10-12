@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { I18nContext, makeT } from '../../lib/i18n';
 import { LangCtx } from '../../lib/i18n-context';
 import type { InboxItem } from '../types';
+import type { InboxRowActions } from './InboxList';
 import { InboxPanel, type InboxPanelProps } from './InboxPanel';
 
 afterEach(cleanup);
@@ -468,5 +469,79 @@ describe('InboxPanel: room for large text', () => {
     expect(scrollerOf(screen.getByRole('searchbox', { name: 'Buscar chats' }))).toBe(region);
     expect(scrollerOf(screen.getByText(NOTICE.text))).toBe(region);
     expectRoomFor(list, region!);
+  });
+});
+
+describe('InboxPanel: the right-click menu of a row', () => {
+  const actions = (over: Partial<InboxRowActions> = {}): InboxRowActions => ({
+    onToggleMuted: vi.fn(),
+    onOpenDetails: vi.fn(),
+    canCall: handle => handle === 'Ana',
+    onCall: vi.fn(),
+    ...over,
+  });
+  const rightClick = (element: Element) => fireEvent.contextMenu(element, { clientX: 40, clientY: 50 });
+  const listed = () => screen.getAllByRole('menuitem').map(item => item.textContent);
+
+  it('offers Activar sonido and Ver detalles on a muted group, each with an icon', () => {
+    const rowActions = actions();
+    renderEs(<InboxPanel {...props({ rowActions })} />);
+    expect(rightClick(rowNamed(/^Familia/))).toBe(false);
+    expect(screen.getByRole('menu', { name: 'Opciones de Familia' })).toBeTruthy();
+    expect(listed()).toEqual(['Activar sonido', 'Ver detalles']);
+    for (const item of screen.getAllByRole('menuitem')) expect(item.querySelector('svg')).not.toBeNull();
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Activar sonido' }));
+    expect(rowActions.onToggleMuted).toHaveBeenCalledWith({ kind: 'group', gid: 'g1' });
+    rightClick(rowNamed(/^Familia/));
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Ver detalles' }));
+    expect(rowActions.onOpenDetails).toHaveBeenCalledWith({ kind: 'group', gid: 'g1' });
+  });
+
+  it('offers Silenciar on a group that is not muted, and on Novedades only that', () => {
+    const items = ITEMS.map(item => (item.key === 'grp:g1' ? { ...item, muted: false } : item));
+    renderEs(<InboxPanel {...props({ items, rowActions: actions() })} />);
+    rightClick(rowNamed(/^Familia/));
+    expect(listed()).toEqual(['Silenciar', 'Ver detalles']);
+    fireEvent.keyDown(document.activeElement!, { key: 'Escape' });
+    rightClick(rowNamed(/^Novedades de Trino/));
+    expect(listed()).toEqual(['Silenciar']);
+  });
+
+  it('offers the calls and Ver detalles on a contact you can call, and only Ver detalles on one you cannot', () => {
+    const rowActions = actions();
+    renderEs(<InboxPanel {...props({ rowActions })} />);
+    rightClick(rowNamed(/^Ana/));
+    expect(screen.getByRole('menu', { name: 'Opciones de Ana' })).toBeTruthy();
+    expect(listed()).toEqual(['Llamada de voz', 'Videollamada', 'Ver detalles']);
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Videollamada' }));
+    expect(rowActions.onCall).toHaveBeenCalledWith('Ana', true);
+    rightClick(rowNamed(/^Ana/));
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Llamada de voz' }));
+    expect(rowActions.onCall).toHaveBeenLastCalledWith('Ana', false);
+    rightClick(rowNamed(/^Carlos/));
+    expect(listed()).toEqual(['Ver detalles']);
+  });
+
+  it('marks the row while its menu is open, and gives the focus back to it', () => {
+    renderEs(<InboxPanel {...props({ rowActions: actions() })} />);
+    const familia = rowNamed(/^Familia/);
+    familia.focus();
+    fireEvent.keyDown(familia, { key: 'F10', shiftKey: true });
+    expect(document.activeElement).toBe(screen.getByRole('menuitem', { name: 'Activar sonido' }));
+    expect(classesOf(familia)).toContain('bg-ui-raised');
+    fireEvent.keyDown(document.activeElement!, { key: 'Escape' });
+    expect(screen.queryByRole('menu')).toBeNull();
+    expect(classesOf(familia)).not.toContain('bg-ui-raised');
+    expect(document.activeElement).toBe(familia);
+  });
+
+  it('opens nothing on the blank list, nor without the actions', () => {
+    renderEs(<InboxPanel {...props({ rowActions: actions() })} />);
+    expect(rightClick(screen.getByRole('list', { name: 'Chats' }))).toBe(true);
+    expect(screen.queryByRole('menu')).toBeNull();
+    cleanup();
+    renderEs(<InboxPanel {...props()} />);
+    expect(rightClick(rowNamed(/^Familia/))).toBe(true);
+    expect(screen.queryByRole('menu')).toBeNull();
   });
 });

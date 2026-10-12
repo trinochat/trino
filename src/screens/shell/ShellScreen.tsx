@@ -34,6 +34,7 @@ import { NoChatSelected } from '../chat/NoChatSelected';
 import { buildInboxItems } from '../inbox/inbox-model';
 import type { CallFilter } from '../inbox/call-history-model';
 import type { CallRowView } from '../inbox/CallRow';
+import type { InboxRowActions } from '../inbox/InboxList';
 import { InboxPanel } from '../inbox/InboxPanel';
 import type { InboxTab } from '../inbox/InboxTabs';
 import type {
@@ -140,6 +141,8 @@ export function ShellScreen(props: ShellScreenProps) {
   const [fromCall, setFromCall] = useState<{ key: string; peer: string } | null>(null);
   const [error, setError] = useState<ShellError | null>(null);
   const [strangersSeen, setStrangersSeen] = useState(0);
+  /** Groups muted from the inbox's menu: each one renders the shell again, which reads the marks anew. */
+  const [, setMutes] = useState(0);
   const [searchFocus, setSearchFocus] = useState(0);
   const searchRef = useRef<HTMLInputElement>(null);
   /** The chat opened from the list: listed under any chip until the chip or the chat changes. */
@@ -353,6 +356,28 @@ export function ShellScreen(props: ShellScreenProps) {
     conv.removed(key);
     setDraft(key, '');
     if (open?.kind === 'group' && open.gid === gid) forgetOpen();
+  };
+
+  /**
+   * The actions of a row's right-click menu (MC-2). A group's mute is a mark
+   * on this device that the inbox reads as it renders, so muting one renders
+   * the shell again; Novedades keeps its own.
+   */
+  const rowActions: InboxRowActions = {
+    onToggleMuted: ref => {
+      if (ref.kind === 'channel') {
+        channel.toggleMuted();
+      } else if (ref.kind === 'group') {
+        prefs.setGroupMuted(ref.gid, !prefs.getGroupMuted(ref.gid));
+        setMutes(count => count + 1);
+      }
+    },
+    onOpenDetails: ref => {
+      openConvo(ref);
+      setDetails(true);
+    },
+    canCall: callable,
+    onCall: (handle, video) => call.start(handle, video),
   };
 
   const mutedGroups = new Set(conv.groups.filter(group => prefs.getGroupMuted(group.gid)).map(group => group.gid));
@@ -699,6 +724,7 @@ export function ShellScreen(props: ShellScreenProps) {
               onAddContact={() => setOverlay({ kind: 'contacts', tab: 'add' })}
               notice={notice}
               now={conv.now}
+              rowActions={rowActions}
             />
           </nav>
         )}

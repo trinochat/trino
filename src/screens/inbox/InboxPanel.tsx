@@ -22,7 +22,7 @@ import { CallHistoryList } from './CallHistoryList';
 import type { CallRowView } from './CallRow';
 import { FilterChips } from './FilterChips';
 import { filterItems } from './inbox-model';
-import { InboxList } from './InboxList';
+import { InboxList, type InboxRowActions } from './InboxList';
 import { InboxTabs, type InboxTab } from './InboxTabs';
 import { ProfileFooter } from './ProfileFooter';
 
@@ -74,6 +74,8 @@ export interface InboxPanelProps {
   keepKey?: string | null;
   /** The Settings button of the foot, for the shell to give the focus back to. */
   settingsRef?: Ref<HTMLButtonElement>;
+  /** What the rows' right-click menu does (MC-2); without it, no row has one. */
+  rowActions?: InboxRowActions;
 }
 
 /** The chips of the inbox, in order; "Solicitudes" joins them with message requests (R6b). */
@@ -131,6 +133,7 @@ export function InboxPanel(props: InboxPanelProps) {
         onSelect={props.onSelect}
         now={props.now}
         emptyText={props.search.trim() ? t('inbox.noMatch', { q: props.search.trim() }) : t('inbox.empty')}
+        rowActions={props.rowActions}
       />
       {!props.hasContacts && (
         <div className="flex flex-col items-start gap-2 px-1">
