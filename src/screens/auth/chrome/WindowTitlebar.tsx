@@ -1,8 +1,7 @@
 /**
  * The window's own title bar (the window has no decorations): the Trino mark
- * and the three window buttons, each with its name. It replaces the old bar
- * with TRINO://DESKTOP. The whole bar drags the window, and Tauri maximizes
- * it on a double click.
+ * and the three window buttons, each with its name. The whole bar drags the
+ * window, and Tauri maximizes it on a double click.
  *
  * Its height is min(2.25rem, 48px): 36 px at 100 %, growing with the text but
  * never past 48 px, so at 200 % it does not eat the window (accesibilidad.md

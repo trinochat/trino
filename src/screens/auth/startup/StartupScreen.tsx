@@ -1,8 +1,9 @@
 /**
  * What shows while the app reads the status, and when it cannot (plan §3
- * W1). It replaces the boot console: no fake log, no TRINO://, nothing that
- * blinks (principle 1). The status usually answers in a few ms, so nothing
- * shows for the first moment, which would only flash before the next screen.
+ * W1): the Trino mark and one line, or the error with a button to try again.
+ * No fake log and nothing that blinks (principle 1). The status usually
+ * answers in a few ms, so nothing shows for the first moment, which would
+ * only flash before the next screen.
  */
 import { CircleAlert } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
