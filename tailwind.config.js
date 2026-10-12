@@ -102,5 +102,11 @@ export default {
       addVariant('full-motion', ':root[data-motion="full"] &');
       addVariant('wide-spacing', ':root[data-spacing="wide"] &');
     },
+    // The style of the appearance, which apply.ts marks on <html> too:
+    // `terminal:` for what Terminal draws its own way, such as the border of
+    // a menu, since it has no shadow.
+    function styleVariants({ addVariant }) {
+      addVariant('terminal', ':root[data-style="terminal"] &');
+    },
   ],
 };

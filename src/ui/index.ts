@@ -11,7 +11,18 @@ export { QR_FRAME } from './qr';
 export * from './controls';
 // Overlays.
 export { Dialog, type DialogProps } from './overlay/Dialog';
-export { Menu, type MenuItem, type MenuProps } from './overlay/Menu';
+export { Menu, type MenuEntry, type MenuItem, type MenuProps, type MenuSeparator } from './overlay/Menu';
+// The items and box both menus share, for a screen that lists the same entries.
+export { MENU_BOX, MenuEntries, isSeparator, moveInMenu, type MenuEntriesProps } from './overlay/menu-parts';
+export {
+  placeMenu,
+  useContextMenu,
+  type ContextMenuBuild,
+  type ContextMenuHandle,
+  type ContextMenuRequest,
+} from './overlay/ContextMenu';
+// Where the person types, which keeps the system's own right-click menu.
+export { isEditableTarget } from './editable';
 export {
   ToastProvider,
   useToast,

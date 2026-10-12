@@ -1,8 +1,9 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { Forward, Reply, Trash2 } from 'lucide-react';
 import { Dialog } from './Dialog';
-import { Menu, type MenuItem } from './Menu';
+import { Menu, type MenuEntry, type MenuItem } from './Menu';
 
 afterEach(cleanup);
 
@@ -171,5 +172,33 @@ describe('Menu', () => {
     expect(screen.queryByRole('menu')).toBeNull();
     expect(closeDialog).not.toHaveBeenCalled();
     expect(document.activeElement).toBe(trigger());
+  });
+
+  it('draws a 16 px icon on each item and a separator before the items that delete, which the arrows skip', () => {
+    const entries: MenuEntry[] = [
+      { id: 'reply', label: 'Responder', icon: Reply, onSelect: () => {} },
+      { id: 'forward', label: 'Reenviar', icon: Forward, onSelect: () => {} },
+      { id: 'sep', separator: true },
+      { id: 'delete', label: 'Borrar para mí', icon: Trash2, tone: 'danger', onSelect: () => {} },
+    ];
+    render(<Menu label="Opciones del mensaje" items={entries} />);
+    fireEvent.click(trigger());
+    for (const menuItem of screen.getAllByRole('menuitem')) {
+      expect(classesOf(menuItem.querySelector('svg')!)).toContain('size-[1rem]');
+    }
+    expect(screen.getByRole('menu').querySelectorAll('[role="separator"]')).toHaveLength(1);
+    press('ArrowDown');
+    press('ArrowDown');
+    expect(document.activeElement).toBe(item('Borrar para mí'));
+    press('End');
+    press('ArrowUp');
+    expect(document.activeElement).toBe(item('Reenviar'));
+  });
+
+  it('takes the control line for its border in Terminal, which has no shadow', () => {
+    renderMenu();
+    fireEvent.click(trigger());
+    const box = screen.getByRole('menu').parentElement!;
+    expect(classesOf(box)).toEqual(expect.arrayContaining(['border-ui-line', 'terminal:border-ui-control-line']));
   });
 });

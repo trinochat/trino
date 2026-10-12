@@ -31,6 +31,8 @@
  * dev builds.
  */
 
+import { isEditableTarget } from '../ui/editable';
+
 export interface BrowserChromeOptions {
   /**
    * Apple's platforms: the browser's shortcuts take Cmd there, while Ctrl and
@@ -38,20 +40,6 @@ export interface BrowserChromeOptions {
    * Option + ← a word back). By default, from the window's user agent.
    */
   apple?: boolean;
-}
-
-/** The input types that hold text to cut, copy and paste; a checkbox, a slider or a file field has none. */
-const TEXT_INPUT_TYPES: ReadonlySet<string> = new Set(['text', 'search', 'url', 'tel', 'email', 'password', 'number']);
-
-/**
- * Whether the menu was asked for where the person types: a text field or
- * editable content (`:read-write`) that is neither read-only nor disabled.
- * Anywhere else the native menu would be the page's.
- */
-function isEditable(target: EventTarget | null): boolean {
-  if (!(target instanceof Element)) return false;
-  if (target instanceof HTMLInputElement && !TEXT_INPUT_TYPES.has(target.type)) return false;
-  return target.matches(':read-write') && !target.matches(':disabled');
 }
 
 /**
@@ -113,7 +101,7 @@ const isApple = (userAgent: string) => /Macintosh|iPhone|iPad|iPod/.test(userAge
 export function installBrowserChromeGuard(host: Window, options: BrowserChromeOptions = {}): () => void {
   const apple = options.apple ?? isApple(host.navigator.userAgent);
   const onContextMenu = (event: Event) => {
-    if (!event.defaultPrevented && !isEditable(event.target)) event.preventDefault();
+    if (!event.defaultPrevented && !isEditableTarget(event.target)) event.preventDefault();
   };
   const onKeyDown = (event: KeyboardEvent) => {
     if (isBrowserShortcut(event, apple)) event.preventDefault();

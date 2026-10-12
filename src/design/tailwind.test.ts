@@ -83,6 +83,15 @@ describe('Tailwind variants for the accessibility settings', () => {
   });
 });
 
+// The style of the appearance marks <html> (apply.ts, applyAppearance):
+// Terminal draws some things its own way, such as a menu's border (MC-2).
+describe('the Tailwind variant for the Terminal style', () => {
+  it('applies under :root[data-style="terminal"]', async () => {
+    const css = await compile('terminal:border-ui-control-line');
+    expect(css).toContain(String.raw`:root[data-style="terminal"] .terminal\:border-ui-control-line {`);
+  });
+});
+
 // Under forced colours, an element that keeps its own colours keeps its focus
 // ring's too (focus.ts). The ring's CanvasText has to reach the page, and to
 // win over the accent colour: same specificity, so it has to come later.
