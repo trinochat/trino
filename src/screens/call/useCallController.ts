@@ -617,8 +617,6 @@ export function useCallController(deps: CallControllerDeps): CallController {
       onRemoteStream: stream => {
         if (!disposed) setRemoteStream(stream);
       },
-      // The old screen's emoji code; the SAS v2 comes from onSasInputs.
-      onSas: () => {},
       onError: code => {
         if (!disposed) actions.onError(code);
       },

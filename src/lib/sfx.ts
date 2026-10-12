@@ -91,12 +91,12 @@ export function playMessageTone(volume = 60): void {
 // ── call tones ──────────────────────────────────────────────────────────────
 
 /**
- * Caller side: soft dual-tone "ring… ring…" every 3s while waiting. With a
- * volume (0 to 100), both notes together reach that volume.
+ * Caller side: soft dual-tone "ring… ring…" every 3s while waiting. Both
+ * notes together reach the volume (0 to 100).
  */
-export function startRingback(opts?: { volume: number }): void {
+export function startRingback(opts: { volume: number }): void {
   stopRinging();
-  const gain = opts ? toneGain(opts.volume) / 2 : 0.1;
+  const gain = toneGain(opts.volume) / 2;
   const loop = () => {
     if (gain <= 0) return;
     const t = ac().currentTime;
@@ -108,29 +108,17 @@ export function startRingback(opts?: { volume: number }): void {
 }
 
 /**
- * Callee side. Without options, the old screen's insistent rising
- * triple-blip every 1.6s. With them, the tone chosen in Settings:
- * "Trino suave", which starts soft and rises to the volume, or silence
- * (which also stops any tone that was playing).
+ * Callee side: the tone chosen in Settings. "Trino suave" starts soft and
+ * rises to the volume; silence plays nothing (and stops any tone that was
+ * playing).
  */
-export function startRingtone(opts?: RingtoneOptions): void {
+export function startRingtone(opts: RingtoneOptions): void {
   stopRinging();
-  if (opts) {
-    if (opts.tone === 'silent') return;
-    let ring = 0;
-    const soft = () => softTrill(softRingGain(opts.volume, ring++));
-    soft();
-    ringTimer = window.setInterval(soft, SOFT_RING_EVERY_MS);
-    return;
-  }
-  const loop = () => {
-    const t = ac().currentTime;
-    beep(660, t, 0.18, 'square', 0.13);
-    beep(660, t + 0.28, 0.18, 'square', 0.13);
-    beep(990, t + 0.58, 0.24, 'square', 0.13);
-  };
-  loop();
-  ringTimer = window.setInterval(loop, 1600);
+  if (opts.tone === 'silent') return;
+  let ring = 0;
+  const soft = () => softTrill(softRingGain(opts.volume, ring++));
+  soft();
+  ringTimer = window.setInterval(soft, SOFT_RING_EVERY_MS);
 }
 
 export function stopRinging(): void {

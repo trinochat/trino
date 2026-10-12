@@ -90,9 +90,6 @@ export interface CallCallbacks {
   onState: (s: CallState, info: { peer: string | null; video: boolean; callId: string | null }) => void;
   onLocalStream: (s: MediaStream | null) => void;
   onRemoteStream: (s: MediaStream | null) => void;
-  // Short Authentication String (Telegram-style emoji code) from the DTLS
-  // fingerprints. Identical on both peers when there's no man-in-the-middle.
-  onSas: (emojis: string) => void;
   onError: (code: CallErrorCode) => void;
   // Current mute / camera state so the UI can reflect the real track status.
   onMedia: (m: MediaState) => void;
@@ -102,10 +99,11 @@ export interface CallCallbacks {
   // with answerDirectConsent(); anything but an explicit yes cancels.
   onDirectConsent: (request: DirectConsentRequest | null) => void;
   // The inputs of the call's SAS v2, each time a description is applied:
-  // after the answer, and again on every renegotiation. The redesigned
-  // screen derives the symbols from them and ends the call if the remote
-  // fingerprint changes (docs/sas-v2.md, "The DTLS fingerprint rule").
-  onSasInputs?: (inputs: SasInputs) => void;
+  // after the answer, and again on every renegotiation. The call screen
+  // derives the symbols from them and ends the call if the remote
+  // fingerprint changes (docs/sas-v2.md, "The DTLS fingerprint rule"). It is
+  // the call's only SAS: the emoji code of 0.1.0 went with the old screen.
+  onSasInputs: (inputs: SasInputs) => void;
 }
 
 interface Signal {
@@ -278,34 +276,24 @@ function loadDirectIceServers(): Promise<IceServerConfig[]> {
   return iceServersLoading;
 }
 
-// Hacker-themed emoji set for the Short Authentication String (MITM tripwire).
-const SAS_EMOJIS = [
-  '🐛', '🔑', '🔒', '🛰', '🦠', '💾', '🖥', '📡', '🧬', '⚡', '🔥', '🌐', '🧠', '👾', '🛡', '🗝',
-  '📟', '🔌', '🧩', '🎛', '🚀', '⭐', '🌙', '🎧', '📀', '🧿', '🔭', '🕹', '💿', '📼', '🧫', '🔬',
-  '🦅', '🐉', '🌵', '🍄', '🎯', '🧨', '💣', '🕵', '🔦', '📎', '🧷', '⛓', '🪝', '🧲', '⚙', '🪫',
-  '🛸', '🌀', '❄', '🌊', '🎲', '♟', '🧭', '⏳', '📮', '🔗', '💊', '🩸', '🦂', '🕷', '🐙', '🦑',
-];
-
 function parseFp(sdp?: string | null): string | null {
   if (!sdp) return null;
   const m = sdp.match(/a=fingerprint:sha-256\s+([0-9A-Fa-f:]+)/);
   return m ? m[1].replace(/:/g, '').toLowerCase() : null;
 }
 
-async function computeSas(): Promise<void> {
+/**
+ * Hands the call screen the inputs of the call's SAS v2 (onSasInputs): the
+ * call id and both DTLS fingerprints, once both descriptions are applied.
+ * The screen may end the call from there, if the remote fingerprint changed.
+ */
+function reportSasInputs(): void {
   const p = pc;
-  if (!p || !cbs) return;
+  if (!p || !cbs || !callId) return;
   const a = parseFp(p.localDescription?.sdp);
   const b = parseFp(p.remoteDescription?.sdp);
   if (!a || !b) return;
-  if (callId) cbs.onSasInputs?.({ callId, localDtls: a, remoteDtls: b });
-  if (pc !== p) return; // the call ended (onSasInputs may end it)
-  const joined = [a, b].sort().join('|');
-  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(joined));
-  if (pc !== p || !cbs) return; // ended meanwhile: its emojis would outlive it
-  const bytes = new Uint8Array(digest);
-  const emojis = Array.from({ length: 5 }, (_, i) => SAS_EMOJIS[bytes[i]! % SAS_EMOJIS.length]);
-  cbs.onSas(emojis.join(' '));
+  cbs.onSasInputs({ callId, localDtls: a, remoteDtls: b });
 }
 
 // ── module state ────────────────────────────────────────────────────────────
@@ -929,7 +917,7 @@ async function answerOffer(from: string, sig: Signal, withVideo = true): Promise
       return;
     }
     api.devLog(`answer sent, iceState=${p.iceGatheringState}`);
-    void computeSas();
+    reportSasInputs();
   } catch (error) {
     if (my !== generation) return;
     console.error('incoming call setup failed', error);
@@ -1093,7 +1081,7 @@ function handleAnswer(from: string, s: Signal, p: RTCPeerConnection): void {
         sendCandidates(from, s.callId, candidates.release());
       }
       await flushIce();
-      await computeSas();
+      reportSasInputs();
     })
     .catch(err => {
       if (pc !== p) return;
@@ -1113,7 +1101,7 @@ async function handleRenegotiation(from: string, s: Signal): Promise<void> {
     candidates.embed(); // an ICE-restart answer carries its new candidates
     await p.setRemoteDescription({ type: 'offer', sdp: s.sdp });
     if (pc !== p) return;
-    void computeSas(); // the offer may carry another fingerprint (onSasInputs)
+    reportSasInputs(); // the offer may carry another fingerprint
     if (pc !== p) return;
     await flushIce();
     const answer = await p.createAnswer();
@@ -1248,7 +1236,6 @@ function end(finalState: CallState = 'ended'): void {
   candidates.reset();
   cbs?.onLocalStream(null);
   cbs?.onRemoteStream(null);
-  cbs?.onSas('');
   setMode(null);
   // The final state carries {peer, video} so the UI can offer "retry".
   setState(finalState);

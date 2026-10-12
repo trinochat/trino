@@ -141,7 +141,7 @@ describe('the incoming call tones', () => {
 
   it('rings nothing in silence, and stops a ring that was playing', async () => {
     vi.useFakeTimers();
-    sfx.startRingback();
+    sfx.startRingback({ volume: 60 });
     const before = started().length;
     expect(before).toBeGreaterThan(0);
     sfx.startRingtone({ tone: 'silent', volume: 80 });
@@ -156,23 +156,6 @@ describe('the incoming call tones', () => {
     sfx.stopRinging();
     await vi.advanceTimersByTimeAsync(10_000);
     expect(started()).toHaveLength(before);
-  });
-
-  // App.tsx still calls them without options until the integration.
-  it('keeps the old ringtone and ringback when called without options', () => {
-    sfx.startRingtone();
-    expect(started().map(tone => [tone.type, tone.frequency])).toEqual([
-      ['square', 660],
-      ['square', 660],
-      ['square', 990],
-    ]);
-    sfx.stopRinging();
-    FakeAudioContext.tones = [];
-    sfx.startRingback();
-    expect(started().map(tone => [tone.type, tone.frequency, peak(tone)])).toEqual([
-      ['sine', 440, 0.1],
-      ['sine', 480, 0.1],
-    ]);
   });
 
   it('plays the ringback at the chosen volume when given one', () => {

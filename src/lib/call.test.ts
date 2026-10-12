@@ -56,11 +56,11 @@ async function setup() {
     onState: vi.fn(),
     onLocalStream: vi.fn(),
     onRemoteStream: vi.fn(),
-    onSas: vi.fn(),
     onError: vi.fn(),
     onMedia: vi.fn(),
     onConnectionMode: vi.fn(),
     onDirectConsent: vi.fn(),
+    onSasInputs: vi.fn(),
   };
   call.initCall(cb);
   return { call, cb };
@@ -563,7 +563,7 @@ describe('answering', () => {
 });
 
 // Additions for the redesigned call screen (W6). Nothing here changes what
-// goes on the wire or how TURN is used; the old screen keeps working as it is.
+// goes on the wire or how TURN is used.
 describe('additions for the redesigned call screen', () => {
   const LOCAL_DTLS = 'aa' + '01'.repeat(31);
   const REMOTE_DTLS = 'bb' + '01'.repeat(31);
@@ -656,33 +656,28 @@ describe('additions for the redesigned call screen', () => {
     expect(onSasInputs).toHaveBeenLastCalledWith(expect.objectContaining({ callId: id, remoteDtls: other }));
   });
 
-  it('says nothing about a call that ended while its SAS was being worked out', async () => {
+  // The call screen hangs up from onSasInputs when a fingerprint changes: the call ends there, with
+  // its bye, and the connection that is gone has nothing more to say.
+  it('ends the call at once when the screen hangs up from onSasInputs', async () => {
     api.getTurnServers.mockResolvedValue(turnOk());
-    const { call, cb } = await setup();
-    let ended = false;
-    call.initCall({
-      ...(await setupCallbacks()),
-      onSas: cb.onSas,
-      onSasInputs: () => {
-        if (!ended) {
-          ended = true;
-          call.hangup(); // as the redesign does when a fingerprint changes
-        }
-      },
-    });
+    const { call } = await setup();
+    const cb = await setupCallbacks();
+    const onSasInputs = vi.fn(() => call.hangup());
+    call.initCall({ ...cb, onSasInputs });
     await connectedCall(call);
     await settle();
-    expect(cb.onSas).toHaveBeenLastCalledWith('');
+    expect(onSasInputs).toHaveBeenCalledTimes(1);
+    expect(lastState(cb)).toBe('ended');
+    expect(sent().map(s => s.signal.t)).toContain('bye');
   });
 });
 
-/** A fresh set of the required callbacks, for a test that adds an optional one. */
+/** A fresh set of the callbacks, for a test that brings its own onSasInputs. */
 async function setupCallbacks() {
   return {
     onState: vi.fn(),
     onLocalStream: vi.fn(),
     onRemoteStream: vi.fn(),
-    onSas: vi.fn(),
     onError: vi.fn(),
     onMedia: vi.fn(),
     onConnectionMode: vi.fn(),
