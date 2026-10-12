@@ -21,7 +21,20 @@ const CREATED: ForgeResponse = {
   fingerprint: 'f1f2f3f4',
   nostr_pub: 'd'.repeat(64),
   relay_connection_started: true,
-  bundle_json: JSON.stringify({ handle: 'Rechita', ik: 'AAAA', avatar: null }),
+  // A whole bundle, as forge returns it (own_bundle_json): a trino2 code
+  // carries every key, so toShareCode gives '' for anything less (W4).
+  bundle_json: JSON.stringify({
+    handle: 'Rechita',
+    idSig: 'd4'.repeat(64),
+    ikDhPub: '8f'.repeat(32),
+    ikSignPub: '3b'.repeat(32),
+    nostrPub: 'a1'.repeat(32),
+    opkId: null,
+    opkPub: null,
+    spkId: 7,
+    spkPub: 'e7'.repeat(32),
+    spkSig: '0f'.repeat(64),
+  }),
 };
 const failure = (code: CommandErrorCode): CommandError => ({ code, message: 'for the log' });
 
@@ -134,7 +147,9 @@ describe('OnboardingFlow, the whole way', () => {
     expect(api.createIdentity).toHaveBeenCalledWith('Rechita', PASS, false);
     expect(heading().textContent).toBe('Todo listo');
     expect(screen.queryByText(/^Paso/)).toBeNull();
-    expect(screen.getByText(toShareCode(CREATED.bundle_json))).toBeTruthy();
+    const code = toShareCode(CREATED.bundle_json);
+    expect(code.startsWith('trino2:')).toBe(true);
+    expect(screen.getByText(code)).toBeTruthy();
     expect(api.updateProfile).not.toHaveBeenCalled();
     click('Ir a mis chats');
     expect(onCreated).toHaveBeenCalledWith(CREATED, 'chats');
