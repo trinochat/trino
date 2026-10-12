@@ -147,6 +147,7 @@ import { useContacts, type ContactsEvents } from './app/contacts';
 import { useGroups, type GroupsEvents } from './app/groups';
 import { settingsBackend, useSettings } from './app/settings';
 import { useAutoLock } from './app/useAutoLock';
+import { useLegacyMarksNotice } from './app/verification';
 import './App.css';
 
 const isMobile = /android|iphone|ipad|ipod/i.test(navigator.userAgent);
@@ -687,6 +688,10 @@ function MainShell({ intent, onLock, onAutolockChanged, onWiped }: MainProps) {
       void refreshGroups();
     },
   });
+
+  // The verification marks of 0.1.0 no longer count: once the contacts are
+  // read, the people who had one are told once (src/app/verification.tsx).
+  const legacyMarksNotice = useLegacyMarksNotice({ contacts: nodes });
 
   useEffect(() => {
     refreshNodes();
@@ -1423,6 +1428,7 @@ function MainShell({ intent, onLock, onAutolockChanged, onWiped }: MainProps) {
       {settings.layer}
       {contacts.dialog}
       {groupScreens.dialogs}
+      {legacyMarksNotice}
       {forwarding && (
         <ForwardModal
           nodes={nodes}
@@ -3710,9 +3716,8 @@ function ChatInfoPanel({
   const [sas, setSas] = useState('');
   const [note, setNote] = useState(() => localStorage.getItem('note:' + handle) || '');
   const [ttl, setTtl] = useState(() => prefs.getTtl(handle));
-  const [verified, setVerified] = useState(
-    () => !!fingerprint && localStorage.getItem('verified:' + handle) === fingerprint,
-  );
+  // Only a call verifies now, and only its mark counts (docs/sas-v2.md).
+  const [verified, setVerified] = useState(() => prefs.isVerified(handle, fingerprint));
   const [editingName, setEditingName] = useState(false);
   const [newName, setNewName] = useState(handle);
   const [confirmDel, setConfirmDel] = useState(false);
@@ -3737,9 +3742,7 @@ function ChatInfoPanel({
   }, [fingerprint, myFingerprint]);
 
   useEffect(() => {
-    setVerified(
-      !!fingerprint && localStorage.getItem('verified:' + handle) === fingerprint,
-    );
+    setVerified(prefs.isVerified(handle, fingerprint));
   }, [fingerprint, handle]);
 
   const saveNote = (v: string) => {
@@ -4063,27 +4066,24 @@ function ChatInfoPanel({
                   {t('chat.verifyWith')} <span className="text-ink">{handle}</span>.{' '}
                   {t('chat.verifyHelp')}
                 </div>
-                <button
-                  className={verified ? 'chat-info-verify-reset' : 'chat-info-verify'}
-                  disabled={!sas}
-                  onClick={() => {
-                    if (verified) {
-                      localStorage.removeItem('verified:' + handle);
+                {/* These emojis never verify (David, 10 Oct): only "Coinciden" in a call does. */}
+                {verified ? (
+                  <button
+                    className="chat-info-verify-reset"
+                    onClick={() => {
+                      prefs.clearVerified(handle);
                       setVerified(false);
-                    } else {
-                      localStorage.setItem('verified:' + handle, fingerprint);
-                      setVerified(true);
-                    }
-                  }}
-                  type="button"
-                >
-                  {verified ? (
+                    }}
+                    type="button"
+                  >
                     <ShieldQuestion className="h-4 w-4" />
-                  ) : (
-                    <ShieldCheck className="h-4 w-4" />
-                  )}
-                  {verified ? t('chat.clearVerification') : t('chat.markVerified')}
-                </button>
+                    {t('chat.clearVerification')}
+                  </button>
+                ) : (
+                  <div className="text-center text-[11px] leading-relaxed text-ink">
+                    {t('verify.howTo', { name: handle })}
+                  </div>
+                )}
               </section>
 
               <details className="chat-info-technical">

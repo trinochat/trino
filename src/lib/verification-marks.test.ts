@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import spec from '../../../docs/sas-v2.md?raw';
+import spec from '../../docs/sas-v2.md?raw';
 import { legacyMarks, markVerifies, readMark, verifiedMark } from './verification-marks';
 
 const FP = 'ab12.cd34.ef56.7890';
@@ -48,7 +48,9 @@ describe('docs/sas-v2.md', () => {
     expect(spec).toContain('### Marks made before v2');
     expect(spec).toContain('`call:<fingerprint>`');
     expect(spec).toContain('`qr:<fingerprint>`');
-    expect(spec).toContain('src/screens/verify/verification-marks.ts');
+    // prefs.ts reads and writes them through it (I5), so it lives in src/lib.
+    expect(spec).toContain('`src/lib/verification-marks.ts`');
+    expect(spec).not.toContain('src/screens/verify/verification-marks.ts');
     expect(spec).not.toContain('marks stay valid');
   });
 });

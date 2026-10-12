@@ -12,8 +12,8 @@
  *
  * Fingerprints are 16 lowercase hex digits in groups of 4 joined by dots
  * (`fp` in src-tauri/src/commands.rs), never with a colon, so the two forms
- * cannot be confused. Pure and self-contained, so prefs.ts can adopt it as
- * it is in the integration.
+ * cannot be confused. Pure: prefs.ts writes and reads every mark through it
+ * (`setVerified`, `isVerified`, `legacyVerified`).
  */
 
 export type VerifiedBy = 'call' | 'qr';

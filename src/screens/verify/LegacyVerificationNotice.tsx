@@ -5,8 +5,9 @@
  * calling and comparing the call's symbols, the way this device has. The
  * desktop cannot scan a QR, so it does not offer that way.
  *
- * The integration shows it while `legacyMarks` (verification-marks.ts)
- * finds old marks, and on close clears them, so it never comes back.
+ * The chats show it while `prefs.legacyVerified` (src/lib/verification-marks.ts)
+ * finds old marks, and on close clear them, so it never comes back
+ * (src/app/verification.tsx).
  */
 import { useT } from '../../lib/i18n';
 import { Button, Dialog } from '../../ui';

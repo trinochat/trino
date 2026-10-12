@@ -28,6 +28,8 @@ const brokenStorage: PrefsStorage = {
 
 describe('preferences that already exist', () => {
   // The keys App.tsx writes today: changing one would lose what people saved.
+  // A verification of 0.1.0 is still read as it was saved, but it no longer
+  // counts (see "verification marks" below).
   it('read the values the current screens saved, under the same keys', () => {
     const { storage } = memoryStorage({
       'verified:Ana': 'ab12cd34',
@@ -41,8 +43,7 @@ describe('preferences that already exist', () => {
     });
     const prefs = createPrefs(storage);
     expect(prefs.getVerified('Ana')).toBe('ab12cd34');
-    expect(prefs.isVerified('Ana', 'ab12cd34')).toBe(true);
-    expect(prefs.isVerified('Ana', 'ffff0000')).toBe(false);
+    expect(prefs.isVerified('Ana', 'ab12cd34')).toBe(false);
     expect(prefs.getNote('Ana')).toBe('Vecina del 3');
     expect(prefs.getTtl('Ana')).toBe(30);
     expect(prefs.getTtl('grp:9f3a')).toBe(3600);
@@ -63,7 +64,7 @@ describe('preferences that already exist', () => {
     prefs.setUpdatesLastRead('x1');
     prefs.pushStickerRecent('s1');
     expect(Object.fromEntries(data)).toEqual({
-      'verified:Ana': 'ab12cd34',
+      'verified:Ana': 'call:ab12cd34',
       'note:Ana': 'Vecina del 3',
       'ttl:grp:9f3a': '300',
       autolock: '0',
@@ -151,9 +152,60 @@ describe('a contact renamed or removed', () => {
   });
 });
 
+// docs/sas-v2.md, "Marks made before v2": a contact is verified only by
+// "Coinciden" on a call's SAS or by a QR scanned in person, and the mark
+// says which, with the fingerprint the contact had then. The bare
+// fingerprint 0.1.0 stored after its weak checks no longer counts.
+describe('verification marks', () => {
+  const FP = 'ab12.cd34.ef56.7890';
+  const OTHER = '0000.1111.2222.3333';
+
+  it('store "Coinciden" on a call as the mark of a call, with the contact’s fingerprint now', () => {
+    const { storage, data } = memoryStorage();
+    const prefs = createPrefs(storage);
+    expect(prefs.setVerified('Ana', FP)).toBe(true);
+    expect(data.get('verified:Ana')).toBe(`call:${FP}`);
+    expect(prefs.getVerified('Ana')).toBe(`call:${FP}`);
+    expect(prefs.isVerified('Ana', FP)).toBe(true);
+  });
+
+  it('verify only while the fingerprint is still the contact’s', () => {
+    const prefs = createPrefs(memoryStorage({ 'verified:Ana': `call:${FP}`, 'verified:Beto': `qr:${FP}` }).storage);
+    expect(prefs.isVerified('Ana', FP)).toBe(true);
+    expect(prefs.isVerified('Beto', FP)).toBe(true);
+    expect(prefs.isVerified('Ana', OTHER)).toBe(false);
+    expect(prefs.isVerified('Ana', '')).toBe(false);
+  });
+
+  it('never count a mark of 0.1.0, the bare fingerprint', () => {
+    const prefs = createPrefs(memoryStorage({ 'verified:Ana': FP }).storage);
+    expect(prefs.getVerified('Ana')).toBe(FP);
+    expect(prefs.isVerified('Ana', FP)).toBe(false);
+  });
+
+  it('name the contacts whose mark comes from 0.1.0, in the order given', () => {
+    const prefs = createPrefs(
+      memoryStorage({ 'verified:Ana': FP, 'verified:Beto': `call:${FP}`, 'verified:Diego': OTHER }).storage,
+    );
+    expect(prefs.legacyVerified(['Diego', 'Ana', 'Beto', 'Carla'])).toEqual(['Diego', 'Ana']);
+    expect(prefs.legacyVerified([])).toEqual([]);
+  });
+
+  // Once told (LegacyVerificationNotice), the old marks go. A call that
+  // verified one of those contacts meanwhile wrote a mark that stays.
+  it('clear only the marks that are still of 0.1.0', () => {
+    const { storage, data } = memoryStorage({ 'verified:Ana': FP, 'verified:Beto': `call:${FP}`, 'verified:Diego': OTHER });
+    const prefs = createPrefs(storage);
+    prefs.setVerified('Diego', OTHER);
+    prefs.clearLegacyVerified(['Ana', 'Beto', 'Diego', 'Carla']);
+    expect(Object.fromEntries(data)).toEqual({ 'verified:Beto': `call:${FP}`, 'verified:Diego': `call:${OTHER}` });
+    expect(prefs.legacyVerified(['Ana', 'Beto', 'Diego'])).toEqual([]);
+  });
+});
+
 /** Every preference there is. Only the parent changes prefs.ts, and this list with it. */
 const MEMBERS = [
-  'getVerified', 'isVerified', 'setVerified', 'clearVerified',
+  'getVerified', 'isVerified', 'setVerified', 'clearVerified', 'legacyVerified', 'clearLegacyVerified',
   'getNote', 'setNote', 'getTtl', 'setTtl',
   'getAutolockMinutes', 'setAutolockMinutes',
   'getUpdatesMuted', 'setUpdatesMuted', 'getUpdatesLastRead', 'setUpdatesLastRead',
@@ -303,9 +355,11 @@ describe('storage that fails', () => {
     expect(prefs.getStickerRecents()).toEqual([]);
     expect(prefs.getNotifPreview()).toBe('name');
     expect(prefs.isVerified('Ana', 'fp')).toBe(false);
+    expect(prefs.legacyVerified(['Ana'])).toEqual([]);
     expect(prefs.getCallsSeenAt()).toBe(0);
     expect(() => prefs.renameContact('Ana', 'B')).not.toThrow();
     expect(() => prefs.forgetContact('Ana')).not.toThrow();
+    expect(() => prefs.clearLegacyVerified(['Ana'])).not.toThrow();
     expect(() => prefs.pushStickerRecent('s1')).not.toThrow();
   });
 

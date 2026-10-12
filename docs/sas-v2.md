@@ -18,7 +18,7 @@ Files:
 | `src/lib/sas.ts` | The derivation (WebCrypto). |
 | `src/lib/sas-symbols.ts` | Loads the table; lookups by index and language. |
 | `src/lib/SasSymbol.tsx` | `SasIcon` (the icon alone) and `SasSymbol` (icon and word). |
-| `src/screens/verify/verification-marks.ts` | How a verification is stored, and how the marks of 0.1.0 are told apart. |
+| `src/lib/verification-marks.ts` | How a verification is stored, and how the marks of 0.1.0 are told apart. |
 
 ## Derivation
 
@@ -142,7 +142,8 @@ lowercase hex digits in groups of 4 joined by dots, never a colon):
 
 A contact counts as verified only while its mark has one of these forms
 and the fingerprint in it is still the contact's.
-`src/screens/verify/verification-marks.ts` writes and reads them.
+`src/lib/verification-marks.ts` writes and reads them, through
+`src/lib/prefs.ts` (`setVerified`, `isVerified`).
 
 0.1.0 stored the bare fingerprint, set by a button beside the contact's
 6 emojis: a contact SAS of 36 bits, which an offline birthday search of
@@ -167,6 +168,10 @@ after the first answer):
   not verified when the call started and "They match" was pressed in it,
   `verified:<handle>` is cleared. A contact verified before the call keeps
   its mark, which came from an earlier call or a QR scan.
+
+"They don't match" pressed after "They match" in the same call undoes that
+match the same way, and the call goes on, no longer verified. The last
+answer counts: a later "They match" verifies again.
 
 ## Symbols
 

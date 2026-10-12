@@ -7,7 +7,7 @@ import type { CallCallbacks, CallState } from '../../lib/call';
 import { I18nContext, makeT } from '../../lib/i18n';
 import { LangCtx } from '../../lib/i18n-context';
 import { callSas } from '../../lib/sas';
-import { markVerifies, verifiedMark } from '../verify/verification-marks';
+import { markVerifies, verifiedMark } from '../../lib/verification-marks';
 import { countingStorage } from './test-support';
 import {
   useCallController,
@@ -454,7 +454,7 @@ describe('useCallController', () => {
     });
 
     // The marks as the contract says to keep them (CallPeer.verified, onVerified, onVerificationRevoked),
-    // with src/screens/verify/verification-marks.ts: the way I5 wires prefs.ts.
+    // with src/lib/verification-marks.ts: the way prefs.ts keeps them since I5.
     it('works with the marks kept as its contract says, where a mark of 0.1.0 does not count', async () => {
       const FP = 'ab12.cd34.ef56.7890';
       const marks = new Map<string, string>([[PEER, FP]]);

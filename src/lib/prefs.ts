@@ -7,7 +7,13 @@
  * `note:`, `ttl:`, `autolock`, `updates.*`, `sticker-recents`), so nothing
  * people saved is lost. The preferences of the redesign live under
  * `trino.pref.*`. Drafts never come here: they would sit on disk in clear text.
+ *
+ * A verification keeps its key, `verified:<handle>`, but its value says how
+ * the contact was verified (verification-marks.ts, docs/sas-v2.md): only a
+ * call's "Coinciden" or a QR scanned in person verifies, and the bare
+ * fingerprint 0.1.0 stored after its weak checks no longer counts.
  */
+import { legacyMarks, markVerifies, readMark, verifiedMark } from './verification-marks';
 
 /** The part of `Storage` the preferences use; `window.localStorage` fits. */
 export type PrefsStorage = Pick<Storage, 'getItem' | 'setItem' | 'removeItem'>;
@@ -47,12 +53,27 @@ const CONTACT_PREFIXES = ['note:', 'ttl:', 'verified:'] as const;
 const PREF = 'trino.pref.';
 
 export interface Prefs {
-  /** The fingerprint the contact was verified with, or null. */
+  /**
+   * The contact's verification mark as stored: `call:<fp>` or `qr:<fp>`, a
+   * bare fingerprint of 0.1.0 (which no longer counts), or null.
+   */
   getVerified(handle: string): string | null;
-  /** Verified only while the stored fingerprint is still the contact's. */
+  /**
+   * Verified by a call or a QR, and with the fingerprint the contact still
+   * has (`markVerifies`). A mark of 0.1.0 never counts.
+   */
   isVerified(handle: string, fingerprint: string): boolean;
+  /**
+   * "Coinciden" on a call's SAS: the mark of a call, with the contact's
+   * fingerprint now (`verifiedMark(fingerprint, 'call')`). Nothing else
+   * verifies on this device, so nothing else calls it.
+   */
   setVerified(handle: string, fingerprint: string): boolean;
   clearVerified(handle: string): boolean;
+  /** The contacts among `handles` whose mark comes from 0.1.0, in that order: who the one-time notice names. */
+  legacyVerified(handles: readonly string[]): string[];
+  /** Removes the marks of 0.1.0 among `handles`, once told; a mark of a call or a QR stays. */
+  clearLegacyVerified(handles: readonly string[]): void;
   getNote(handle: string): string;
   setNote(handle: string, note: string): boolean;
   /** Seconds until a new message in that conversation disappears; 0 is off. */
@@ -163,9 +184,15 @@ export function createPrefs(storage?: PrefsStorage): Prefs {
 
   return {
     getVerified: handle => read('verified:' + handle),
-    isVerified: (handle, fingerprint) => !!fingerprint && read('verified:' + handle) === fingerprint,
-    setVerified: (handle, fingerprint) => write('verified:' + handle, fingerprint),
+    isVerified: (handle, fingerprint) => markVerifies(read('verified:' + handle), fingerprint),
+    setVerified: (handle, fingerprint) => write('verified:' + handle, verifiedMark(fingerprint, 'call')),
     clearVerified: handle => remove('verified:' + handle),
+    legacyVerified: handles => legacyMarks(handles.map(handle => [handle, read('verified:' + handle)] as const)),
+    clearLegacyVerified: handles => {
+      for (const handle of handles) {
+        if (readMark(read('verified:' + handle)).kind === 'legacy') remove('verified:' + handle);
+      }
+    },
     getNote: handle => read('note:' + handle) || '',
     setNote: (handle, note) => write('note:' + handle, note),
     // As `ttlFor` in App.tsx read it: anything but a positive number is off.

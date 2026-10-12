@@ -10,12 +10,11 @@
  * question "call directly?" reads or writes a preference: it is asked on
  * every call and never remembered (docs/llamadas-turn.md).
  *
- * The marks keep the format of src/screens/verify/verification-marks.ts:
+ * The marks keep the format of src/lib/verification-marks.ts:
  * `verified:<handle>` holds `verifiedMark(fingerprint, 'call')`, and only
  * `markVerifies` reads it as verified; a bare fingerprint is a mark of 0.1.0
- * and no longer counts (docs/sas-v2.md, "Marks made before v2"). Today
- * prefs.ts writes and compares the bare fingerprint, so I5 moves
- * `setVerified` and `isVerified` to those two functions.
+ * and no longer counts (docs/sas-v2.md, "Marks made before v2"). prefs.ts
+ * writes and reads them that way (`setVerified`, `isVerified`).
  *
  * It also applies the DTLS fingerprint rule (docs/sas-v2.md): if the remote
  * fingerprint changes during a call, the call ends, and a "Coinciden" given
@@ -71,8 +70,9 @@ export interface CallPeer {
    * Verified on this device: "Coinciden" on a call's SAS, or a QR scanned in
    * person. Read from the contact's mark and its fingerprint now:
    * `markVerifies(<value of verified:<handle>>, node.fingerprint)`
-   * (src/screens/verify/verification-marks.ts). A bare fingerprint, as 0.1.0
-   * stored it, does not count; neither does a mark of an older fingerprint.
+   * (src/lib/verification-marks.ts), which is `prefs.isVerified`. A bare
+   * fingerprint, as 0.1.0 stored it, does not count; neither does a mark of
+   * an older fingerprint.
    */
   verified: boolean;
   /** The identity digest saved for the contact (K7); null until the backend gives it. */
@@ -107,8 +107,8 @@ export interface CallControllerDeps {
   isWindowVisible(): boolean;
   /**
    * "Coinciden" on the call's SAS: store `verifiedMark(node.fingerprint, 'call')`
-   * (src/screens/verify/verification-marks.ts) as the contact's
-   * `verified:<handle>`, with the fingerprint it has now. Never the bare
+   * (src/lib/verification-marks.ts) as the contact's `verified:<handle>`,
+   * with the fingerprint it has now: `prefs.setVerified`. Never the bare
    * fingerprint: that is a mark of 0.1.0, which no longer counts, and the
    * one-time notice about those marks would name the contact and delete it.
    */
