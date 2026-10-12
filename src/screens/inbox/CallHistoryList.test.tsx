@@ -108,9 +108,9 @@ describe('CallHistoryList', () => {
     expect(openRow('Ana').getAttribute('aria-current')).toBeNull();
   });
 
-  // `raised` is the sidebar's own colour in Terminal light, and a contrast
-  // theme drops backgrounds: the open call needs a shape too, as in ChatRow.
-  it('marks the open call by more than a fill: the accent tint, a bar at its start in the system highlight', () => {
+  // As ChatRow (David, 12 Oct 2026): no accent bar, the accent tint; a contrast theme drops the tint, so
+  // only there a bar in the system highlight marks the open call.
+  it('marks the open call with the accent tint, and with a bar only under forced colours', () => {
     renderEs(<CallHistoryList {...props({ selectedKey: 'call:o1' })} />);
     const rowOf = (name: string) => openRow(name).closest('li')!.firstElementChild!;
     const open = rowOf('Bea');
@@ -119,8 +119,9 @@ describe('CallHistoryList', () => {
     const bar = open.querySelector('[data-selection-bar]');
     expect(bar?.getAttribute('aria-hidden')).toBe('true');
     expect(classesOf(bar)).toEqual(
-      expect.arrayContaining(['border-s-[3px]', 'border-ui-accent-text', 'forced-colors:border-[color:Highlight]']),
+      expect.arrayContaining(['hidden', 'forced-colors:block', 'border-s-[3px]', 'forced-colors:border-[color:Highlight]']),
     );
+    expect(classesOf(bar)).not.toContain('border-ui-accent-text');
 
     const other = rowOf('Ana');
     expect(classesOf(other)).not.toContain('bg-ui-accent-soft');

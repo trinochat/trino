@@ -7,8 +7,9 @@
  *
  * The call whose chat is open is marked as ChatRow marks its chat: the accent
  * tint, which `raised` cannot be (it is the sidebar's own colour in Terminal
- * light), and a bar on its leading edge, a border that a Windows contrast
- * theme keeps and paints in the system highlight.
+ * light), and no accent bar (David, 12 Oct 2026). A Windows contrast theme
+ * drops the tint, so only there a bar on its leading edge, a border in the
+ * system highlight, marks it.
  */
 import { Phone } from 'lucide-react';
 import { CALL_EVENT_ICONS, callEventIcon, callEventText, isMissed } from '../../lib/call-events';
@@ -51,7 +52,7 @@ export function CallRow({ row, selected, now, onCall, onOpenChat }: CallRowProps
         <span
           data-selection-bar=""
           aria-hidden="true"
-          className="pointer-events-none absolute inset-y-2 start-0 rounded-full border-s-[3px] border-ui-accent-text forced-colors:border-[color:Highlight]"
+          className="pointer-events-none hidden absolute inset-y-2 start-0 rounded-full border-s-[3px] forced-colors:block forced-colors:border-[color:Highlight] forced-colors:[forced-color-adjust:none]"
         />
       )}
       <button

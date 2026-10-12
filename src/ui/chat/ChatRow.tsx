@@ -1,8 +1,9 @@
 /**
  * A chat in the inbox, as one button: avatar, name, trust, a one-line preview
  * (with the draft prefix), time and unread count. The selected chat carries
- * aria-current, the accent tint and an accent bar on its leading edge, drawn
- * as a border so forced colours keep it.
+ * aria-current and the accent tint; no accent bar (David, 12 Oct 2026). A
+ * contrast theme drops the tint, so only under forced colours a bar on its
+ * leading edge, a border in the system highlight, marks it.
  */
 import { cx } from '../cx';
 import { FOCUS_RING_INSET } from '../focus';
@@ -52,7 +53,7 @@ export function ChatRow({
       className={cx(
         'relative flex min-h-16 w-full items-center gap-3 rounded-ui p-2.5 text-left text-ui-ink',
         // `raised` almost matches the sidebar in Terminal light, so the
-        // selection uses the accent tint plus a bar that keeps 3:1.
+        // selection uses the accent tint.
         selected ? 'bg-ui-accent-soft' : 'hover:bg-ui-raised',
         FOCUS_RING_INSET,
         className,
@@ -62,7 +63,7 @@ export function ChatRow({
         <span
           data-selection-bar
           aria-hidden="true"
-          className="absolute inset-y-2 left-0 rounded-full border-s-[3px] border-ui-accent-text"
+          className="hidden absolute inset-y-2 left-0 rounded-full border-s-[3px] forced-colors:block forced-colors:border-[color:Highlight] forced-colors:[forced-color-adjust:none]"
         />
       )}
       <Avatar {...avatar} size={44} />

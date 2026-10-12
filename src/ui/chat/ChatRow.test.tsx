@@ -23,19 +23,20 @@ function renderRow(props: Partial<ChatRowProps> = {}) {
 const row = () => screen.getByRole('button');
 
 describe('ChatRow', () => {
-  // `raised` is nearly the same colour as the sidebar in Terminal light, so the
-  // selection is shown with the accent's soft tint plus an accent bar, which
-  // keeps 3:1 against the row in every theme.
-  it('is marked aria-current, tinted and given the accent bar when selected', () => {
+  // David, 12 Oct 2026: no accent bar on the open chat. It keeps aria-current and the accent tint; a
+  // contrast theme drops that tint, so only there a bar in the system highlight marks it.
+  it('is marked aria-current and tinted when selected, with a bar only under forced colours', () => {
     renderRow({ selected: true });
     expect(row().getAttribute('aria-current')).toBe('true');
     expect(classesOf(row())).toContain('bg-ui-accent-soft');
     const bar = row().querySelector('[data-selection-bar]');
-    expect(bar).not.toBeNull();
     expect(bar?.getAttribute('aria-hidden')).toBe('true');
-    // A border, which forced colours keep, not a background.
-    expect(classesOf(bar)).toContain('border-s-[3px]');
-    expect(classesOf(bar)).toContain('border-ui-accent-text');
+    // Hidden in every theme, drawn only under forced colours, as a border (which they keep) in Highlight.
+    expect(classesOf(bar)).toEqual(
+      expect.arrayContaining(['hidden', 'forced-colors:block', 'border-s-[3px]', 'forced-colors:border-[color:Highlight]']),
+    );
+    expect(classesOf(bar).filter(name => /^(?:block|flex|inline)/.test(name))).toEqual([]);
+    expect(classesOf(bar)).not.toContain('border-ui-accent-text');
     expect(classesOf(bar).filter(name => name.startsWith('bg-'))).toEqual([]);
   });
 
