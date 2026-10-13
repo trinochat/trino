@@ -4,7 +4,7 @@
 //!  6  "TRDAT\0"
 //!  1  format version: 1
 //!  1  kind: 1 account, 2 prefs, 3 history, 4 sessions, 5 profiles,
-//!     6 sticker, 7 index
+//!     6 sticker, 7 index, 8 a file of an earlier version kept aside
 //!  4  key_gen (u32 LE)
 //! 16  id_vault
 //! 12  nonce
@@ -48,6 +48,11 @@ pub(crate) enum Slot {
     /// A sticker, by its name on disk (`StoreKeys::sticker_disk_name`).
     Sticker(String),
     Index,
+    /// A file of an earlier version that the migration could not read, kept
+    /// sealed in `aside/` by its name (`config.json`…) so it never lies
+    /// there in clear (design §5.2). Never listed in the index.
+    #[cfg_attr(not(test), allow(dead_code))] // unseal uses it from the next commit
+    Legacy(String),
 }
 
 impl Slot {
@@ -69,6 +74,7 @@ impl Slot {
             Slot::Profiles => 5,
             Slot::Sticker(_) => 6,
             Slot::Index => 7,
+            Slot::Legacy(_) => 8,
         }
     }
 
@@ -81,6 +87,7 @@ impl Slot {
             Slot::Profiles => KeyLabel::Profiles,
             Slot::Sticker(_) => KeyLabel::Stickers,
             Slot::Index => KeyLabel::Index,
+            Slot::Legacy(_) => KeyLabel::Legacy,
         }
     }
 
@@ -94,10 +101,12 @@ impl Slot {
             Slot::Profiles => "profiles".into(),
             Slot::Sticker(name) => format!("sticker:{name}"),
             Slot::Index => "index".into(),
+            Slot::Legacy(name) => format!("legacy:{name}"),
         }
     }
 
-    /// The slot a logical name stands for, if it is one.
+    /// The slot a logical name stands for, if it is one of the index's: a
+    /// file kept aside is not.
     pub(crate) fn from_logical_name(name: &str) -> Option<Slot> {
         match name {
             "account" => Some(Slot::Account),
@@ -123,6 +132,7 @@ impl Slot {
             Slot::Profiles => "profiles",
             Slot::Sticker(_) => "sticker",
             Slot::Index => "index",
+            Slot::Legacy(_) => "legacy",
         }
     }
 
@@ -130,6 +140,7 @@ impl Slot {
     pub(crate) fn relative_path(&self) -> std::path::PathBuf {
         match self {
             Slot::Sticker(name) => std::path::Path::new("stickers").join(format!("{name}.bin")),
+            Slot::Legacy(name) => std::path::Path::new("aside").join(format!("legacy.{name}.bin")),
             other => format!("{}.bin", other.kind_name()).into(),
         }
     }
@@ -513,6 +524,13 @@ mod tests {
                 Some(slot)
             );
         }
+        let kept = Slot::Legacy("friends.json".into());
+        assert_eq!(kept.logical_name(), "legacy:friends.json");
+        assert_eq!(
+            kept.relative_path(),
+            std::path::Path::new("aside").join("legacy.friends.json.bin")
+        );
+        assert_eq!(Slot::from_logical_name(&kept.logical_name()), None);
         for bad in [
             "sticker:../x",
             "sticker:ABAB",

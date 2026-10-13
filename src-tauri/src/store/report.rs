@@ -35,6 +35,10 @@ pub(crate) enum What {
     /// said otherwise than the vault holds; sealed again, it is right
     /// (design §4.9).
     TotpFlag,
+    /// Files of an earlier version, in clear, that nothing shows are this
+    /// account's: they appeared after the migration, or there was no proof
+    /// to migrate them (design §4.8). Trino did not open them.
+    PlainFiles,
 }
 
 /// What the store did, or asks.
@@ -59,6 +63,9 @@ pub(crate) enum Action {
     KeepForLater,
     /// Nothing to do: only told.
     Notice,
+    /// "Ver qué traen", "Importarlos" or "Borrarlos": nothing is read until
+    /// the user picks one (design §4.8 and §11.4).
+    OfferImport,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
@@ -120,6 +127,7 @@ pub(crate) fn action_for(slot: &Slot, what: What) -> Action {
         (What::Unreadable, _) => Action::KeepForLater,
         (What::VaultChanged | What::TotpFlag, _) => Action::Notice,
         (What::OtherAccount, _) => Action::SetAside,
+        (What::PlainFiles, _) => Action::OfferImport,
         (_, Slot::Index) => Action::Notice,
         (_, Slot::Sessions) => Action::NewSessions,
         (What::OlderCopy, Slot::Sticker(_)) => Action::SetAside,

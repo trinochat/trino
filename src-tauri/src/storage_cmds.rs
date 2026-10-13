@@ -11,11 +11,11 @@
 //! A child module of `commands`, so it reaches the helpers there.
 
 use super::*;
+use crate::fsutil::destroy_file;
 use crate::store::session::{
     legacy_open, vault_header, LegacyFiles, OpenedStore, Storage, StorageCell, OTHER_STORE_PREFIX,
 };
 use std::collections::BTreeSet;
-use std::io::Write as _;
 
 /// What unlocking found on disk for the session, before it opens.
 pub(crate) struct LoadedSession {
@@ -387,31 +387,6 @@ impl WipeOps for RealWipe {
             done => done,
         }
     }
-}
-
-/// Overwrite the file at `path` with random bytes of its length, sync it and
-/// remove it. A file that is not there is no error. On an SSD the old bytes
-/// may stay elsewhere (design §5.4); on a hard disk, and for the small files
-/// NTFS keeps in its table, this is what removes them.
-pub(super) fn destroy_file(path: &Path) -> std::io::Result<()> {
-    let mut file = match std::fs::OpenOptions::new().write(true).open(path) {
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
-        file => file?,
-    };
-    let mut left = file.metadata()?.len();
-    let mut chunk = vec![0u8; 64 * 1024];
-    while left > 0 {
-        let size = chunk.len().min(usize::try_from(left).unwrap_or(usize::MAX));
-        for block in chunk[..size].chunks_mut(32) {
-            let random: [u8; 32] = crate::crypto::random_array();
-            block.copy_from_slice(&random[..block.len()]);
-        }
-        file.write_all(&chunk[..size])?;
-        left -= size as u64;
-    }
-    file.sync_all()?;
-    drop(file);
-    std::fs::remove_file(path)
 }
 
 /// Destroy `path` and the temporaries a cut save of it left.

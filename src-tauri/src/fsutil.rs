@@ -30,10 +30,48 @@ const FIRST_RENAME_PAUSE: Duration = Duration::from_millis(10);
 /// synced to disk and then renamed over `path`. If any step fails, that
 /// temporary file is removed and `path` is left as it was.
 pub fn atomic_write(path: &Path, bytes: &[u8]) -> io::Result<()> {
+    write_through_temp(path, bytes, |from, to| fs::rename(from, to))
+}
+
+/// `atomic_write`, and the rename is on the disk when this returns, so a
+/// power cut right after cannot undo it.
+///
+/// On Windows `atomic_write` cannot promise that: NTFS journals the rename
+/// but may not have flushed its journal yet, and "the very last rename may be
+/// undone" (`sync_dir_of`). Here the rename goes through `MoveFileExW` with
+/// `MOVEFILE_WRITE_THROUGH`, which returns only once the move is on the
+/// disk. NTFS writes its journal in order, so every rename made before this
+/// one is on the disk too. The migration of the local files writes the vault
+/// that commits it this way, before it destroys anything (design §5.2).
+#[cfg_attr(not(test), allow(dead_code))] // unseal uses it from the next commit
+pub fn atomic_write_durable(path: &Path, bytes: &[u8]) -> io::Result<()> {
+    write_through_temp(path, bytes, |from, to| move_on_disk(from, to, true))
+}
+
+/// Move the file or the directory `from` to `to`, which must not exist, and
+/// return only once the move is on the disk (`atomic_write_durable`).
+#[cfg_attr(not(test), allow(dead_code))] // unseal uses it from the next commit
+pub fn rename_durable(from: &Path, to: &Path) -> io::Result<()> {
+    move_on_disk(from, to, false)?;
+    sync_dir_of(to);
+    if dir_of(from) != dir_of(to) {
+        sync_dir_of(from);
+    }
+    Ok(())
+}
+
+/// `bytes` to a new temporary file next to `path`, synced, then moved over
+/// `path` with `rename`. If any step fails, the temporary file is removed and
+/// `path` is left as it was.
+fn write_through_temp(
+    path: &Path,
+    bytes: &[u8],
+    rename: impl Fn(&Path, &Path) -> io::Result<()>,
+) -> io::Result<()> {
     let temp = temp_path_for(path)?;
     // Nothing to clean up if this fails: the file was never created.
     let file = create_temp(&temp)?;
-    if let Err(error) = fill(file, bytes).and_then(|()| rename_over(&temp, path)) {
+    if let Err(error) = fill(file, bytes).and_then(|()| rename_over(&temp, path, &rename)) {
         // Best effort. `path` is untouched either way, and a wipe also
         // removes temporary files left behind (`leftover_temp_files`).
         let _ = fs::remove_file(&temp);
@@ -41,6 +79,78 @@ pub fn atomic_write(path: &Path, bytes: &[u8]) -> io::Result<()> {
     }
     sync_dir_of(path);
     Ok(())
+}
+
+/// Move `from` to `to` and return once the move is on the disk: through
+/// `MoveFileExW` with `MOVEFILE_WRITE_THROUGH`, replacing a file at `to`
+/// only with `replace`.
+#[cfg(windows)]
+#[cfg_attr(not(test), allow(dead_code))] // unseal uses it from the next commit
+fn move_on_disk(from: &Path, to: &Path, replace: bool) -> io::Result<()> {
+    use std::os::windows::ffi::OsStrExt;
+
+    #[link(name = "kernel32")]
+    extern "system" {
+        fn MoveFileExW(existing: *const u16, new: *const u16, flags: u32) -> i32;
+    }
+    const MOVEFILE_REPLACE_EXISTING: u32 = 0x1;
+    const MOVEFILE_WRITE_THROUGH: u32 = 0x8;
+
+    let wide =
+        |path: &Path| -> Vec<u16> { path.as_os_str().encode_wide().chain(Some(0)).collect() };
+    let (from, to) = (wide(from), wide(to));
+    let mut flags = MOVEFILE_WRITE_THROUGH;
+    if replace {
+        flags |= MOVEFILE_REPLACE_EXISTING;
+    }
+    // SAFETY: both arguments are NUL-terminated UTF-16 strings that live
+    // until the call returns, and MoveFileExW keeps neither pointer.
+    let moved = unsafe { MoveFileExW(from.as_ptr(), to.as_ptr(), flags) };
+    if moved == 0 {
+        Err(io::Error::last_os_error())
+    } else {
+        Ok(())
+    }
+}
+
+/// Elsewhere `rename` plus the directory sync (`sync_dir_of`) the callers do
+/// after it; a rename would replace an empty directory, so `to` is checked
+/// first when it must not be replaced.
+#[cfg(not(windows))]
+#[cfg_attr(not(test), allow(dead_code))] // unseal uses it from the next commit
+fn move_on_disk(from: &Path, to: &Path, replace: bool) -> io::Result<()> {
+    if !replace && fs::symlink_metadata(to).is_ok() {
+        return Err(io::Error::new(
+            io::ErrorKind::AlreadyExists,
+            format!("{} exists", to.display()),
+        ));
+    }
+    fs::rename(from, to)
+}
+
+/// Overwrite the file at `path` with random bytes of its length, sync it and
+/// remove it. A file that is not there is no error. On an SSD the old bytes
+/// may stay elsewhere (design §5.4); on a hard disk, and for the small files
+/// NTFS keeps in its table, this is what removes them.
+pub fn destroy_file(path: &Path) -> io::Result<()> {
+    let mut file = match OpenOptions::new().write(true).open(path) {
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
+        file => file?,
+    };
+    let mut left = file.metadata()?.len();
+    let mut chunk = vec![0u8; 64 * 1024];
+    while left > 0 {
+        let size = chunk.len().min(usize::try_from(left).unwrap_or(usize::MAX));
+        for block in chunk[..size].chunks_mut(32) {
+            let random: [u8; 32] = crate::crypto::random_array();
+            block.copy_from_slice(&random[..block.len()]);
+        }
+        file.write_all(&chunk[..size])?;
+        left -= size as u64;
+    }
+    file.sync_all()?;
+    drop(file);
+    fs::remove_file(path)
 }
 
 /// Temporary files `atomic_write` left next to `path`. That only happens if
@@ -115,17 +225,21 @@ fn fill(mut file: File, bytes: &[u8]) -> io::Result<()> {
     file.sync_all()
 }
 
-/// Rename `from` over `to`, replacing it.
+/// Rename `from` over `to` with `rename`, replacing it.
 ///
 /// On Windows a virus scanner or the search indexer may hold `to` (or the new
 /// file) open for a moment without allowing deletes, and the rename then
 /// fails with "access denied" or a sharing violation until it lets go. Those
 /// failures are retried a few times with a growing pause.
-fn rename_over(from: &Path, to: &Path) -> io::Result<()> {
+fn rename_over(
+    from: &Path,
+    to: &Path,
+    rename: impl Fn(&Path, &Path) -> io::Result<()>,
+) -> io::Result<()> {
     let mut pause = FIRST_RENAME_PAUSE;
     let mut attempt = 1;
     loop {
-        match fs::rename(from, to) {
+        match rename(from, to) {
             Err(error) if attempt < RENAME_ATTEMPTS && may_clear_up(&error) => {
                 std::thread::sleep(pause);
                 pause *= 2;
@@ -333,6 +447,86 @@ mod tests {
 
         let mode = fs::metadata(&path).unwrap().permissions().mode();
         assert_eq!(mode & 0o777, 0o600);
+    }
+
+    #[test]
+    fn a_durable_write_creates_or_replaces_the_file_and_leaves_no_temporary() {
+        let dir = ScratchDir::new("atomic-durable");
+        let path = dir.path().join("vault.bin");
+
+        atomic_write_durable(&path, b"first").unwrap();
+        assert_eq!(fs::read(&path).unwrap(), b"first");
+        atomic_write_durable(&path, b"second, longer").unwrap();
+
+        assert_eq!(fs::read(&path).unwrap(), b"second, longer");
+        assert_eq!(names_in(dir.path()), ["vault.bin"]);
+    }
+
+    #[test]
+    fn a_durable_write_that_cannot_rename_leaves_the_file_as_it_was() {
+        let dir = ScratchDir::new("atomic-durable-blocked");
+        let path = dir.path().join("vault.bin");
+        fs::create_dir(&path).unwrap();
+        fs::write(path.join("inside"), b"keep").unwrap();
+
+        assert!(atomic_write_durable(&path, b"new").is_err());
+
+        assert_eq!(names_in(dir.path()), ["vault.bin"]);
+        assert_eq!(fs::read(path.join("inside")).unwrap(), b"keep");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_durable_write_waits_for_another_program_to_let_go_of_the_file() {
+        let dir = ScratchDir::new("atomic-durable-held");
+        let path = dir.path().join("vault.bin");
+        fs::write(&path, b"old").unwrap();
+        let scanner = hold_like_a_scanner(&path);
+        let release = std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_millis(40));
+            drop(scanner);
+        });
+
+        let result = atomic_write_durable(&path, b"new");
+        release.join().unwrap();
+
+        result.unwrap();
+        assert_eq!(fs::read(&path).unwrap(), b"new");
+    }
+
+    #[test]
+    fn a_durable_rename_moves_a_directory_with_its_files() {
+        let dir = ScratchDir::new("rename-durable");
+        let from = dir.path().join("store.new");
+        fs::create_dir_all(from.join("stickers")).unwrap();
+        fs::write(from.join("index.bin"), b"index").unwrap();
+        fs::write(from.join("stickers").join("a.bin"), b"sticker").unwrap();
+        let to = dir.path().join("store");
+
+        rename_durable(&from, &to).unwrap();
+
+        assert!(!from.exists());
+        assert_eq!(fs::read(to.join("index.bin")).unwrap(), b"index");
+        assert_eq!(
+            fs::read(to.join("stickers").join("a.bin")).unwrap(),
+            b"sticker"
+        );
+    }
+
+    #[test]
+    fn a_durable_rename_never_replaces_what_is_there() {
+        let dir = ScratchDir::new("rename-durable-exists");
+        let from = dir.path().join("store.new");
+        fs::create_dir(&from).unwrap();
+        let to = dir.path().join("store");
+        fs::create_dir(&to).unwrap();
+        fs::write(to.join("index.bin"), b"keep").unwrap();
+
+        assert!(rename_durable(&from, &to).is_err());
+
+        assert!(from.exists());
+        assert_eq!(fs::read(to.join("index.bin")).unwrap(), b"keep");
+        assert!(rename_durable(&dir.path().join("missing"), &dir.path().join("x")).is_err());
     }
 
     #[test]

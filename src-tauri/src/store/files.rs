@@ -27,7 +27,7 @@
 
 use super::disk::Disk;
 use super::envelope::{self, Slot};
-use super::index::{Index, VaultHeader};
+use super::index::{Index, Legacy, VaultHeader};
 use super::keys::StoreKeys;
 use super::report::{action_for, Action, IntegrityReport, What};
 use std::collections::{BTreeMap, BTreeSet};
@@ -439,6 +439,41 @@ impl<D: Disk> Store<D> {
         self.bump_and_save_index()
     }
 
+    /// Note how far the migration from the files of earlier versions got
+    /// (design §5.2), like any change of the index's own.
+    #[cfg_attr(not(test), allow(dead_code))] // unseal uses it from the next commit
+    pub(crate) fn set_legacy(&mut self, legacy: Legacy) -> Result<(), StoreError> {
+        self.index.legacy = legacy;
+        if self.index_frozen {
+            return Err(StoreError::Frozen("the store".into()));
+        }
+        if self.index_blocked() {
+            // It goes out with the index once the choices are made.
+            self.index_saved = false;
+            return Ok(());
+        }
+        self.bump_and_save_index()
+    }
+
+    /// Keep `content` in `aside/`, sealed as `slot` (a `Slot::Legacy`), out
+    /// of the index: nothing reads `aside/` back, so it is never taken for a
+    /// file of the store.
+    #[cfg_attr(not(test), allow(dead_code))] // unseal uses it from the next commit
+    pub(crate) fn put_aside(&self, slot: &Slot, content: &[u8]) -> Result<(), StoreError> {
+        let sealed = envelope::seal(&self.keys, slot, 0, content)?;
+        self.disk.write(&self.path_of(slot), &sealed)?;
+        Ok(())
+    }
+
+    /// Keep `bytes` in `aside/` as they are, under `name`: a file of an
+    /// earlier version that was sealed already and did not open.
+    #[cfg_attr(not(test), allow(dead_code))] // unseal uses it from the next commit
+    pub(crate) fn put_aside_raw(&self, name: &str, bytes: &[u8]) -> Result<(), StoreError> {
+        self.disk
+            .write(&self.dir.join(ASIDE_DIR).join(name), bytes)?;
+        Ok(())
+    }
+
     /// Whether data waits in memory or the index on disk is behind it.
     pub(crate) fn is_behind(&self) -> bool {
         !self.waiting.is_empty() || !self.index_saved
@@ -567,6 +602,16 @@ fn read_index(disk: &impl Disk, dir: &Path, keys: &StoreKeys) -> Result<IndexSta
         Err(error) if error.is_other_vault() => return Err(StoreError::OtherAccount),
         Err(_) => IndexState::Altered,
     })
+}
+
+/// The index of the store in `dir` if it opens under `keys`, read and
+/// nothing else: none if it is missing, does not open or cannot be read now.
+#[cfg_attr(not(test), allow(dead_code))] // unseal uses it from the next commit
+pub(crate) fn peek_index(disk: &impl Disk, dir: &Path, keys: &StoreKeys) -> Option<Index> {
+    match read_index(disk, dir, keys) {
+        Ok(IndexState::Opened(index)) => Some(index),
+        _ => None,
+    }
 }
 
 /// The data files in `dir`: the fixed ones, then the stickers. Anything else

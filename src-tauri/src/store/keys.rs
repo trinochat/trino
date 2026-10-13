@@ -48,11 +48,12 @@ pub(crate) enum KeyLabel {
     Stickers,
     StickerName,
     Index,
+    Legacy,
 }
 
 impl KeyLabel {
     #[cfg_attr(not(test), allow(dead_code))]
-    pub(crate) const ALL: [KeyLabel; 8] = [
+    pub(crate) const ALL: [KeyLabel; 9] = [
         KeyLabel::Account,
         KeyLabel::Prefs,
         KeyLabel::History,
@@ -61,6 +62,7 @@ impl KeyLabel {
         KeyLabel::Stickers,
         KeyLabel::StickerName,
         KeyLabel::Index,
+        KeyLabel::Legacy,
     ];
 
     pub(crate) fn info(self) -> &'static [u8] {
@@ -73,6 +75,7 @@ impl KeyLabel {
             KeyLabel::Stickers => b"trino-store-v1/stickers",
             KeyLabel::StickerName => b"trino-store-v1/sticker-name",
             KeyLabel::Index => b"trino-store-v1/index",
+            KeyLabel::Legacy => b"trino-store-v1/legacy",
         }
     }
 }

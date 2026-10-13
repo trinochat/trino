@@ -186,7 +186,7 @@ fn is_empty_store(dir: &Path) -> io::Result<bool> {
 }
 
 /// A name for `store/` moved aside whole, unique in `home`.
-fn other_store_name() -> String {
+pub(crate) fn other_store_name() -> String {
     let nanos = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_or(0, |elapsed| elapsed.as_nanos());
@@ -313,6 +313,19 @@ impl SessionStore {
     /// The verified `prefs.bin`, if there is one.
     pub(crate) fn prefs(&self) -> Option<&[u8]> {
         self.prefs.as_deref().map(Vec::as_slice)
+    }
+
+    /// The migration's cleanup (M4, `migrate::settle`) ran to its end: the
+    /// index says so, and the next unlock does not run it again. Best
+    /// effort: if the index cannot take it now, M4 runs again, in silence.
+    #[cfg_attr(not(test), allow(dead_code))] // unseal uses it from the next commit
+    pub(crate) fn finish_cleanup(&mut self) {
+        let mut legacy = self.store.index().legacy.clone();
+        if !legacy.cleanup_pending {
+            return;
+        }
+        legacy.cleanup_pending = false;
+        let _ = self.store.set_legacy(legacy);
     }
 
     /// Never write `slot` this session: what it holds did not read, so it

@@ -13,11 +13,15 @@
 //! - `disk`: the file operations, which tests make fail.
 //! - `session`: the store of the open session, or the files of an account
 //!   not moved to it yet, as the commands use them (`storage_cmds.rs`).
+//! - `migrate`: moving an account of an earlier version into the store, so
+//!   that a cut at any step loses nothing (design §5).
 
 pub(crate) mod disk;
 pub(crate) mod envelope;
 pub(crate) mod files;
 pub(crate) mod index;
 pub(crate) mod keys;
+#[cfg_attr(not(test), allow(dead_code))] // unseal uses it from the next commit
+pub(crate) mod migrate;
 pub(crate) mod report;
 pub(crate) mod session;
