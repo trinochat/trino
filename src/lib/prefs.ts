@@ -1,7 +1,13 @@
 /**
- * Local preferences, kept in `localStorage` on this device only. Every read
- * and write is wrapped, so blocked or full storage gives the defaults and a
- * `false` from the setter instead of an exception.
+ * The preferences. Every read and write is wrapped, so blocked or full
+ * storage gives the defaults and a `false` from the setter instead of an
+ * exception.
+ *
+ * Where they live (cifrado local CL-2a, src/lib/prefs-session.ts): the
+ * account's, sealed in the store, through a copy in memory that the unlock
+ * fills before the chats show; locked, they give the defaults and touch
+ * nothing. Only Terminal's scan lines and the capture switch, which the
+ * screen before unlocking applies, stay in this device's `localStorage`.
  *
  * The keys the current screens use stay exactly as they are (`verified:`,
  * `note:`, `ttl:`, `autolock`, `updates.*`, `sticker-recents`), so nothing
@@ -13,6 +19,7 @@
  * call's "Coinciden" or a QR scanned in person verifies, and the bare
  * fingerprint 0.1.0 stored after its weak checks no longer counts.
  */
+import { accountPrefsStorage } from './prefs-session';
 import { legacyMarks, markVerifies, readMark, verifiedMark } from './verification-marks';
 
 /** The part of `Storage` the preferences use; `window.localStorage` fits. */
@@ -268,5 +275,5 @@ export function createPrefs(storage?: PrefsStorage): Prefs {
   };
 }
 
-/** The preferences of this device, in `localStorage`. */
-export const prefs: Prefs = createPrefs();
+/** The preferences of the app: the account's in the session, the screen's own in `localStorage`. */
+export const prefs: Prefs = createPrefs(accountPrefsStorage);

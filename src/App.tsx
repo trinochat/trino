@@ -4,6 +4,7 @@ import { getCurrentWindow } from '@tauri-apps/api/window';
 import { I18nContext, makeT, detectLang, type Lang } from './lib/i18n';
 import { LangCtx, useDocumentLang } from './lib/i18n-context';
 import { prefs } from './lib/prefs';
+import { prefsSession, type PrefsSession } from './lib/prefs-session';
 import { teardownCall, isCallBusy } from './lib/call';
 import { api, onCallCloseRequested, onCallQuitRequested, isCommandError, type StatusResponse } from './lib/api';
 import { ToastProvider } from './ui';
@@ -24,6 +25,7 @@ import { installBrowserChromeGuard } from './app/browser-chrome';
 import type { CallGate } from './app/calls';
 import { MainScreen, type MainProps } from './app/MainScreen';
 import { useAutoLock } from './app/useAutoLock';
+import { withAccountPrefs, type AccountPrefsApi } from './app/account-prefs';
 
 export type { MainProps };
 
@@ -33,7 +35,7 @@ const isMobile = /android|iphone|ipad|ipod/i.test(navigator.userAgent);
  * What App() needs from the backend: `api` of src/lib/api.ts in the app, a
  * fake in the tests. The first run and the unlock screen take their part.
  */
-export interface AppApi extends OnboardingApi, UnlockApi {
+export interface AppApi extends OnboardingApi, UnlockApi, AccountPrefsApi {
   status(): Promise<StatusResponse>;
   lockVault(): Promise<void>;
   /** Whether a call holds the microphone: the window's close and the tray's "Salir" ask first. */
@@ -56,6 +58,9 @@ const BACKEND: AppApi = {
   updateProfile: (handle, avatar) => api.updateProfile(handle, avatar),
   unseal: api.unseal,
   wipe: api.wipe,
+  prefsSave: api.prefsSave,
+  prefsImport: api.prefsImport,
+  clearBrowsingData: api.clearBrowsingData,
 };
 
 /**
@@ -77,6 +82,8 @@ export interface AppProps {
   windowApi?: WindowApi;
   /** The chats, once Trino is unlocked. */
   Main?: ComponentType<MainProps>;
+  /** The account's preferences while unlocked: the one `prefs.ts` reads, unless a test brings its own. */
+  session?: PrefsSession;
 }
 
 /**
@@ -84,7 +91,11 @@ export interface AppProps {
  * error, the first run, the unlock screen and the chats. Every lock seals the
  * vault and then reads the status again, with the reason it locked.
  */
-function App({ api: backend = BACKEND, windowApi = TAURI_WINDOW, Main = MainScreen }: AppProps) {
+function App({ api: given = BACKEND, windowApi = TAURI_WINDOW, Main = MainScreen, session = prefsSession }: AppProps) {
+  // Unlocking and the first run resolve once the account's preferences are
+  // in memory and the WebView's copy of before was imported (CL-2a), so the
+  // chats never open on the defaults.
+  const backend = useMemo(() => withAccountPrefs(given, session), [given, session]);
   const [phase, dispatch] = useReducer(phaseReducer, INITIAL_PHASE);
   const [lang, setLangState] = useState<Lang>(detectLang);
   useDocumentLang(lang);
@@ -137,10 +148,12 @@ function App({ api: backend = BACKEND, windowApi = TAURI_WINDOW, Main = MainScre
     callGate.current?.confirmEnd(reason) ?? Promise.resolve(true);
 
   // Every lock path releases the microphone and camera before sealing. The
-  // chats go at once, also when sealing fails.
+  // chats go at once, also when sealing fails. The account's preferences
+  // still waiting go to the store first, and their copy is forgotten.
   const lockNow = (reason: LockReason) => {
     teardownCall();
-    sealing.current = Promise.resolve()
+    sealing.current = session
+      .close()
       .then(() => backend.lockVault())
       .catch(() => console.warn('lock_vault failed'));
     dispatch({ type: 'locked', reason });
@@ -215,10 +228,11 @@ function App({ api: backend = BACKEND, windowApi = TAURI_WINDOW, Main = MainScre
   });
 
   // "Borrar identidad" on the unlock screen, or "Borrar todo de este equipo"
-  // in Settings, deleted the vault, the chats and the contacts. What this
-  // device keeps beside them goes too, as the old screen did: the consent
-  // record, the verified marks, the notes and the settings.
+  // in Settings, deleted the vault, the chats and the contacts, and with the
+  // store the account's preferences. Their copy in memory is forgotten
+  // unsaved, and what the WebView keeps goes too, as the old screen did.
   const wiped = () => {
+    session.discard();
     try {
       localStorage.clear();
     } catch {

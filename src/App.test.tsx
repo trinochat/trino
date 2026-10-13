@@ -1,10 +1,12 @@
 // @vitest-environment jsdom
 import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react';
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import App, { type AppApi, type MainProps } from './App';
 import type { CallGate } from './app/calls';
 import type { ForgeResponse, StatusResponse, UnsealResponse } from './lib/api';
+import { prefs } from './lib/prefs';
+import { prefsSession, type PrefsImported, type PrefsMap } from './lib/prefs-session';
 import type { WindowApi } from './screens/auth';
 
 // How App() goes from reading the status to the chats and back (plan §4,
@@ -27,6 +29,8 @@ const UNSEALED: UnsealResponse = {
   fingerprint: 'f1f2f3f4',
   nostr_pub: 'c'.repeat(64),
   relay_connection_started: true,
+  prefs_import: 'done',
+  custom_data_dir: false,
 };
 const CREATED: ForgeResponse = { ...UNSEALED, bundle_json: JSON.stringify({ handle: 'Rechita', ik: 'AAAA', avatar: null }) };
 
@@ -64,8 +68,16 @@ function fakeApi(...answers: Array<StatusResponse | Error>) {
     totpVerify: vi.fn(() => Promise.resolve(false)),
     createIdentity: vi.fn(() => Promise.resolve(CREATED)),
     updateProfile: vi.fn(() => Promise.resolve()),
-    unseal: vi.fn(() => Promise.resolve(UNSEALED)),
+    unseal: vi.fn((_pass: string, _code?: string | null) => Promise.resolve(UNSEALED)),
     wipe: vi.fn(() => Promise.resolve()),
+    prefsSave: vi.fn((_prefs: PrefsMap) => {
+      calls.push('prefsSave');
+      return Promise.resolve();
+    }),
+    prefsImport: vi.fn(
+      (entries: PrefsMap): Promise<PrefsImported> => Promise.resolve({ taken: entries, saved: true, notes: 0 }),
+    ),
+    clearBrowsingData: vi.fn(() => Promise.resolve()),
   } satisfies AppApi;
   return { ...api, calls, requested };
 }
@@ -90,9 +102,16 @@ function FakeMain({ intent, onLock, onAutolockChanged, onWiped, onCallGate }: Ma
     onCallGate?.(callGate);
     return () => onCallGate?.(null);
   }, [onCallGate]);
+  // What the chats read as they open: the first message's timer and the
+  // first notification's level (design §12.5, test 65).
+  const [first] = useState(() => `ttl: ${prefs.getTtl('Ana')}, preview: ${prefs.getNotifPreview()}`);
   return (
     <section aria-label="Chats">
       <p>{`intent: ${intent}`}</p>
+      <p>{first}</p>
+      <button type="button" onClick={() => prefs.setNote('Ana', 'Vecina del 3')}>
+        Guardar nota
+      </button>
       <button type="button" onClick={onLock}>
         Bloquear ahora
       </button>
@@ -102,7 +121,7 @@ function FakeMain({ intent, onLock, onAutolockChanged, onWiped, onCallGate }: Ma
       <button
         type="button"
         onClick={() => {
-          localStorage.setItem('autolock', '1');
+          prefs.setAutolockMinutes(1);
           onAutolockChanged?.(1);
         }}
       >
@@ -152,6 +171,7 @@ beforeEach(() => {
 });
 afterEach(() => {
   cleanup();
+  prefsSession.discard();
   callGate = null;
   vi.useRealTimers();
   localStorage.clear();
@@ -301,10 +321,12 @@ describe('App', () => {
   });
 
   // The auto-lock (useAutoLock): src/app/useAutoLock.test.ts has its cases.
-  it('locks after the minutes saved on this device, and says why', async () => {
+  // The minutes are the account's, in the store (CL-2a).
+  it('locks after the minutes saved for the account, and says why', async () => {
     fakeClock();
-    localStorage.setItem('autolock', '1');
-    renderApp(fakeApi(VAULT));
+    const api = fakeApi(VAULT);
+    api.unseal.mockResolvedValue({ ...UNSEALED, prefs: { autolock: '1' } });
+    renderApp(api);
     await heading('Hola de nuevo, Rechita');
     await unlockWith(PASS);
 
@@ -317,8 +339,9 @@ describe('App', () => {
   // when the chats opened, so a new time waited for the next unlock.
   it('applies a new auto-lock time at once, without locking and unlocking', async () => {
     fakeClock();
-    localStorage.setItem('autolock', '15');
-    renderApp(fakeApi(VAULT));
+    const api = fakeApi(VAULT);
+    api.unseal.mockResolvedValue({ ...UNSEALED, prefs: { autolock: '15' } });
+    renderApp(api);
     await heading('Hola de nuevo, Rechita');
     await unlockWith(PASS);
 
@@ -392,6 +415,127 @@ describe('App', () => {
     expect(root.hasAttribute('data-theme')).toBe(false);
     const variables = Array.from({ length: root.style.length }, (_, index) => root.style.item(index));
     expect(variables.filter(name => name.startsWith('--color-'))).toEqual([]);
+  });
+});
+
+// Cifrado local CL-2a (design §5.3 and §12.5): the account's preferences come
+// with the unlock, before the chats, and go back to the store.
+describe("App and the account's preferences", () => {
+  // Design §12.5, test 65: no message leaves without its timer and no
+  // notification has the default level because the chats came first.
+  it('opens the chats with the preferences of the unlock answer already in place', async () => {
+    const api = fakeApi(VAULT);
+    api.unseal.mockResolvedValue({ ...UNSEALED, prefs: { 'ttl:Ana': '30', 'trino.pref.notifPreview': 'none' } });
+    renderApp(api);
+    await heading('Hola de nuevo, Rechita');
+
+    await unlockWith(PASS);
+
+    expect(screen.getByText('ttl: 30, preview: none')).toBeTruthy();
+  });
+
+  // Design §12.5, tests 40 and 41: the import waits for the store before the
+  // chats, and the WebView keeps only the screen's own settings.
+  it('imports the WebView’s copy before the chats show, then clears it', async () => {
+    localStorage.setItem('ttl:Ana', '60');
+    localStorage.setItem('note:Ana', 'Vecina del 3');
+    localStorage.setItem('trino.appearance', '{"style":"calma"}');
+    const api = fakeApi(VAULT);
+    api.unseal.mockResolvedValue({ ...UNSEALED, prefs_import: 'pending' });
+    let answer: (imported: PrefsImported) => void = () => {};
+    api.prefsImport.mockImplementation(() => new Promise(resolve => (answer = resolve)));
+    renderApp(api);
+    await heading('Hola de nuevo, Rechita');
+
+    type('Contraseña', PASS);
+    click('Desbloquear');
+    await vi.waitFor(() => expect(api.prefsImport).toHaveBeenCalledTimes(1), WAIT);
+    expect(api.prefsImport).toHaveBeenCalledWith({ 'ttl:Ana': '60', 'note:Ana': 'Vecina del 3' });
+    expect(screen.queryByText('intent: chats')).toBeNull();
+    await act(async () => answer({ taken: { 'ttl:Ana': '60', 'note:Ana': 'Vecina del 3' }, saved: true, notes: 1 }));
+    await chatsOpen();
+
+    expect(screen.getByText('ttl: 60, preview: name')).toBeTruthy();
+    expect(prefs.getNote('Ana')).toBe('Vecina del 3');
+    expect(localStorage.getItem('ttl:Ana')).toBeNull();
+    expect(localStorage.getItem('note:Ana')).toBeNull();
+    await vi.waitFor(() => expect(api.clearBrowsingData).toHaveBeenCalledTimes(1), WAIT);
+    expect(localStorage.getItem('lang')).toBe('es');
+    expect(localStorage.getItem('trino.appearance')).toBe('{"style":"calma"}');
+  });
+
+  // Part 1's error path: an account whose migration stopped before its commit.
+  it('keeps them in the WebView for an account that has not moved to the store yet', async () => {
+    localStorage.setItem('ttl:Ana', '30');
+    const api = fakeApi(VAULT);
+    api.unseal.mockResolvedValue({ ...UNSEALED, prefs_import: 'unavailable' });
+    renderApp(api);
+    await heading('Hola de nuevo, Rechita');
+
+    await unlockWith(PASS);
+    click('Guardar nota');
+
+    expect(screen.getByText('ttl: 30, preview: name')).toBeTruthy();
+    expect(localStorage.getItem('note:Ana')).toBe('Vecina del 3');
+    expect(api.prefsImport).not.toHaveBeenCalled();
+    expect(api.prefsSave).not.toHaveBeenCalled();
+  });
+
+  it('sends a change before the vault locks, then forgets them', async () => {
+    const api = fakeApi(VAULT, VAULT);
+    renderApp(api);
+    await heading('Hola de nuevo, Rechita');
+    await unlockWith(PASS);
+
+    click('Guardar nota');
+    click('Bloquear ahora');
+    await heading('Hola de nuevo, Rechita');
+
+    expect(api.calls).toEqual(['status', 'prefsSave', 'lockVault', 'status']);
+    expect(api.prefsSave).toHaveBeenCalledWith({ 'note:Ana': 'Vecina del 3' });
+    expect(prefs.getNote('Ana')).toBe('');
+    expect(localStorage.getItem('note:Ana')).toBeNull();
+  });
+
+  it('forgets them without saving once Settings erased the identity', async () => {
+    const api = fakeApi(VAULT);
+    renderApp(api);
+    await heading('Hola de nuevo, Rechita');
+    await unlockWith(PASS);
+
+    click('Guardar nota');
+    click('Borrar todo de este equipo');
+    await heading('Te damos la bienvenida a Trino');
+    await new Promise(resolve => setTimeout(resolve, 600));
+
+    expect(api.prefsSave).not.toHaveBeenCalled();
+    expect(prefs.getNote('Ana')).toBe('');
+  });
+
+  // Design §12.5, test 42 (H5): the record of the two boxes, with the new
+  // identity's key, goes to the store with the account's preferences.
+  it('keeps the record of the two boxes with the account, not in the WebView', async () => {
+    const api = fakeApi(NO_VAULT);
+    api.createIdentity.mockResolvedValue({ ...CREATED, prefs_import: 'pending' });
+    renderApp(api);
+    await heading('Te damos la bienvenida a Trino');
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Tengo 18 años o más' }));
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Leí y acepto cómo Trino trata mis datos' }));
+    click('Empezar');
+    type('Nombre', 'Rechita');
+    click('Continuar');
+    type('Contraseña', PASS);
+    type('Repite la contraseña', PASS);
+    click('Continuar');
+    await heading('Elige cómo se ve Trino');
+    click('Continuar');
+    click('Ahora no');
+    await heading('Todo listo');
+
+    expect(localStorage.getItem('trino.consent')).toBeNull();
+    await vi.waitFor(() => expect(api.prefsSave).toHaveBeenCalled(), WAIT);
+    const saved = api.prefsSave.mock.calls[api.prefsSave.mock.calls.length - 1]![0];
+    expect(JSON.parse(saved['trino.consent']!)).toMatchObject({ format: 1, publicKey: CREATED.nostr_pub });
   });
 });
 

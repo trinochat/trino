@@ -21,6 +21,8 @@ const CREATED: ForgeResponse = {
   fingerprint: 'f1f2f3f4',
   nostr_pub: 'd'.repeat(64),
   relay_connection_started: true,
+  prefs_import: 'pending',
+  custom_data_dir: false,
   // A whole bundle, as forge returns it (own_bundle_json): a trino2 code
   // carries every key, so toShareCode gives '' for anything less (W4).
   bundle_json: JSON.stringify({

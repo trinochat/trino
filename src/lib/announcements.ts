@@ -1,3 +1,5 @@
+import { accountPrefsStorage } from './prefs-session';
+
 export interface Announcement {
   id: string;
   title: string;
@@ -42,7 +44,10 @@ const MAX_ANNOUNCEMENTS = 50;
 const PINNED_SIGNER_FINGERPRINT: string =
   '4DE8E4BC5872E37566FA4114A62EE5607F666A6B';
 
-/** Highest signed `seq` ever accepted — blocks rollback to an older feed. */
+/**
+ * Highest signed `seq` ever accepted — blocks rollback to an older feed. One
+ * of the account's preferences, sealed in the store (src/lib/prefs-session.ts).
+ */
 const SEQ_STORAGE_KEY = 'trino:announcements:minSeq';
 
 export const BUNDLED_ANNOUNCEMENTS: Announcement[] = [
@@ -147,7 +152,7 @@ function commitFeedSequence(payload: string): void {
   }
   let seen = 0;
   try {
-    seen = Number(localStorage.getItem(SEQ_STORAGE_KEY) || '0') || 0;
+    seen = Number(accountPrefsStorage.getItem(SEQ_STORAGE_KEY) || '0') || 0;
   } catch {
     /* storage unavailable — fail open on read, still enforce within session */
   }
@@ -156,7 +161,7 @@ function commitFeedSequence(payload: string): void {
   }
   if (seq > seen) {
     try {
-      localStorage.setItem(SEQ_STORAGE_KEY, String(seq));
+      accountPrefsStorage.setItem(SEQ_STORAGE_KEY, String(seq));
     } catch {
       /* ignore */
     }

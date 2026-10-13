@@ -45,3 +45,11 @@ describe('protection from screen capture', () => {
     expect(capability.permissions).toContain('core:window:allow-set-content-protected');
   });
 });
+
+// Cifrado local CL-2a (design §5.3): once the account's preferences are in
+// the store, the WebView's data is cleared, where removed values may linger.
+describe("clearing the WebView's data", () => {
+  it('is allowed to the app, for after the one import of the preferences', () => {
+    expect(capability.permissions).toContain('core:webview:allow-clear-all-browsing-data');
+  });
+});

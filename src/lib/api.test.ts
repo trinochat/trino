@@ -21,7 +21,9 @@ import {
   type SendReceipt,
   type SentFile,
   type SentGroupFile,
+  type UnsealResponse,
 } from './api';
+import type { PrefsImported } from './prefs-session';
 
 // The wrappers are the contract with src-tauri: the command and event names
 // and the argument keys must match the Rust side exactly (plan §5). Tauri
@@ -38,6 +40,8 @@ vi.mock('@tauri-apps/plugin-notification', () => ({
   sendNotification: vi.fn(),
 }));
 vi.mock('@tauri-apps/plugin-opener', () => ({ openUrl: vi.fn() }));
+const { clearAllBrowsingData } = vi.hoisted(() => ({ clearAllBrowsingData: vi.fn(async () => {}) }));
+vi.mock('@tauri-apps/api/webview', () => ({ getCurrentWebview: () => ({ clearAllBrowsingData }) }));
 
 beforeEach(() => {
   invoke.mockClear();
@@ -307,6 +311,40 @@ describe('the new events', () => {
     expect(name).toBe(event);
     handler({ payload });
     expect(callback).toHaveBeenCalledWith(payload);
+  });
+});
+
+// Cifrado local CL-2a: the account's preferences in the store (prefs_cmds.rs).
+describe("the account's preferences", () => {
+  it.each([
+    ['prefsSave', () => api.prefsSave({ 'note:Ana': 'x' }), 'prefs_save', { prefs: { 'note:Ana': 'x' } }],
+    ['prefsImport', () => api.prefsImport({ autolock: '1' }), 'prefs_import', { entries: { autolock: '1' } }],
+    ['prefsGet', () => api.prefsGet(), 'prefs_get', undefined],
+  ])('%s calls its command', async (_name, call, command, args) => {
+    await call();
+    expect(invoke.mock.calls).toEqual([args === undefined ? [command] : [command, args]]);
+  });
+
+  it('clear the WebView through its own call, once imported', async () => {
+    await api.clearBrowsingData();
+    expect(clearAllBrowsingData).toHaveBeenCalledTimes(1);
+    expect(invoke).not.toHaveBeenCalled();
+  });
+
+  it('come with the unlock answer, as the backend sends it', () => {
+    const answer: UnsealResponse = {
+      handle: 'Ana',
+      fingerprint: 'f1f2',
+      nostr_pub: 'cc',
+      relay_connection_started: true,
+      prefs: { 'note:Bob': 'Vecino' },
+      prefs_import: 'pending',
+      custom_data_dir: false,
+      integrity: { findings: [{ file: 'account', what: 'olderCopy', action: 'ask' }] },
+      migration: { contacts: 1, groups: 0, stickers: 0 },
+    };
+    expectTypeOf(answer.prefs_import).toEqualTypeOf<'done' | 'pending' | 'unavailable'>();
+    expectTypeOf<PrefsImported>().toEqualTypeOf<{ taken: Record<string, string>; saved: boolean; notes: number }>();
   });
 });
 

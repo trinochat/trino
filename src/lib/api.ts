@@ -1,11 +1,13 @@
 import { invoke } from '@tauri-apps/api/core';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
+import { getCurrentWebview } from '@tauri-apps/api/webview';
 import {
   isPermissionGranted,
   requestPermission,
   sendNotification,
 } from '@tauri-apps/plugin-notification';
 import { openUrl } from '@tauri-apps/plugin-opener';
+import type { PrefsImportState, PrefsImported, PrefsMap } from './prefs-session';
 
 // Open a URL in the system browser (not inside the webview).
 export function openLink(url: string): void {
@@ -47,6 +49,51 @@ export interface StatusResponse {
   totp_enabled: boolean | null;
 }
 
+// What changed on disk since the last session, for the one dialog at unlock
+// (cifrado local, design §6; src-tauri/src/store/report.rs).
+export type IntegrityWhat =
+  | 'olderCopy'
+  | 'unverified'
+  | 'altered'
+  | 'missing'
+  | 'unlisted'
+  | 'unreadable'
+  | 'behind'
+  | 'vaultChanged'
+  | 'otherAccount'
+  | 'totpFlag'
+  | 'plainFiles';
+export type IntegrityAction =
+  | 'ask'
+  | 'newSessions'
+  | 'setAside'
+  | 'use'
+  | 'empty'
+  | 'defaults'
+  | 'keepForLater'
+  | 'notice'
+  | 'offerImport';
+export interface IntegrityFinding {
+  // The file's logical name (`account`, `prefs`, `history`…), `index`,
+  // `vault`, `store` or `legacy`.
+  file: string;
+  what: IntegrityWhat;
+  action: IntegrityAction;
+}
+export interface IntegrityReport {
+  findings: IntegrityFinding[];
+}
+
+// The one note after the migration moved an earlier version's account into
+// the store (design §11.5). `notes` is not the backend's: the frontend adds
+// how many notes the import of the WebView's copy took (prefs-session.ts).
+export interface MigrationNote {
+  contacts: number;
+  groups: number;
+  stickers: number;
+  notes?: number;
+}
+
 export interface UnsealResponse {
   handle: string;
   fingerprint: string;
@@ -54,6 +101,18 @@ export interface UnsealResponse {
   // False when the session was open already: whoever opened it started the
   // relay connections.
   relay_connection_started: boolean;
+  // The account's preferences in the store (`prefs.bin`), any JSON the
+  // backend read: prefs-session.ts keeps only its entries of text. Left out
+  // when there are none.
+  prefs?: unknown;
+  // Where the one import of the WebView's copy of them stands.
+  prefs_import: PrefsImportState;
+  // TRINO_HOME chose the data folder: other folders may share the WebView.
+  custom_data_dir: boolean;
+  // Left out when nothing changed on disk.
+  integrity?: IntegrityReport;
+  // Only at the unlock that ended the migration.
+  migration?: MigrationNote;
 }
 
 // What `forge` returns: the session it opened, as `unseal` describes it, and
@@ -380,6 +439,15 @@ export const api = {
   // Leave `totpCode` out, or empty, for a vault without TOTP.
   unseal: (passphrase: string, totpCode?: string | null): Promise<UnsealResponse> =>
     invoke('unseal', { passphrase, totpCode: totpCode ?? null }),
+  // The account's preferences (cifrado local CL-2a): the whole map, sealed
+  // in the store; the one import of the WebView's copy, which keeps only
+  // this account's entries; and what the session has now.
+  prefsSave: (prefs: PrefsMap): Promise<void> => invoke('prefs_save', { prefs }),
+  prefsImport: (entries: PrefsMap): Promise<PrefsImported> => invoke('prefs_import', { entries }),
+  prefsGet: (): Promise<unknown> => invoke('prefs_get'),
+  // Clears the WebView's data, where removed values may linger (design
+  // §5.3): through Tauri's own command, allowed in capabilities/default.json.
+  clearBrowsingData: (): Promise<void> => getCurrentWebview().clearAllBrowsingData(),
   shareBundle: (): Promise<string> => invoke('share_bundle'),
   // `replaceExisting` (K8) replaces a contact that has the name, after the
   // user confirmed it; left out, the payload is the one older backends take.

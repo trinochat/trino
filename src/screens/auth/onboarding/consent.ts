@@ -28,10 +28,13 @@ export const PRIVACY_POLICY_VERSION = 1;
 /** Where that document is published, opened in the system browser. */
 export const PRIVACY_POLICY_URL = 'https://trinochat.org/privacidad/';
 
-/** One record per device: the identity on it. A new identity replaces it. */
+/**
+ * One record per account, among its preferences: sealed in the store with
+ * them (cifrado local CL-2a, design H5), no longer in the WebView.
+ */
 export const CONSENT_STORAGE_KEY = 'trino.consent';
 
-/** The part of `Storage` the record uses; `window.localStorage` fits. */
+/** The part of `Storage` the record uses; `accountPrefsStorage` of prefs-session.ts fits. */
 export type ConsentStorage = Pick<Storage, 'getItem' | 'setItem'>;
 
 export interface ConsentRecord {

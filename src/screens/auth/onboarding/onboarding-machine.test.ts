@@ -17,6 +17,8 @@ const CREATED: ForgeResponse = {
   fingerprint: 'f1f2',
   nostr_pub: 'b'.repeat(64),
   relay_connection_started: true,
+  prefs_import: 'pending',
+  custom_data_dir: false,
   bundle_json: '{"handle":"Rechita"}',
 };
 const PHOTO = 'data:image/jpeg;base64,AAAA';

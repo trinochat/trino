@@ -17,6 +17,7 @@ import { THEMES } from '../../../design/tokens';
 import { useAppearance } from '../../../design/useAppearance';
 import { isCommandError, openLink as openInBrowser } from '../../../lib/api';
 import { makeAvatar as makeProfileAvatar } from '../../../lib/avatar';
+import { accountPrefsStorage } from '../../../lib/prefs-session';
 import { useT } from '../../../lib/i18n';
 import { useLang } from '../../../lib/i18n-context';
 import { Button } from '../../../ui';
@@ -45,26 +46,16 @@ import { WelcomeStep } from './steps/WelcomeStep';
 export interface OnboardingFlowOptions {
   /** Turns the chosen picture into the profile photo: `makeAvatar` (E0c). */
   makeAvatar?(file: File): Promise<string>;
-  /** Where the record of the two boxes is kept: this device's localStorage. */
+  /**
+   * Where the record of the two boxes is kept: the account's preferences,
+   * sealed in the store with the session the new identity opened (cifrado
+   * local CL-2a, design H5).
+   */
   consentStorage?: ConsentStorage;
   /** Opens the public document in the system browser: `openLink` of api.ts. */
   openLink?(url: string): void;
   /** The clock of the consent record, in ms: `Date.now`. */
   now?(): number;
-}
-
-/** localStorage, or a storage that keeps nothing when the webview refuses it. */
-function deviceStorage(): ConsentStorage {
-  try {
-    return window.localStorage;
-  } catch {
-    return {
-      getItem: () => null,
-      setItem: () => {
-        throw new Error('no storage');
-      },
-    };
-  }
 }
 
 /** A failure for the console: its code, never the backend's whole answer. */
@@ -152,7 +143,7 @@ export function OnboardingFlow({
         return;
       case 'recordConsent': {
         const record = consentRecord({ publicKey: effect.publicKey, lang, at: new Date(now()) });
-        if (!saveConsentRecord(consentStorage ?? deviceStorage(), record)) {
+        if (!saveConsentRecord(consentStorage ?? accountPrefsStorage, record)) {
           console.warn('the record of the age and data boxes could not be kept');
         }
         return;

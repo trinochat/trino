@@ -14,7 +14,14 @@ afterEach(() => {
 });
 
 const PASS = 'caballo-correcto-bateria';
-const UNSEALED: UnsealResponse = { handle: 'rechita', fingerprint: 'f1f2', nostr_pub: 'c'.repeat(64), relay_connection_started: true };
+const UNSEALED: UnsealResponse = {
+  handle: 'rechita',
+  fingerprint: 'f1f2',
+  nostr_pub: 'c'.repeat(64),
+  relay_connection_started: true,
+  prefs_import: 'done',
+  custom_data_dir: false,
+};
 const failure = (code: CommandErrorCode): CommandError => ({ code, message: 'for the log' });
 
 /** An unseal that answers when the test says. */
