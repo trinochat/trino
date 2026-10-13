@@ -4694,7 +4694,7 @@ dependencies = [
 [[package]]
 name = "trino-core"
 version = "0.1.0"
-source = "git+https://github.com/trinochat/trino-core?rev=4ce6775d511afc7ac20a8a5f7b903954c0bff7cb#4ce6775d511afc7ac20a8a5f7b903954c0bff7cb"
+source = "git+https://github.com/trinochat/trino-core?rev=3421e168c94da92d21234e1a8c1587d552b0002b#3421e168c94da92d21234e1a8c1587d552b0002b"
 dependencies = [
  "aes-gcm",
  "base64 0.22.1",

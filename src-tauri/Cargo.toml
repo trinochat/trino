@@ -18,7 +18,7 @@ tauri-build = { version = "2", features = [] }
 # repository so it can be audited on its own; Cargo.lock pins the exact commit,
 # so builds stay reproducible. To work on both at once, add a [patch] pointing
 # at a local checkout — do not commit it.
-trino-core = { git = "https://github.com/trinochat/trino-core", rev = "4ce6775d511afc7ac20a8a5f7b903954c0bff7cb" }
+trino-core = { git = "https://github.com/trinochat/trino-core", rev = "3421e168c94da92d21234e1a8c1587d552b0002b" }
 
 tauri = { version = "2", features = ["tray-icon", "image-png"] }
 tauri-plugin-opener = "2"
