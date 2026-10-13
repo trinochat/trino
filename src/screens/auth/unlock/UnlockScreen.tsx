@@ -1,6 +1,8 @@
 /**
- * The unlock screen of the redesign (R3.6, Unlock:50-90): the avatar, a
- * greeting and why Trino is locked; the password, and the code of the
+ * The unlock screen of the redesign (R3.6, Unlock:50-90): Trino's mark, the
+ * greeting "Hola de nuevo" and why Trino is locked. No name and no initials:
+ * nothing in clear may give them before unlocking (cifrado local, design H1
+ * and §11.3; David's decision 1); the password, and the code of the
  * authenticator app only when the vault has 2FA (or asks for one); one error
  * at a time in an alert tied to its field, or to the password when it is
  * about none, and that field takes the focus; and "¿Olvidaste la contraseña?",
@@ -11,8 +13,7 @@
 import { useEffect, useId, useRef, useState, type FormEvent } from 'react';
 import { isCommandError } from '../../../lib/api';
 import { useT } from '../../../lib/i18n';
-import { identityInitials } from '../../../lib/initials';
-import { Avatar, Banner, Button, FOCUS_RING, Field, Input, PasswordInput, cx } from '../../../ui';
+import { Banner, Button, FOCUS_RING, Field, Input, PasswordInput, TrinoLogo, cx } from '../../../ui';
 import type { UnlockScreenProps } from '../../types';
 import { attempt } from '../common/attempt';
 import { AuthFrame } from '../common/AuthFrame';
@@ -40,7 +41,7 @@ const codeDigits = (value: string) => value.replace(/\D/g, '').slice(0, 6);
  */
 const focusFieldOf = (shown: ShownError): FieldName => shown.field ?? 'pass';
 
-export function UnlockScreen({ handle, totpEnabled, reason, api, onUnlocked, onNoVault, onWiped }: UnlockScreenProps) {
+export function UnlockScreen({ totpEnabled, reason, api, onUnlocked, onNoVault, onWiped }: UnlockScreenProps) {
   const t = useT();
   const titleId = useId();
   const errorId = useId();
@@ -136,9 +137,9 @@ export function UnlockScreen({ handle, totpEnabled, reason, api, onUnlocked, onN
   return (
     <AuthFrame width="narrow" labelledBy={titleId}>
       <div className="flex flex-col items-center gap-3 text-center">
-        <Avatar initials={identityInitials(handle ?? '')} size={64} />
+        <TrinoLogo size={48} decorative className="size-12 text-ui-accent-text" />
         <h1 id={titleId} className="m-0 font-ui-display text-[1.5rem] font-bold leading-[1.25]">
-          {handle ? t('unlock2.title', { name: handle }) : t('unlock2.titleNoName')}
+          {t('unlock2.titleNoName')}
         </h1>
         <p className="m-0 text-ui-base leading-normal text-ui-muted">{lockReasonText(reason, t)}</p>
       </div>

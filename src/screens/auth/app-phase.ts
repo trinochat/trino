@@ -4,9 +4,10 @@
  * the integration keeps the phase with `useReducer` and turns what happens
  * (the status, an identity created, an unlock, a lock) into events.
  *
- * Locking always reads the status again, so the unlock screen shows the name
- * and the code field as they are now. With an identity the password is always
- * asked, also when a reload left the session open: the status never skips it.
+ * Locking always reads the status again, so the unlock screen shows the code
+ * field as it is now. With an identity the password is always asked, also when
+ * a reload left the session open: the status never skips it. The status's
+ * name is not kept: the unlock screen greets without one (David's decision 1).
  */
 import type { StatusResponse } from '../../lib/api';
 import type { LockReason, OnboardingIntent } from '../types';
@@ -17,7 +18,7 @@ export type AppPhase =
   /** The status could not be read; `then` survives the retry. */
   | { kind: 'startupError'; then?: LockReason }
   | { kind: 'onboarding' }
-  | { kind: 'unlock'; reason: LockReason; handle: string | null; totpEnabled: boolean | null }
+  | { kind: 'unlock'; reason: LockReason; totpEnabled: boolean | null }
   | { kind: 'main'; intent: OnboardingIntent };
 
 export type PhaseEvent =
@@ -47,7 +48,6 @@ export function phaseReducer(phase: AppPhase, event: PhaseEvent): AppPhase {
         return {
           kind: 'unlock',
           reason: phase.then ?? { kind: 'cold' },
-          handle: status.handle,
           totpEnabled: status.totp_enabled,
         };
       }

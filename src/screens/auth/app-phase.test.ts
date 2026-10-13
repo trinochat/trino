@@ -28,11 +28,12 @@ describe('phaseReducer', () => {
     expect(run(INITIAL_PHASE, { type: 'status', status: status() })).toEqual({ kind: 'onboarding' });
   });
 
-  it('goes to the unlock screen when there is one, with its name and whether it asks for a code', () => {
+  // Without the name the status may give (David's decision 1): the unlock
+  // screen greets "Hola de nuevo".
+  it('goes to the unlock screen when there is one, with whether it asks for a code and no name', () => {
     expect(run(INITIAL_PHASE, { type: 'status', status: VAULT })).toEqual({
       kind: 'unlock',
       reason: { kind: 'cold' },
-      handle: 'Rechita',
       totpEnabled: true,
     });
   });
@@ -71,7 +72,7 @@ describe('phaseReducer', () => {
   });
 
   // Locking always reads the status again, so the unlock screen shows the
-  // name and the code field as they are now.
+  // code field as it is now.
   it('reads the status again on locking, then unlocks with the reason', () => {
     const loading = run(main, LOCKED_BY_HAND);
     expect(loading).toEqual({ kind: 'loading', then: { kind: 'manual' } });
@@ -79,7 +80,6 @@ describe('phaseReducer', () => {
     expect(run(loading, { type: 'status', status: renamed })).toEqual({
       kind: 'unlock',
       reason: { kind: 'manual' },
-      handle: 'Rechi',
       totpEnabled: false,
     });
     const idle = run(main, { type: 'locked', reason: { kind: 'idle', minutes: 5 } }, { type: 'status', status: VAULT });

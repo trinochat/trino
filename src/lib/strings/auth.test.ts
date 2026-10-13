@@ -25,7 +25,7 @@ const KEYS = [
   'onb.errNameTooLong', 'onb.checking', 'onb.ageLabel', 'onb.privacyLabel', 'onb.privacyLink',
   'onb.errConsent', 'onb.errTotpBegin', 'onb.errCodeLength', 'onb.errTotpCheck',
   'onb.errTotpNotVerified', 'onb.qrTitle',
-  'unlock2.title', 'unlock2.lockedIdle', 'unlock2.lockedIdleOne', 'unlock2.lockedManual',
+  'unlock2.lockedIdle', 'unlock2.lockedIdleOne', 'unlock2.lockedManual',
   'unlock2.coldStart', 'unlock2.passLabel', 'unlock2.showPassword',
   'unlock2.codeLabel', 'unlock2.codeHint', 'unlock2.codeRequired', 'unlock2.submit',
   'unlock2.unlocking', 'unlock2.errPass', 'unlock2.errPassOrCode', 'unlock2.errUnlock',
@@ -34,6 +34,10 @@ const KEYS = [
   'unlock2.wiping', 'unlock2.errWipe',
   // R3.6: a vault from a newer Trino, no name to greet, an empty password.
   'unlock2.errUnsupported', 'unlock2.titleNoName', 'unlock2.errEmpty',
+  // Cifrado local (design §11.3): why Trino locked with Windows (CL-6a). The
+  // greeting with the name is gone: the unlock screen never shows one
+  // (David's decision 1).
+  'unlock2.lockedWindows', 'unlock2.lockedSuspend',
   // The start-up screen and the window bar.
   'start.loading', 'start.error', 'start.retry',
   'titlebar.minimize', 'titlebar.maximize', 'titlebar.restore', 'titlebar.close',
@@ -43,7 +47,6 @@ const PLACEHOLDERS: Record<string, string[]> = {
   'onb.stepOf': ['n', 'total'],
   'onb.errTooShort': ['min'],
   'onb.errNameTooLong': ['max'],
-  'unlock2.title': ['name'],
   'unlock2.lockedIdle': ['n'],
 };
 
@@ -66,6 +69,17 @@ describe('the copy of the first run', () => {
     for (const lang of ['es', 'en', 'pt'] as const) {
       expect(auth[lang]['onb.ageLabel'], lang).toContain('18');
       expect(auth[lang]['onb.errConsent'], lang).toContain('18');
+    }
+  });
+});
+
+describe('the copy of the unlock screen', () => {
+  // David, 12 Oct 2026 (decision 1): "Hola de nuevo", without the name,
+  // which nothing in clear may give before unlocking (design H1).
+  it('greets without a name in every language', () => {
+    expect(auth.es['unlock2.titleNoName']).toBe('Hola de nuevo');
+    for (const lang of ['es', 'en', 'pt'] as const) {
+      expect(Object.values(auth[lang]).filter(text => text.includes('{name}')), lang).toEqual([]);
     }
   });
 });

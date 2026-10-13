@@ -187,9 +187,12 @@ describe('App', () => {
     expect(api.status).toHaveBeenCalledTimes(1);
   });
 
-  it('goes to the unlock screen when there is one, with its name and its code field', async () => {
-    renderApp(fakeApi({ ...VAULT, totp_enabled: true }));
-    expect(await heading('Hola de nuevo, Rechita')).toBeTruthy();
+  // David's decision 1 (design §11.3, test 43): "Hola de nuevo" without the
+  // name, even when the status has one, as after a reload of the window.
+  it('goes to the unlock screen when there is one, greeting without a name, with its code field', async () => {
+    renderApp(fakeApi({ ...VAULT, is_unsealed: true, totp_enabled: true }));
+    expect(await heading('Hola de nuevo')).toBeTruthy();
+    expect(document.body.textContent).not.toMatch(/Rechita|RE/);
     expect(screen.getByText('Escribe tu contraseña para abrir tus chats.')).toBeTruthy();
     expect(screen.getByLabelText('Código de tu app autenticadora')).toBeTruthy();
   });
@@ -204,17 +207,17 @@ describe('App', () => {
     expect(api.status).toHaveBeenCalledTimes(2);
   });
 
-  // The unlock screen shows the name and the code field as they are after
-  // the lock, so the status is read again once the vault is locked.
+  // The unlock screen shows the code field as it is after the lock, so the
+  // status is read again once the vault is locked.
   it('locks the vault and reads the status again on locking', async () => {
     const api = fakeApi(VAULT, { ...VAULT, handle: 'Rechi' });
     renderApp(api);
-    await heading('Hola de nuevo, Rechita');
+    await heading('Hola de nuevo');
     await unlockWith(PASS);
     expect(api.unseal).toHaveBeenCalledWith(PASS, null);
 
     click('Bloquear ahora');
-    expect(await heading('Hola de nuevo, Rechi')).toBeTruthy();
+    expect(await heading('Hola de nuevo')).toBeTruthy();
     expect(screen.getByText('Bloqueaste Trino.')).toBeTruthy();
     expect(screen.queryByText('intent: chats')).toBeNull();
     expect(api.calls).toEqual(['status', 'lockVault', 'status']);
@@ -253,7 +256,7 @@ describe('App', () => {
     localStorage.setItem('verified:ana', 'ab12cd34');
     const api = fakeApi(VAULT);
     renderApp(api);
-    await heading('Hola de nuevo, Rechita');
+    await heading('Hola de nuevo');
     click('¿Olvidaste la contraseña?');
     click('Borrar identidad y empezar de cero');
     const dialog = await screen.findByRole('alertdialog', {}, WAIT);
@@ -274,7 +277,7 @@ describe('App', () => {
     localStorage.setItem('note:ana', 'la del trabajo');
     const api = fakeApi(VAULT);
     renderApp(api);
-    await heading('Hola de nuevo, Rechita');
+    await heading('Hola de nuevo');
     await unlockWith(PASS);
 
     click('Borrar todo de este equipo');
@@ -291,11 +294,11 @@ describe('App', () => {
   it('locks with Ctrl+L from the chats', async () => {
     const api = fakeApi(VAULT, { ...VAULT, handle: 'Rechi' });
     renderApp(api);
-    await heading('Hola de nuevo, Rechita');
+    await heading('Hola de nuevo');
     await unlockWith(PASS);
 
     expect(fireEvent.keyDown(screen.getByText('intent: chats'), { key: 'l', ctrlKey: true })).toBe(false);
-    expect(await heading('Hola de nuevo, Rechi')).toBeTruthy();
+    expect(await heading('Hola de nuevo')).toBeTruthy();
     expect(screen.getByText('Bloqueaste Trino.')).toBeTruthy();
     expect(api.calls).toEqual(['status', 'lockVault', 'status']);
   });
@@ -304,7 +307,7 @@ describe('App', () => {
   it('leaves Ctrl+L alone before the chats, once a screen took it, and with Alt', async () => {
     const api = fakeApi(VAULT);
     renderApp(api);
-    const title = await heading('Hola de nuevo, Rechita');
+    const title = await heading('Hola de nuevo');
     fireEvent.keyDown(title, { key: 'l', ctrlKey: true });
     await unlockWith(PASS);
 
@@ -327,11 +330,11 @@ describe('App', () => {
     const api = fakeApi(VAULT);
     api.unseal.mockResolvedValue({ ...UNSEALED, prefs: { autolock: '1' } });
     renderApp(api);
-    await heading('Hola de nuevo, Rechita');
+    await heading('Hola de nuevo');
     await unlockWith(PASS);
 
     await idle(MINUTE);
-    expect(await heading('Hola de nuevo, Rechita')).toBeTruthy();
+    expect(await heading('Hola de nuevo')).toBeTruthy();
     expect(screen.getByText('Trino se bloqueó tras 1 minuto sin actividad.')).toBeTruthy();
   });
 
@@ -342,12 +345,12 @@ describe('App', () => {
     const api = fakeApi(VAULT);
     api.unseal.mockResolvedValue({ ...UNSEALED, prefs: { autolock: '15' } });
     renderApp(api);
-    await heading('Hola de nuevo, Rechita');
+    await heading('Hola de nuevo');
     await unlockWith(PASS);
 
     click('Bloqueo automático al minuto');
     await idle(MINUTE);
-    expect(await heading('Hola de nuevo, Rechita')).toBeTruthy();
+    expect(await heading('Hola de nuevo')).toBeTruthy();
     expect(screen.getByText('Trino se bloqueó tras 1 minuto sin actividad.')).toBeTruthy();
   });
 
@@ -355,7 +358,7 @@ describe('App', () => {
     fakeClock();
     localStorage.setItem('autolock', '1');
     renderApp(fakeApi(VAULT));
-    await heading('Hola de nuevo, Rechita');
+    await heading('Hola de nuevo');
     click('¿Olvidaste la contraseña?');
     click('Borrar identidad y empezar de cero');
     const dialog = await screen.findByRole('alertdialog', {}, WAIT);
@@ -387,7 +390,7 @@ describe('App', () => {
   // once the app is gone. The cases are in src/app/browser-chrome.test.ts.
   it('takes the browser’s menu and shortcuts away, and keeps the menu of the text fields', async () => {
     const { unmount } = renderApp(fakeApi(VAULT));
-    const title = await heading('Hola de nuevo, Rechita');
+    const title = await heading('Hola de nuevo');
     const password = screen.getByLabelText('Contraseña');
     // fireEvent answers false once a listener cancelled what the browser does.
     expect(fireEvent.contextMenu(title)).toBe(false);
@@ -427,7 +430,7 @@ describe("App and the account's preferences", () => {
     const api = fakeApi(VAULT);
     api.unseal.mockResolvedValue({ ...UNSEALED, prefs: { 'ttl:Ana': '30', 'trino.pref.notifPreview': 'none' } });
     renderApp(api);
-    await heading('Hola de nuevo, Rechita');
+    await heading('Hola de nuevo');
 
     await unlockWith(PASS);
 
@@ -445,7 +448,7 @@ describe("App and the account's preferences", () => {
     let answer: (imported: PrefsImported) => void = () => {};
     api.prefsImport.mockImplementation(() => new Promise(resolve => (answer = resolve)));
     renderApp(api);
-    await heading('Hola de nuevo, Rechita');
+    await heading('Hola de nuevo');
 
     type('Contraseña', PASS);
     click('Desbloquear');
@@ -470,7 +473,7 @@ describe("App and the account's preferences", () => {
     const api = fakeApi(VAULT);
     api.unseal.mockResolvedValue({ ...UNSEALED, prefs_import: 'unavailable' });
     renderApp(api);
-    await heading('Hola de nuevo, Rechita');
+    await heading('Hola de nuevo');
 
     await unlockWith(PASS);
     click('Guardar nota');
@@ -484,12 +487,12 @@ describe("App and the account's preferences", () => {
   it('sends a change before the vault locks, then forgets them', async () => {
     const api = fakeApi(VAULT, VAULT);
     renderApp(api);
-    await heading('Hola de nuevo, Rechita');
+    await heading('Hola de nuevo');
     await unlockWith(PASS);
 
     click('Guardar nota');
     click('Bloquear ahora');
-    await heading('Hola de nuevo, Rechita');
+    await heading('Hola de nuevo');
 
     expect(api.calls).toEqual(['status', 'prefsSave', 'lockVault', 'status']);
     expect(api.prefsSave).toHaveBeenCalledWith({ 'note:Ana': 'Vecina del 3' });
@@ -500,7 +503,7 @@ describe("App and the account's preferences", () => {
   it('forgets them without saving once Settings erased the identity', async () => {
     const api = fakeApi(VAULT);
     renderApp(api);
-    await heading('Hola de nuevo, Rechita');
+    await heading('Hola de nuevo');
     await unlockWith(PASS);
 
     click('Guardar nota');
@@ -560,7 +563,7 @@ describe('App during a call', () => {
     const { asked } = callInProgress();
     const api = fakeApi(VAULT, { ...VAULT, handle: 'Rechi' });
     renderApp(api);
-    await heading('Hola de nuevo, Rechita');
+    await heading('Hola de nuevo');
     await unlockWith(PASS);
 
     click('Bloquear ahora');
@@ -572,7 +575,7 @@ describe('App during a call', () => {
     fireEvent.keyDown(screen.getByText('intent: chats'), { key: 'l', ctrlKey: true });
     expect(asked.map(question => question.reason)).toEqual(['lock', 'lock']);
     await asked[1]!.answer(true);
-    expect(await heading('Hola de nuevo, Rechi')).toBeTruthy();
+    expect(await heading('Hola de nuevo')).toBeTruthy();
     expect(api.calls).toEqual(['status', 'lockVault', 'status']);
   });
 
@@ -581,7 +584,7 @@ describe('App during a call', () => {
     const api = fakeApi(VAULT);
     const windowApi = fakeWindow();
     render(<App api={api} windowApi={windowApi} Main={FakeMain} />);
-    await heading('Hola de nuevo, Rechita');
+    await heading('Hola de nuevo');
     await unlockWith(PASS);
     api.setCallActive.mockClear();
 
@@ -601,7 +604,7 @@ describe('App during a call', () => {
     const { asked } = callInProgress();
     const api = fakeApi(VAULT);
     renderApp(api);
-    await heading('Hola de nuevo, Rechita');
+    await heading('Hola de nuevo');
     await unlockWith(PASS);
     api.setCallActive.mockClear();
 
@@ -618,7 +621,7 @@ describe('App during a call', () => {
     const api = fakeApi(VAULT);
     const windowApi = fakeWindow();
     render(<App api={api} windowApi={windowApi} Main={FakeMain} />);
-    await heading('Hola de nuevo, Rechita');
+    await heading('Hola de nuevo');
 
     await act(async () => api.requested.close!());
     expect(confirmEnd).not.toHaveBeenCalled();

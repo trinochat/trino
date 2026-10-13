@@ -107,13 +107,23 @@ export interface OnboardingFlowProps {
    */
   profileSync?: boolean;
 }
-export type LockReason = { kind: 'cold' } | { kind: 'idle'; minutes: number } | { kind: 'manual' };
+/**
+ * Why the unlock screen shows: Trino just started, locked after the idle
+ * minutes, was locked by hand, or locked with the system (cifrado local
+ * CL-6a, design §7.2): Windows was locked, or the computer went to sleep or
+ * hibernated.
+ */
+export type LockReason =
+  | { kind: 'cold' }
+  | { kind: 'idle'; minutes: number }
+  | { kind: 'manual' }
+  | { kind: 'system'; cause: 'session' | 'suspend' };
 export interface UnlockApi {
   unseal(p: string, totpCode?: string | null): Promise<UnsealResponse>;
   wipe(): Promise<void>;
 }
+/** No name: the unlock screen greets "Hola de nuevo" (David's decision 1, design §11.3). */
 export interface UnlockScreenProps {
-  handle: string | null;
   totpEnabled: boolean | null;
   reason: LockReason;
   api: UnlockApi;

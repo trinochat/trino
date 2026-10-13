@@ -82,10 +82,11 @@ const es: Dict = {
   'onb.qrTitle': 'Tu código QR',
 
   // Redesigned unlock (R3). Sentence case; replaces unseal.*.
-  'unlock2.title': 'Hola de nuevo, {name}',
   'unlock2.lockedIdle': 'Trino se bloqueó tras {n} minutos sin actividad.',
   'unlock2.lockedIdleOne': 'Trino se bloqueó tras 1 minuto sin actividad.',
   'unlock2.lockedManual': 'Bloqueaste Trino.',
+  'unlock2.lockedWindows': 'Trino se bloqueó porque bloqueaste Windows.',
+  'unlock2.lockedSuspend': 'Trino se bloqueó porque el computador se suspendió.',
   'unlock2.coldStart': 'Escribe tu contraseña para abrir tus chats.',
   'unlock2.passLabel': 'Contraseña',
   'unlock2.showPassword': 'Mostrar contraseña',
@@ -195,10 +196,11 @@ const en: Dict = {
   'onb.qrTitle': 'Your QR code',
 
   // Redesigned unlock (R3). Sentence case; replaces unseal.*.
-  'unlock2.title': 'Welcome back, {name}',
   'unlock2.lockedIdle': 'Trino locked after {n} minutes without activity.',
   'unlock2.lockedIdleOne': 'Trino locked after 1 minute without activity.',
   'unlock2.lockedManual': 'You locked Trino.',
+  'unlock2.lockedWindows': 'Trino locked because you locked Windows.',
+  'unlock2.lockedSuspend': 'Trino locked because the computer went to sleep.',
   'unlock2.coldStart': 'Enter your password to open your chats.',
   'unlock2.passLabel': 'Password',
   'unlock2.showPassword': 'Show password',
@@ -307,10 +309,11 @@ const pt: Dict = {
   'onb.qrTitle': 'Seu código QR',
 
   // Redesigned unlock (R3). Sentence case; replaces unseal.*.
-  'unlock2.title': 'Olá de novo, {name}',
   'unlock2.lockedIdle': 'O Trino foi bloqueado após {n} minutos sem atividade.',
   'unlock2.lockedIdleOne': 'O Trino foi bloqueado após 1 minuto sem atividade.',
   'unlock2.lockedManual': 'Você bloqueou o Trino.',
+  'unlock2.lockedWindows': 'O Trino foi bloqueado porque você bloqueou o Windows.',
+  'unlock2.lockedSuspend': 'O Trino foi bloqueado porque o computador entrou em suspensão.',
   'unlock2.coldStart': 'Digite sua senha para abrir suas conversas.',
   'unlock2.passLabel': 'Senha',
   'unlock2.showPassword': 'Mostrar senha',

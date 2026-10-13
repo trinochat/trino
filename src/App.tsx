@@ -262,7 +262,6 @@ function App({ api: given = BACKEND, windowApi = TAURI_WINDOW, Main = MainScreen
                 ) : null}
                 {phase.kind === 'unlock' ? (
                   <UnlockScreen
-                    handle={phase.handle}
                     totpEnabled={phase.totpEnabled}
                     reason={phase.reason}
                     api={backend}

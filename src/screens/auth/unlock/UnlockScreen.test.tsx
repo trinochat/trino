@@ -43,7 +43,6 @@ function setup(props: Partial<UnlockScreenProps> = {}, lang?: Lang) {
   const handlers = { onUnlocked: vi.fn(), onNoVault: vi.fn(), onWiped: vi.fn() };
   renderAuth(
     <UnlockScreen
-      handle="rechita"
       totpEnabled={false}
       reason={{ kind: 'idle', minutes: 5 }}
       {...handlers}
@@ -72,17 +71,26 @@ async function unlockWith(pass: string, code?: string) {
 }
 
 describe('UnlockScreen', () => {
-  it('greets the identity by name and says why Trino is locked (Unlock:52-56)', () => {
+  // David's decision 1 (design §11.3, test 43): no name and no initials
+  // before unlocking, only Trino's mark.
+  it('greets without a name and says why Trino is locked (Unlock:52-56)', () => {
     setup();
-    expect(screen.getByRole('heading', { level: 1 }).textContent).toBe('Hola de nuevo, rechita');
+    expect(screen.getByRole('heading', { level: 1 }).textContent).toBe('Hola de nuevo');
     expect(screen.getByText('Trino se bloqueó tras 5 minutos sin actividad.')).toBeTruthy();
-    expect(screen.getByRole('main', { name: 'Hola de nuevo, rechita' })).toBeTruthy();
+    expect(screen.getByRole('main', { name: 'Hola de nuevo' })).toBeTruthy();
+    expect(screen.getByRole('main').querySelector('svg[viewBox="0 0 94 33"]')).toBeTruthy();
+    expect(screen.queryByText('?')).toBeNull();
   });
 
-  it('greets without a name when the status has none, in the language of the app', () => {
-    setup({ handle: null, reason: { kind: 'manual' } }, 'en');
+  it('greets in the language of the app', () => {
+    setup({ reason: { kind: 'manual' } }, 'en');
     expect(screen.getByRole('heading', { level: 1 }).textContent).toBe('Welcome back');
     expect(screen.getByText('You locked Trino.')).toBeTruthy();
+  });
+
+  it('says when Windows locked it (CL-6a)', () => {
+    setup({ reason: { kind: 'system', cause: 'session' } });
+    expect(screen.getByText('Trino se bloqueó porque bloqueaste Windows.')).toBeTruthy();
   });
 
   it('starts in the password field', () => {
