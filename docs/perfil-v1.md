@@ -137,30 +137,41 @@ the worst case.
 
 ## Storage on the desktop
 
-`~/.trino/profiles.bin` holds this identity's "about" and revision, and for
-each contact the profile it shares and what it announced:
+The profiles live in the encrypted store of local encryption (cifrado
+local): `~/.trino/store/profiles.bin` holds this identity's "about" and
+revision, and for each contact the profile it shares and what it announced,
+as JSON inside the store's envelope (`src-tauri/src/store/envelope.rs`):
 
 ```
-nonce (12 bytes) ‖ AES-256-GCM( JSON )
+header: "TRDAT\0" ‖ format 1 ‖ kind 5 ‖ key_gen ‖ id_vault ‖ nonce
+‖ AES-256-GCM( seq ‖ length ‖ JSON ‖ zeros up to the next size step )
 
-key = HKDF-SHA256( ikm  = identity signing private key,
-                   salt = 32 zero bytes,
-                   info = "trino-profiles-key-v1",
-                   length = 32 )
+key = HKDF-SHA256( ikm  = the data key the vault carries,
+                   salt = id_vault,
+                   info = "trino-store-v1/profiles" )
 ```
 
-The key differs from the history key (`trino-history-key-v1`). The file is
-replaced atomically. This identity's name and photo stay in `config.json`,
-which the unlock screen reads before anything is decrypted. Renaming a
-contact moves its entry, removing a contact or replacing its keys drops it,
-locking clears it from memory and wiping deletes the file.
+The header and the logical name `profiles` are the associated data. The file
+is replaced atomically, and the store's index notes each write. This
+identity's name and photo are in the store's `account.bin`, with the rest of
+the account; the unlock screen reads no name. Renaming a contact moves its
+entry, removing a contact or replacing its keys drops it, locking clears it
+from memory, and wiping destroys the vault, whose data key opens the store,
+and then removes the store.
 
 Only a missing `profiles.bin` starts afresh at unlock. One that does not
-decrypt (damaged, or another identity's) is first moved to
-`profiles.bin.damaged`, replacing any copy there, and wiping deletes that
-too. One that cannot be read at all (another program holding it, say) stays
-as it is: that session never writes it and never sends this profile, and
-`update_profile` answers `io` until an unlock reads it again.
+open (changed, put in the place of another file, or planted) is set aside in
+`store/aside/` unopened, and the session starts afresh. An older copy, or one
+the index cannot vouch for, waits for the user's choice at unlock. One that
+cannot be read now (another program holding it, say), or that waits for that
+choice, stays as it is: that session never writes it and never sends this
+profile, and `update_profile` answers `io` until an unlock reads it again.
+
+Earlier versions kept `~/.trino/profiles.bin` as `nonce ‖ AES-256-GCM(JSON)`
+under `HKDF-SHA256(identity signing private key, 32 zero bytes,
+"trino-profiles-key-v1")`, and moved one that did not decrypt to
+`profiles.bin.damaged`. The first unlock with local encryption moves the
+first into the store and keeps the second in `store/aside/`.
 
 ## Commands and events (desktop)
 

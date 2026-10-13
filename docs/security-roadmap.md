@@ -23,7 +23,11 @@ clave pública, destinatario, hora y volumen aproximado.
 - Los mensajes y las señales de llamada viajan cifrados con el canal ratchet.
 - WebRTC cifra el audio y video mediante DTLS-SRTP.
 - La identidad no requiere un número de teléfono ni una cuenta central.
-- La bóveda local usa cifrado autenticado y el historial se guarda cifrado.
+- La bóveda local usa cifrado autenticado y lleva la llave de un almacén
+  cifrado (`~/.trino/store/`) con los contactos, los grupos, el perfil, las
+  preferencias, los stickers, el historial y las sesiones. En claro solo queda
+  lo que usa la pantalla de desbloqueo: que hay una cuenta, si pide código, el
+  idioma, la apariencia, la accesibilidad y si se bloquean las capturas.
 - Las huellas de contactos y llamadas se pueden comparar fuera de banda.
 
 ### Límites que deben comunicarse
@@ -35,6 +39,9 @@ clave pública, destinatario, hora y volumen aproximado.
 - El TOTP actual está dentro de la misma bóveda que protege la contraseña. Tras
   acertar la contraseña sobre una copia robada, el atacante obtiene también el
   secreto TOTP; por ello no añade una segunda barrera offline independiente.
+- Cambiar la contraseña no cambia la llave del almacén cifrado: con una copia
+  vieja de `vault.bin` y la contraseña de antes se abre también lo que se
+  guarde después. Rotarla está planeada con la bóveda que use Argon2id.
 - No se debe afirmar "privacidad suiza" ni jurisdicción suiza sin una entidad,
   responsable del tratamiento o infraestructura realmente sometida a ella.
 
@@ -122,7 +129,11 @@ El descifrado local se ejecuta fuera del hilo asíncrono principal y la conexió
 a relays comienza en segundo plano. El usuario puede abrir el historial local
 sin esperar a que terminen conexiones de red lentas.
 
-### Formato de bóveda v2
+### Formato de bóveda con Argon2id
+
+La versión 2 de la bóveda ya existe: lleva la llave del almacén cifrado como
+dato de la app, y las versiones anteriores la rechazan. El formato de abajo
+tendrá que ser la versión 3.
 
 1. Generar una clave maestra aleatoria de 256 bits.
 2. Cifrar identidad e historial con esa clave maestra.

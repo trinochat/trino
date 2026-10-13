@@ -51,8 +51,8 @@ const PROFILES_KEY_INFO: &[u8] = b"trino-profiles-key-v1";
 /// The shared profiles, as profiles.bin keeps them.
 #[derive(Default, Serialize, Deserialize)]
 pub(crate) struct Profiles {
-    /// This identity's "about". Its name and photo stay in config.json,
-    /// which the unlock screen reads before anything is decrypted.
+    /// This identity's "about". Its name and photo are in the account file
+    /// (`account.bin` in the store), with the rest of the account.
     #[serde(default)]
     pub about: String,
     /// The revision of this identity's profile. It only grows.

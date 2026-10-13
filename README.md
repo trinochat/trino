@@ -24,8 +24,11 @@ cryptography a second time — see [`docs/mobile-client.md`](./docs/mobile-clien
 - **Voice and video calls** over WebRTC (DTLS-SRTP), with a short
   authentication string derived from both DTLS fingerprints so you can detect a
   man-in-the-middle by reading a code aloud.
-- **Local vault** sealed with your passphrase + TOTP; history and sessions are
-  encrypted at rest, and auto-lock re-seals it after inactivity.
+- **Local vault** sealed with your passphrase (plus an optional TOTP code). It
+  carries the key of an encrypted store that keeps your contacts, groups,
+  profile, preferences, stickers, history and sessions at rest; only what the
+  unlock screen needs stays in clear. Trino locks after inactivity and, on
+  Windows, when Windows locks or the computer sleeps.
 - **Attachments** encrypted client-side before upload; downloads are fetched by
   content hash, never from a URL a sender chose.
 - Groups, stickers, replies, disappearing messages, and a signed announcement
