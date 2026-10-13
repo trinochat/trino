@@ -405,6 +405,11 @@ pub(super) fn status_of(inner: &InnerState, home: &Path, vault: &Path) -> Status
         nostr_pub: identity.map(|identity| hex::encode(identity.nostr.pub_bytes)),
         home_dir: home.to_string_lossy().to_string(),
         totp_enabled: totp_hint(vault),
+        lock_reason: if identity.is_none() {
+            inner.lock_reason
+        } else {
+            None
+        },
     }
 }
 

@@ -21,6 +21,10 @@ mod connection;
 mod diag;
 mod net;
 mod security_cmds;
+// -- cifrado local CL-6a --
+mod system_events;
+#[cfg(desktop)]
+mod window_renewal;
 
 use state::AppState;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -54,6 +58,17 @@ fn wait_for_call_release(call_active: &AtomicBool, timeout: Duration, poll: Dura
         }
         std::thread::sleep(poll.min(deadline - now));
     }
+}
+
+/// The tray's menu, by id and label, in order: open the window, lock
+/// (cifrado local CL-6a, design §7.2) and quit.
+#[cfg_attr(not(desktop), allow(dead_code))]
+fn tray_items() -> Vec<(&'static str, &'static str)> {
+    vec![
+        ("open", "Abrir trino"),
+        ("lock", "Bloquear"),
+        ("quit", "Salir"),
+    ]
 }
 
 /// Tray "Salir": give an active call the chance to send its `bye` first.
@@ -115,30 +130,31 @@ pub fn run() {
             }
             // Desktop: a system-tray icon so trino keeps running (connected,
             // receiving messages, ringing for calls) when the window is closed.
+            // "Bloquear" locks from there (cifrado local CL-6a).
             #[cfg(desktop)]
             {
                 use tauri::{
-                    menu::{Menu, MenuItem},
+                    menu::{IsMenuItem, Menu, MenuItem},
                     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
                     Manager,
                 };
-                let show = |app: &tauri::AppHandle| {
-                    if let Some(w) = app.get_webview_window("main") {
-                        let _ = w.show();
-                        let _ = w.unminimize();
-                        let _ = w.set_focus();
-                    }
-                };
-                let open = MenuItem::with_id(_app, "open", "Abrir trino", true, None::<&str>)?;
-                let quit = MenuItem::with_id(_app, "quit", "Salir", true, None::<&str>)?;
-                let menu = Menu::with_items(_app, &[&open, &quit])?;
+                let items = tray_items()
+                    .into_iter()
+                    .map(|(id, label)| MenuItem::with_id(_app, id, label, true, None::<&str>))
+                    .collect::<tauri::Result<Vec<_>>>()?;
+                let items: Vec<&dyn IsMenuItem<_>> = items
+                    .iter()
+                    .map(|item| item as &dyn IsMenuItem<_>)
+                    .collect();
+                let menu = Menu::with_items(_app, &items)?;
                 let _ = TrayIconBuilder::with_id("trino-tray")
                     .icon(_app.default_window_icon().unwrap().clone())
                     .tooltip("trino")
                     .menu(&menu)
                     .show_menu_on_left_click(false)
                     .on_menu_event(move |app, event| match event.id.as_ref() {
-                        "open" => show(app),
+                        "open" => window_renewal::show(app),
+                        "lock" => commands::lock_cmds::tray_lock(app),
                         "quit" => quit_app(app),
                         _ => {}
                     })
@@ -149,45 +165,23 @@ pub fn run() {
                             ..
                         } = event
                         {
-                            show(&tray.app_handle().clone());
+                            window_renewal::show(&tray.app_handle().clone());
                         }
                     })
                     .build(_app)?;
-            }
-            // Linux: WebKitGTK denies getUserMedia (mic/camera) unless we handle
-            // the permission-request signal. Without this, calls silently fail on
-            // Ubuntu (the call button does nothing; accepting sends a reject that
-            // looks like the callee hung up). Grant media requests here.
-            #[cfg(target_os = "linux")]
-            {
-                use tauri::Manager;
-                // ObjectExt, not Cast: `is::<T>()` lives on ObjectExt in glib
-                // 0.18. This only ever compiles on Linux, so nothing caught it
-                // until CI started building for Ubuntu.
-                use webkit2gtk::{
-                    glib::prelude::ObjectExt, PermissionRequestExt, SettingsExt,
-                    UserMediaPermissionRequest, WebViewExt,
-                };
-                if let Some(win) = _app.get_webview_window("main") {
-                    let _ = win.with_webview(|webview| {
-                        let wv = webview.inner();
-                        // getUserMedia is off by default in WebKitGTK — enable it.
-                        if let Some(settings) = wv.settings() {
-                            settings.set_enable_media_stream(true);
-                            settings.set_enable_mediasource(true);
-                        }
-                        // Grant only getUserMedia. Deny geolocation, pointer lock,
-                        // DRM and every other WebKit permission request.
-                        wv.connect_permission_request(|_wv, req| {
-                            if req.is::<UserMediaPermissionRequest>() {
-                                req.allow();
-                            } else {
-                                req.deny();
-                            }
-                            true
-                        });
-                    });
+                _app.manage(window_renewal::Renewal::default());
+                if let Some(window) = _app.get_webview_window(window_renewal::MAIN) {
+                    window_renewal::prepare(&window);
                 }
+            }
+            // Windows: lock when Windows locks, sleeps or hibernates, unless
+            // the account turned it off (design §7.2).
+            #[cfg(windows)]
+            {
+                let app = _app.handle().clone();
+                system_events::listen(move |event| {
+                    commands::lock_cmds::on_system_event(&app, event)
+                });
             }
             Ok(())
         })
@@ -263,14 +257,32 @@ pub fn run() {
             commands::groups_cmds::delete_group,
             commands::history_cmds::delete_history_item,
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        .run(|_app, _event| {
+            // Each lock renews the window (cifrado local CL-6a).
+            #[cfg(desktop)]
+            window_renewal::on_run_event(_app, &_event);
+        });
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::sync::Arc;
+
+    /// Design §12.6, test 69.
+    #[test]
+    fn the_tray_offers_lock() {
+        assert_eq!(
+            tray_items(),
+            vec![
+                ("open", "Abrir trino"),
+                ("lock", "Bloquear"),
+                ("quit", "Salir")
+            ]
+        );
+    }
 
     #[test]
     fn quit_does_not_wait_when_no_call_is_active() {

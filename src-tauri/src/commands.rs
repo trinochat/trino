@@ -81,6 +81,9 @@ pub struct StatusResponse {
     /// Whether unlocking will ask for a TOTP code, from the vault header
     /// (`totp_hint`): `None` with no vault, or one this version cannot read.
     pub totp_enabled: Option<bool>,
+    /// Why the session locked, while it stays locked (CL-6a): the window
+    /// that opens after the lock reads it for its unlock screen.
+    pub lock_reason: Option<lock_cmds::LockReason>,
 }
 
 #[derive(Debug, Serialize)]
@@ -152,6 +155,9 @@ pub(crate) mod storage_cmds;
 // Cifrado local (CL-2a): the account's preferences in the store.
 #[path = "prefs_cmds.rs"]
 pub(crate) mod prefs_cmds;
+// Cifrado local (CL-6a): locking with the system, and renewing the window.
+#[path = "lock_cmds.rs"]
+pub(crate) mod lock_cmds;
 
 #[derive(Serialize)]
 pub struct NodeInfo {
@@ -1399,6 +1405,7 @@ pub async fn wipe(state: State<'_, AppState>) -> Result<(), String> {
     let mut inner = state.inner.lock().await;
     // The data key goes with the session's storage first.
     forget_session(&mut inner, &state.turn);
+    inner.lock_reason = None;
     drop(inner);
 
     let failures = storage_cmds::wipe_home(&trino_home(), &mut storage_cmds::RealWipe);
@@ -1465,18 +1472,18 @@ pub fn get_autostart() -> bool {
 
 /// Lock the vault: drop all in-memory secrets (identity, keys, ratchets) and
 /// disconnect the relays, but KEEP the encrypted files on disk. The UI returns
-/// to the unseal screen; unlocking reloads everything. Used by auto-lock.
+/// to the unseal screen; unlocking reloads everything. Used by "Bloquear",
+/// Ctrl+L and the auto-lock, which say why (`reason`): the window is renewed
+/// after the lock (cifrado local CL-6a), and the new one reads the reason
+/// from the status.
 #[tauri::command]
-pub async fn lock_vault(state: State<'_, AppState>) -> Result<(), String> {
-    let _gate = state.session_gate.lock().await;
-    let mut inner = state.inner.lock().await;
-    // Persist current session/history state before wiping it from memory,
-    // with whatever waits for the store's index (design §4.6).
-    save_ratchets(&inner);
-    save_history(&inner);
-    inner.storage.flush_for_lock();
-    forget_session(&mut inner, &state.turn);
-    dbg_log("vault LOCKED (auto-lock)");
+pub async fn lock_vault(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    reason: Option<lock_cmds::LockReason>,
+) -> Result<(), String> {
+    let window = lock_cmds::TauriMainWindow(app);
+    lock_cmds::lock_and_renew(&state, &window, reason, lock_cmds::LockOrigin::Frontend).await;
     Ok(())
 }
 
@@ -2232,12 +2239,18 @@ pub async fn send_call_signal(
 }
 
 /// The frontend reports whether a call holds the microphone or camera, so
-/// closing the window or quitting from the tray can hang it up first.
+/// closing the window or quitting from the tray can hang it up first. A lock
+/// of Windows during the call waited for its end (CL-6a): it happens now.
 #[tauri::command]
-pub fn set_call_active(state: State<'_, AppState>, active: bool) {
-    state
-        .call_active
-        .store(active, std::sync::atomic::Ordering::SeqCst);
+pub fn set_call_active(app: AppHandle, state: State<'_, AppState>, active: bool) {
+    if lock_cmds::call_flag_changed(&state.call_active, &state.lock_after_call, active) {
+        lock_cmds::lock_from_backend(
+            app,
+            lock_cmds::LockReason::System {
+                cause: lock_cmds::SystemCause::Session,
+            },
+        );
+    }
 }
 
 /// What the frontend sends here is text, and the diagnostic log never holds

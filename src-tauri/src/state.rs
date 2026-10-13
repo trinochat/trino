@@ -34,6 +34,9 @@ pub struct AppState {
     pub session_gate: Mutex<()>,
     /// TURN credentials for protected calls, in memory only (see turn.rs).
     pub turn: TurnCache,
+    /// Windows was locked during a call: Trino locks when the call ends
+    /// (cifrado local CL-6a, design §7.2). Cleared by every lock.
+    pub lock_after_call: Arc<AtomicBool>,
 }
 
 #[derive(Default)]
@@ -99,6 +102,9 @@ pub struct InnerState {
     /// what each contact shares and announced. Persisted ENCRYPTED to
     /// profiles.bin with a key of its own derived from the identity.
     pub profiles: crate::commands::profile::Profiles,
+    /// Why the last lock happened, kept while locked so the window opened
+    /// after it can say so (CL-6a). Not a secret: it never names anyone.
+    pub lock_reason: Option<crate::commands::lock_cmds::LockReason>,
 }
 
 /// The newest handshake accepted from one contact.

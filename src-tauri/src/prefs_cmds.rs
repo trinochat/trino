@@ -113,7 +113,7 @@ pub(super) fn prefs_of(inner: &InnerState) -> (Option<serde_json::Value>, PrefsI
 
 /// The session's preferences as a map, as the frontend keeps them: an entry
 /// that is not text, or a `prefs.bin` that is not a map, gives nothing.
-fn current_map(inner: &InnerState) -> BTreeMap<String, String> {
+pub(super) fn current_map(inner: &InnerState) -> BTreeMap<String, String> {
     let (prefs, _) = prefs_of(inner);
     prefs
         .and_then(|value| serde_json::from_value::<BTreeMap<String, serde_json::Value>>(value).ok())
