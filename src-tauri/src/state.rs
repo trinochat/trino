@@ -241,6 +241,12 @@ pub fn trino_home() -> PathBuf {
     PathBuf::from(".trino")
 }
 
+/// Whether `TRINO_HOME` chose the data folder: then other folders may share
+/// the WebView's localStorage with this one (design §5.6).
+pub fn custom_data_dir() -> bool {
+    std::env::var_os("TRINO_HOME").is_some()
+}
+
 pub fn vault_path() -> PathBuf {
     trino_home().join("vault.bin")
 }

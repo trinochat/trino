@@ -23,7 +23,7 @@
 //!   contacts, groups and invitations, in one file, so a change to several of
 //!   them is one write and a cut never leaves them half done;
 //! - `prefs`: the account's preferences, which the unlock answer carries
-//!   (CL-2a fills them);
+//!   (`prefs_cmds`, CL-2a);
 //! - `history`, `sessions` and `profiles`, as before but under the data key;
 //! - one file per sticker, named by a keyed hash of the image, holding the
 //!   sticker's id, its type and the image.
@@ -50,6 +50,10 @@ pub(crate) const STORE_DIR: &str = "store";
 /// A store that belongs to another account is moved next to `store/`, under
 /// this prefix, and never removed by itself (design §5.6).
 pub(crate) const OTHER_STORE_PREFIX: &str = "store-aside-";
+
+/// Why an account the migration has not moved yet keeps no preferences in
+/// the store.
+pub(crate) const NOT_MOVED: &str = "this account's data has not moved to the store yet";
 
 /// What `account.bin` holds.
 #[derive(Clone, Default, Serialize, Deserialize)]
@@ -92,6 +96,20 @@ pub(crate) enum Found {
     /// It waits for the user's choice, or could not be read now: the
     /// session starts empty, and the store does not write it until then.
     Held,
+}
+
+/// Where the account's preferences stand this session (CL-2a, design §5.3).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub(crate) enum PrefsImport {
+    /// What this device kept for the account before the store (in the
+    /// WebView's localStorage) was imported once already.
+    Done,
+    /// It has not been: the frontend sends it once (`prefs_import`).
+    Pending,
+    /// The account has not moved to the store yet, so there is nowhere
+    /// sealed to keep its preferences: they stay where they were.
+    Unavailable,
 }
 
 /// The store, as `SessionStore::open` found it.
@@ -317,6 +335,26 @@ impl SessionStore {
         self.prefs.as_deref().map(Vec::as_slice)
     }
 
+    /// Whether the preferences this device kept before the store were
+    /// imported (`legacy.prefs_imported`).
+    pub(crate) fn prefs_imported(&self) -> bool {
+        self.store.index().legacy.prefs_imported
+    }
+
+    /// The preferences imported once from this device (`json`), written
+    /// with the note that they were in the same index write. Whether the
+    /// index on disk has both now: false while it cannot be written, and
+    /// the note goes out with its next write.
+    pub(crate) fn import_prefs(&mut self, json: &[u8]) -> io::Result<bool> {
+        let mut legacy = self.store.index().legacy.clone();
+        legacy.prefs_imported = true;
+        self.store
+            .write_noting_legacy(&Slot::Prefs, json, legacy)
+            .map_err(to_io)?;
+        self.prefs = Some(Zeroizing::new(json.to_vec()));
+        Ok(!self.store.is_behind())
+    }
+
     /// The migration's cleanup (M4, `migrate::settle`) ran to its end: the
     /// index says so, and the next unlock does not run it again. Best
     /// effort: if the index cannot take it now, M4 runs again, in silence.
@@ -415,7 +453,12 @@ impl SessionStore {
     }
 
     fn write(&mut self, slot: &Slot, bytes: &[u8]) -> io::Result<()> {
-        self.store.write(slot, bytes).map_err(to_io)
+        self.store.write(slot, bytes).map_err(to_io)?;
+        if *slot == Slot::Prefs {
+            // What an unlock of the open session carries.
+            self.prefs = Some(Zeroizing::new(bytes.to_vec()));
+        }
+        Ok(())
     }
 
     fn note_vault_pending(&mut self, header: &VaultHeader) {
@@ -593,15 +636,40 @@ impl StorageCell {
 
     /// The account's preferences (CL-2a). An account the migration has not
     /// moved yet has nowhere sealed to keep them.
-    #[cfg_attr(not(test), allow(dead_code))] // the prefs commands, CL-2a
     pub(crate) fn write_prefs(&self, json: &[u8]) -> io::Result<()> {
         self.with(|storage| match storage {
             Storage::Store(store) => store.write(&Slot::Prefs, json),
-            Storage::Legacy(_) => Err(io::Error::other(
-                "this account's data has not moved to the store yet",
-            )),
+            Storage::Legacy(_) => Err(io::Error::other(NOT_MOVED)),
         })
         .unwrap_or(Ok(()))
+    }
+
+    /// The account's preferences as the session has them now, and where
+    /// their import stands; `None` with no session.
+    pub(crate) fn prefs_now(&self) -> Option<(Option<Zeroizing<Vec<u8>>>, PrefsImport)> {
+        self.with(|storage| match storage {
+            Storage::Store(store) => {
+                let prefs = store.prefs().map(|json| Zeroizing::new(json.to_vec()));
+                let state = if store.prefs_imported() {
+                    PrefsImport::Done
+                } else {
+                    PrefsImport::Pending
+                };
+                (prefs, state)
+            }
+            Storage::Legacy(_) => (None, PrefsImport::Unavailable),
+        })
+    }
+
+    /// The one import of the preferences this device kept before the store
+    /// (`SessionStore::import_prefs`). An account not moved to the store
+    /// yet has nowhere sealed to keep them.
+    pub(crate) fn import_prefs(&self, json: &[u8]) -> io::Result<bool> {
+        self.with(|storage| match storage {
+            Storage::Store(store) => store.import_prefs(json),
+            Storage::Legacy(_) => Err(io::Error::other(NOT_MOVED)),
+        })
+        .unwrap_or_else(|| Err(io::Error::other("no session is open")))
     }
 
     fn write_part(&self, slot: Slot, json: &[u8]) -> io::Result<()> {

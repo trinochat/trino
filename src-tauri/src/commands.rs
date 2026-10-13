@@ -25,7 +25,7 @@ use crate::state::{
 use crate::store::envelope::Slot;
 use crate::store::keys::{StoreKeys, VaultKeys};
 use crate::store::report::{Action, IntegrityReport, What};
-use crate::store::session::{AccountFile, Found, SessionStore, STORE_DIR};
+use crate::store::session::{AccountFile, Found, PrefsImport, SessionStore, STORE_DIR};
 use crate::totp_enrollment::TotpBeginResponse;
 use crate::turn::TurnCache;
 use crate::vault::{
@@ -91,10 +91,16 @@ pub struct UnsealResponse {
     /// Whether this call started the relay connections: false when the
     /// session was open already, as the call that opened it started them.
     pub relay_connection_started: bool,
-    /// The account's preferences, there before the chats show (design §5.3;
-    /// CL-2a fills them).
+    /// The account's preferences, there before the chats show (design
+    /// §5.3): `prefs.bin`, also when the session was open already.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub prefs: Option<serde_json::Value>,
+    /// Where the one import of what the WebView kept for the account before
+    /// the store stands (`prefs_cmds`).
+    pub prefs_import: PrefsImport,
+    /// `TRINO_HOME` is set: other data folders may share this WebView's
+    /// localStorage, so the import leaves their entries where they are.
+    pub custom_data_dir: bool,
     /// What changed on disk since the last session, for the one dialog at
     /// unlock (design §6.2); none when nothing did.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -143,6 +149,9 @@ pub(crate) mod profile;
 // Cifrado local (CL-1b): where the session keeps its data.
 #[path = "storage_cmds.rs"]
 pub(crate) mod storage_cmds;
+// Cifrado local (CL-2a): the account's preferences in the store.
+#[path = "prefs_cmds.rs"]
+pub(crate) mod prefs_cmds;
 
 #[derive(Serialize)]
 pub struct NodeInfo {
@@ -694,12 +703,17 @@ async fn open_session(
                 "another identity's session is open; lock it first",
             ));
         }
+        // A reload of the WebView unlocks again: it needs the preferences
+        // as the session has them now.
+        let (prefs, prefs_import) = prefs_cmds::prefs_of(&inner);
         return Ok(UnsealResponse {
             handle: inner.handle.clone().unwrap_or_default(),
             fingerprint,
             nostr_pub,
             relay_connection_started: false,
-            prefs: None,
+            prefs,
+            prefs_import,
+            custom_data_dir: crate::state::custom_data_dir(),
             integrity: None,
             migration: None,
         });
@@ -724,6 +738,7 @@ async fn open_session(
     inner.storage.set(storage);
     let now = chrono::Utc::now().timestamp();
     apply_loaded(&mut inner, account, history, sessions, profiles, now);
+    let (_, prefs_import) = prefs_cmds::prefs_of(&inner);
     let handle = inner.handle.clone().unwrap_or_default();
     let relays = if inner.relay_urls.is_empty() {
         default_relays()
@@ -744,6 +759,8 @@ async fn open_session(
         nostr_pub,
         relay_connection_started: true,
         prefs,
+        prefs_import,
+        custom_data_dir: crate::state::custom_data_dir(),
         integrity: (!report.is_empty()).then_some(report),
         migration,
     })
@@ -4876,6 +4893,8 @@ mod tests {
                 nostr_pub: "ff".to_string(),
                 relay_connection_started: true,
                 prefs: None,
+                prefs_import: PrefsImport::Pending,
+                custom_data_dir: false,
                 integrity: None,
                 migration: None,
             },
@@ -4888,6 +4907,8 @@ mod tests {
                 "fingerprint": "ab12.cd34",
                 "nostr_pub": "ff",
                 "relay_connection_started": true,
+                "prefs_import": "pending",
+                "custom_data_dir": false,
                 "bundle_json": "{}",
             })
         );

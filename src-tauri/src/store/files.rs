@@ -454,6 +454,37 @@ impl<D: Disk> Store<D> {
         self.bump_and_save_index()
     }
 
+    /// Write `content` as the file in `slot` and note `legacy` in the index
+    /// written right after it, so the two reach the disk together: a cut
+    /// leaves either both, or the file one step ahead under the old note,
+    /// never the note without the file. Refused while the index cannot be
+    /// written now, since an index saved first would carry the note alone.
+    pub(crate) fn write_noting_legacy(
+        &mut self,
+        slot: &Slot,
+        content: &[u8],
+        legacy: Legacy,
+    ) -> Result<(), StoreError> {
+        self.check_writable(slot)?;
+        // What waits goes first, each file with its index.
+        self.drain()?;
+        if self.is_behind() {
+            return Err(StoreError::Io(std::io::Error::other(
+                "the index cannot be written now",
+            )));
+        }
+        let before = std::mem::replace(&mut self.index.legacy, legacy);
+        if let Err(error) = self.write_data(slot, content) {
+            self.index.legacy = before;
+            return Err(error);
+        }
+        // If this fails, the file is one step ahead of the index on disk,
+        // which the next unlock takes in silence, and the note goes out with
+        // the next index write.
+        let _ = self.save_index();
+        Ok(())
+    }
+
     /// Keep `content` in `aside/`, sealed as `slot` (a `Slot::Legacy`), out
     /// of the index: nothing reads `aside/` back, so it is never taken for a
     /// file of the store.
@@ -732,6 +763,108 @@ mod tests {
             .report
             .find(&slot.logical_name())
             .map(|finding| (finding.what, finding.action))
+    }
+
+    /// CL-2a (design §5.3): `prefs.bin` and `prefs_imported` land in one
+    /// index write.
+    #[test]
+    fn a_file_and_a_legacy_note_go_out_in_one_index_write() {
+        let scratch = ScratchDir::new("store-noting-legacy");
+        let dir = dir_in(&scratch);
+        let mut store = created(&dir);
+        let before = store.index().seq;
+        let legacy = Legacy {
+            prefs_imported: true,
+            ..Legacy::default()
+        };
+
+        store
+            .write_noting_legacy(&Slot::Prefs, b"prefs", legacy.clone())
+            .unwrap();
+
+        assert_eq!(store.index().seq, before + 1, "one write, not two");
+        assert!(!store.is_behind());
+        let (store, loaded) = reopen(&dir);
+        assert!(loaded.report.is_empty(), "{:?}", loaded.report);
+        assert_eq!(ready(&loaded, &Slot::Prefs).as_deref(), Some(&b"prefs"[..]));
+        assert_eq!(store.index().legacy, legacy);
+    }
+
+    /// The note never reaches the disk without its file: not when the file
+    /// cannot be written, and not ahead of it when the index was behind.
+    #[test]
+    fn a_legacy_note_never_goes_out_without_its_file() {
+        let scratch = ScratchDir::new("store-noting-legacy-fails");
+        let dir = dir_in(&scratch);
+        created(&dir);
+        let legacy = Legacy {
+            prefs_imported: true,
+            ..Legacy::default()
+        };
+
+        // The file cannot be written.
+        let disk = Rc::new(FaultyDisk::default());
+        disk.fail_writes.borrow_mut().insert("prefs.bin".into());
+        let (mut store, _) = Store::open(&dir, keys(1), disk.clone()).unwrap();
+        assert!(store
+            .write_noting_legacy(&Slot::Prefs, b"prefs", legacy.clone())
+            .is_err());
+        assert_eq!(store.index().legacy, Legacy::default());
+        disk.fail_writes.borrow_mut().clear();
+        store.write(&Slot::Account, b"ana").unwrap();
+        drop(store);
+        let (store, _) = reopen(&dir);
+        assert_eq!(store.index().legacy, Legacy::default());
+        drop(store);
+
+        // The index is behind: refused before anything is written.
+        let disk = Rc::new(FaultyDisk::default());
+        let (mut store, _) = Store::open(&dir, keys(1), disk.clone()).unwrap();
+        disk.fail_writes.borrow_mut().insert(INDEX_FILE.into());
+        store.write(&Slot::Account, b"ana 2").unwrap();
+        assert!(store.is_behind());
+        assert!(store
+            .write_noting_legacy(&Slot::Prefs, b"prefs", legacy)
+            .is_err());
+        assert!(!dir.join("prefs.bin").exists());
+        disk.fail_writes.borrow_mut().clear();
+        store.flush_for_lock().unwrap();
+        drop(store);
+        let (store, loaded) = reopen(&dir);
+        assert_eq!(store.index().legacy, Legacy::default());
+        assert_eq!(ready(&loaded, &Slot::Prefs), None);
+    }
+
+    /// A store frozen at unlock, or a file that waits for a choice, takes no
+    /// note either.
+    #[test]
+    fn a_legacy_note_waits_like_any_write() {
+        let scratch = ScratchDir::new("store-noting-legacy-pending");
+        let dir = dir_in(&scratch);
+        let mut store = created(&dir);
+        store.write(&Slot::Prefs, b"old").unwrap();
+        let old = bytes(&dir, &Slot::Prefs);
+        store.write(&Slot::Prefs, b"new").unwrap();
+        drop(store);
+        put(&dir, &Slot::Prefs, &old);
+        let (mut store, loaded) = reopen(&dir);
+        assert_eq!(
+            what(&loaded, &Slot::Prefs),
+            Some((What::OlderCopy, Action::Ask))
+        );
+
+        let result = store.write_noting_legacy(
+            &Slot::Prefs,
+            b"imported",
+            Legacy {
+                prefs_imported: true,
+                ..Legacy::default()
+            },
+        );
+
+        assert!(matches!(result, Err(StoreError::ChoicePending(_))));
+        assert_eq!(store.index().legacy, Legacy::default());
+        assert_eq!(bytes(&dir, &Slot::Prefs), old);
     }
 
     /// Every file of a store that was written and locked normally opens
