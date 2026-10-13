@@ -26,6 +26,11 @@ pub(crate) enum What {
     Unreadable,
     /// The index is behind the files: nothing it says counts.
     Behind,
+    /// `vault.bin` is not the one the index noted, and nothing explains it
+    /// (design §4.9): another copy was put here.
+    VaultChanged,
+    /// The store belongs to another account: it was moved aside whole.
+    OtherAccount,
 }
 
 /// What the store did, or asks.
@@ -84,6 +89,16 @@ impl IntegrityReport {
         self.findings.iter().find(|finding| finding.file == file)
     }
 
+    /// A finding about something other than one file: the vault or the
+    /// whole store.
+    pub(crate) fn note(&mut self, file: &str, what: What, action: Action) {
+        self.findings.push(Finding {
+            file: file.to_string(),
+            what,
+            action,
+        });
+    }
+
     pub(crate) fn push(&mut self, slot: &Slot, what: What) {
         self.findings.push(Finding {
             file: slot.logical_name(),
@@ -97,6 +112,8 @@ impl IntegrityReport {
 pub(crate) fn action_for(slot: &Slot, what: What) -> Action {
     match (what, slot) {
         (What::Unreadable, _) => Action::KeepForLater,
+        (What::VaultChanged, _) => Action::Notice,
+        (What::OtherAccount, _) => Action::SetAside,
         (_, Slot::Index) => Action::Notice,
         (_, Slot::Sessions) => Action::NewSessions,
         (What::OlderCopy, Slot::Sticker(_)) => Action::SetAside,

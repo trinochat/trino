@@ -27,7 +27,7 @@
 
 use super::disk::Disk;
 use super::envelope::{self, Slot};
-use super::index::Index;
+use super::index::{Index, VaultHeader};
 use super::keys::StoreKeys;
 use super::report::{action_for, Action, IntegrityReport, What};
 use std::collections::{BTreeMap, BTreeSet};
@@ -409,6 +409,34 @@ impl<D: Disk> Store<D> {
             let _ = self.bump_and_save_index();
         }
         Ok(())
+    }
+
+    /// Never write `slot` this session, as one that could not be read at
+    /// unlock: what it holds did not read in this version, so it stays.
+    pub(crate) fn hold(&mut self, slot: &Slot) {
+        self.waiting.remove(slot);
+        self.frozen.insert(slot.clone());
+    }
+
+    /// Note the vault's header (design §4.9): the one it has, and one being
+    /// written. Best effort, like every index write: while the index cannot
+    /// be written, the next unlock checks against the older note.
+    pub(crate) fn note_vault(
+        &mut self,
+        vault: Option<VaultHeader>,
+        pending: Option<VaultHeader>,
+    ) -> Result<(), StoreError> {
+        self.index.vault = vault;
+        self.index.vault_pending = pending;
+        if self.index_frozen {
+            return Err(StoreError::Frozen("the store".into()));
+        }
+        if self.index_blocked() {
+            // It goes out with the index once the choices are made.
+            self.index_saved = false;
+            return Ok(());
+        }
+        self.bump_and_save_index()
     }
 
     /// Whether data waits in memory or the index on disk is behind it.

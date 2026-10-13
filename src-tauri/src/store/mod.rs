@@ -21,3 +21,4 @@ pub(crate) mod files;
 pub(crate) mod index;
 pub(crate) mod keys;
 pub(crate) mod report;
+pub(crate) mod session;
