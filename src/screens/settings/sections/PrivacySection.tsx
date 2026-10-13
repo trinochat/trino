@@ -14,9 +14,11 @@
  * "En este equipo" (cifrado local, design §11.1), under the blocked
  * contacts: "Tus datos en este equipo", which opens what Trino keeps
  * encrypted with your password, what stays in clear for the unlock screen
- * and what lies outside Trino (LocalDataView.tsx). Locking with Windows
- * (CL-6a) and "Protección reforzada" (CL-6b) join this group with their
- * behaviour.
+ * and what lies outside Trino (LocalDataView.tsx); and, on Windows,
+ * "Bloquear Trino al bloquear Windows" (CL-6a; David's decision 4: on by
+ * default), kept with the account's preferences, where the backend reads it
+ * when Windows locks or the computer sleeps. "Protección reforzada" (CL-6b)
+ * joins this group with its behaviour.
  *
  * Not here, on purpose: the IP warning before a call (TURN made it
  * unnecessary), Tor and "Quién puede escribirte" (no Tor, no message
@@ -39,9 +41,9 @@ import type { SettingsApi, SettingsPlatform } from '../types';
 
 export interface PrivacySectionProps {
   api: Pick<SettingsApi, 'listNodes' | 'blockNode' | 'setContentProtected'>;
-  /** Where the block of screen captures is kept. */
-  prefs: Pick<Prefs, 'getBlockCaptures' | 'setBlockCaptures'>;
-  /** Linux cannot keep a window out of captures: no switch there. */
+  /** Where the block of screen captures and locking with Windows are kept. */
+  prefs: Pick<Prefs, 'getBlockCaptures' | 'setBlockCaptures' | 'getLockWithSystem' | 'setLockWithSystem'>;
+  /** Linux cannot keep a window out of captures, and only Windows locks Trino with it. */
   platform: SettingsPlatform;
   /** A contact was unblocked: the shell reads its contacts again. */
   onContactsChanged?(): void;
@@ -67,6 +69,15 @@ export function PrivacySection({ api, prefs, platform, onContactsChanged, autoFo
   const [moved, setMoved] = useState(false);
   const [blockCaptures, setBlockCaptures] = useState(() => prefs.getBlockCaptures());
   const [capturesError, setCapturesError] = useState<CapturesError | null>(null);
+  const [lockWithSystem, setLockWithSystem] = useState(() => prefs.getLockWithSystem());
+  const [lockWithSystemFailed, setLockWithSystemFailed] = useState(false);
+
+  /** Shown as it changes, and back as it was if it cannot be kept. */
+  const toggleLockWithSystem = (on: boolean) => {
+    const kept = prefs.setLockWithSystem(on);
+    setLockWithSystemFailed(!kept);
+    setLockWithSystem(kept ? on : !on);
+  };
 
   /** The window first: only a change it took is kept. */
   const toggleCaptures = async (on: boolean) => {
@@ -162,6 +173,18 @@ export function PrivacySection({ api, prefs, platform, onContactsChanged, autoFo
       <div className="flex flex-col gap-2">
         <h3 className="m-0 text-ui-lg font-bold text-ui-ink">{t('settings2.privacy.onDevice')}</h3>
         <SettingsRows label={t('settings2.privacy.onDevice')} items={onDevice} />
+        {platform === 'windows' ? (
+          <>
+            <Switch
+              className="border-y border-ui-line py-3.5"
+              label={t('settings2.privacy.lockWithSystem')}
+              description={t('settings2.privacy.lockWithSystemBody')}
+              checked={lockWithSystem}
+              onCheckedChange={toggleLockWithSystem}
+            />
+            {lockWithSystemFailed ? <ErrorLine>{t('settings2.privacy.errLockWithSystem')}</ErrorLine> : null}
+          </>
+        ) : null}
       </div>
       {platform === 'linux' ? null : (
         <div className="flex flex-col gap-2">

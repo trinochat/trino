@@ -10,7 +10,10 @@ import {
   api,
   onCallCloseRequested,
   onCallQuitRequested,
+  onLockRequested,
+  onVaultLocked,
   isCommandError,
+  type SessionLockReason,
   type StatusResponse,
   type UnsealResponse,
 } from './lib/api';
@@ -30,7 +33,7 @@ import {
   type StoreReviewApi,
   type WindowApi,
 } from './screens/auth';
-import type { LockReason, OnboardingApi, UnlockApi } from './screens/types';
+import type { OnboardingApi, UnlockApi } from './screens/types';
 import { capabilities } from './app/capabilities';
 import { installBrowserChromeGuard } from './app/browser-chrome';
 import type { CallGate } from './app/calls';
@@ -48,11 +51,16 @@ const isMobile = /android|iphone|ipad|ipod/i.test(navigator.userAgent);
  */
 export interface AppApi extends OnboardingApi, UnlockApi, AccountPrefsApi, StoreReviewApi {
   status(): Promise<StatusResponse>;
-  lockVault(): Promise<void>;
+  /** Locks, saying why: the window the backend opens after the lock says it too (CL-6a). */
+  lockVault(reason?: SessionLockReason): Promise<void>;
   /** Whether a call holds the microphone: the window's close and the tray's "Salir" ask first. */
   setCallActive(active: boolean): Promise<void>;
   onCallCloseRequested(cb: () => void): Promise<UnlistenFn>;
   onCallQuitRequested(cb: () => void): Promise<UnlistenFn>;
+  /** The backend locked by itself: Windows locked or slept, or the tray (CL-6a). */
+  onVaultLocked(cb: (reason: SessionLockReason) => void): Promise<UnlistenFn>;
+  /** "Bloquear" in the tray during a call: lock as "Bloquear" does. */
+  onLockRequested(cb: () => void): Promise<UnlistenFn>;
 }
 
 const BACKEND: AppApi = {
@@ -61,6 +69,8 @@ const BACKEND: AppApi = {
   setCallActive: api.setCallActive,
   onCallCloseRequested,
   onCallQuitRequested,
+  onVaultLocked,
+  onLockRequested,
   checkPassphrase: api.checkPassphrase,
   totpBegin: api.totpBegin,
   totpVerify: api.totpVerify,
@@ -166,12 +176,14 @@ function App({ api: given = BACKEND, windowApi = TAURI_WINDOW, Main = MainScreen
 
   // Every lock path releases the microphone and camera before sealing. The
   // chats go at once, also when sealing fails. The account's preferences
-  // still waiting go to the store first, and their copy is forgotten.
-  const lockNow = (reason: LockReason) => {
+  // still waiting go to the store first, and their copy is forgotten. The
+  // backend then renews the window (CL-6a), and keeps why it locked for
+  // the new one.
+  const lockNow = (reason: SessionLockReason) => {
     teardownCall();
     sealing.current = session
       .close()
-      .then(() => backend.lockVault())
+      .then(() => backend.lockVault(reason))
       .catch(() => console.warn('lock_vault failed'));
     dispatch({ type: 'locked', reason });
   };
@@ -204,6 +216,31 @@ function App({ api: given = BACKEND, windowApi = TAURI_WINDOW, Main = MainScreen
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
   }, [sessionShown]);
+
+  // The backend locked by itself (CL-6a): Windows locked or slept, or the
+  // tray. The vault is sealed already, so what waited for the store cannot
+  // go there: the chats and their copy go at once. The window is renewed
+  // right after; this covers one that could not be. "Bloquear" in the tray
+  // during a call comes here as a request, and asks the call first.
+  const sessionOpen = useRef(false);
+  useLayoutEffect(() => {
+    sessionOpen.current = sessionShown;
+  });
+  useEffect(() => {
+    const locked = backend.onVaultLocked(reason => {
+      if (!sessionOpen.current) return;
+      teardownCall();
+      session.discard();
+      dispatch({ type: 'locked', reason });
+    });
+    const requested = backend.onLockRequested(() => {
+      if (sessionOpen.current) latestRequestLock.current();
+    });
+    return () => {
+      locked.then(fn => fn());
+      requested.then(fn => fn());
+    };
+  }, [backend, session]);
 
   // The backend asks before hiding the window or quitting while a call holds
   // the microphone (see `set_call_active` and the tray "Salir"): the call's

@@ -216,6 +216,7 @@ const MEMBERS = [
   'getMuteGroupsByDefault', 'setMuteGroupsByDefault', 'getGroupMuted', 'setGroupMuted',
   'getScanLines', 'setScanLines',
   'getBlockCaptures', 'setBlockCaptures',
+  'getLockWithSystem', 'setLockWithSystem',
 ] as const;
 
 // With TURN the contact never sees your IP, so the warning "once per
@@ -265,7 +266,22 @@ describe('preferences of the redesign', () => {
       muteGroupsByDefault: false,
       scanLines: true,
       blockCaptures: true,
+      lockWithSystem: true,
     });
+  });
+
+  // Cifrado local CL-6a (David's decision 4): Trino locks when Windows
+  // locks, sleeps or hibernates unless you turn it off.
+  it('lock Trino with Windows unless turned off, under trino.pref.lockWithSystem', () => {
+    const { storage, data } = memoryStorage();
+    const prefs = createPrefs(storage);
+    expect(prefs.getLockWithSystem()).toBe(true);
+    expect(prefs.setLockWithSystem(false)).toBe(true);
+    expect(data.get('trino.pref.lockWithSystem')).toBe('0');
+    expect(prefs.getLockWithSystem()).toBe(false);
+    prefs.setLockWithSystem(true);
+    expect(data.get('trino.pref.lockWithSystem')).toBe('1');
+    expect(prefs.getLockWithSystem()).toBe(true);
   });
 
   it('are stored under trino.pref.*', () => {

@@ -14,6 +14,7 @@ import type {
   GroupInfo,
   GroupInvite,
   NodeInfo,
+  SessionLockReason,
   StickerInfo,
   TotpBeginResponse,
   UnsealResponse,
@@ -113,11 +114,7 @@ export interface OnboardingFlowProps {
  * CL-6a, design §7.2): Windows was locked, or the computer went to sleep or
  * hibernated.
  */
-export type LockReason =
-  | { kind: 'cold' }
-  | { kind: 'idle'; minutes: number }
-  | { kind: 'manual' }
-  | { kind: 'system'; cause: 'session' | 'suspend' };
+export type LockReason = { kind: 'cold' } | SessionLockReason;
 export interface UnlockApi {
   unseal(p: string, totpCode?: string | null): Promise<UnsealResponse>;
   wipe(): Promise<void>;

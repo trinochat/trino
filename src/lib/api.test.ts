@@ -7,7 +7,9 @@ import {
   onConnectionChanged,
   onContactKeyMismatch,
   onGroupRemoved,
+  onLockRequested,
   onProfileUpdated,
+  onVaultLocked,
   type CallEventWire,
   type CallLogWire,
   type CommandError,
@@ -22,6 +24,8 @@ import {
   type SendReceipt,
   type SentFile,
   type SentGroupFile,
+  type SessionLockReason,
+  type StatusResponse,
   type UnsealResponse,
 } from './api';
 import type { PrefsImported } from './prefs-session';
@@ -304,6 +308,8 @@ describe('the new events', () => {
     ['onGroupRemoved', onGroupRemoved, 'group-removed', { gid: 'g1' }],
     ['onCallLogged', onCallLogged, 'call-logged', { peer: 'Ana', ts: 1760000000, call: CALL }],
     ['onProfileUpdated', onProfileUpdated, 'profile-updated', { handle: 'Ana' }],
+    // Cifrado local CL-6a: the backend locked by itself (lock_cmds.rs).
+    ['onVaultLocked', onVaultLocked, 'vault-locked', { kind: 'system', cause: 'suspend' }],
   ])('%s listens to %s and hands over the payload', async (_name, subscribe, event, payload) => {
     const callback = vi.fn();
     await (subscribe as (cb: (p: unknown) => void) => Promise<unknown>)(callback);
@@ -312,6 +318,31 @@ describe('the new events', () => {
     expect(name).toBe(event);
     handler({ payload });
     expect(callback).toHaveBeenCalledWith(payload);
+  });
+});
+
+// Cifrado local CL-6a: locking says why, so the window renewed after the
+// lock can say it too (lock_cmds.rs).
+describe('locking', () => {
+  it.each([
+    [{ kind: 'manual' }],
+    [{ kind: 'idle', minutes: 5 }],
+  ] as const)('lockVault sends its reason, %j', async reason => {
+    await api.lockVault(reason);
+    expect(invoke.mock.calls).toEqual([['lock_vault', { reason }]]);
+  });
+
+  it('the tray asks to lock during a call, with nothing to hand over', async () => {
+    const callback = vi.fn();
+    await onLockRequested(callback);
+    const [name, handler] = listen.mock.calls[0] as [string, (e: { payload: unknown }) => void];
+    expect(name).toBe('lock-requested');
+    handler({ payload: null });
+    expect(callback).toHaveBeenCalledWith();
+  });
+
+  it('the status may say why the session locked', () => {
+    expectTypeOf<StatusResponse['lock_reason']>().toEqualTypeOf<SessionLockReason | null | undefined>();
   });
 });
 

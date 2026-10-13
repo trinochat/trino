@@ -47,7 +47,19 @@ export interface StatusResponse {
   // null when there is no vault or it cannot be read. Only a hint for what to
   // show; unlocking can still fail with `totp_required`.
   totp_enabled: boolean | null;
+  // Why the session locked, while it stays locked (cifrado local CL-6a):
+  // every lock renews the window, and the new one says why from here.
+  // Absent from a backend of before.
+  lock_reason?: SessionLockReason | null;
 }
+
+// Why a session locked, as the backend keeps it (src-tauri/src/lock_cmds.rs):
+// by hand (also from the tray), after the idle minutes, or with the system
+// (Windows locked, or the computer went to sleep or hibernated).
+export type SessionLockReason =
+  | { kind: 'manual' }
+  | { kind: 'idle'; minutes: number }
+  | { kind: 'system'; cause: 'session' | 'suspend' };
 
 // What changed on disk since the last session, for the one dialog at unlock
 // (cifrado local, design §6; src-tauri/src/store/report.rs).
@@ -553,7 +565,8 @@ export const api = {
   setCallActive: (active: boolean): Promise<void> => invoke('set_call_active', { active }),
   devLog: (msg: string): Promise<void> => invoke<void>('dev_log', { msg }).catch(() => {}),
   wipe: (): Promise<void> => invoke('wipe'),
-  lockVault: (): Promise<void> => invoke('lock_vault'),
+  // Says why, so the window the backend opens after the lock can say it too.
+  lockVault: (reason?: SessionLockReason): Promise<void> => invoke('lock_vault', { reason: reason ?? null }),
   resendOutbox: (handle: string): Promise<void> =>
     invoke<void>('resend_outbox', { handle }).catch(() => {}),
   resyncSession: (handle: string): Promise<void> => invoke('resync_session', { handle }),
@@ -706,6 +719,19 @@ export async function onCallCloseRequested(cb: () => void): Promise<UnlistenFn> 
 // once the call flag clears, or after a short grace period.
 export async function onCallQuitRequested(cb: () => void): Promise<UnlistenFn> {
   return await listen('call-quit-requested', () => cb());
+}
+
+// The backend locked by itself (cifrado local CL-6a): Windows locked or the
+// computer went to sleep, or "Bloquear" in the tray. The window is renewed
+// right after; this is for one that could not be.
+export async function onVaultLocked(cb: (reason: SessionLockReason) => void): Promise<UnlistenFn> {
+  return await listen<SessionLockReason>('vault-locked', e => cb(e.payload));
+}
+
+// "Bloquear" was chosen in the tray during a call: lock as "Bloquear" does,
+// asking the call first.
+export async function onLockRequested(cb: () => void): Promise<UnlistenFn> {
+  return await listen('lock-requested', () => cb());
 }
 
 // The relays connected changed (K3), debounced by the backend.

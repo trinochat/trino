@@ -72,8 +72,10 @@ describe('PrivacySection', () => {
     const text = container.textContent ?? '';
     expect(text).not.toMatch(/Avisar|antes de una llamada que muestra|(?<!\p{L})Tor(?!\p{L})|Quién puede escribirte|@|por defecto/u);
     expect(screen.queryAllByRole('radiogroup')).toEqual([]);
-    // The one switch is the block of screen captures (SC-1).
+    // The switches are locking with Windows (CL-6a) and the block of screen
+    // captures (SC-1).
     expect(screen.getAllByRole('switch').map(nameOf)).toEqual([
+      'Bloquear Trino al bloquear Windows',
       'Bloquear capturas de pantalla',
     ]);
   });
@@ -229,6 +231,62 @@ describe('PrivacySection, the block of screen captures', () => {
   ] as const)('speaks %s', (lang, label, body) => {
     captures({ lang });
     const toggle = capturesSwitch(label);
+    expect(toggle.getAttribute('aria-checked')).toBe('true');
+    expect(descriptionOf(toggle)).toBe(body);
+  });
+});
+
+const LOCK_WITH_WINDOWS = 'Bloquear Trino al bloquear Windows';
+const LOCK_WITH_WINDOWS_BODY = 'También al suspender o hibernar el computador. Si estás en una llamada, al colgar.';
+
+// Cifrado local CL-6a (design §7.2 and §11.1; David's decision 4): Trino
+// locks when Windows locks, sleeps or hibernates, on by default, and the
+// switch lives in "En este equipo". Only Windows has it.
+describe('PrivacySection, locking with Windows', () => {
+  it('is on by default in "En este equipo", and says when else it locks', () => {
+    captures();
+    const toggle = screen.getByRole('switch', { name: LOCK_WITH_WINDOWS });
+    expect(toggle.getAttribute('aria-checked')).toBe('true');
+    expect(descriptionOf(toggle)).toBe(LOCK_WITH_WINDOWS_BODY);
+    const group = screen.getByRole('heading', { level: 3, name: 'En este equipo' }).parentElement!;
+    expect(within(group).getByRole('switch', { name: LOCK_WITH_WINDOWS })).toBe(toggle);
+  });
+
+  it('shows what the account chose, and keeps each change', async () => {
+    const { storage } = captures({ stored: { 'trino.pref.lockWithSystem': '0' } });
+    const toggle = () => screen.getByRole('switch', { name: LOCK_WITH_WINDOWS });
+    expect(toggle().getAttribute('aria-checked')).toBe('false');
+    fireEvent.click(toggle());
+    await waitFor(() => expect(storage.data.get('trino.pref.lockWithSystem')).toBe('1'));
+    expect(toggle().getAttribute('aria-checked')).toBe('true');
+    fireEvent.click(toggle());
+    await waitFor(() => expect(storage.data.get('trino.pref.lockWithSystem')).toBe('0'));
+    expect(toggle().getAttribute('aria-checked')).toBe('false');
+  });
+
+  it('goes back and says so when the change cannot be kept', async () => {
+    const prefs: Prefs = { ...memoryPrefs().prefs, getLockWithSystem: () => true, setLockWithSystem: () => false };
+    captures({ prefs });
+    fireEvent.click(screen.getByRole('switch', { name: LOCK_WITH_WINDOWS }));
+    expect((await screen.findByRole('alert')).textContent).toContain('No se pudo guardar el cambio. Sigue como estaba.');
+    expect(screen.getByRole('switch', { name: LOCK_WITH_WINDOWS }).getAttribute('aria-checked')).toBe('true');
+  });
+
+  it.each(['macos', 'linux'] as const)('is not there on %s, where nothing would lock', platform => {
+    captures({ platform });
+    expect(screen.queryByRole('switch', { name: LOCK_WITH_WINDOWS })).toBeNull();
+  });
+
+  it.each([
+    ['en', 'Lock Trino when Windows locks', 'Also when the computer sleeps or hibernates. If you are on a call, when it ends.'],
+    [
+      'pt',
+      'Bloquear o Trino ao bloquear o Windows',
+      'Também ao suspender ou hibernar o computador. Se você estiver em uma chamada, ao desligar.',
+    ],
+  ] as const)('speaks %s', (lang, label, body) => {
+    captures({ lang });
+    const toggle = screen.getByRole('switch', { name: label });
     expect(toggle.getAttribute('aria-checked')).toBe('true');
     expect(descriptionOf(toggle)).toBe(body);
   });

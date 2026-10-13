@@ -54,6 +54,12 @@ export const PREF_DEFAULTS = Object.freeze({
    * unlocking, like the appearance: main.tsx applies it as the app starts.
    */
   blockCaptures: true,
+  /**
+   * Lock Trino when Windows locks, sleeps or hibernates (cifrado local
+   * CL-6a; David's decision 4: on by default). The account's: the backend
+   * reads it from the store when Windows tells it (lock_cmds.rs).
+   */
+  lockWithSystem: true,
 });
 
 /** Minutes without activity before Trino locks; 0 never locks. */
@@ -149,6 +155,9 @@ export interface Prefs {
    */
   getBlockCaptures(): boolean;
   setBlockCaptures(on: boolean): boolean;
+  /** Lock Trino when Windows locks, sleeps or hibernates (Settings › Privacidad). */
+  getLockWithSystem(): boolean;
+  setLockWithSystem(on: boolean): boolean;
 }
 
 /**
@@ -272,6 +281,8 @@ export function createPrefs(storage?: PrefsStorage): Prefs {
     setScanLines: on => writeFlag(PREF + 'scanLines', on),
     getBlockCaptures: () => readFlag(PREF + 'blockCaptures', PREF_DEFAULTS.blockCaptures),
     setBlockCaptures: on => writeFlag(PREF + 'blockCaptures', on),
+    getLockWithSystem: () => readFlag(PREF + 'lockWithSystem', PREF_DEFAULTS.lockWithSystem),
+    setLockWithSystem: on => writeFlag(PREF + 'lockWithSystem', on),
   };
 }
 

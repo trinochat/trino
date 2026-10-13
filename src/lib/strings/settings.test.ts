@@ -99,6 +99,10 @@ const PRIVACY = [
   'settings2.privacy.dataNotificationsOther',
   'settings2.privacy.dataDownloads',
   'settings2.privacy.dataCopies',
+  // Cifrado local CL-6a (design §11.1): locking with Windows.
+  'settings2.privacy.lockWithSystem',
+  'settings2.privacy.lockWithSystemBody',
+  'settings2.privacy.errLockWithSystem',
 ];
 
 /** Settings > Notificaciones (NotificationsSection.tsx). */

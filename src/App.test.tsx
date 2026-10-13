@@ -4,7 +4,14 @@ import { useEffect, useState } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import App, { type AppApi, type MainProps } from './App';
 import type { CallGate } from './app/calls';
-import type { ForgeResponse, IntegrityReport, LegacyPreview, StatusResponse, UnsealResponse } from './lib/api';
+import type {
+  ForgeResponse,
+  IntegrityReport,
+  LegacyPreview,
+  SessionLockReason,
+  StatusResponse,
+  UnsealResponse,
+} from './lib/api';
 import { prefs } from './lib/prefs';
 import { prefsSession, type PrefsImported, type PrefsMap } from './lib/prefs-session';
 import type { WindowApi } from './screens/auth';
@@ -42,15 +49,23 @@ const CREATED: ForgeResponse = { ...UNSEALED, bundle_json: JSON.stringify({ hand
 function fakeApi(...answers: Array<StatusResponse | Error>) {
   const calls: string[] = [];
   let next = 0;
-  /** What the backend's `call-close-requested` and `call-quit-requested` reach. */
-  const requested: { close: (() => void) | null; quit: (() => void) | null } = { close: null, quit: null };
+  /**
+   * What the backend's `call-close-requested`, `call-quit-requested`,
+   * `vault-locked` and `lock-requested` reach.
+   */
+  const requested: {
+    close: (() => void) | null;
+    quit: (() => void) | null;
+    vaultLocked: ((reason: SessionLockReason) => void) | null;
+    lock: (() => void) | null;
+  } = { close: null, quit: null, vaultLocked: null, lock: null };
   const api = {
     status: vi.fn(() => {
       calls.push('status');
       const answer = answers[Math.min(next++, answers.length - 1)]!;
       return answer instanceof Error ? Promise.reject(answer) : Promise.resolve(answer);
     }),
-    lockVault: vi.fn(() => {
+    lockVault: vi.fn((_reason?: SessionLockReason) => {
       calls.push('lockVault');
       return Promise.resolve();
     }),
@@ -61,6 +76,14 @@ function fakeApi(...answers: Array<StatusResponse | Error>) {
     }),
     onCallQuitRequested: vi.fn((cb: () => void) => {
       requested.quit = cb;
+      return Promise.resolve(() => {});
+    }),
+    onVaultLocked: vi.fn((cb: (reason: SessionLockReason) => void) => {
+      requested.vaultLocked = cb;
+      return Promise.resolve(() => {});
+    }),
+    onLockRequested: vi.fn((cb: () => void) => {
+      requested.lock = cb;
       return Promise.resolve(() => {});
     }),
     checkPassphrase: vi.fn(() => Promise.resolve()),
@@ -229,6 +252,8 @@ describe('App', () => {
     expect(screen.getByText('Bloqueaste Trino.')).toBeTruthy();
     expect(screen.queryByText('intent: chats')).toBeNull();
     expect(api.calls).toEqual(['status', 'lockVault', 'status']);
+    // The backend keeps why, for the window it opens after the lock (CL-6a).
+    expect(api.lockVault).toHaveBeenCalledWith({ kind: 'manual' });
   });
 
   it('opens the chats with the intent the first run ended with, without asking to unlock', async () => {
@@ -344,6 +369,7 @@ describe('App', () => {
     await idle(MINUTE);
     expect(await heading('Hola de nuevo')).toBeTruthy();
     expect(screen.getByText('Trino se bloqueó tras 1 minuto sin actividad.')).toBeTruthy();
+    expect(api.lockVault).toHaveBeenCalledWith({ kind: 'idle', minutes: 1 });
   });
 
   // A beta tester: "automatic lock... no funciona". App read the setting only
@@ -657,6 +683,63 @@ describe('App and what the store found', () => {
   });
 });
 
+// Cifrado local CL-6a (design §7.2): every lock renews the window, so the
+// one that opens after it reads why from the status; and the backend locks
+// by itself when Windows locks or sleeps, or from the tray.
+describe('App and the locks of the backend', () => {
+  it.each([
+    [{ kind: 'system', cause: 'session' }, 'Trino se bloqueó porque bloqueaste Windows.'],
+    [{ kind: 'system', cause: 'suspend' }, 'Trino se bloqueó porque el computador se suspendió.'],
+    [{ kind: 'manual' }, 'Bloqueaste Trino.'],
+    [{ kind: 'idle', minutes: 5 }, 'Trino se bloqueó tras 5 minutos sin actividad.'],
+  ] as const)('opens after a lock saying why, %j', async (reason, text) => {
+    renderApp(fakeApi({ ...VAULT, lock_reason: reason }));
+    expect(await heading('Hola de nuevo')).toBeTruthy();
+    expect(screen.getByText(text)).toBeTruthy();
+  });
+
+  it('goes to the unlock screen when the backend locked, without saving what waited', async () => {
+    const api = fakeApi(VAULT, VAULT);
+    renderApp(api);
+    await heading('Hola de nuevo');
+    await unlockWith(PASS);
+    click('Guardar nota');
+
+    act(() => api.requested.vaultLocked?.({ kind: 'system', cause: 'suspend' }));
+    expect(await heading('Hola de nuevo')).toBeTruthy();
+    expect(screen.getByText('Trino se bloqueó porque el computador se suspendió.')).toBeTruthy();
+    expect(screen.queryByText('intent: chats')).toBeNull();
+    // The vault is locked already, and the session with it.
+    expect(api.calls).toEqual(['status', 'status']);
+    await act(async () => {
+      await new Promise(resolve => setTimeout(resolve, 700));
+    });
+    expect(api.prefsSave).not.toHaveBeenCalled();
+    expect(prefs.getNote('Ana')).toBe('');
+  });
+
+  it('leaves the screens before the chats alone when the backend says it locked', async () => {
+    const api = fakeApi(VAULT);
+    renderApp(api);
+    await heading('Hola de nuevo');
+    act(() => api.requested.vaultLocked?.({ kind: 'system', cause: 'session' }));
+    expect(screen.getByText('Escribe tu contraseña para abrir tus chats.')).toBeTruthy();
+    expect(api.status).toHaveBeenCalledTimes(1);
+  });
+
+  it('locks from the tray as "Bloquear" does', async () => {
+    const api = fakeApi(VAULT, VAULT);
+    renderApp(api);
+    await heading('Hola de nuevo');
+    await unlockWith(PASS);
+
+    act(() => api.requested.lock?.());
+    expect(await heading('Hola de nuevo')).toBeTruthy();
+    expect(screen.getByText('Bloqueaste Trino.')).toBeTruthy();
+    expect(api.lockVault).toHaveBeenCalledWith({ kind: 'manual' });
+  });
+});
+
 // The chats hand App the gate of their calls (src/app/calls.tsx): locking,
 // closing the window and quitting from the tray end a call through it, so
 // the call asks first, sends its bye and keeps its record (plan §4, I5).
@@ -692,6 +775,27 @@ describe('App during a call', () => {
     await asked[1]!.answer(true);
     expect(await heading('Hola de nuevo')).toBeTruthy();
     expect(api.calls).toEqual(['status', 'lockVault', 'status']);
+  });
+
+  // "Bloquear" in the tray during a call: the backend asks the frontend,
+  // which asks the call first, as its own "Bloquear" does (CL-6a).
+  it('asks the call before locking from the tray, and locks only on yes', async () => {
+    const { asked } = callInProgress();
+    const api = fakeApi(VAULT, VAULT);
+    renderApp(api);
+    await heading('Hola de nuevo');
+    await unlockWith(PASS);
+
+    act(() => api.requested.lock?.());
+    expect(asked.map(question => question.reason)).toEqual(['lock']);
+    await asked[0]!.answer(false);
+    expect(screen.getByText('intent: chats')).toBeTruthy();
+    expect(api.lockVault).not.toHaveBeenCalled();
+
+    act(() => api.requested.lock?.());
+    await asked[1]!.answer(true);
+    expect(await heading('Hola de nuevo')).toBeTruthy();
+    expect(api.lockVault).toHaveBeenCalledWith({ kind: 'manual' });
   });
 
   it('closes the window during a call only once the call lets it, after clearing the call flag', async () => {

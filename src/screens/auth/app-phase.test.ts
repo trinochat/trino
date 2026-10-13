@@ -39,6 +39,32 @@ describe('phaseReducer', () => {
     });
   });
 
+  // Cifrado local CL-6a: every lock renews the window, and the new one
+  // starts over; the backend keeps why it locked, and the status says it.
+  it('says why it locked when the status does, as the window opened after a lock reads it', () => {
+    for (const reason of [
+      { kind: 'manual' },
+      { kind: 'idle', minutes: 5 },
+      { kind: 'system', cause: 'session' },
+      { kind: 'system', cause: 'suspend' },
+    ] as const) {
+      expect(run(INITIAL_PHASE, { type: 'status', status: { ...VAULT, lock_reason: reason } })).toEqual({
+        kind: 'unlock',
+        reason,
+        totpEnabled: true,
+      });
+    }
+  });
+
+  it('keeps the reason of its own lock over the status’s, and starts cold without either', () => {
+    const locked = run(main, LOCKED_BY_HAND);
+    const idle = { kind: 'idle', minutes: 5 } as const;
+    expect(run(locked, { type: 'status', status: { ...VAULT, lock_reason: idle } })).toMatchObject({ reason: { kind: 'manual' } });
+    expect(run(INITIAL_PHASE, { type: 'status', status: { ...VAULT, lock_reason: null } })).toMatchObject({
+      reason: { kind: 'cold' },
+    });
+  });
+
   // A reload of the window leaves the session open in the backend; the
   // password is asked anyway, as the old screens did.
   it('asks for the password even when the session is still open', () => {

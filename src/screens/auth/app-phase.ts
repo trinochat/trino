@@ -6,7 +6,8 @@
  * unlock, a lock) into events.
  *
  * Locking always reads the status again, so the unlock screen shows the code
- * field as it is now. With an identity the password is always asked, also when
+ * field as it is now. Every lock also renews the window (cifrado local
+ * CL-6a), and the new one learns why it locked from the status. With an identity the password is always asked, also when
  * a reload left the session open: the status never skips it. The status's
  * name is not kept: the unlock screen greets without one (David's decision 1).
  */
@@ -56,7 +57,9 @@ export function phaseReducer(phase: AppPhase, event: PhaseEvent): AppPhase {
         if (!status.has_vault) return { kind: 'onboarding' };
         return {
           kind: 'unlock',
-          reason: phase.then ?? { kind: 'cold' },
+          // This window's own lock, or the one before this window opened
+          // (each lock renews the window, CL-6a), or a cold start.
+          reason: phase.then ?? status.lock_reason ?? { kind: 'cold' },
           totpEnabled: status.totp_enabled,
         };
       }

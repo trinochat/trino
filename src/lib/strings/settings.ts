@@ -90,6 +90,11 @@ export const settings: AreaStrings = {
     'settings2.privacy.onDevice': 'En este equipo',
     'settings2.privacy.data': 'Tus datos en este equipo',
     'settings2.privacy.dataBody': 'Cifrados con tu contraseña, menos lo que usa la pantalla de desbloqueo.',
+    // Cifrado local CL-6a (design §7.2 and §11.1).
+    'settings2.privacy.lockWithSystem': 'Bloquear Trino al bloquear Windows',
+    'settings2.privacy.lockWithSystemBody':
+      'También al suspender o hibernar el computador. Si estás en una llamada, al colgar.',
+    'settings2.privacy.errLockWithSystem': 'No se pudo guardar el cambio. Sigue como estaba.',
     'settings2.privacy.dataEncrypted': 'Cifrado con tu contraseña',
     'settings2.privacy.dataIdentity': 'Tu identidad y tus chats',
     'settings2.privacy.dataContacts': 'Tus contactos, tus grupos y a quién bloqueaste',
@@ -414,6 +419,10 @@ export const settings: AreaStrings = {
     'settings2.privacy.onDevice': 'On this device',
     'settings2.privacy.data': 'Your data on this device',
     'settings2.privacy.dataBody': 'Encrypted with your password, except what the unlock screen uses.',
+    'settings2.privacy.lockWithSystem': 'Lock Trino when Windows locks',
+    'settings2.privacy.lockWithSystemBody':
+      'Also when the computer sleeps or hibernates. If you are on a call, when it ends.',
+    'settings2.privacy.errLockWithSystem': 'The change couldn’t be saved. It stays as it was.',
     'settings2.privacy.dataEncrypted': 'Encrypted with your password',
     'settings2.privacy.dataIdentity': 'Your identity and your chats',
     'settings2.privacy.dataContacts': 'Your contacts, your groups and who you blocked',
@@ -731,6 +740,10 @@ export const settings: AreaStrings = {
     'settings2.privacy.onDevice': 'Neste dispositivo',
     'settings2.privacy.data': 'Seus dados neste dispositivo',
     'settings2.privacy.dataBody': 'Criptografados com sua senha, menos o que a tela de desbloqueio usa.',
+    'settings2.privacy.lockWithSystem': 'Bloquear o Trino ao bloquear o Windows',
+    'settings2.privacy.lockWithSystemBody':
+      'Também ao suspender ou hibernar o computador. Se você estiver em uma chamada, ao desligar.',
+    'settings2.privacy.errLockWithSystem': 'Não foi possível salvar a mudança. Ela continua como estava.',
     'settings2.privacy.dataEncrypted': 'Criptografado com sua senha',
     'settings2.privacy.dataIdentity': 'Sua identidade e suas conversas',
     'settings2.privacy.dataContacts': 'Seus contatos, seus grupos e quem você bloqueou',

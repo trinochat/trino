@@ -128,6 +128,8 @@ describe('the keys', () => {
       'trino.pref.notifPreview',
       'trino.pref.groupMuted:g1',
       'trino.pref.callsSeenAt',
+      // Cifrado local CL-6a: locking with Windows is the account's.
+      'trino.pref.lockWithSystem',
     ]) {
       expect(isAccountKey(key), key).toBe(true);
       expect(isDeviceKey(key), key).toBe(false);
