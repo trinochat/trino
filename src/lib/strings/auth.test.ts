@@ -38,6 +38,29 @@ const KEYS = [
   // greeting with the name is gone: the unlock screen never shows one
   // (David's decision 1).
   'unlock2.lockedWindows', 'unlock2.lockedSuspend',
+  // Cifrado local CL-2b (design §6.2, §11.4 and §11.5): the one dialog at
+  // unlock when files changed, the files of an earlier version, and the one
+  // note after the migration.
+  'integrity.title', 'integrity.body', 'integrity.listLabel',
+  'integrity.item.account', 'integrity.item.prefs', 'integrity.item.history', 'integrity.item.sessions',
+  'integrity.item.profiles', 'integrity.item.stickers', 'integrity.item.index', 'integrity.item.vault',
+  'integrity.item.store', 'integrity.item.other',
+  'integrity.askOlderOne', 'integrity.askOlderMany', 'integrity.askUnverified',
+  'integrity.withoutOne', 'integrity.withoutMany', 'integrity.withoutUnverified',
+  'integrity.risk.account', 'integrity.risk.prefs', 'integrity.risk.history', 'integrity.risk.profiles', 'integrity.risk.other',
+  'integrity.loss.account', 'integrity.loss.prefs', 'integrity.loss.history', 'integrity.loss.profiles', 'integrity.loss.other',
+  'integrity.skipOne', 'integrity.useOne', 'integrity.skipMany', 'integrity.useMany',
+  'integrity.skipUnverified', 'integrity.useUnverified', 'integrity.used', 'integrity.skipped', 'integrity.errChoose',
+  'integrity.notice.altered', 'integrity.notice.unlisted', 'integrity.notice.olderAside', 'integrity.notice.missing',
+  'integrity.notice.missingPrefs', 'integrity.notice.missingStickers', 'integrity.notice.newSessions',
+  'integrity.notice.unreadable', 'integrity.notice.held', 'integrity.notice.index', 'integrity.notice.vaultChanged', 'integrity.notice.totpFlag',
+  'integrity.notice.otherAccount', 'integrity.notice.storeMissing',
+  'integrity.plain.title', 'integrity.plain.body', 'integrity.plain.preview', 'integrity.plain.import',
+  'integrity.plain.remove', 'integrity.plain.removeAsk', 'integrity.plain.removeYes', 'integrity.plain.removeNo',
+  'integrity.plain.name', 'integrity.plain.contacts', 'integrity.plain.groups', 'integrity.plain.counts',
+  'integrity.plain.unreadable', 'integrity.plain.imported', 'integrity.plain.removed', 'integrity.plain.err',
+  'integrity.footer', 'integrity.whatToDo', 'integrity.whatToDoLock', 'integrity.whatToDoPass', 'integrity.done',
+  'migrated.title', 'migrated.body', 'migrated.leftovers', 'migrated.copies', 'migrated.otherFolders', 'migrated.done',
   // The start-up screen and the window bar.
   'start.loading', 'start.error', 'start.retry',
   'titlebar.minimize', 'titlebar.maximize', 'titlebar.restore', 'titlebar.close',
@@ -48,6 +71,17 @@ const PLACEHOLDERS: Record<string, string[]> = {
   'onb.errTooShort': ['min'],
   'onb.errNameTooLong': ['max'],
   'unlock2.lockedIdle': ['n'],
+  'integrity.loss.account': ['without'],
+  'integrity.loss.prefs': ['without'],
+  'integrity.loss.history': ['without'],
+  'integrity.loss.profiles': ['without'],
+  'integrity.loss.other': ['without'],
+  'integrity.plain.name': ['name'],
+  'integrity.plain.contacts': ['n', 'names'],
+  'integrity.plain.groups': ['n', 'names'],
+  'integrity.plain.counts': ['chats', 'blocked', 'invites', 'stickers'],
+  'integrity.plain.unreadable': ['files'],
+  'migrated.body': ['contacts', 'groups', 'notes', 'stickers'],
 };
 
 describe('the copy of the first run', () => {
@@ -79,8 +113,35 @@ describe('the copy of the unlock screen', () => {
   it('greets without a name in every language', () => {
     expect(auth.es['unlock2.titleNoName']).toBe('Hola de nuevo');
     for (const lang of ['es', 'en', 'pt'] as const) {
-      expect(Object.values(auth[lang]).filter(text => text.includes('{name}')), lang).toEqual([]);
+      const unlock = Object.entries(auth[lang]).filter(([key]) => key.startsWith('unlock2.'));
+      expect(unlock.filter(([, text]) => text.includes('{name}')), lang).toEqual([]);
     }
+  });
+});
+
+// Design test 47: the texts about what Trino keeps on this device promise
+// nothing it cannot keep.
+describe('the copy about the data on this device', () => {
+  const PROMISES = /irrecuperable|sin rastro|segur[oa]s?|unrecoverable|no trace|secure|safe|irrecuper[aá]vel|sem rastro/i;
+
+  it('never promises "irrecuperable", "sin rastro" or "seguro"', () => {
+    for (const lang of ['es', 'en', 'pt'] as const) {
+      const texts = Object.entries(auth[lang]).filter(([key]) => key.startsWith('integrity.') || key.startsWith('migrated.'));
+      expect(texts.length, lang).toBeGreaterThan(0);
+      expect(texts.filter(([, text]) => PROMISES.test(text)).map(([key]) => key), lang).toEqual([]);
+    }
+  });
+
+  // Investigación §3: BitLocker protects the leftovers only while the
+  // computer is off (design §11.5).
+  it('says when BitLocker protects the leftovers', () => {
+    expect(auth.es['migrated.leftovers']).toContain('BitLocker los protege solo con el computador apagado.');
+  });
+
+  // David's decision 3: the two answers to an old copy, in the design's words.
+  it('names both choices of an old copy as the design does', () => {
+    expect([auth.es['integrity.skipOne'], auth.es['integrity.useOne']]).toEqual(['Seguir sin ella', 'Usar esa copia']);
+    expect([auth.es['integrity.skipUnverified'], auth.es['integrity.useUnverified']]).toEqual(['Seguir sin ellos', 'Usarlos']);
   });
 });
 

@@ -286,6 +286,36 @@ describe('the preferences of the account', () => {
     expect(save).not.toHaveBeenCalled();
   });
 
+  // "Usar esa copia" for prefs.bin in the dialog at unlock (CL-2b): what the
+  // user took replaces the session's copy, and what the session had beyond
+  // it (the import's entries) stays under it and is saved.
+  it('take the copy chosen in the dialog, over what the session had', async () => {
+    vi.useFakeTimers();
+    const { session, saves } = openSession(null);
+    session.addUnder({ 'note:Ana': 'del WebView', 'ttl:Ana': '30' });
+
+    session.adopt({ 'note:Ana': 'de la copia', autolock: '15', bad: 7 });
+
+    expect(session.getItem('note:Ana')).toBe('de la copia');
+    expect(session.getItem('autolock')).toBe('15');
+    expect(session.getItem('ttl:Ana')).toBe('30');
+    expect(session.getItem('bad')).toBeNull();
+    await vi.advanceTimersByTimeAsync(500);
+    expect(saves).toEqual([{ 'note:Ana': 'de la copia', autolock: '15', 'ttl:Ana': '30' }]);
+  });
+
+  it('save nothing when the chosen copy holds everything the session had', async () => {
+    vi.useFakeTimers();
+    const { session, save } = openSession(null);
+    session.adopt({ 'note:Ana': 'de la copia' });
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(session.getItem('note:Ana')).toBe('de la copia');
+    expect(save).not.toHaveBeenCalled();
+    const closed = createPrefsSession();
+    closed.adopt({ 'note:Ana': 'x' });
+    expect(closed.getItem('note:Ana')).toBeNull();
+  });
+
   // Part 1's error path: an account an earlier version created whose
   // migration stopped before its commit works as earlier versions did.
   it('stay in the WebView for an account that has not moved to the store yet', () => {

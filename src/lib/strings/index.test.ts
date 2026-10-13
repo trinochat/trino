@@ -53,7 +53,8 @@ describe('the string areas', () => {
 
   it('give every unit of the redesign its own prefixes', () => {
     expect(NAMESPACES.common).toEqual(['common2', 'time2', 'callEvent']);
-    expect(NAMESPACES.auth).toEqual(['onb', 'unlock2', 'start', 'titlebar']);
+    // integrity and migrated: the dialog and the note at unlock of cifrado local (CL-2b).
+    expect(NAMESPACES.auth).toEqual(['onb', 'unlock2', 'start', 'titlebar', 'integrity', 'migrated']);
     expect(NAMESPACES.shell).toEqual(['shell', 'inbox', 'forward']);
     expect(NAMESPACES.chat).toEqual(['chat2', 'composer2', 'msg2', 'channel', 'media', 'emoji', 'sticker2']);
     expect(NAMESPACES.contacts).toEqual(['contacts', 'groupPanel', 'groupNew']);

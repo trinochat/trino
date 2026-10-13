@@ -40,6 +40,8 @@ function backend(answer: UnsealResponse = UNSEALED) {
       notes: Object.keys(entries).filter(key => key.startsWith('note:')).length,
     })),
     clearBrowsingData: vi.fn(async () => {}),
+    storeChoose: vi.fn(async (_file: string, _useIt: boolean) => ({ findings: [] })),
+    prefsGet: vi.fn(async (): Promise<unknown> => ({ 'note:Bob': 'de la copia' })),
   } satisfies AccountPrefsApi;
 }
 
@@ -99,5 +101,54 @@ describe('unlocking with the account’s preferences', () => {
 
     expect(session.mode).toBe('legacy');
     expect(api.prefsImport).not.toHaveBeenCalled();
+  });
+});
+
+// "Usar esa copia" or "Usarlos" for prefs.bin in the dialog at unlock
+// (CL-2b): the session takes the copy the backend now has.
+describe('choosing in the dialog at unlock', () => {
+  it('takes the chosen preferences into the session', async () => {
+    const api = backend({ ...UNSEALED, prefs_import: 'done' });
+    const session = createPrefsSession();
+    const wrapped = withAccountPrefs(api, session, () => memoryLocal());
+    await wrapped.unseal('pass', null);
+
+    await wrapped.storeChoose('prefs', true);
+
+    expect(api.storeChoose).toHaveBeenCalledWith('prefs', true);
+    expect(api.prefsGet).toHaveBeenCalledTimes(1);
+    expect(session.getItem('note:Bob')).toBe('de la copia');
+    expect(session.getItem('ttl:Bob')).toBe('30');
+  });
+
+  it('reads nothing more for another file, or for going on without them', async () => {
+    const api = backend({ ...UNSEALED, prefs_import: 'done' });
+    const session = createPrefsSession();
+    const wrapped = withAccountPrefs(api, session, () => memoryLocal());
+    await wrapped.unseal('pass', null);
+
+    await wrapped.storeChoose('account', true);
+    await wrapped.storeChoose('prefs', false);
+
+    expect(api.prefsGet).not.toHaveBeenCalled();
+    expect(session.getItem('ttl:Bob')).toBe('30');
+  });
+
+  // The session must never save its copy over the one the user chose: if
+  // the chosen copy cannot be read, the session is dropped unsaved, and the
+  // account's preferences give the defaults until the next unlock.
+  it('drops the session unsaved when the chosen copy cannot be read', async () => {
+    const api = backend({ ...UNSEALED, prefs_import: 'done' });
+    api.prefsGet.mockRejectedValue({ code: 'internal', message: 'for the log' });
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const session = createPrefsSession();
+    const wrapped = withAccountPrefs(api, session, () => memoryLocal());
+    await wrapped.unseal('pass', null);
+
+    await expect(wrapped.storeChoose('prefs', true)).resolves.toEqual({ findings: [] });
+
+    expect(session.mode).toBe('closed');
+    await session.flush();
+    expect(api.prefsSave).not.toHaveBeenCalled();
   });
 });

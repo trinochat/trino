@@ -108,6 +108,12 @@ export interface PrefsSession {
   removeItem(key: string): void;
   /** Adds the entries the session does not have; what it has wins. */
   addUnder(entries: PrefsMap): void;
+  /**
+   * The copy chosen in the dialog at unlock ("Usar esa copia", CL-2b): its
+   * entries replace the session's, what the session had beyond them stays,
+   * and that is saved.
+   */
+  adopt(prefs: unknown): void;
   /** Sends the changes not saved yet, now; resolves once they went. */
   flush(): Promise<void>;
   /** At lock: sends what is left, then forgets the copy. */
@@ -209,6 +215,13 @@ export function createPrefsSession({ delayMs = 500 }: SessionOptions = {}): Pref
       for (const [key, value] of Object.entries(entries)) {
         if (!data.has(key) && typeof value === 'string') data.set(key, value);
       }
+    },
+    adopt(prefs) {
+      if (mode !== 'store') return;
+      const chosen = textEntries(prefs);
+      const beyond = [...data].filter(([key]) => !chosen.has(key));
+      data = new Map([...chosen, ...beyond]);
+      if (beyond.length > 0) changed();
     },
     flush,
     close() {

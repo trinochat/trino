@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import App, { type AppApi, type MainProps } from './App';
 import type { CallGate } from './app/calls';
-import type { ForgeResponse, StatusResponse, UnsealResponse } from './lib/api';
+import type { ForgeResponse, IntegrityReport, LegacyPreview, StatusResponse, UnsealResponse } from './lib/api';
 import { prefs } from './lib/prefs';
 import { prefsSession, type PrefsImported, type PrefsMap } from './lib/prefs-session';
 import type { WindowApi } from './screens/auth';
@@ -78,6 +78,14 @@ function fakeApi(...answers: Array<StatusResponse | Error>) {
       (entries: PrefsMap): Promise<PrefsImported> => Promise.resolve({ taken: entries, saved: true, notes: 0 }),
     ),
     clearBrowsingData: vi.fn(() => Promise.resolve()),
+    prefsGet: vi.fn((): Promise<unknown> => Promise.resolve(null)),
+    storeChoose: vi.fn((_file: string, _useIt: boolean): Promise<IntegrityReport> => Promise.resolve({ findings: [] })),
+    legacyFilesPreview: vi.fn(
+      (): Promise<LegacyPreview> =>
+        Promise.resolve({ handle: null, contacts: [], blocked: 0, groups: [], invitations: 0, conversations: 0, stickers: 0, unreadable: [] }),
+    ),
+    legacyFilesImport: vi.fn((): Promise<IntegrityReport> => Promise.resolve({ findings: [] })),
+    legacyFilesRemove: vi.fn((): Promise<IntegrityReport> => Promise.resolve({ findings: [] })),
   } satisfies AppApi;
   return { ...api, calls, requested };
 }
@@ -539,6 +547,113 @@ describe("App and the account's preferences", () => {
     await vi.waitFor(() => expect(api.prefsSave).toHaveBeenCalled(), WAIT);
     const saved = api.prefsSave.mock.calls[api.prefsSave.mock.calls.length - 1]![0];
     expect(JSON.parse(saved['trino.consent']!)).toMatchObject({ format: 1, publicKey: CREATED.nostr_pub });
+  });
+});
+
+// Cifrado local CL-2b (design §6.2 and §11.5): the one dialog at unlock and
+// the one note after the migration come before the chats.
+describe('App and what the store found', () => {
+  const OLDER_ACCOUNT: UnsealResponse = {
+    ...UNSEALED,
+    integrity: { findings: [{ file: 'account', what: 'olderCopy', action: 'ask' }] },
+  };
+
+  it('asks about a file that changed before the chats, and opens them once answered', async () => {
+    const api = fakeApi(VAULT);
+    api.unseal.mockResolvedValue(OLDER_ACCOUNT);
+    renderApp(api);
+    await heading('Hola de nuevo');
+    type('Contraseña', PASS);
+    click('Desbloquear');
+
+    expect(await heading('Algunos archivos de Trino cambiaron')).toBeTruthy();
+    expect(screen.queryByText('intent: chats')).toBeNull();
+    expect(api.storeChoose).not.toHaveBeenCalled();
+    click('Usar esa copia');
+    await vi.waitFor(() => expect(api.storeChoose).toHaveBeenCalledWith('account', true), WAIT);
+    fireEvent.click(await screen.findByRole('button', { name: 'Entendido' }, WAIT));
+    await chatsOpen();
+  });
+
+  // "Usar esa copia" for prefs.bin: the chats open with the copy chosen.
+  it('opens the chats with the preferences chosen in the dialog', async () => {
+    const api = fakeApi(VAULT);
+    api.unseal.mockResolvedValue({
+      ...UNSEALED,
+      integrity: { findings: [{ file: 'prefs', what: 'olderCopy', action: 'ask' }] },
+    });
+    api.prefsGet.mockResolvedValue({ 'ttl:Ana': '30', 'trino.pref.notifPreview': 'none' });
+    renderApp(api);
+    await heading('Hola de nuevo');
+    type('Contraseña', PASS);
+    click('Desbloquear');
+    await heading('Algunos archivos de Trino cambiaron');
+
+    click('Usar esa copia');
+    fireEvent.click(await screen.findByRole('button', { name: 'Entendido' }, WAIT));
+    await chatsOpen();
+    expect(screen.getByText('ttl: 30, preview: none')).toBeTruthy();
+  });
+
+  // Design test 45: once, with the notes the import of the WebView took.
+  it('shows the note after the migration once, with what it encrypted', async () => {
+    localStorage.setItem('note:Ana', 'Vecina del 3');
+    const api = fakeApi(VAULT, VAULT);
+    api.unseal
+      .mockResolvedValueOnce({ ...UNSEALED, prefs_import: 'pending', migration: { contacts: 2, groups: 1, stickers: 0 } })
+      .mockResolvedValue(UNSEALED);
+    api.prefsImport.mockImplementation(entries => Promise.resolve({ taken: entries, saved: true, notes: 1 }));
+    renderApp(api);
+    await heading('Hola de nuevo');
+    type('Contraseña', PASS);
+    click('Desbloquear');
+
+    expect(await heading('Tus datos en este equipo ya están cifrados')).toBeTruthy();
+    expect(
+      screen.getByText(
+        'Trino cifró con tu contraseña tu perfil, tus contactos (2), tus grupos (1), tus notas (1) y tus stickers (0), como ya hacía con tus chats.',
+      ),
+    ).toBeTruthy();
+    click('Entendido');
+    await chatsOpen();
+
+    click('Bloquear ahora');
+    await heading('Hola de nuevo');
+    await unlockWith(PASS);
+    expect(screen.queryByText('Tus datos en este equipo ya están cifrados')).toBeNull();
+  });
+
+  // The session is open while the dialog waits: Ctrl+L and the auto-lock
+  // close it as they do from the chats.
+  it('locks from the dialog, as from the chats', async () => {
+    const api = fakeApi(VAULT, VAULT);
+    api.unseal.mockResolvedValue(OLDER_ACCOUNT);
+    renderApp(api);
+    await heading('Hola de nuevo');
+    type('Contraseña', PASS);
+    click('Desbloquear');
+    const title = await heading('Algunos archivos de Trino cambiaron');
+
+    fireEvent.keyDown(title, { key: 'l', ctrlKey: true });
+    await heading('Hola de nuevo');
+    expect(screen.getByText('Bloqueaste Trino.')).toBeTruthy();
+    expect(api.calls).toEqual(['status', 'lockVault', 'status']);
+    expect(api.storeChoose).not.toHaveBeenCalled();
+  });
+
+  it('locks after the minutes saved for the account while the dialog waits', async () => {
+    fakeClock();
+    const api = fakeApi(VAULT, VAULT);
+    api.unseal.mockResolvedValue({ ...OLDER_ACCOUNT, prefs: { autolock: '1' } });
+    renderApp(api);
+    await heading('Hola de nuevo');
+    type('Contraseña', PASS);
+    click('Desbloquear');
+    await heading('Algunos archivos de Trino cambiaron');
+
+    await idle(MINUTE + 20_000);
+    await heading('Hola de nuevo');
+    expect(screen.getByText('Trino se bloqueó tras 1 minuto sin actividad.')).toBeTruthy();
   });
 });
 

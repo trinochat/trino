@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { StatusResponse } from '../../lib/api';
 import { INITIAL_PHASE, phaseReducer, type AppPhase, type PhaseEvent } from './app-phase';
+import type { Review } from './review/store-check';
 
 const status = (change: Partial<StatusResponse> = {}): StatusResponse => ({
   has_vault: false,
@@ -69,6 +70,23 @@ describe('phaseReducer', () => {
     expect(main).toEqual({ kind: 'main', intent: 'chats' });
     const unlock = run(INITIAL_PHASE, { type: 'status', status: VAULT });
     expect(run(unlock, { type: 'noVault' })).toEqual({ kind: 'onboarding' });
+  });
+
+  // Cifrado local CL-2b: what the store found, or the note after the
+  // migration, comes between unlocking and the chats.
+  it('stops before the chats for what the store found, then opens them', () => {
+    const unlock = run(INITIAL_PHASE, { type: 'status', status: VAULT });
+    const review: Review = { integrity: { findings: [{ file: 'account', what: 'olderCopy', action: 'ask' }] }, customDataDir: false };
+    const reviewing = run(unlock, { type: 'review', review });
+    expect(reviewing).toEqual({ kind: 'review', review });
+    expect(run(reviewing, { type: 'unlocked' })).toEqual({ kind: 'main', intent: 'chats' });
+    expect(run(reviewing, LOCKED_BY_HAND)).toEqual({ kind: 'loading', then: { kind: 'manual' } });
+    expect(run(reviewing, { type: 'noVault' })).toEqual({ kind: 'onboarding' });
+    const ignored: PhaseEvent[] = [{ type: 'status', status: VAULT }, { type: 'retry' }, { type: 'review', review }];
+    for (const event of ignored) {
+      expect(phaseReducer(reviewing, event), event.type).toBe(reviewing);
+    }
+    expect(phaseReducer(main, { type: 'review', review })).toBe(main);
   });
 
   // Locking always reads the status again, so the unlock screen shows the

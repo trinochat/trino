@@ -6,17 +6,28 @@ import { LangCtx, useDocumentLang } from './lib/i18n-context';
 import { prefs } from './lib/prefs';
 import { prefsSession, type PrefsSession } from './lib/prefs-session';
 import { teardownCall, isCallBusy } from './lib/call';
-import { api, onCallCloseRequested, onCallQuitRequested, isCommandError, type StatusResponse } from './lib/api';
+import {
+  api,
+  onCallCloseRequested,
+  onCallQuitRequested,
+  isCommandError,
+  type StatusResponse,
+  type UnsealResponse,
+} from './lib/api';
 import { ToastProvider } from './ui';
 import { AppearanceProvider } from './design/useAppearance';
 import {
   INITIAL_PHASE,
   OnboardingFlow,
   StartupScreen,
+  StoreReview,
   UnlockScreen,
   WindowTitlebar,
+  needsReview,
   phaseReducer,
+  reviewOf,
   type PhaseEvent,
+  type StoreReviewApi,
   type WindowApi,
 } from './screens/auth';
 import type { LockReason, OnboardingApi, UnlockApi } from './screens/types';
@@ -35,7 +46,7 @@ const isMobile = /android|iphone|ipad|ipod/i.test(navigator.userAgent);
  * What App() needs from the backend: `api` of src/lib/api.ts in the app, a
  * fake in the tests. The first run and the unlock screen take their part.
  */
-export interface AppApi extends OnboardingApi, UnlockApi, AccountPrefsApi {
+export interface AppApi extends OnboardingApi, UnlockApi, AccountPrefsApi, StoreReviewApi {
   status(): Promise<StatusResponse>;
   lockVault(): Promise<void>;
   /** Whether a call holds the microphone: the window's close and the tray's "Salir" ask first. */
@@ -60,7 +71,12 @@ const BACKEND: AppApi = {
   wipe: api.wipe,
   prefsSave: api.prefsSave,
   prefsImport: api.prefsImport,
+  prefsGet: api.prefsGet,
   clearBrowsingData: api.clearBrowsingData,
+  storeChoose: api.storeChoose,
+  legacyFilesPreview: api.legacyFilesPreview,
+  legacyFilesImport: api.legacyFilesImport,
+  legacyFilesRemove: api.legacyFilesRemove,
 };
 
 /**
@@ -88,8 +104,9 @@ export interface AppProps {
 
 /**
  * The phases before the chats (W1's `phaseReducer`): reading the status, its
- * error, the first run, the unlock screen and the chats. Every lock seals the
- * vault and then reads the status again, with the reason it locked.
+ * error, the first run, the unlock screen, what the store found at unlock
+ * (cifrado local CL-2b) and the chats. Every lock seals the vault and then
+ * reads the status again, with the reason it locked.
  */
 function App({ api: given = BACKEND, windowApi = TAURI_WINDOW, Main = MainScreen, session = prefsSession }: AppProps) {
   // Unlocking and the first run resolve once the account's preferences are
@@ -173,8 +190,11 @@ function App({ api: given = BACKEND, windowApi = TAURI_WINDOW, Main = MainScreen
     latestRequestLock.current = requestLock;
   });
   const chatsShown = phase.kind === 'main';
+  // The dialog of what the store found waits with the session open: it locks
+  // like the chats, by hand and after the idle minutes.
+  const sessionShown = chatsShown || phase.kind === 'review';
   useEffect(() => {
-    if (!chatsShown) return;
+    if (!sessionShown) return;
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.defaultPrevented || event.repeat || event.isComposing) return;
       if (!(event.ctrlKey || event.metaKey) || event.altKey || event.key.toLowerCase() !== 'l') return;
@@ -183,7 +203,7 @@ function App({ api: given = BACKEND, windowApi = TAURI_WINDOW, Main = MainScreen
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [chatsShown]);
+  }, [sessionShown]);
 
   // The backend asks before hiding the window or quitting while a call holds
   // the microphone (see `set_call_active` and the tray "Salir"): the call's
@@ -220,8 +240,17 @@ function App({ api: given = BACKEND, windowApi = TAURI_WINDOW, Main = MainScreen
     setAutolockMinutes(prefs.getAutolockMinutes());
     dispatch(event);
   };
+  // Unlocked: what the store found, or the one note after the migration,
+  // comes before the chats. Once read and answered, the preferences a choice
+  // changed go to the store as soon as it takes writes again.
+  const unlocked = (response: UnsealResponse) =>
+    openChats(needsReview(response) ? { type: 'review', review: reviewOf(response) } : { type: 'unlocked' });
+  const reviewed = () => {
+    void session.flush();
+    openChats({ type: 'unlocked' });
+  };
   useAutoLock({
-    enabled: chatsShown,
+    enabled: sessionShown,
     minutes: autolockMinutes,
     isCallBusy,
     onLock: minutes => lockNow({ kind: 'idle', minutes }),
@@ -265,11 +294,12 @@ function App({ api: given = BACKEND, windowApi = TAURI_WINDOW, Main = MainScreen
                     totpEnabled={phase.totpEnabled}
                     reason={phase.reason}
                     api={backend}
-                    onUnlocked={() => openChats({ type: 'unlocked' })}
+                    onUnlocked={unlocked}
                     onNoVault={() => dispatch({ type: 'noVault' })}
                     onWiped={wiped}
                   />
                 ) : null}
+                {phase.kind === 'review' ? <StoreReview review={phase.review} api={backend} onDone={reviewed} /> : null}
                 {phase.kind === 'main' ? (
                   // The chats' own <main> is the pane on screen (src/app/MainScreen.tsx).
                   <div className="h-full">

@@ -84,6 +84,21 @@ export interface IntegrityReport {
   findings: IntegrityFinding[];
 }
 
+// "Ver qué traen" (design §11.4): what files of an earlier version that
+// appeared hold, read only once asked: names, and how many of the rest
+// (`LegacyPreview` in src-tauri/src/storage_cmds.rs).
+export interface LegacyPreview {
+  handle: string | null;
+  contacts: string[];
+  blocked: number;
+  groups: string[];
+  invitations: number;
+  conversations: number;
+  stickers: number;
+  // Files that do not read.
+  unreadable: string[];
+}
+
 // The one note after the migration moved an earlier version's account into
 // the store (design §11.5). `notes` is not the backend's: the frontend adds
 // how many notes the import of the WebView's copy took (prefs-session.ts).
@@ -448,6 +463,14 @@ export const api = {
   // Clears the WebView's data, where removed values may linger (design
   // §5.3): through Tauri's own command, allowed in capabilities/default.json.
   clearBrowsingData: (): Promise<void> => getCurrentWebview().clearAllBrowsingData(),
+  // The one dialog at unlock (cifrado local CL-2b, design §6.2): "Usar esa
+  // copia" (useIt) or "Seguir sin ella" for a file that waits; and "Ver qué
+  // traen", "Importarlos" or "Borrarlos" for files of an earlier version.
+  // Each answers with what still waits.
+  storeChoose: (file: string, useIt: boolean): Promise<IntegrityReport> => invoke('store_choose', { file, useIt }),
+  legacyFilesPreview: (): Promise<LegacyPreview> => invoke('legacy_files_preview'),
+  legacyFilesImport: (): Promise<IntegrityReport> => invoke('legacy_files_import'),
+  legacyFilesRemove: (): Promise<IntegrityReport> => invoke('legacy_files_remove'),
   shareBundle: (): Promise<string> => invoke('share_bundle'),
   // `replaceExisting` (K8) replaces a contact that has the name, after the
   // user confirmed it; left out, the payload is the one older backends take.

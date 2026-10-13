@@ -14,10 +14,13 @@ describe('the auth screens', () => {
         'PRIVACY_POLICY_URL',
         'PRIVACY_POLICY_VERSION',
         'StartupScreen',
+        'StoreReview',
         'UnlockScreen',
         'WindowTitlebar',
         'loadConsentRecord',
+        'needsReview',
         'phaseReducer',
+        'reviewOf',
       ].sort(),
     );
   });

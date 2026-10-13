@@ -1,6 +1,7 @@
 /**
  * The screens before the chats (W1, plan §3): reading the status, the first
- * run, the unlock screen and the window's title bar, with the phase that
+ * run, the unlock screen, what the store found at unlock (cifrado local) and
+ * the window's title bar, with the phase that
  * picks between them. The integration imports them from here, never from the
  * files behind.
  */
@@ -18,3 +19,5 @@ export {
   type ConsentStorage,
 } from './onboarding/consent';
 export { UnlockScreen } from './unlock/UnlockScreen';
+export { StoreReview, type StoreReviewApi, type StoreReviewProps } from './review/StoreReview';
+export { needsReview, reviewOf, type Review } from './review/store-check';

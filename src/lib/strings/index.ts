@@ -23,7 +23,7 @@ export type AreaName = keyof typeof AREAS;
  */
 export const NAMESPACES: Readonly<Record<AreaName, readonly string[]>> = {
   common: ['common2', 'time2', 'callEvent'],
-  auth: ['onb', 'unlock2', 'start', 'titlebar'],
+  auth: ['onb', 'unlock2', 'start', 'titlebar', 'integrity', 'migrated'],
   shell: ['shell', 'inbox', 'forward'],
   chat: ['chat2', 'composer2', 'msg2', 'channel', 'media', 'emoji', 'sticker2'],
   contacts: ['contacts', 'groupPanel', 'groupNew'],

@@ -16,6 +16,7 @@ import {
   type GroupMember,
   type GroupSendReceipt,
   type HistItem,
+  type LegacyPreview,
   type NodeInfo,
   type ProfileResponse,
   type SendReceipt,
@@ -345,6 +346,34 @@ describe("the account's preferences", () => {
     };
     expectTypeOf(answer.prefs_import).toEqualTypeOf<'done' | 'pending' | 'unavailable'>();
     expectTypeOf<PrefsImported>().toEqualTypeOf<{ taken: Record<string, string>; saved: boolean; notes: number }>();
+  });
+});
+
+// The dialog at unlock (cifrado local CL-2b, design §6.2 and §11.4):
+// "Usar esa copia" or "Seguir sin ella", and the three answers to files of
+// an earlier version (src-tauri/src/storage_cmds.rs).
+describe('the dialog at unlock', () => {
+  it.each([
+    ['storeChoose', () => api.storeChoose('account', true), 'store_choose', { file: 'account', useIt: true }],
+    ['legacyFilesPreview', () => api.legacyFilesPreview(), 'legacy_files_preview', undefined],
+    ['legacyFilesImport', () => api.legacyFilesImport(), 'legacy_files_import', undefined],
+    ['legacyFilesRemove', () => api.legacyFilesRemove(), 'legacy_files_remove', undefined],
+  ])('%s calls its command', async (_name, call, command, args) => {
+    await call();
+    expect(invoke.mock.calls).toEqual([args === undefined ? [command] : [command, args]]);
+  });
+
+  it('read what the files of before hold as the backend sends it', () => {
+    expectTypeOf<LegacyPreview>().toEqualTypeOf<{
+      handle: string | null;
+      contacts: string[];
+      blocked: number;
+      groups: string[];
+      invitations: number;
+      conversations: number;
+      stickers: number;
+      unreadable: string[];
+    }>();
   });
 });
 
