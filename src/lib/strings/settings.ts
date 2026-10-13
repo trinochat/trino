@@ -109,6 +109,8 @@ export const settings: AreaStrings = {
     'settings2.privacy.dataNotificationsOther':
       'Tu sistema puede guardar una copia de cada notificación. Con «Solo el nombre», ahí quedan el nombre de quien te escribe o del grupo, y el de quien te llama.',
     'settings2.privacy.dataDownloads': 'Lo que descargas queda como cualquier archivo de tu computador.',
+    'settings2.privacy.dataClipboard':
+      'Lo que copias en Trino no entra al historial del portapapeles de Windows. Otros programas que guardan lo que copias pueden ignorarlo.',
     'settings2.privacy.dataCopies': 'Si copiaste la carpeta .trino antes de esta versión, esa copia sigue sin cifrar.',
 
     // Notificaciones (Settings:50-113).
@@ -437,6 +439,8 @@ export const settings: AreaStrings = {
     'settings2.privacy.dataNotificationsOther':
       'Your system may keep a copy of each notification. With “Only the name”, it keeps the name of who writes to you or of the group, and of who calls you.',
     'settings2.privacy.dataDownloads': 'What you download stays like any other file on your computer.',
+    'settings2.privacy.dataClipboard':
+      'What you copy in Trino stays out of the Windows clipboard history. Other programs that keep what you copy may ignore this.',
     'settings2.privacy.dataCopies': 'If you copied the .trino folder before this version, that copy is still unencrypted.',
 
     'settings2.notif.title': 'Notifications',
@@ -758,6 +762,8 @@ export const settings: AreaStrings = {
     'settings2.privacy.dataNotificationsOther':
       'Seu sistema pode guardar uma cópia de cada notificação. Com “Só o nome”, ali ficam o nome de quem escreve para você ou do grupo, e o de quem liga para você.',
     'settings2.privacy.dataDownloads': 'O que você baixa fica como qualquer arquivo do seu computador.',
+    'settings2.privacy.dataClipboard':
+      'O que você copia no Trino não entra no histórico da área de transferência do Windows. Outros programas que guardam o que você copia podem ignorar isso.',
     'settings2.privacy.dataCopies': 'Se você copiou a pasta .trino antes desta versão, essa cópia continua sem criptografia.',
 
     'settings2.notif.title': 'Notificações',

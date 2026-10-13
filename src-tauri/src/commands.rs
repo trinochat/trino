@@ -158,6 +158,9 @@ pub(crate) mod prefs_cmds;
 // Cifrado local (CL-6a): locking with the system, and renewing the window.
 #[path = "lock_cmds.rs"]
 pub(crate) mod lock_cmds;
+// Cifrado local (CL-6b): copying without the clipboard history.
+#[path = "clipboard_cmds.rs"]
+pub(crate) mod clipboard_cmds;
 
 #[derive(Serialize)]
 pub struct NodeInfo {

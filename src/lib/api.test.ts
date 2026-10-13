@@ -346,6 +346,17 @@ describe('locking', () => {
   });
 });
 
+// Cifrado local CL-6b: copies without the clipboard history (clipboard_cmds.rs).
+describe('the clipboard', () => {
+  it.each([
+    ['clipboardWriteText', () => api.clipboardWriteText('hola'), 'clipboard_write_text', { text: 'hola' }],
+    ['clipboardWriteImage', () => api.clipboardWriteImage('iVBORw=='), 'clipboard_write_image', { png: 'iVBORw==' }],
+  ] as const)('%s calls its command', async (_name, call, command, args) => {
+    await call();
+    expect(invoke.mock.calls).toEqual([[command, args]]);
+  });
+});
+
 // Cifrado local CL-2a: the account's preferences in the store (prefs_cmds.rs).
 describe("the account's preferences", () => {
   it.each([

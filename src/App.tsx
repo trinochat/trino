@@ -36,6 +36,8 @@ import {
 import type { OnboardingApi, UnlockApi } from './screens/types';
 import { capabilities } from './app/capabilities';
 import { installBrowserChromeGuard } from './app/browser-chrome';
+import { installCopyGuard } from './app/copy-guard';
+import { clipboard } from './lib/clipboard';
 import type { CallGate } from './app/calls';
 import { MainScreen, type MainProps } from './app/MainScreen';
 import { useAutoLock } from './app/useAutoLock';
@@ -135,6 +137,9 @@ function App({ api: given = BACKEND, windowApi = TAURI_WINDOW, Main = MainScreen
   // Trino is an app, not a web page: no browser menu outside the text fields
   // and none of the browser's shortcuts, on every screen (src/app/browser-chrome.ts).
   useEffect(() => installBrowserChromeGuard(window), []);
+  // On Windows every copy, Ctrl + C and Ctrl + X included, goes through the
+  // backend, out of the clipboard history (src/app/copy-guard.ts, CL-6b).
+  useEffect(() => (clipboard.throughBackend() ? installCopyGuard(window, clipboard.copyText) : undefined), []);
 
   // The last lock: the status is read once the vault is sealed.
   const sealing = useRef<Promise<void>>(Promise.resolve());

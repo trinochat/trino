@@ -23,6 +23,8 @@ mod net;
 mod security_cmds;
 // -- cifrado local CL-6a --
 mod system_events;
+// -- cifrado local CL-6b --
+mod clipboard;
 #[cfg(desktop)]
 mod window_renewal;
 
@@ -234,6 +236,8 @@ pub fn run() {
             commands::prefs_cmds::prefs_save,
             commands::prefs_cmds::prefs_import,
             commands::prefs_cmds::prefs_get,
+            commands::clipboard_cmds::clipboard_write_text,
+            commands::clipboard_cmds::clipboard_write_image,
             commands::resend_outbox,
             commands::resync_session,
             commands::set_autostart,

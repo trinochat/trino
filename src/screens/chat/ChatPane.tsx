@@ -7,8 +7,9 @@
  * What a message's options do lives here: Responder fills the reply bar and
  * puts the focus in the box; Copiar, and the right-click menu's Copiar
  * selección, Copiar enlace and Copiar imagen (MC-2), say what they copied,
- * or that they could not. Copiar imagen is offered only where the clipboard
- * takes pictures (clipboard-image.ts). Borrar para mí asks
+ * or that they could not; on Windows they copy without the clipboard
+ * history (src/lib/clipboard.ts). Copiar imagen is offered only where the
+ * clipboard takes pictures. Borrar para mí asks
  * first, since it cannot be undone, and says above the composer when it
  * failed. You cannot write to a contact you blocked, whose messages do not
  * reach you, nor in a group you are no longer in: a line says why in place
@@ -17,7 +18,7 @@
  */
 import { Check, CircleAlert, Trash2 } from 'lucide-react';
 import { useEffect, useId, useMemo, useRef, useState } from 'react';
-import { canCopyImages, writeImage } from '../../lib/clipboard-image';
+import { clipboard } from '../../lib/clipboard';
 import { convoKey } from '../../lib/convo';
 import { useT } from '../../lib/i18n';
 import { Button, Dialog, iconSize } from '../../ui';
@@ -129,14 +130,15 @@ export function ChatPane(props: ChatPaneProps) {
             input.current?.focus();
           }
         : undefined,
+      // On Windows without the clipboard history (src/lib/clipboard.ts).
       onCopy: (text, what) => {
         const kind = what ?? 'message';
-        const clipboard = typeof navigator === 'undefined' ? undefined : navigator.clipboard;
-        if (!clipboard) return notCopied(kind)();
-        clipboard.writeText(text).then(copied(kind), notCopied(kind));
+        clipboard.copyText(text).then(copied(kind), notCopied(kind));
       },
       // Read when the chat opens: a webview gains no clipboard while it runs.
-      onCopyImage: canCopyImages() ? png => void writeImage(png).then(copied('image'), notCopied('image')) : undefined,
+      onCopyImage: clipboard.canCopyImages()
+        ? png => void clipboard.copyImage(png).then(copied('image'), notCopied('image'))
+        : undefined,
       onDeleteForMe: onDeleteForMe ? setDeleting : undefined,
     };
   }, [onRetry, onForward, onOpenLink, fetchFile, onDeleteForMe, writable, t]);

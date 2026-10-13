@@ -4,9 +4,9 @@
  * your password, what stays in clear because the unlock screen needs it, and
  * what lies outside Trino. Each part is a short named list, no panels.
  *
- * Only what is true now: copying without the clipboard history comes with
- * CL-6b, and its line with it. The notifications line names Windows only on
- * Windows.
+ * Only what is true now: the notifications line names Windows only on
+ * Windows, and only there does Trino copy without the clipboard history
+ * (CL-6b, src/lib/clipboard.ts), so its line is Windows' alone.
  */
 import { ArrowLeft } from 'lucide-react';
 import { useId } from 'react';
@@ -32,7 +32,10 @@ const PARTS = [
     ],
   },
   { title: 'settings2.privacy.dataPlain', lines: ['settings2.privacy.dataAccount', 'settings2.privacy.dataLook'] },
-  { title: 'settings2.privacy.dataOutside', lines: ['settings2.privacy.dataNotifications', 'settings2.privacy.dataDownloads'] },
+  {
+    title: 'settings2.privacy.dataOutside',
+    lines: ['settings2.privacy.dataNotifications', 'settings2.privacy.dataDownloads', 'settings2.privacy.dataClipboard'],
+  },
 ] as const;
 
 export function LocalDataView({ platform, onBack, autoFocus }: LocalDataViewProps) {
@@ -56,9 +59,11 @@ export function LocalDataView({ platform, onBack, autoFocus }: LocalDataViewProp
             aria-labelledby={`${id}-${index}`}
             className="m-0 flex list-disc flex-col gap-1.5 ps-5 text-ui-base leading-normal text-ui-ink"
           >
-            {part.lines.map(key => (
-              <li key={key}>{line(key)}</li>
-            ))}
+            {part.lines
+              .filter(key => key !== 'settings2.privacy.dataClipboard' || platform === 'windows')
+              .map(key => (
+                <li key={key}>{line(key)}</li>
+              ))}
           </ul>
         </div>
       ))}

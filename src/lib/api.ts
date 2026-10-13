@@ -472,6 +472,11 @@ export const api = {
   prefsSave: (prefs: PrefsMap): Promise<void> => invoke('prefs_save', { prefs }),
   prefsImport: (entries: PrefsMap): Promise<PrefsImported> => invoke('prefs_import', { entries }),
   prefsGet: (): Promise<unknown> => invoke('prefs_get'),
+  // Copies without the clipboard history (cifrado local CL-6b, design §8),
+  // Windows only: a text, and a picture as its PNG in base64. Through
+  // src/lib/clipboard.ts, which uses the webview's clipboard elsewhere.
+  clipboardWriteText: (text: string): Promise<void> => invoke('clipboard_write_text', { text }),
+  clipboardWriteImage: (png: string): Promise<void> => invoke('clipboard_write_image', { png }),
   // Clears the WebView's data, where removed values may linger (design
   // §5.3): through Tauri's own command, allowed in capabilities/default.json.
   clearBrowsingData: (): Promise<void> => getCurrentWebview().clearAllBrowsingData(),

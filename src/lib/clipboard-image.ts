@@ -11,7 +11,12 @@
  * app: the clipboard is the person's own.
  */
 
-/** What the clipboard needs from the window: `window` and `navigator` in the app. */
+/**
+ * What the clipboard needs from the window: `window` and `navigator` in the
+ * app, given by src/lib/clipboard.ts, which uses this off Windows; on
+ * Windows the backend copies the picture without the clipboard history
+ * (cifrado local CL-6b).
+ */
 export interface ImageClipboardHost {
   ClipboardItem?: {
     new (items: Record<string, Promise<Blob>>): unknown;
@@ -21,16 +26,8 @@ export interface ImageClipboardHost {
   clipboard?: { write?(items: unknown[]): Promise<void> };
 }
 
-/** The window's clipboard, read when it is used, so a test can set one first. */
-function windowHost(): ImageClipboardHost {
-  return {
-    ClipboardItem: (globalThis as { ClipboardItem?: ImageClipboardHost['ClipboardItem'] }).ClipboardItem,
-    clipboard: typeof navigator === 'undefined' ? undefined : navigator.clipboard,
-  };
-}
-
 /** Whether the clipboard takes a PNG picture. */
-export function canCopyImages(host: ImageClipboardHost = windowHost()): boolean {
+export function canCopyImages(host: ImageClipboardHost): boolean {
   const Item = host.ClipboardItem;
   if (typeof Item !== 'function' || typeof host.clipboard?.write !== 'function') return false;
   return typeof Item.supports === 'function' ? Item.supports('image/png') : true;
@@ -40,7 +37,7 @@ export function canCopyImages(host: ImageClipboardHost = windowHost()): boolean 
  * Writes a PNG to the clipboard. It takes the PNG still on its way, so the
  * write starts within the click that asked for it, as a webview may require.
  */
-export function writeImage(png: Promise<Blob>, host: ImageClipboardHost = windowHost()): Promise<void> {
+export function writeImage(png: Promise<Blob>, host: ImageClipboardHost): Promise<void> {
   const Item = host.ClipboardItem;
   const clipboard = host.clipboard;
   if (typeof Item !== 'function' || typeof clipboard?.write !== 'function') {

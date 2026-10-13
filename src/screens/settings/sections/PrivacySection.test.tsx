@@ -328,6 +328,7 @@ describe('PrivacySection, your data on this device', () => {
     expect(listed('Fuera de Trino')).toEqual([
       'Windows guarda una copia de cada notificación. Con «Solo el nombre», ahí quedan el nombre de quien te escribe o del grupo, y el de quien te llama.',
       'Lo que descargas queda como cualquier archivo de tu computador.',
+      'Lo que copias en Trino no entra al historial del portapapeles de Windows. Otros programas que guardan lo que copias pueden ignorarlo.',
     ]);
     expect(screen.getByText('Si copiaste la carpeta .trino antes de esta versión, esa copia sigue sin cifrar.')).toBeTruthy();
 
@@ -344,6 +345,8 @@ describe('PrivacySection, your data on this device', () => {
       ),
     ).toBeTruthy();
     expect(screen.queryByText(/Windows/)).toBeNull();
+    // Only Windows copies without the clipboard history (CL-6b).
+    expect(screen.queryByText(/portapapeles/)).toBeNull();
   });
 
   it.each([

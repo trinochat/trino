@@ -99,6 +99,8 @@ const PRIVACY = [
   'settings2.privacy.dataNotificationsOther',
   'settings2.privacy.dataDownloads',
   'settings2.privacy.dataCopies',
+  // Cifrado local CL-6b (design §11.2): copies without the clipboard history.
+  'settings2.privacy.dataClipboard',
   // Cifrado local CL-6a (design §11.1): locking with Windows.
   'settings2.privacy.lockWithSystem',
   'settings2.privacy.lockWithSystemBody',

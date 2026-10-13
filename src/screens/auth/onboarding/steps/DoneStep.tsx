@@ -8,6 +8,7 @@
 import { Check, Copy, QrCode } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
 import { useEffect, useState, type Ref } from 'react';
+import { clipboard } from '../../../../lib/clipboard';
 import { toShareCode } from '../../../../lib/contact-code';
 import { useT } from '../../../../lib/i18n';
 import { Banner, Button, Dialog, QR_FRAME, cx, iconSize } from '../../../../ui';
@@ -39,9 +40,7 @@ export function DoneStep({ state, headingId, headingRef, onFinish }: DoneStepPro
   }, [copied]);
 
   const copy = () => {
-    const clipboard = navigator.clipboard;
-    if (!clipboard) return;
-    clipboard.writeText(code).then(
+    clipboard.copyText(code).then(
       () => setCopied(true),
       () => console.warn('copying the contact code failed'),
     );

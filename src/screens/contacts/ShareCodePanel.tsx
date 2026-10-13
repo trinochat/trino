@@ -13,6 +13,7 @@ import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 're
 import { QRCodeCanvas, QRCodeSVG } from 'qrcode.react';
 import { CircleAlert, Copy, Download } from 'lucide-react';
 import { Button, QR_FRAME, cx, iconSize } from '../../ui';
+import { clipboard } from '../../lib/clipboard';
 import { formatFingerprint, toShareCode } from '../../lib/contact-code';
 import { useT } from '../../lib/i18n';
 import type { ContactsApi } from './contacts-api';
@@ -105,7 +106,7 @@ export function ShareCodePanel({ api, download, extraActions }: ShareCodePanelPr
   const { code, name, fingerprint } = loaded;
   const copy = async () => {
     try {
-      await navigator.clipboard.writeText(code);
+      await clipboard.copyText(code);
       setNotice('copied');
     } catch {
       setNotice('copyFailed');
