@@ -441,7 +441,6 @@ impl<D: Disk> Store<D> {
 
     /// Note how far the migration from the files of earlier versions got
     /// (design §5.2), like any change of the index's own.
-    #[cfg_attr(not(test), allow(dead_code))] // unseal uses it from the next commit
     pub(crate) fn set_legacy(&mut self, legacy: Legacy) -> Result<(), StoreError> {
         self.index.legacy = legacy;
         if self.index_frozen {
@@ -458,7 +457,6 @@ impl<D: Disk> Store<D> {
     /// Keep `content` in `aside/`, sealed as `slot` (a `Slot::Legacy`), out
     /// of the index: nothing reads `aside/` back, so it is never taken for a
     /// file of the store.
-    #[cfg_attr(not(test), allow(dead_code))] // unseal uses it from the next commit
     pub(crate) fn put_aside(&self, slot: &Slot, content: &[u8]) -> Result<(), StoreError> {
         let sealed = envelope::seal(&self.keys, slot, 0, content)?;
         self.disk.write(&self.path_of(slot), &sealed)?;
@@ -467,7 +465,6 @@ impl<D: Disk> Store<D> {
 
     /// Keep `bytes` in `aside/` as they are, under `name`: a file of an
     /// earlier version that was sealed already and did not open.
-    #[cfg_attr(not(test), allow(dead_code))] // unseal uses it from the next commit
     pub(crate) fn put_aside_raw(&self, name: &str, bytes: &[u8]) -> Result<(), StoreError> {
         self.disk
             .write(&self.dir.join(ASIDE_DIR).join(name), bytes)?;
@@ -606,7 +603,6 @@ fn read_index(disk: &impl Disk, dir: &Path, keys: &StoreKeys) -> Result<IndexSta
 
 /// The index of the store in `dir` if it opens under `keys`, read and
 /// nothing else: none if it is missing, does not open or cannot be read now.
-#[cfg_attr(not(test), allow(dead_code))] // unseal uses it from the next commit
 pub(crate) fn peek_index(disk: &impl Disk, dir: &Path, keys: &StoreKeys) -> Option<Index> {
     match read_index(disk, dir, keys) {
         Ok(IndexState::Opened(index)) => Some(index),

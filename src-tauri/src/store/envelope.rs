@@ -51,7 +51,6 @@ pub(crate) enum Slot {
     /// A file of an earlier version that the migration could not read, kept
     /// sealed in `aside/` by its name (`config.json`…) so it never lies
     /// there in clear (design §5.2). Never listed in the index.
-    #[cfg_attr(not(test), allow(dead_code))] // unseal uses it from the next commit
     Legacy(String),
 }
 

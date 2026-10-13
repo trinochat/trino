@@ -21,7 +21,6 @@ pub(crate) mod envelope;
 pub(crate) mod files;
 pub(crate) mod index;
 pub(crate) mod keys;
-#[cfg_attr(not(test), allow(dead_code))] // unseal uses it from the next commit
 pub(crate) mod migrate;
 pub(crate) mod report;
 pub(crate) mod session;

@@ -4,18 +4,28 @@
 //!
 //! An account whose vault carries the key to `store/` (every account created
 //! from this version on) opens from the store. One whose vault carries none
-//! yet, created by an earlier version, keeps its files of before until the
-//! migration (CL-1c) moves it: `Storage::Legacy` reads and writes them as
-//! earlier versions did.
+//! yet, created by an earlier version, is moved into it at unlock first
+//! (CL-1c, `migrate_account` and `store::migrate`). Only if that stops
+//! before its commit, with proof that the files of before are this
+//! account's, does the session open from them: `Storage::Legacy` reads and
+//! writes them as earlier versions did, and the next unlock tries again.
+//! Files of before that appear later are never read unless the user asks
+//! (`legacy_files_preview`, `_import` and `_remove`).
 //!
 //! A child module of `commands`, so it reaches the helpers there.
 
 use super::*;
 use crate::fsutil::destroy_file;
+use crate::store::disk::RealDisk;
+use crate::store::migrate::{
+    destroy_legacy, migrate, read_legacy, settle, LegacyKeys, NewVault, NEW_STORE_DIR,
+};
+use crate::store::report::Finding;
 use crate::store::session::{
     legacy_open, vault_header, LegacyFiles, OpenedStore, Storage, StorageCell, OTHER_STORE_PREFIX,
 };
 use std::collections::BTreeSet;
+use std::collections::HashSet;
 
 /// What unlocking found on disk for the session, before it opens.
 pub(crate) struct LoadedSession {
@@ -30,6 +40,93 @@ pub(crate) struct LoadedSession {
     pub(super) prefs: Option<serde_json::Value>,
     /// What changed on disk, for the one dialog at unlock.
     pub(super) report: IntegrityReport,
+    /// The one note after the migration (design §11.5).
+    pub(super) migration: Option<MigrationNote>,
+}
+
+/// What the migration moved into the store, for its one note (design
+/// §11.5). The notes come with the preferences (CL-2a), from the frontend.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MigrationNote {
+    pub contacts: usize,
+    pub groups: usize,
+    pub stickers: usize,
+}
+
+/// What `migrate_account` committed: the key to the store that the vault
+/// carries now, and what the dialog tells.
+pub(super) struct AccountMigrated {
+    pub(super) record: Zeroizing<Vec<u8>>,
+    pub(super) findings: Vec<Finding>,
+}
+
+/// Move the account of `identity`, whose vault carries no data key, into
+/// the store under the new `keys` (CL-1c, `store::migrate`), committed by
+/// the vault sealed again with them, the same TOTP secret and `passphrase`.
+/// `None` if the migration stopped before its commit with proof that the
+/// files of before are this account's: the session opens from them, as
+/// earlier versions did, and the next unlock tries again. An error if it
+/// stopped without that proof.
+pub(super) fn migrate_account(
+    files: &DataFiles,
+    identity: &Identity,
+    keys: StoreKeys,
+    totp_secret: Option<&[u8]>,
+    passphrase: &str,
+    now: i64,
+) -> Result<Option<AccountMigrated>, CommandError> {
+    harden_dir(&files.home);
+    let record = keys.to_vault_app();
+    drop(keys);
+    // The vault the migration commits: the same identity, TOTP secret and
+    // passphrase, with the key to the store.
+    let sealed = seal_vault(identity, totp_secret, Some(&record), passphrase)?;
+    let bytes = encode_vault(&sealed);
+    let vault = NewVault {
+        record: &record,
+        bytes: &bytes,
+        header: vault_header(&bytes, identity.signed_prekey.id),
+    };
+    let nostr_pub = hex::encode(identity.nostr.pub_bytes);
+    match migrate(
+        &RealDisk,
+        &files.home,
+        &legacy_keys(identity),
+        &vault,
+        &nostr_pub,
+        now,
+    ) {
+        Ok(migrated) => Ok(Some(AccountMigrated {
+            record,
+            findings: migrated.findings,
+        })),
+        Err(failed) if failed.proof => {
+            dbg_log("the migration stopped before its commit: the files of before stay");
+            Ok(None)
+        }
+        Err(failed) => Err(CommandError::io(&failed.error)),
+    }
+}
+
+/// The keys earlier versions derived from `identity` for their files.
+fn legacy_keys(identity: &Identity) -> LegacyKeys {
+    LegacyKeys {
+        history: Zeroizing::new(derive_history_key(identity)),
+        profiles: profile::profiles_key(identity).expect("HKDF-SHA256 always gives 32 bytes"),
+    }
+}
+
+/// Add `findings` to what unlocking found, in the session's report too, so
+/// the dialog keeps them while it asks.
+pub(super) fn add_findings(loaded: &mut LoadedSession, findings: Vec<Finding>) {
+    if findings.is_empty() {
+        return;
+    }
+    loaded.report.findings.extend(findings.iter().cloned());
+    if let Storage::Store(store) = &mut loaded.storage {
+        store.note_findings(findings);
+    }
 }
 
 /// Read what the session of `identity` needs from `files`: from the store
@@ -55,6 +152,8 @@ fn load_store(
     record: &[u8],
     vault: Option<&[u8]>,
 ) -> Result<LoadedSession, CommandError> {
+    // What a cut left of the migration is finished first (CL-1c).
+    let settled = settle(&RealDisk, &files.home, record).map_err(|e| CommandError::io(&e))?;
     let header = vault.and_then(|bytes| vault_header(bytes, identity.signed_prekey.id));
     let OpenedStore {
         mut session,
@@ -63,6 +162,10 @@ fn load_store(
         sessions,
         profiles,
     } = SessionStore::open(&files.home, record, header).map_err(|e| CommandError::io(&e))?;
+    if settled.cleaned {
+        session.finish_cleanup();
+    }
+    session.note_findings(settled.findings);
     // What opens but does not read (a newer version's, say) is held: never
     // written over this session.
     let account = match account {
@@ -87,6 +190,12 @@ fn load_store(
         None => None,
     };
     let report = session.report();
+    // The one note, at the unlock whose cleanup ended the migration.
+    let migration = settled.cleaned.then(|| MigrationNote {
+        contacts: account.as_ref().map_or(0, |account| account.friends.len()),
+        groups: account.as_ref().map_or(0, |account| account.groups.len()),
+        stickers: session.stickers().len(),
+    });
     Ok(LoadedSession {
         storage: Storage::Store(Box::new(session)),
         account,
@@ -95,6 +204,7 @@ fn load_store(
         profiles,
         prefs,
         report,
+        migration,
     })
 }
 
@@ -152,6 +262,7 @@ fn load_legacy(files: &DataFiles, identity: &Identity) -> Result<LoadedSession, 
         profiles,
         prefs: None,
         report,
+        migration: None,
     })
 }
 
@@ -413,6 +524,7 @@ pub(super) fn wipe_home(home: &Path, ops: &mut dyn WipeOps) -> Vec<String> {
     let mut failures = Vec::new();
     destroy_with_leftovers(ops, &home.join("vault.bin"), &mut failures);
     remove_dir_with(ops, &home.join(STORE_DIR), &mut failures);
+    remove_dir_with(ops, &home.join(NEW_STORE_DIR), &mut failures);
     let mut others: Vec<PathBuf> = std::fs::read_dir(home)
         .map(|entries| {
             entries
@@ -650,10 +762,233 @@ pub async fn store_choose(
     choose_in(&mut *state.inner.lock().await, &file, use_it)
 }
 
+/// "Ver qué traen" (design §11.4): what the files of an earlier version that
+/// appeared hold, read only now that the user asked. Names, and how many of
+/// the rest.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LegacyPreview {
+    pub handle: Option<String>,
+    pub contacts: Vec<String>,
+    pub blocked: usize,
+    pub groups: Vec<String>,
+    pub invitations: usize,
+    pub conversations: usize,
+    pub stickers: usize,
+    /// Files that do not read.
+    pub unreadable: Vec<String>,
+}
+
+pub(super) fn preview_in(inner: &InnerState, home: &Path) -> Result<LegacyPreview, CommandError> {
+    let identity = inner
+        .identity
+        .as_ref()
+        .ok_or_else(super::contacts_cmds::sealed)?;
+    let now = chrono::Utc::now().timestamp();
+    let read = read_files_of_before(identity, home, now)?;
+    let account = read.account.unwrap_or_default();
+    let conversations = read
+        .history
+        .and_then(|json| serde_json::from_slice::<HashMap<String, serde_json::Value>>(&json).ok())
+        .map_or(0, |history| history.len());
+    Ok(LegacyPreview {
+        handle: (!account.handle.is_empty()).then_some(account.handle),
+        contacts: account
+            .friends
+            .into_iter()
+            .map(|friend| friend.handle)
+            .collect(),
+        blocked: account.blocked.len(),
+        groups: account.groups.into_iter().map(|group| group.name).collect(),
+        invitations: account.group_invites.len(),
+        conversations,
+        stickers: read.stickers.len(),
+        unreadable: read
+            .unreadable
+            .into_iter()
+            .map(|unreadable| unreadable.name)
+            .collect(),
+    })
+}
+
+/// The files of an earlier version in `home`, read with the keys of
+/// `identity`.
+fn read_files_of_before(
+    identity: &Identity,
+    home: &Path,
+    now: i64,
+) -> Result<crate::store::migrate::LegacyRead, CommandError> {
+    let nostr_pub = hex::encode(identity.nostr.pub_bytes);
+    read_legacy(&RealDisk, home, &legacy_keys(identity), &nostr_pub, now)
+        .map_err(|e| CommandError::io(&e))
+}
+
+/// The report of the open session's store, without the finding about the
+/// files of before, which the user settled.
+fn settle_plain_files(inner: &InnerState) -> IntegrityReport {
+    inner
+        .storage
+        .with(|storage| match storage {
+            Storage::Store(store) => {
+                store.forget_finding("legacy");
+                store.report()
+            }
+            Storage::Legacy(_) => IntegrityReport::default(),
+        })
+        .unwrap_or_default()
+}
+
+/// "Importarlos": what the files of an earlier version hold joins the
+/// session, is saved to the store, and the files are destroyed.
+pub(super) fn import_in(
+    inner: &mut InnerState,
+    home: &Path,
+    now: i64,
+) -> Result<IntegrityReport, CommandError> {
+    let identity = inner
+        .identity
+        .as_ref()
+        .ok_or_else(super::contacts_cmds::sealed)?;
+    let in_store = inner
+        .storage
+        .with(|storage| matches!(storage, Storage::Store(_)))
+        .unwrap_or(false);
+    if !in_store {
+        return Err(CommandError::internal(
+            "this account's data has not moved to the store yet",
+        ));
+    }
+    let read = read_files_of_before(identity, home, now)?;
+    if let Some(account) = read.account {
+        import_account(inner, account);
+    }
+    if let Some(json) = &read.history {
+        if let Ok(history) = serde_json::from_slice::<HashMap<String, Vec<HistItem>>>(json) {
+            import_history(inner, history);
+        }
+    }
+    // Sessions are never taken from a copy nothing vouches for (design
+    // §6.1): each contact gets a new one. The shared profiles come again
+    // from the contacts; neither is imported.
+    inner
+        .storage
+        .with(|storage| -> std::io::Result<()> {
+            let Storage::Store(store) = storage else {
+                return Ok(());
+            };
+            for sticker in &read.stickers {
+                store.put_sticker(&sticker.id, &sticker.mime, &sticker.image)?;
+            }
+            for unreadable in &read.unreadable {
+                store.keep_aside(unreadable)?;
+            }
+            Ok(())
+        })
+        .ok_or_else(super::contacts_cmds::sealed)?
+        .map_err(|e| CommandError::io(&e))?;
+    persist_account(inner).map_err(CommandError::internal)?;
+    write_history(inner).map_err(|e| CommandError::io(&e))?;
+    // Only now that the store has what they held.
+    destroy_legacy(&RealDisk, home).map_err(|e| CommandError::io(&e))?;
+    Ok(settle_plain_files(inner))
+}
+
+/// The contacts, blocked contacts, groups and invitations of `account` join
+/// the session's. Its profile (name, photo, relays, date) only replaces one
+/// the session does not have: an account that opened without its own, as
+/// "anon" (design §6.1).
+fn import_account(inner: &mut InnerState, account: AccountFile) {
+    let unnamed = inner
+        .handle
+        .as_deref()
+        .is_none_or(|handle| handle == display_handle(""));
+    let profile = (
+        inner.handle.clone(),
+        inner.avatar.clone(),
+        inner.relay_urls.clone(),
+        inner.created_at,
+    );
+    merge_account(inner, account);
+    if !unnamed {
+        (
+            inner.handle,
+            inner.avatar,
+            inner.relay_urls,
+            inner.created_at,
+        ) = profile;
+    }
+}
+
+/// The conversations of an earlier version join the session's, without
+/// what it has already, in the order they were written.
+fn import_history(inner: &mut InnerState, imported: HashMap<String, Vec<HistItem>>) {
+    for (convo, items) in imported {
+        let present = inner.history.remove(&convo).unwrap_or_default();
+        let seen: HashSet<String> = present
+            .iter()
+            .filter_map(|item| serde_json::to_string(item).ok())
+            .collect();
+        let mut merged: Vec<HistItem> = items
+            .into_iter()
+            .map(|mut item| {
+                if let Some(file) = item.file.take() {
+                    item.file = Some(sanitize_file_ref(file));
+                }
+                item
+            })
+            .filter(|item| !serde_json::to_string(item).is_ok_and(|json| seen.contains(&json)))
+            .collect();
+        merged.extend(present);
+        merged.sort_by_key(|item| item.ts);
+        let excess = merged.len().saturating_sub(HISTORY_CAP);
+        merged.drain(..excess);
+        inner.history.insert(convo, merged);
+    }
+}
+
+/// "Borrarlos": the files of an earlier version are destroyed unread.
+pub(super) fn remove_in(
+    inner: &mut InnerState,
+    home: &Path,
+) -> Result<IntegrityReport, CommandError> {
+    inner
+        .identity
+        .as_ref()
+        .ok_or_else(super::contacts_cmds::sealed)?;
+    destroy_legacy(&RealDisk, home).map_err(|e| CommandError::io(&e))?;
+    Ok(settle_plain_files(inner))
+}
+
+/// "Ver qué traen" in the dialog at unlock.
+#[tauri::command]
+pub async fn legacy_files_preview(
+    state: State<'_, AppState>,
+) -> Result<LegacyPreview, CommandError> {
+    preview_in(&*state.inner.lock().await, &trino_home())
+}
+
+/// "Importarlos" in the dialog at unlock.
+#[tauri::command]
+pub async fn legacy_files_import(
+    state: State<'_, AppState>,
+) -> Result<IntegrityReport, CommandError> {
+    let now = chrono::Utc::now().timestamp();
+    import_in(&mut *state.inner.lock().await, &trino_home(), now)
+}
+
+/// "Borrarlos" in the dialog at unlock.
+#[tauri::command]
+pub async fn legacy_files_remove(
+    state: State<'_, AppState>,
+) -> Result<IntegrityReport, CommandError> {
+    remove_in(&mut *state.inner.lock().await, &trino_home())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::fsutil::scratch::ScratchDir;
+    use crate::store::session::legacy_seal;
     use crate::store::session::tests::{reopen, store_cell};
 
     const NOW: i64 = 1_760_000_000;
@@ -1344,5 +1679,333 @@ mod tests {
         assert!(cell.write_history(b"{}").is_err());
         assert_eq!(std::fs::read(&files.history).unwrap(), b"a damaged history");
         assert!(!files.home.join(STORE_DIR).exists());
+    }
+
+    // ---- the migration, wired to unlocking (CL-1c) ----
+
+    fn history_with(contact: &str, text: &str) -> Vec<u8> {
+        let mut history = HashMap::new();
+        history.insert(
+            contact.to_string(),
+            vec![HistItem {
+                side: "them".into(),
+                from: None,
+                text: Some(text.into()),
+                file: None,
+                call: None,
+                ts: NOW,
+            }],
+        );
+        serde_json::to_vec(&history).unwrap()
+    }
+
+    /// The files an earlier version keeps for the account of `me`, with
+    /// `contact` in them and a conversation with it.
+    fn plant_files_of_before(files: &DataFiles, me: &Identity, handle: &str, contact: &str) {
+        let config = ConfigFile {
+            handle: handle.into(),
+            nostr_pub: hex::encode(me.nostr.pub_bytes),
+            relays: vec!["wss://relay.example".into()],
+            created_at: NOW - 100,
+            avatar: None,
+        };
+        let other = create_identity();
+        let friends = FriendsFile {
+            handle: handle.into(),
+            friends: vec![friend(&other, contact)],
+            blocked: vec![],
+        };
+        std::fs::create_dir_all(&files.home).unwrap();
+        std::fs::write(&files.config, serde_json::to_vec(&config).unwrap()).unwrap();
+        std::fs::write(&files.friends, serde_json::to_vec(&friends).unwrap()).unwrap();
+        std::fs::write(&files.groups, b"[]").unwrap();
+        std::fs::write(&files.group_invites, b"[]").unwrap();
+        let history = legacy_seal(
+            &derive_history_key(me),
+            &history_with(contact, &format!("hola {contact}")),
+        )
+        .unwrap();
+        std::fs::write(&files.history, history).unwrap();
+        std::fs::create_dir_all(&files.stickers).unwrap();
+        let image = format!("an image from {contact}").into_bytes();
+        let id = hex::encode(&crate::crypto::sha256(&image)[..8]);
+        std::fs::write(files.stickers.join(format!("{id}.png")), image).unwrap();
+    }
+
+    /// An account as an earlier version leaves it: its vault with no data
+    /// key and its files of before, with "bob" as its contact.
+    fn earlier_account(files: &DataFiles) -> Identity {
+        let me = create_identity();
+        std::fs::create_dir_all(&files.home).unwrap();
+        let sealed = seal_vault(&me, None, None, PASSPHRASE).unwrap();
+        std::fs::write(&files.vault, encode_vault(&sealed)).unwrap();
+        plant_files_of_before(files, &me, "ana", "bob");
+        me
+    }
+
+    fn assert_no_file_of_before(home: &Path) {
+        let names = names_in(home);
+        for name in crate::store::migrate::PLAIN_FILES
+            .iter()
+            .chain(crate::store::migrate::SEALED_FILES.iter())
+        {
+            assert!(!names.contains(&name.to_string()), "{name} is left");
+        }
+        assert!(names_in(&home.join("stickers")).is_empty());
+    }
+
+    fn history_text(found: &Found) -> String {
+        match found {
+            Found::Ready(json) => String::from_utf8_lossy(json).into_owned(),
+            _ => String::new(),
+        }
+    }
+
+    /// Design §12.4, test 29, through the unlock: an earlier version's
+    /// account opens from the store, with the one note, and the vault holds
+    /// the key from then on.
+    #[test]
+    fn unlocking_an_earlier_versions_account_moves_it_into_the_store() {
+        let scratch = ScratchDir::new("unlock-migrates");
+        let files = data_files_in(scratch.path().to_path_buf());
+        earlier_account(&files);
+
+        let (_, _, loaded) = unlock_files(&files, PASSPHRASE, None, false, NOW).unwrap();
+
+        let loaded = loaded.unwrap();
+        assert!(matches!(loaded.storage, Storage::Store(_)));
+        let account = loaded.account.clone().unwrap();
+        assert_eq!(account.handle, "ana");
+        assert_eq!(account.friends.len(), 1);
+        assert!(history_text(&loaded.history).contains("hola bob"));
+        assert_eq!(
+            loaded.migration,
+            Some(MigrationNote {
+                contacts: 1,
+                groups: 0,
+                stickers: 1
+            })
+        );
+        assert!(loaded.report.is_empty(), "{:?}", loaded.report);
+        drop(loaded);
+        assert!(open_vault(&files.vault, PASSPHRASE, None)
+            .unwrap()
+            .app
+            .is_some());
+        assert_no_file_of_before(&files.home);
+
+        // The next unlock opens the store, with no note.
+        let (_, _, again) = unlock_files(&files, PASSPHRASE, None, false, NOW).unwrap();
+        let again = again.unwrap();
+        assert_eq!(again.migration, None);
+        assert_eq!(again.account.unwrap().handle, "ana");
+        assert!(history_text(&again.history).contains("hola bob"));
+    }
+
+    /// Design §12.4, test 37. Versions before the store read only version 1
+    /// vaults (trino-core 4ce6775, `check_header`), so they refuse the
+    /// migrated vault before they read or write anything else: they can
+    /// neither touch store/ nor seal the vault again without its key.
+    #[test]
+    fn an_old_version_refuses_the_migrated_vault() {
+        let scratch = ScratchDir::new("unlock-old-version");
+        let files = data_files_in(scratch.path().to_path_buf());
+        let me = earlier_account(&files);
+
+        let migrated = migrate_account(&files, &me, StoreKeys::generate(), None, PASSPHRASE, NOW)
+            .unwrap()
+            .unwrap();
+
+        let vault = decode_vault(&std::fs::read(&files.vault).unwrap()).unwrap();
+        assert_ne!(vault.version, 1, "an older version would open it");
+        let opened = open_vault(&files.vault, PASSPHRASE, None).unwrap();
+        assert_eq!(opened.app.as_deref(), Some(&*migrated.record));
+    }
+
+    /// A migration that stops before its commit leaves the vault and the
+    /// files of before as they were, and the session opens from them.
+    #[test]
+    fn a_migration_stopped_before_its_commit_opens_from_the_files_of_before() {
+        let scratch = ScratchDir::new("unlock-migration-stopped");
+        let files = data_files_in(scratch.path().to_path_buf());
+        earlier_account(&files);
+        // Something no migration can clear out of its way.
+        std::fs::write(files.home.join("store.new"), b"not a folder").unwrap();
+        let vault = std::fs::read(&files.vault).unwrap();
+
+        let (_, _, loaded) = unlock_files(&files, PASSPHRASE, None, false, NOW).unwrap();
+
+        let loaded = loaded.unwrap();
+        assert!(matches!(loaded.storage, Storage::Legacy(_)));
+        assert_eq!(loaded.account.unwrap().handle, "ana");
+        assert!(history_text(&loaded.history).contains("hola bob"));
+        assert_eq!(loaded.migration, None);
+        assert!(open_vault(&files.vault, PASSPHRASE, None)
+            .unwrap()
+            .app
+            .is_none());
+        assert_eq!(
+            decode_vault(&std::fs::read(&files.vault).unwrap())
+                .unwrap()
+                .salt,
+            decode_vault(&vault).unwrap().salt,
+            "the vault was sealed again"
+        );
+        assert!(files.config.exists());
+    }
+
+    /// A session of an account in the store, opened in `inner`.
+    async fn store_session(files: &DataFiles, handle: &str) -> (Identity, InnerState) {
+        let (me, app) = new_account(files, handle);
+        let inner = tokio::sync::Mutex::new(InnerState::default());
+        let loaded = load_session(files, &me, Some(&app), None).unwrap();
+        open_session(&inner, me.clone(), None, Some(loaded), |_| {})
+            .await
+            .unwrap();
+        (me, inner.into_inner())
+    }
+
+    fn report_of(inner: &InnerState) -> IntegrityReport {
+        inner
+            .storage
+            .with(|storage| match storage {
+                Storage::Store(store) => store.report(),
+                Storage::Legacy(_) => IntegrityReport::default(),
+            })
+            .unwrap()
+    }
+
+    /// Design §12.4, tests 33 and 34, through the session: files of before
+    /// that appear are reported unread; "Ver qué traen" and "Importarlos"
+    /// read them only when asked, and importing destroys them once the
+    /// store has what they held.
+    #[tokio::test]
+    async fn files_of_before_that_appear_are_read_only_when_asked() {
+        let scratch = ScratchDir::new("legacy-import");
+        let files = data_files_in(scratch.path().to_path_buf());
+        let (me, _) = store_session(&files, "ana").await;
+        plant_files_of_before(&files, &me, "someone", "carla");
+
+        let app = open_vault(&files.vault, PASSPHRASE, None).unwrap().app;
+        let loaded = load_session(&files, &me, app.as_deref().map(Vec::as_slice), None).unwrap();
+        assert!(loaded.account.as_ref().unwrap().friends.is_empty());
+        let finding = loaded.report.find("legacy").cloned().unwrap();
+        assert_eq!(
+            (finding.what, finding.action),
+            (What::PlainFiles, Action::OfferImport)
+        );
+        let inner = tokio::sync::Mutex::new(InnerState::default());
+        open_session(&inner, me.clone(), None, Some(loaded), |_| {})
+            .await
+            .unwrap();
+        let mut inner = inner.into_inner();
+        assert!(!inner.friends.contains_key("carla"));
+        assert!(report_of(&inner).find("legacy").is_some());
+
+        let preview = preview_in(&inner, &files.home).unwrap();
+        assert_eq!(
+            preview,
+            LegacyPreview {
+                handle: Some("someone".into()),
+                contacts: vec!["carla".into()],
+                blocked: 0,
+                groups: vec![],
+                invitations: 0,
+                conversations: 1,
+                stickers: 1,
+                unreadable: vec![],
+            }
+        );
+        assert!(files.config.exists(), "looking removed them");
+
+        let report = import_in(&mut inner, &files.home, NOW).unwrap();
+
+        assert!(report.find("legacy").is_none());
+        assert!(inner.friends.contains_key("carla"));
+        assert_eq!(inner.handle.as_deref(), Some("ana"), "the profile changed");
+        assert_eq!(inner.history["carla"].len(), 1);
+        assert_no_file_of_before(&files.home);
+        let back = load_session(&files, &me, app.as_deref().map(Vec::as_slice), None).unwrap();
+        assert!(back.report.is_empty(), "{:?}", back.report);
+        let account = back.account.unwrap();
+        assert_eq!(account.handle, "ana");
+        assert_eq!(account.friends[0].handle, "carla");
+        assert!(history_text(&back.history).contains("hola carla"));
+        let Storage::Store(store) = back.storage else {
+            panic!("legacy")
+        };
+        assert_eq!(store.stickers().len(), 1);
+
+        // The same files again add nothing twice.
+        plant_files_of_before(&files, &me, "someone", "carla");
+        import_in(&mut inner, &files.home, NOW).unwrap();
+        assert_eq!(inner.friends.len(), 1);
+        assert_eq!(inner.history["carla"].len(), 1);
+    }
+
+    /// An account that opened without its own profile ("anon") takes the
+    /// imported one.
+    #[tokio::test]
+    async fn an_account_without_a_profile_takes_the_imported_one() {
+        let scratch = ScratchDir::new("legacy-import-profile");
+        let files = data_files_in(scratch.path().to_path_buf());
+        let (me, app) = new_account(&files, "ana");
+        std::fs::remove_file(files.home.join(STORE_DIR).join("account.bin")).unwrap();
+        let inner = tokio::sync::Mutex::new(InnerState::default());
+        let loaded = load_session(&files, &me, Some(&app), None).unwrap();
+        open_session(&inner, me.clone(), None, Some(loaded), |_| {})
+            .await
+            .unwrap();
+        let mut inner = inner.into_inner();
+        assert_eq!(inner.handle.as_deref(), Some("anon"));
+        plant_files_of_before(&files, &me, "ana de antes", "carla");
+
+        import_in(&mut inner, &files.home, NOW).unwrap();
+
+        assert_eq!(inner.handle.as_deref(), Some("ana de antes"));
+        assert_eq!(inner.relay_urls, ["wss://relay.example"]);
+    }
+
+    /// "Borrarlos": destroyed without being read, even one that does not
+    /// read; and before a session, nothing.
+    #[tokio::test]
+    async fn files_of_before_are_removed_unread() {
+        let scratch = ScratchDir::new("legacy-remove");
+        let files = data_files_in(scratch.path().to_path_buf());
+        let (me, mut inner) = store_session(&files, "ana").await;
+        plant_files_of_before(&files, &me, "someone", "carla");
+        std::fs::write(&files.friends, b"{ not json").unwrap();
+
+        assert!(remove_in(&mut InnerState::default(), &files.home).is_err());
+        assert!(files.friends.exists());
+        let report = remove_in(&mut inner, &files.home).unwrap();
+
+        assert!(report.find("legacy").is_none());
+        assert_no_file_of_before(&files.home);
+        assert!(!inner.friends.contains_key("carla"));
+    }
+
+    /// Design §5.6: a store.new/ with no vault is a migration a cut stopped
+    /// in an account that is gone; a new account and a wipe remove it.
+    #[test]
+    fn a_new_account_and_a_wipe_remove_a_store_new_left_behind() {
+        let scratch = ScratchDir::new("store-new-leftover");
+        let files = data_files_in(scratch.path().to_path_buf());
+        let leftover = files.home.join("store.new");
+        std::fs::create_dir_all(&leftover).unwrap();
+        std::fs::write(leftover.join("index.bin"), b"x").unwrap();
+
+        new_account(&files, "ana");
+        assert!(!leftover.exists());
+
+        std::fs::create_dir_all(&leftover).unwrap();
+        std::fs::write(leftover.join("index.bin"), b"x").unwrap();
+        let failures = wipe_home(&files.home, &mut RealWipe);
+        assert!(failures.is_empty(), "{failures:?}");
+        assert!(
+            names_in(&files.home).is_empty(),
+            "{:?}",
+            names_in(&files.home)
+        );
     }
 }

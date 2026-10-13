@@ -106,10 +106,9 @@ impl std::fmt::Debug for StoreKeys {
     }
 }
 
-/// Where the keys of an opened vault come from. The migration (CL-1c)
-/// uses it; until then only the tests do.
+/// Where the keys of an opened vault come from: unlocking takes the vault's,
+/// or makes new ones for the migration (CL-1c, `commands::unlock_files`).
 #[derive(Debug)]
-#[cfg_attr(not(test), allow(dead_code))]
 pub(crate) enum VaultKeys {
     /// The vault carries them: the account already has its store.
     InVault(StoreKeys),
@@ -123,7 +122,6 @@ pub(crate) enum VaultKeys {
     New(StoreKeys),
 }
 
-#[cfg_attr(not(test), allow(dead_code))]
 impl VaultKeys {
     /// The keys of a vault whose app data is `app`, or new ones if it has
     /// none. App data that is not a key record is an error, never a reason
@@ -135,6 +133,7 @@ impl VaultKeys {
         }
     }
 
+    #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn keys(&self) -> &StoreKeys {
         match self {
             VaultKeys::InVault(keys) | VaultKeys::New(keys) => keys,

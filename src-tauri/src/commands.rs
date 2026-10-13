@@ -23,7 +23,7 @@ use crate::state::{
     GroupInvite, HandshakeMark, HistItem, InnerState,
 };
 use crate::store::envelope::Slot;
-use crate::store::keys::StoreKeys;
+use crate::store::keys::{StoreKeys, VaultKeys};
 use crate::store::report::{Action, IntegrityReport, What};
 use crate::store::session::{AccountFile, Found, SessionStore, STORE_DIR};
 use crate::totp_enrollment::TotpBeginResponse;
@@ -99,6 +99,10 @@ pub struct UnsealResponse {
     /// unlock (design §6.2); none when nothing did.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub integrity: Option<IntegrityReport>,
+    /// The one note after the migration moved the account of an earlier
+    /// version into the store (design §11.5); none at any other unlock.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub migration: Option<storage_cmds::MigrationNote>,
 }
 
 /// What `forge` returns: the session it opened, as `unseal` describes it, and
@@ -445,8 +449,8 @@ pub async fn status(state: State<'_, AppState>) -> Result<StatusResponse, String
 /// Where the data files of the identity are. Passed in rather than read from
 /// `trino_home()` so tests can create and open an identity in a scratch
 /// directory. The `.json` files, `history.bin`, `ratchets.bin`,
-/// `profiles.bin` and `stickers/` are those of earlier versions, which an
-/// account keeps until the migration moves it to `store/` (CL-1c).
+/// `profiles.bin` and `stickers/` are those of earlier versions, which the
+/// migration moves to `store/` at the first unlock (CL-1c).
 #[derive(Clone)]
 pub(crate) struct DataFiles {
     pub(crate) home: PathBuf,
@@ -509,6 +513,12 @@ fn create_identity_files(
     let home_existed = files.home.exists();
     std::fs::create_dir_all(&files.home)?;
     harden_dir(&files.home);
+    // A store.new/ with no vault is a migration a cut stopped in an account
+    // that is gone; nothing in it opens (design §5.6).
+    match std::fs::remove_dir_all(files.home.join(crate::store::migrate::NEW_STORE_DIR)) {
+        Err(error) if error.kind() != std::io::ErrorKind::NotFound => return Err(error),
+        _ => {}
+    }
     let undo = || {
         let _ = std::fs::remove_dir_all(files.home.join(STORE_DIR));
         if !home_existed {
@@ -691,6 +701,7 @@ async fn open_session(
             relay_connection_started: false,
             prefs: None,
             integrity: None,
+            migration: None,
         });
     }
     let Some(LoadedSession {
@@ -701,6 +712,7 @@ async fn open_session(
         profiles,
         prefs,
         report,
+        migration,
     }) = loaded
     else {
         return Err(CommandError::internal("nothing was loaded for the session"));
@@ -733,6 +745,7 @@ async fn open_session(
         relay_connection_started: true,
         prefs,
         integrity: (!report.is_empty()).then_some(report),
+        migration,
     })
 }
 
@@ -1000,47 +1013,11 @@ pub async fn unseal(
     let session_open = state.inner.lock().await.identity.is_some();
     let files = DataFiles::in_trino_home();
     crate::diag::remove_stale_log(&files.home, crate::diag::Build::CURRENT);
-    let vault = files.vault.clone();
 
     let (identity, totp_secret, loaded) = tokio::task::spawn_blocking(move || {
         let code = submitted_code(totp_code.as_deref().map(String::as_str));
-        let UnsealedVault {
-            mut identity,
-            totp_secret,
-            app,
-        } = open_vault(&vault, &passphrase, code)?;
-        let totp_secret = totp_secret.map(Zeroizing::new);
-        if session_open {
-            return Ok::<_, CommandError>((identity, totp_secret, None));
-        }
-        // The store opens before the vault is sealed again, so the re-seal
-        // is noted in its index (design §4.9).
-        let bytes = std::fs::read(&vault).ok();
-        let app = app.as_deref().map(Vec::as_slice);
-        let mut loaded = load_session(&files, &identity, app, bytes.as_deref())?;
-        let fix_flag = bytes
-            .as_deref()
-            .is_some_and(|bytes| totp_flag_disagrees(bytes, totp_secret.is_some()));
-        if fix_flag {
-            loaded.report.note("vault", What::TotpFlag, Action::Notice);
-        }
         let now = chrono::Utc::now().timestamp();
-        let storage = &mut loaded.storage;
-        let save = |bytes: &[u8], spk: u32| write_vault_noted(Some(storage), &vault, bytes, spk);
-        let secret = totp_secret.as_deref().map(Vec::as_slice);
-        match reseal_if_needed(&mut identity, secret, app, &passphrase, now, fix_flag, save) {
-            None => {}
-            Some(Ok(())) => crate::diag::note_with(
-                "vault sealed again",
-                &[
-                    ("spk_id", &identity.signed_prekey.id),
-                    ("retired", &identity.retired_signed_prekeys.len()),
-                ],
-            ),
-            // Keep the session usable; we simply retry next unlock.
-            Some(Err(_)) => dbg_log("the vault could not be sealed again"),
-        }
-        Ok((identity, totp_secret, Some(loaded)))
+        unlock_files(&files, &passphrase, code, session_open, now)
     })
     .await
     .map_err(|_| CommandError::internal("vault unlock worker failed"))??;
@@ -1051,6 +1028,79 @@ pub async fn unseal(
     }
     let starter = relay_starter(app, &state);
     open_session(&state.inner, identity, totp_secret, loaded, starter).await
+}
+
+/// What `unlock_files` gives `open_session`: the identity, its TOTP secret,
+/// and what was loaded for its session (nothing if it is open already).
+pub(crate) type Unlocked = (Identity, Option<Zeroizing<Vec<u8>>>, Option<LoadedSession>);
+
+/// What `unseal` does on disk, off the async runtime: open the vault in
+/// `files` with `passphrase` and `code`; for an account of an earlier
+/// version, whose vault carries no data key, move it into the store first
+/// (CL-1c); load what the session needs; and seal the vault again if its
+/// signed prekey is due. With `session_open` it only checks the passphrase
+/// and the code, and loads nothing.
+pub(crate) fn unlock_files(
+    files: &DataFiles,
+    passphrase: &str,
+    code: Option<&str>,
+    session_open: bool,
+    now: i64,
+) -> Result<Unlocked, CommandError> {
+    let UnsealedVault {
+        mut identity,
+        totp_secret,
+        app,
+    } = open_vault(&files.vault, passphrase, code)?;
+    let totp_secret = totp_secret.map(Zeroizing::new);
+    if session_open {
+        return Ok((identity, totp_secret, None));
+    }
+    let secret = totp_secret.as_deref().map(Vec::as_slice);
+    let mut findings = Vec::new();
+    let keys = VaultKeys::from_vault_app(app.as_deref().map(Vec::as_slice))
+        .map_err(|e| CommandError::internal(e.to_string()))?;
+    let app = match keys {
+        VaultKeys::InVault(_) => app,
+        // Into the store first. The vault the migration writes carries the
+        // new keys; if it stopped before that, with proof that the files of
+        // before are this account's, they open as they did and the next
+        // unlock tries again.
+        VaultKeys::New(keys) => storage_cmds::migrate_account(
+            files, &identity, keys, secret, passphrase, now,
+        )?
+        .map(|migrated| {
+            findings = migrated.findings;
+            migrated.record
+        }),
+    };
+    // The store opens before the vault is sealed again, so the re-seal is
+    // noted in its index (design §4.9).
+    let bytes = std::fs::read(&files.vault).ok();
+    let app = app.as_deref().map(Vec::as_slice);
+    let mut loaded = load_session(files, &identity, app, bytes.as_deref())?;
+    storage_cmds::add_findings(&mut loaded, findings);
+    let fix_flag = bytes
+        .as_deref()
+        .is_some_and(|bytes| totp_flag_disagrees(bytes, totp_secret.is_some()));
+    if fix_flag {
+        loaded.report.note("vault", What::TotpFlag, Action::Notice);
+    }
+    let storage = &mut loaded.storage;
+    let save = |bytes: &[u8], spk: u32| write_vault_noted(Some(storage), &files.vault, bytes, spk);
+    match reseal_if_needed(&mut identity, secret, app, passphrase, now, fix_flag, save) {
+        None => {}
+        Some(Ok(())) => crate::diag::note_with(
+            "vault sealed again",
+            &[
+                ("spk_id", &identity.signed_prekey.id),
+                ("retired", &identity.retired_signed_prekeys.len()),
+            ],
+        ),
+        // Keep the session usable; we simply retry next unlock.
+        Some(Err(_)) => dbg_log("the vault could not be sealed again"),
+    }
+    Ok((identity, totp_secret, Some(loaded)))
 }
 
 /// What the transport relay can see about one event. Deliberately metadata
@@ -4827,6 +4877,7 @@ mod tests {
                 relay_connection_started: true,
                 prefs: None,
                 integrity: None,
+                migration: None,
             },
             bundle_json: "{}".to_string(),
         };

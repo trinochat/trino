@@ -17,19 +17,15 @@ pub(crate) trait Disk {
     fn list(&self, dir: &Path) -> io::Result<Vec<String>>;
     /// `write`, on the disk when it returns: a power cut cannot undo it, nor
     /// anything written before it (`fsutil::atomic_write_durable`).
-    #[cfg_attr(not(test), allow(dead_code))] // unseal uses it from the next commit
     fn write_durable(&self, path: &Path, bytes: &[u8]) -> io::Result<()>;
     /// Move the file or directory `from` to `to`, which must not exist, on
     /// the disk when it returns (`fsutil::rename_durable`).
-    #[cfg_attr(not(test), allow(dead_code))] // unseal uses it from the next commit
     fn rename_durable(&self, from: &Path, to: &Path) -> io::Result<()>;
     /// Overwrite the file at `path`, sync it and remove it; one that is not
     /// there is no error (`fsutil::destroy_file`).
-    #[cfg_attr(not(test), allow(dead_code))] // unseal uses it from the next commit
     fn destroy(&self, path: &Path) -> io::Result<()>;
     /// Remove the directory `dir` with everything in it; one that is not
     /// there is no error.
-    #[cfg_attr(not(test), allow(dead_code))] // unseal uses it from the next commit
     fn remove_dir_all(&self, dir: &Path) -> io::Result<()>;
 }
 

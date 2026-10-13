@@ -493,7 +493,7 @@ fn write_new_store<D: Disk + Clone>(
         store.write(slot, content).map_err(to_io)?;
     }
     for unreadable in &data.unreadable {
-        put_aside(&store, unreadable).map_err(to_io)?;
+        keep_aside(&store, unreadable).map_err(to_io)?;
     }
     if store.is_behind() {
         return Err(io::Error::other(
@@ -545,7 +545,10 @@ fn json<T: serde::Serialize>(value: &T) -> io::Result<Zeroizing<Vec<u8>>> {
 
 /// Keep a file that did not read in `aside/`: as it was if it was sealed
 /// already, sealed under the data key if it was in clear.
-fn put_aside<D: Disk>(store: &Store<D>, unreadable: &Unreadable) -> Result<(), StoreError> {
+pub(crate) fn keep_aside<D: Disk>(
+    store: &Store<D>,
+    unreadable: &Unreadable,
+) -> Result<(), StoreError> {
     if unreadable.in_clear {
         store.put_aside(&Slot::Legacy(unreadable.name.clone()), &unreadable.bytes)
     } else {

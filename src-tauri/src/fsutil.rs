@@ -43,14 +43,12 @@ pub fn atomic_write(path: &Path, bytes: &[u8]) -> io::Result<()> {
 /// disk. NTFS writes its journal in order, so every rename made before this
 /// one is on the disk too. The migration of the local files writes the vault
 /// that commits it this way, before it destroys anything (design §5.2).
-#[cfg_attr(not(test), allow(dead_code))] // unseal uses it from the next commit
 pub fn atomic_write_durable(path: &Path, bytes: &[u8]) -> io::Result<()> {
     write_through_temp(path, bytes, |from, to| move_on_disk(from, to, true))
 }
 
 /// Move the file or the directory `from` to `to`, which must not exist, and
 /// return only once the move is on the disk (`atomic_write_durable`).
-#[cfg_attr(not(test), allow(dead_code))] // unseal uses it from the next commit
 pub fn rename_durable(from: &Path, to: &Path) -> io::Result<()> {
     move_on_disk(from, to, false)?;
     sync_dir_of(to);
@@ -85,7 +83,6 @@ fn write_through_temp(
 /// `MoveFileExW` with `MOVEFILE_WRITE_THROUGH`, replacing a file at `to`
 /// only with `replace`.
 #[cfg(windows)]
-#[cfg_attr(not(test), allow(dead_code))] // unseal uses it from the next commit
 fn move_on_disk(from: &Path, to: &Path, replace: bool) -> io::Result<()> {
     use std::os::windows::ffi::OsStrExt;
 
@@ -117,7 +114,6 @@ fn move_on_disk(from: &Path, to: &Path, replace: bool) -> io::Result<()> {
 /// after it; a rename would replace an empty directory, so `to` is checked
 /// first when it must not be replaced.
 #[cfg(not(windows))]
-#[cfg_attr(not(test), allow(dead_code))] // unseal uses it from the next commit
 fn move_on_disk(from: &Path, to: &Path, replace: bool) -> io::Result<()> {
     if !replace && fs::symlink_metadata(to).is_ok() {
         return Err(io::Error::new(

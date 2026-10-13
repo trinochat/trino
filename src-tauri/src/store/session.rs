@@ -10,7 +10,9 @@
 //!   whose vault carries no data key yet: `config.json`, `friends.json`,
 //!   `groups.json` and `group_invites.json` in clear, and `history.bin`,
 //!   `ratchets.bin` and `profiles.bin` under keys derived from the identity.
-//!   Such an account keeps working as it did until the migration moves it.
+//!   Unlocking moves such an account into the store first; only a migration
+//!   that stopped before its commit leaves a session working on them, as
+//!   earlier versions did, until the next unlock tries again.
 //!
 //! `StorageCell` holds it inside `InnerState` behind a lock of its own:
 //! saving changes nothing the session shows, so it needs only `&InnerState`.
@@ -31,7 +33,7 @@ use super::envelope::Slot;
 use super::files::{Store, StoreError};
 use super::index::VaultHeader;
 use super::keys::StoreKeys;
-use super::report::{Action, IntegrityReport, What};
+use super::report::{Action, Finding, IntegrityReport, What};
 use crate::fsutil;
 use crate::group::GroupRoster;
 use crate::state::{ConfigFile, FriendRecord, FriendsFile, GroupInvite};
@@ -318,7 +320,6 @@ impl SessionStore {
     /// The migration's cleanup (M4, `migrate::settle`) ran to its end: the
     /// index says so, and the next unlock does not run it again. Best
     /// effort: if the index cannot take it now, M4 runs again, in silence.
-    #[cfg_attr(not(test), allow(dead_code))] // unseal uses it from the next commit
     pub(crate) fn finish_cleanup(&mut self) {
         let mut legacy = self.store.index().legacy.clone();
         if !legacy.cleanup_pending {
@@ -326,6 +327,23 @@ impl SessionStore {
         }
         legacy.cleanup_pending = false;
         let _ = self.store.set_legacy(legacy);
+    }
+
+    /// Findings of unlocking that are not the store's own (the migration's),
+    /// for the one dialog.
+    pub(crate) fn note_findings(&mut self, findings: Vec<Finding>) {
+        self.report.findings.extend(findings);
+    }
+
+    /// The finding about `file` is settled: the dialog no longer shows it.
+    pub(crate) fn forget_finding(&mut self, file: &str) {
+        self.report.findings.retain(|finding| finding.file != file);
+    }
+
+    /// Keep a file of an earlier version that did not read in `aside/`,
+    /// sealed if it was in clear (`migrate::keep_aside`).
+    pub(crate) fn keep_aside(&self, unreadable: &super::migrate::Unreadable) -> io::Result<()> {
+        super::migrate::keep_aside(&self.store, unreadable).map_err(to_io)
     }
 
     /// Never write `slot` this session: what it holds did not read, so it
