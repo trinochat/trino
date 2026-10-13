@@ -98,7 +98,7 @@ export const settings: AreaStrings = {
     'settings2.privacy.reinforced': 'Protección reforzada',
     'settings2.privacy.reinforcedOff': 'Para cuando tu computador corre más riesgo. Cambia varios ajustes a la vez.',
     'settings2.privacy.reinforcedOn':
-      'Se bloquea al minuto, las notificaciones no dicen quién escribe, las capturas de pantalla salen en negro y lo que copias se borra a los 30 segundos.',
+      'Se bloquea al minuto, las notificaciones no dicen quién escribe, la ventana sale en negro o no aparece en las capturas de pantalla y lo que copias se borra a los 30 segundos.',
     'settings2.privacy.reinforcedTip':
       'También ayuda activar el cifrado del dispositivo (BitLocker) y apagar o hibernar el computador cuando lo pierdas de vista.',
     'settings2.privacy.errReinforced': 'No se pudieron cambiar todos los ajustes. Revisa cada uno.',
@@ -119,6 +119,13 @@ export const settings: AreaStrings = {
     'settings2.privacy.dataClipboard':
       'Lo que copias en Trino no entra al historial del portapapeles de Windows. Otros programas que guardan lo que copias pueden ignorarlo.',
     'settings2.privacy.dataCopies': 'Si copiaste la carpeta .trino antes de esta versión, esa copia sigue sin cifrar.',
+    // Cifrado local CL-4: the capture switch stays in the WebView with the
+    // appearance, and an account not moved to the store yet is not encrypted.
+    'settings2.privacy.dataCaptures': 'Si Trino bloquea las capturas de pantalla',
+    'settings2.privacy.dataBodyNotYet': 'Todavía no están todos cifrados.',
+    'settings2.privacy.dataNotYet': 'Todavía sin cifrar',
+    'settings2.privacy.dataNotYetBody':
+      'Trino no pudo terminar de cifrarlos en este equipo y lo vuelve a intentar la próxima vez que lo desbloquees.',
 
     // Notificaciones (Settings:50-113).
     'settings2.notif.title': 'Notificaciones',
@@ -435,7 +442,7 @@ export const settings: AreaStrings = {
     'settings2.privacy.reinforced': 'Enhanced protection',
     'settings2.privacy.reinforcedOff': 'For when your computer is at greater risk. It changes several settings at once.',
     'settings2.privacy.reinforcedOn':
-      'Locks after a minute, notifications do not say who is writing, screenshots come out black and what you copy is cleared after 30 seconds.',
+      'Locks after a minute, notifications do not say who is writing, the window comes out black or does not appear in screenshots and what you copy is cleared after 30 seconds.',
     'settings2.privacy.reinforcedTip':
       'It also helps to turn on device encryption (BitLocker) and to shut down or hibernate the computer when it is out of your sight.',
     'settings2.privacy.errReinforced': 'Not every setting could be changed. Check each one.',
@@ -456,6 +463,11 @@ export const settings: AreaStrings = {
     'settings2.privacy.dataClipboard':
       'What you copy in Trino stays out of the Windows clipboard history. Other programs that keep what you copy may ignore this.',
     'settings2.privacy.dataCopies': 'If you copied the .trino folder before this version, that copy is still unencrypted.',
+    'settings2.privacy.dataCaptures': 'Whether Trino blocks screenshots',
+    'settings2.privacy.dataBodyNotYet': 'Not all of it is encrypted yet.',
+    'settings2.privacy.dataNotYet': 'Not encrypted yet',
+    'settings2.privacy.dataNotYetBody':
+      'Trino could not finish encrypting them on this device and tries again the next time you unlock it.',
 
     'settings2.notif.title': 'Notifications',
     'settings2.notif.level': 'What a notification shows',
@@ -765,7 +777,7 @@ export const settings: AreaStrings = {
     'settings2.privacy.reinforced': 'Proteção reforçada',
     'settings2.privacy.reinforcedOff': 'Para quando seu computador corre mais risco. Muda vários ajustes de uma vez.',
     'settings2.privacy.reinforcedOn':
-      'Bloqueia depois de um minuto, as notificações não dizem quem escreve, as capturas de tela ficam pretas e o que você copia é apagado depois de 30 segundos.',
+      'Bloqueia depois de um minuto, as notificações não dizem quem escreve, a janela fica preta ou não aparece nas capturas de tela e o que você copia é apagado depois de 30 segundos.',
     'settings2.privacy.reinforcedTip':
       'Também ajuda ativar a criptografia do dispositivo (BitLocker) e desligar ou hibernar o computador quando ele ficar fora da sua vista.',
     'settings2.privacy.errReinforced': 'Não foi possível mudar todos os ajustes. Confira cada um.',
@@ -786,6 +798,11 @@ export const settings: AreaStrings = {
     'settings2.privacy.dataClipboard':
       'O que você copia no Trino não entra no histórico da área de transferência do Windows. Outros programas que guardam o que você copia podem ignorar isso.',
     'settings2.privacy.dataCopies': 'Se você copiou a pasta .trino antes desta versão, essa cópia continua sem criptografia.',
+    'settings2.privacy.dataCaptures': 'Se o Trino bloqueia as capturas de tela',
+    'settings2.privacy.dataBodyNotYet': 'Ainda não estão todos criptografados.',
+    'settings2.privacy.dataNotYet': 'Ainda sem criptografia',
+    'settings2.privacy.dataNotYetBody':
+      'O Trino não conseguiu terminar de criptografá-los neste dispositivo e tenta de novo na próxima vez que você o desbloquear.',
 
     'settings2.notif.title': 'Notificações',
     'settings2.notif.level': 'O que aparece na notificação',

@@ -111,6 +111,12 @@ const PRIVACY = [
   'settings2.privacy.reinforcedOn',
   'settings2.privacy.reinforcedTip',
   'settings2.privacy.errReinforced',
+  // Cifrado local CL-4: what the code really keeps in clear and what it has
+  // not encrypted yet (an account whose migration stopped before its commit).
+  'settings2.privacy.dataCaptures',
+  'settings2.privacy.dataBodyNotYet',
+  'settings2.privacy.dataNotYet',
+  'settings2.privacy.dataNotYetBody',
 ];
 
 /** Settings > Notificaciones (NotificationsSection.tsx). */

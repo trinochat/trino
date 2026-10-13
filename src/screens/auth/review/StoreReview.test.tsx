@@ -193,8 +193,13 @@ describe('StoreReview, when files changed (design §6.2 and §11.4)', () => {
     expect(what.getAttribute('aria-expanded')).toBe('false');
     fireEvent.click(what);
     expect(what.getAttribute('aria-expanded')).toBe('true');
-    expect(document.getElementById(what.getAttribute('aria-controls')!)?.textContent).toContain(
-      'Si crees que alguien conoce tu contraseña de Trino, cámbiala en Ajustes › Cuenta y seguridad.',
+    const advice = document.getElementById(what.getAttribute('aria-controls')!)?.textContent;
+    expect(advice).toContain('Si crees que alguien conoce tu contraseña de Trino, cámbiala en Ajustes › Cuenta y seguridad.');
+    // A new password does not change the data key the vault carries (design
+    // §3.3): a copy of the vault with the old password still opens what is
+    // saved after. The advice says so instead of promising more.
+    expect(advice).toContain(
+      'Si además copió los archivos de Trino, cambiarla no basta: con esa copia y tu contraseña de antes podría abrir también lo que Trino guarde después, si vuelve a tener este equipo. Para cortar eso, hay que empezar con una identidad nueva.',
     );
   });
 

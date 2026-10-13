@@ -14,7 +14,9 @@
  * "En este equipo" (cifrado local, design §11.1), under the blocked
  * contacts: "Tus datos en este equipo", which opens what Trino keeps
  * encrypted with your password, what stays in clear for the unlock screen
- * and what lies outside Trino (LocalDataView.tsx); and, on Windows,
+ * and what lies outside Trino (LocalDataView.tsx), or, for an account whose
+ * migration has not finished (`dataMoved` false), what is not encrypted yet;
+ * and, on Windows,
  * "Bloquear Trino al bloquear Windows" (CL-6a; David's decision 4: on by
  * default), kept with the account's preferences, where the backend reads it
  * when Windows locks or the computer sleeps. Under it, on Windows too,
@@ -39,6 +41,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { NodeInfo } from '../../../lib/api';
 import { useT } from '../../../lib/i18n';
 import type { Prefs } from '../../../lib/prefs';
+import { prefsSession } from '../../../lib/prefs-session';
 import { Switch } from '../../../ui';
 import { BlockedContactsView } from '../BlockedContactsView';
 import { ErrorLine } from '../ErrorLine';
@@ -58,6 +61,12 @@ export interface PrivacySectionProps {
   onContactsChanged?(): void;
   /** Protección reforzada changed the auto-lock: App applies it at once. */
   onAutolockChanged?(minutes: number): void;
+  /**
+   * Whether this account's data is in the encrypted store. False while a
+   * migration that stopped before its commit leaves the session on the files
+   * of earlier versions (the session's preferences then live in the WebView).
+   */
+  dataMoved?: boolean;
   autoFocus?: boolean;
 }
 
@@ -71,7 +80,15 @@ const CAPTURES_ERROR_KEYS: Record<CapturesError, string> = {
   save: 'settings2.privacy.errCapturesSave',
 };
 
-export function PrivacySection({ api, prefs, platform, onContactsChanged, onAutolockChanged, autoFocus }: PrivacySectionProps) {
+export function PrivacySection({
+  api,
+  prefs,
+  platform,
+  onContactsChanged,
+  onAutolockChanged,
+  dataMoved = prefsSession.mode !== 'legacy',
+  autoFocus,
+}: PrivacySectionProps) {
   const t = useT();
   const [nodes, setNodes] = useState<readonly NodeInfo[] | null>(null);
   const [loadFailed, setLoadFailed] = useState(false);
@@ -159,14 +176,14 @@ export function PrivacySection({ api, prefs, platform, onContactsChanged, onAuto
       {
         id: 'data',
         label: t('settings2.privacy.data'),
-        body: t('settings2.privacy.dataBody'),
+        body: t(dataMoved ? 'settings2.privacy.dataBody' : 'settings2.privacy.dataBodyNotYet'),
         onSelect: () => {
           setMoved(true);
           setView('data');
         },
       },
     ],
-    [t],
+    [t, dataMoved],
   );
 
   if (view === 'blocked') {
@@ -191,7 +208,7 @@ export function PrivacySection({ api, prefs, platform, onContactsChanged, onAuto
   }
 
   if (view === 'data') {
-    return <LocalDataView autoFocus platform={platform} onBack={() => setView('main')} />;
+    return <LocalDataView autoFocus platform={platform} moved={dataMoved} onBack={() => setView('main')} />;
   }
 
   return (

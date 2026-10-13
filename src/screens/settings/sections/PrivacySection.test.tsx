@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { NodeInfo } from '../../../lib/api';
 import type { Lang } from '../../../lib/i18n';
 import type { Prefs } from '../../../lib/prefs';
+import { prefsSession } from '../../../lib/prefs-session';
 import { fakeApi, memoryPrefs, node, renderEs, withLang } from '../test-utils';
 import type { SettingsApi, SettingsPlatform } from '../types';
 import { PrivacySection } from './PrivacySection';
@@ -296,7 +297,7 @@ describe('PrivacySection, locking with Windows', () => {
 const REINFORCED = 'Protección reforzada';
 const REINFORCED_OFF = 'Para cuando tu computador corre más riesgo. Cambia varios ajustes a la vez.';
 const REINFORCED_ON =
-  'Se bloquea al minuto, las notificaciones no dicen quién escribe, las capturas de pantalla salen en negro y lo que copias se borra a los 30 segundos.';
+  'Se bloquea al minuto, las notificaciones no dicen quién escribe, la ventana sale en negro o no aparece en las capturas de pantalla y lo que copias se borra a los 30 segundos.';
 const REINFORCED_TIP =
   'También ayuda activar el cifrado del dispositivo (BitLocker) y apagar o hibernar el computador cuando lo pierdas de vista.';
 
@@ -385,14 +386,14 @@ describe('PrivacySection, Protección reforzada', () => {
       'en',
       'Enhanced protection',
       'For when your computer is at greater risk. It changes several settings at once.',
-      'Locks after a minute, notifications do not say who is writing, screenshots come out black and what you copy is cleared after 30 seconds.',
+      'Locks after a minute, notifications do not say who is writing, the window comes out black or does not appear in screenshots and what you copy is cleared after 30 seconds.',
       'It also helps to turn on device encryption (BitLocker) and to shut down or hibernate the computer when it is out of your sight.',
     ],
     [
       'pt',
       'Proteção reforçada',
       'Para quando seu computador corre mais risco. Muda vários ajustes de uma vez.',
-      'Bloqueia depois de um minuto, as notificações não dizem quem escreve, as capturas de tela ficam pretas e o que você copia é apagado depois de 30 segundos.',
+      'Bloqueia depois de um minuto, as notificações não dizem quem escreve, a janela fica preta ou não aparece nas capturas de tela e o que você copia é apagado depois de 30 segundos.',
       'Também ajuda ativar a criptografia do dispositivo (BitLocker) e desligar ou hibernar o computador quando ele ficar fora da sua vista.',
     ],
   ] as const)('speaks %s', async (lang, label, off, on, tip) => {
@@ -434,10 +435,14 @@ describe('PrivacySection, your data on this device', () => {
       'Tu perfil y tus stickers',
       'Tus notas, las marcas de verificado y los temporizadores',
     ]);
+    // trino.pref.blockCaptures stays in the WebView with the appearance
+    // (prefs-session.ts DEVICE_KEYS), so the list says so.
     expect(listed('Sin cifrar, para la pantalla de desbloqueo')).toEqual([
       'Que hay una cuenta y si pide código',
       'El idioma, la apariencia y la accesibilidad',
+      'Si Trino bloquea las capturas de pantalla',
     ]);
+    expect(screen.queryByRole('list', { name: 'Todavía sin cifrar' })).toBeNull();
     expect(listed('Fuera de Trino')).toEqual([
       'Windows guarda una copia de cada notificación. Con «Solo el nombre», ahí quedan el nombre de quien te escribe o del grupo, y el de quien te llama.',
       'Lo que descargas queda como cualquier archivo de tu computador.',
@@ -460,6 +465,51 @@ describe('PrivacySection, your data on this device', () => {
     expect(screen.queryByText(/Windows/)).toBeNull();
     // Only Windows copies without the clipboard history (CL-6b).
     expect(screen.queryByText(/portapapeles/)).toBeNull();
+  });
+
+  it('leaves the captures out of what stays in clear on Linux, which has no such switch', () => {
+    renderEs(<PrivacySection api={fakeApi()} prefs={memoryPrefs().prefs} platform="linux" />);
+    fireEvent.click(screen.getByRole('button', { name: /Tus datos en este equipo/ }));
+    expect(screen.queryByText('Si Trino bloquea las capturas de pantalla')).toBeNull();
+  });
+
+  // An account whose migration stopped before its commit (prefs_import
+  // "unavailable", Storage::Legacy) still keeps its contacts, groups, profile,
+  // stickers and notes as earlier versions did: the texts must not say they
+  // are encrypted.
+  it('says what is not encrypted yet when the account has not moved to the store', () => {
+    renderEs(<PrivacySection api={fakeApi()} prefs={memoryPrefs().prefs} platform="windows" dataMoved={false} />);
+    const row = screen.getByRole('button', { name: /^Tus datos en este equipo\s*Todavía no están todos cifrados\.$/ });
+    fireEvent.click(row);
+    const listed = (name: string) =>
+      within(screen.getByRole('list', { name }))
+        .getAllByRole('listitem')
+        .map(item => item.textContent);
+    expect(listed('Cifrado con tu contraseña')).toEqual(['Tu identidad y tus chats']);
+    expect(listed('Todavía sin cifrar')).toEqual([
+      'Tus contactos, tus grupos y a quién bloqueaste',
+      'Tu perfil y tus stickers',
+      'Tus notas, las marcas de verificado y los temporizadores',
+    ]);
+    expect(
+      screen.getByText(
+        'Trino no pudo terminar de cifrarlos en este equipo y lo vuelve a intentar la próxima vez que lo desbloquees.',
+      ),
+    ).toBeTruthy();
+  });
+
+  it('knows by itself from the open session whether the account has moved', () => {
+    prefsSession.open({ mode: 'legacy', prefs: null, save: async () => {} });
+    try {
+      renderEs(<PrivacySection api={fakeApi()} prefs={memoryPrefs().prefs} platform="windows" />);
+      expect(screen.getByRole('button', { name: /Todavía no están todos cifrados\./ })).toBeTruthy();
+      cleanup();
+      prefsSession.open({ mode: 'store', prefs: {}, save: async () => {} });
+      renderEs(<PrivacySection api={fakeApi()} prefs={memoryPrefs().prefs} platform="windows" />);
+      expect(screen.getByRole('button', { name: /Cifrados con tu contraseña, menos lo que usa la pantalla de desbloqueo\./ })).toBeTruthy();
+    } finally {
+      prefsSession.discard();
+    }
   });
 
   it.each([
