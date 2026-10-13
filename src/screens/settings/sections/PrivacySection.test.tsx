@@ -72,10 +72,11 @@ describe('PrivacySection', () => {
     const text = container.textContent ?? '';
     expect(text).not.toMatch(/Avisar|antes de una llamada que muestra|(?<!\p{L})Tor(?!\p{L})|Quién puede escribirte|@|por defecto/u);
     expect(screen.queryAllByRole('radiogroup')).toEqual([]);
-    // The switches are locking with Windows (CL-6a) and the block of screen
-    // captures (SC-1).
+    // The switches are locking with Windows (CL-6a), Protección reforzada
+    // (CL-6b) and the block of screen captures (SC-1).
     expect(screen.getAllByRole('switch').map(nameOf)).toEqual([
       'Bloquear Trino al bloquear Windows',
+      'Protección reforzada',
       'Bloquear capturas de pantalla',
     ]);
   });
@@ -289,6 +290,118 @@ describe('PrivacySection, locking with Windows', () => {
     const toggle = screen.getByRole('switch', { name: label });
     expect(toggle.getAttribute('aria-checked')).toBe('true');
     expect(descriptionOf(toggle)).toBe(body);
+  });
+});
+
+const REINFORCED = 'Protección reforzada';
+const REINFORCED_OFF = 'Para cuando tu computador corre más riesgo. Cambia varios ajustes a la vez.';
+const REINFORCED_ON =
+  'Se bloquea al minuto, las notificaciones no dicen quién escribe, las capturas de pantalla salen en negro y lo que copias se borra a los 30 segundos.';
+const REINFORCED_TIP =
+  'También ayuda activar el cifrado del dispositivo (BitLocker) y apagar o hibernar el computador cuando lo pierdas de vista.';
+
+function reinforced(options: { stored?: Record<string, string>; platform?: SettingsPlatform; lang?: Lang; api?: Partial<SettingsApi> } = {}) {
+  const { prefs, storage } = memoryPrefs(options.stored);
+  const api = fakeApi(options.api);
+  const onAutolockChanged = vi.fn();
+  render(
+    withLang(
+      <PrivacySection api={api} prefs={prefs} platform={options.platform ?? 'windows'} onAutolockChanged={onAutolockChanged} />,
+      options.lang ?? 'es',
+    ),
+  );
+  const toggle = (name = REINFORCED) => screen.getByRole('switch', { name });
+  return { api, prefs, storage, onAutolockChanged, toggle };
+}
+
+// Cifrado local CL-6b (design §10 and §11.1; David's decision 5): a switch,
+// off by default, that sets the stricter values together; each can still be
+// changed on its own after. Turning it off gives back what it changed.
+describe('PrivacySection, Protección reforzada', () => {
+  it('is off by default in "En este equipo", after locking with Windows, and says what it is for', () => {
+    const { toggle } = reinforced();
+    expect(toggle().getAttribute('aria-checked')).toBe('false');
+    expect(descriptionOf(toggle())).toBe(REINFORCED_OFF);
+    const group = screen.getByRole('heading', { level: 3, name: 'En este equipo' }).parentElement!;
+    expect(within(group).getAllByRole('switch').map(nameOf)).toEqual([LOCK_WITH_WINDOWS, REINFORCED]);
+    expect(screen.queryByText(REINFORCED_TIP)).toBeNull();
+  });
+
+  it('sets the stricter values at once and says what it did', async () => {
+    const stored = { autolock: '15', 'trino.pref.lockWithSystem': '0', 'trino.pref.notifPreview': 'full', 'trino.pref.blockCaptures': '0' };
+    const { api, storage, onAutolockChanged, toggle } = reinforced({ stored });
+    expect(toggle(LOCK_WITH_WINDOWS).getAttribute('aria-checked')).toBe('false');
+    fireEvent.click(toggle());
+    await waitFor(() => expect(toggle().getAttribute('aria-checked')).toBe('true'));
+    expect(descriptionOf(toggle())).toBe(REINFORCED_ON);
+    expect(screen.getByText(REINFORCED_TIP)).toBeTruthy();
+    expect(storage.data.get('trino.pref.reinforced')).toBe('1');
+    expect(storage.data.get('autolock')).toBe('1');
+    expect(storage.data.get('trino.pref.notifPreview')).toBe('none');
+    expect(api.setContentProtected).toHaveBeenLastCalledWith(true);
+    expect(onAutolockChanged).toHaveBeenLastCalledWith(1);
+    // The switches of the same section show the new values.
+    expect(toggle(LOCK_WITH_WINDOWS).getAttribute('aria-checked')).toBe('true');
+    expect(toggle('Bloquear capturas de pantalla').getAttribute('aria-checked')).toBe('true');
+    expect(screen.queryByRole('alert')).toBeNull();
+  });
+
+  it('gives back what it changed when turned off', async () => {
+    const stored = { autolock: '15', 'trino.pref.lockWithSystem': '0', 'trino.pref.notifPreview': 'full', 'trino.pref.blockCaptures': '0' };
+    const { api, storage, onAutolockChanged, toggle } = reinforced({ stored });
+    fireEvent.click(toggle());
+    await waitFor(() => expect(toggle().getAttribute('aria-checked')).toBe('true'));
+    fireEvent.click(toggle());
+    await waitFor(() => expect(toggle().getAttribute('aria-checked')).toBe('false'));
+    expect(descriptionOf(toggle())).toBe(REINFORCED_OFF);
+    expect(storage.data.get('trino.pref.reinforced')).toBe('0');
+    expect(storage.data.get('autolock')).toBe('15');
+    expect(storage.data.get('trino.pref.notifPreview')).toBe('full');
+    expect(api.setContentProtected).toHaveBeenLastCalledWith(false);
+    expect(onAutolockChanged).toHaveBeenLastCalledWith(15);
+    expect(toggle(LOCK_WITH_WINDOWS).getAttribute('aria-checked')).toBe('false');
+    expect(toggle('Bloquear capturas de pantalla').getAttribute('aria-checked')).toBe('false');
+  });
+
+  it('says so when not everything could change, and stays on', async () => {
+    const { toggle, storage } = reinforced({
+      stored: { 'trino.pref.blockCaptures': '0' },
+      api: { setContentProtected: vi.fn(async () => Promise.reject(new Error('window'))) },
+    });
+    fireEvent.click(toggle());
+    expect((await screen.findByRole('alert')).textContent).toContain('No se pudieron cambiar todos los ajustes. Revisa cada uno.');
+    expect(toggle().getAttribute('aria-checked')).toBe('true');
+    expect(storage.data.get('trino.pref.blockCaptures')).toBe('0');
+    expect(toggle('Bloquear capturas de pantalla').getAttribute('aria-checked')).toBe('false');
+  });
+
+  it.each(['macos', 'linux'] as const)('is not there on %s, where Trino does not copy through Windows', platform => {
+    reinforced({ platform });
+    expect(screen.queryByRole('switch', { name: REINFORCED })).toBeNull();
+  });
+
+  it.each([
+    [
+      'en',
+      'Enhanced protection',
+      'For when your computer is at greater risk. It changes several settings at once.',
+      'Locks after a minute, notifications do not say who is writing, screenshots come out black and what you copy is cleared after 30 seconds.',
+      'It also helps to turn on device encryption (BitLocker) and to shut down or hibernate the computer when it is out of your sight.',
+    ],
+    [
+      'pt',
+      'Proteção reforçada',
+      'Para quando seu computador corre mais risco. Muda vários ajustes de uma vez.',
+      'Bloqueia depois de um minuto, as notificações não dizem quem escreve, as capturas de tela ficam pretas e o que você copia é apagado depois de 30 segundos.',
+      'Também ajuda ativar a criptografia do dispositivo (BitLocker) e desligar ou hibernar o computador quando ele ficar fora da sua vista.',
+    ],
+  ] as const)('speaks %s', async (lang, label, off, on, tip) => {
+    const { toggle } = reinforced({ lang });
+    expect(descriptionOf(toggle(label))).toBe(off);
+    fireEvent.click(toggle(label));
+    await waitFor(() => expect(toggle(label).getAttribute('aria-checked')).toBe('true'));
+    expect(descriptionOf(toggle(label))).toBe(on);
+    expect(screen.getByText(tip)).toBeTruthy();
   });
 });
 

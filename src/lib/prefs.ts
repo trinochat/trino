@@ -62,6 +62,17 @@ export const PREF_DEFAULTS = Object.freeze({
   lockWithSystem: true,
 });
 
+/**
+ * What "Protección reforzada" changed, as it was before (cifrado local
+ * CL-6b, design §10), so turning it off gives it back.
+ */
+export interface ReinforcedBefore {
+  autolockMinutes: number;
+  lockWithSystem: boolean;
+  notifPreview: NotifPreview;
+  blockCaptures: boolean;
+}
+
 /** Minutes without activity before Trino locks; 0 never locks. */
 export const DEFAULT_AUTOLOCK_MINUTES = 5;
 export const STICKER_RECENTS_MAX = 24;
@@ -158,6 +169,39 @@ export interface Prefs {
   /** Lock Trino when Windows locks, sleeps or hibernates (Settings › Privacidad). */
   getLockWithSystem(): boolean;
   setLockWithSystem(on: boolean): boolean;
+  /**
+   * "Protección reforzada" (Settings › Privacidad, design §10): off by
+   * default. Its values live in their own preferences; this is the switch,
+   * and what copies read to be cleared after 30 seconds.
+   */
+  getReinforced(): boolean;
+  setReinforced(on: boolean): boolean;
+  /** What it changed, as it was before; null when nothing is remembered or it cannot be read. */
+  getReinforcedBefore(): ReinforcedBefore | null;
+  setReinforcedBefore(before: ReinforcedBefore | null): boolean;
+}
+
+/** A remembered `ReinforcedBefore`, or null if it is not one. */
+function readReinforcedBefore(value: string | null): ReinforcedBefore | null {
+  if (value === null) return null;
+  try {
+    const parsed: unknown = JSON.parse(value);
+    if (typeof parsed !== 'object' || parsed === null) return null;
+    const { autolockMinutes, lockWithSystem, notifPreview, blockCaptures } = parsed as Record<string, unknown>;
+    if (
+      typeof autolockMinutes !== 'number' ||
+      !Number.isFinite(autolockMinutes) ||
+      autolockMinutes < 0 ||
+      typeof lockWithSystem !== 'boolean' ||
+      !(NOTIF_PREVIEWS as readonly unknown[]).includes(notifPreview) ||
+      typeof blockCaptures !== 'boolean'
+    ) {
+      return null;
+    }
+    return { autolockMinutes, lockWithSystem, notifPreview: notifPreview as NotifPreview, blockCaptures };
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -283,6 +327,11 @@ export function createPrefs(storage?: PrefsStorage): Prefs {
     setBlockCaptures: on => writeFlag(PREF + 'blockCaptures', on),
     getLockWithSystem: () => readFlag(PREF + 'lockWithSystem', PREF_DEFAULTS.lockWithSystem),
     setLockWithSystem: on => writeFlag(PREF + 'lockWithSystem', on),
+    getReinforced: () => readFlag(PREF + 'reinforced', false),
+    setReinforced: on => writeFlag(PREF + 'reinforced', on),
+    getReinforcedBefore: () => readReinforcedBefore(read(PREF + 'reinforcedBefore')),
+    setReinforcedBefore: before =>
+      before === null ? remove(PREF + 'reinforcedBefore') : write(PREF + 'reinforcedBefore', JSON.stringify(before)),
   };
 }
 

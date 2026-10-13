@@ -8,7 +8,7 @@ class FakeItem {
   constructor(readonly items: Record<string, Promise<Blob>>) {}
 }
 
-function deps(windows: boolean, extra: Partial<ClipboardDeps> = {}) {
+function deps(windows: boolean, extra: Partial<ClipboardDeps> = {}, reinforced = false) {
   const backend = {
     clipboardWriteText: vi.fn(async (_text: string) => {}),
     clipboardWriteImage: vi.fn(async (_png: string) => {}),
@@ -24,6 +24,7 @@ function deps(windows: boolean, extra: Partial<ClipboardDeps> = {}) {
     backend,
     webText: () => webWriteText,
     imageHost: () => imageHost,
+    clearAfter: () => reinforced,
     ...extra,
   };
   return { all, backend, webWriteText, webWrite };
@@ -35,7 +36,7 @@ describe('the clipboard on Windows', () => {
   it('copies a text through the backend, never the webview', async () => {
     const { all, backend, webWriteText } = deps(true);
     await createClipboard(all).copyText('hola');
-    expect(backend.clipboardWriteText).toHaveBeenCalledWith('hola');
+    expect(backend.clipboardWriteText).toHaveBeenCalledWith('hola', false);
     expect(webWriteText).not.toHaveBeenCalled();
   });
 
@@ -44,7 +45,7 @@ describe('the clipboard on Windows', () => {
     const clipboard = createClipboard(all);
     expect(clipboard.canCopyImages()).toBe(true);
     await clipboard.copyImage(Promise.resolve(new Blob([new Uint8Array([0x89, 0x50, 0x4e, 0x47])], { type: 'image/png' })));
-    expect(backend.clipboardWriteImage).toHaveBeenCalledWith('iVBORw==');
+    expect(backend.clipboardWriteImage).toHaveBeenCalledWith('iVBORw==', false);
     expect(webWrite).not.toHaveBeenCalled();
   });
 
@@ -57,6 +58,17 @@ describe('the clipboard on Windows', () => {
     const { all, backend } = deps(true);
     backend.clipboardWriteText.mockRejectedValueOnce(new Error('the clipboard is busy'));
     await expect(createClipboard(all).copyText('hola')).rejects.toThrow('busy');
+  });
+
+  // Design §10: with Protección reforzada the backend clears the copy 30
+  // seconds later, if nothing was copied after it.
+  it('asks the backend to clear the copy later with Protección reforzada', async () => {
+    const { all, backend } = deps(true, {}, true);
+    const clipboard = createClipboard(all);
+    await clipboard.copyText('hola');
+    await clipboard.copyImage(Promise.resolve(new Blob([new Uint8Array([0x89, 0x50, 0x4e, 0x47])])));
+    expect(backend.clipboardWriteText).toHaveBeenCalledWith('hola', true);
+    expect(backend.clipboardWriteImage).toHaveBeenCalledWith('iVBORw==', true);
   });
 
   it('says it copies through the backend', () => {

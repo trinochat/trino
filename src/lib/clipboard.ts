@@ -6,12 +6,15 @@
  * On Windows they go to the backend (src-tauri/src/clipboard.rs), which puts
  * them on the clipboard with the marks that keep them out of the clipboard
  * history (Win + V) and off the cloud clipboard; the web's clipboard has no
- * way to ask for that. Elsewhere, the webview's own clipboard, as before.
+ * way to ask for that. With Protección reforzada, the backend also clears
+ * the copy 30 seconds later, if nothing was copied after it (design §10).
+ * Elsewhere, the webview's own clipboard, as before.
  *
  * This is the one module that touches `navigator.clipboard`; its test checks
  * that nothing else does.
  */
 import { api } from './api';
+import { prefs } from './prefs';
 import { canCopyImages as webCanCopyImages, writeImage as webWriteImage, type ImageClipboardHost } from './clipboard-image';
 
 export interface ClipboardDeps {
@@ -23,6 +26,8 @@ export interface ClipboardDeps {
   webText(): ((text: string) => Promise<void>) | undefined;
   /** The webview's own clipboard for pictures. */
   imageHost(): ImageClipboardHost;
+  /** Whether the backend clears a copy 30 seconds later: Protección reforzada. */
+  clearAfter(): boolean;
 }
 
 export interface Clipboard {
@@ -49,14 +54,14 @@ export function createClipboard(deps: ClipboardDeps): Clipboard {
   return {
     throughBackend: () => deps.isWindows(),
     copyText: async text => {
-      if (deps.isWindows()) return deps.backend.clipboardWriteText(text);
+      if (deps.isWindows()) return deps.backend.clipboardWriteText(text, deps.clearAfter());
       const write = deps.webText();
       if (!write) throw new Error('no clipboard');
       return write(text);
     },
     canCopyImages: () => deps.isWindows() || webCanCopyImages(deps.imageHost()),
     copyImage: async png => {
-      if (deps.isWindows()) return deps.backend.clipboardWriteImage(await base64Of(await png));
+      if (deps.isWindows()) return deps.backend.clipboardWriteImage(await base64Of(await png), deps.clearAfter());
       return webWriteImage(png, deps.imageHost());
     },
   };
@@ -79,9 +84,10 @@ function windowImageHost(): ImageClipboardHost {
 export const clipboard: Clipboard = createClipboard({
   isWindows: () => typeof navigator !== 'undefined' && /Windows/i.test(navigator.userAgent),
   backend: {
-    clipboardWriteText: text => api.clipboardWriteText(text),
-    clipboardWriteImage: png => api.clipboardWriteImage(png),
+    clipboardWriteText: (text, clearAfter) => api.clipboardWriteText(text, clearAfter),
+    clipboardWriteImage: (png, clearAfter) => api.clipboardWriteImage(png, clearAfter),
   },
   webText: webClipboard,
   imageHost: windowImageHost,
+  clearAfter: () => prefs.getReinforced(),
 });

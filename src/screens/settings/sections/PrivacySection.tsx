@@ -17,8 +17,16 @@
  * and what lies outside Trino (LocalDataView.tsx); and, on Windows,
  * "Bloquear Trino al bloquear Windows" (CL-6a; David's decision 4: on by
  * default), kept with the account's preferences, where the backend reads it
- * when Windows locks or the computer sleeps. "Protección reforzada" (CL-6b)
- * joins this group with its behaviour.
+ * when Windows locks or the computer sleeps. Under it, on Windows too,
+ * "Protección reforzada" (CL-6b, design §10 and §11.1; David's decision 5),
+ * off by default: it sets the auto-lock to a minute, locking with Windows
+ * on, notifications to "Nada" (only "Nuevo mensaje", groups and calls
+ * included), the window out of captures, and copies cleared after 30
+ * seconds (src/lib/clipboard.ts); each can still be changed on its own, and
+ * turning it off gives back what it changed (src/screens/settings/
+ * reinforced.ts). While on, a line suggests device encryption and shutting
+ * the computer down. Windows only, as the copies it clears and the lock it
+ * turns on are Windows'.
  *
  * Not here, on purpose: the IP warning before a call (TURN made it
  * unnecessary), Tor and "Quién puede escribirte" (no Tor, no message
@@ -35,18 +43,21 @@ import { Switch } from '../../../ui';
 import { BlockedContactsView } from '../BlockedContactsView';
 import { ErrorLine } from '../ErrorLine';
 import { LocalDataView } from '../LocalDataView';
+import { turnOffReinforced, turnOnReinforced } from '../reinforced';
 import { SettingsRows, type SettingsRowItem } from '../SettingsRows';
 import { SettingsSection } from '../SettingsSection';
 import type { SettingsApi, SettingsPlatform } from '../types';
 
 export interface PrivacySectionProps {
   api: Pick<SettingsApi, 'listNodes' | 'blockNode' | 'setContentProtected'>;
-  /** Where the block of screen captures and locking with Windows are kept. */
-  prefs: Pick<Prefs, 'getBlockCaptures' | 'setBlockCaptures' | 'getLockWithSystem' | 'setLockWithSystem'>;
+  /** Where the block of screen captures, locking with Windows and Protección reforzada are kept. */
+  prefs: Prefs;
   /** Linux cannot keep a window out of captures, and only Windows locks Trino with it. */
   platform: SettingsPlatform;
   /** A contact was unblocked: the shell reads its contacts again. */
   onContactsChanged?(): void;
+  /** Protección reforzada changed the auto-lock: App applies it at once. */
+  onAutolockChanged?(minutes: number): void;
   autoFocus?: boolean;
 }
 
@@ -60,7 +71,7 @@ const CAPTURES_ERROR_KEYS: Record<CapturesError, string> = {
   save: 'settings2.privacy.errCapturesSave',
 };
 
-export function PrivacySection({ api, prefs, platform, onContactsChanged, autoFocus }: PrivacySectionProps) {
+export function PrivacySection({ api, prefs, platform, onContactsChanged, onAutolockChanged, autoFocus }: PrivacySectionProps) {
   const t = useT();
   const [nodes, setNodes] = useState<readonly NodeInfo[] | null>(null);
   const [loadFailed, setLoadFailed] = useState(false);
@@ -71,6 +82,23 @@ export function PrivacySection({ api, prefs, platform, onContactsChanged, autoFo
   const [capturesError, setCapturesError] = useState<CapturesError | null>(null);
   const [lockWithSystem, setLockWithSystem] = useState(() => prefs.getLockWithSystem());
   const [lockWithSystemFailed, setLockWithSystemFailed] = useState(false);
+  const [reinforced, setReinforced] = useState(() => prefs.getReinforced());
+  const [reinforcedFailed, setReinforcedFailed] = useState(false);
+
+  /** All its values at once; the switches here show what each became. */
+  const toggleReinforced = async (on: boolean) => {
+    setReinforced(on);
+    setReinforcedFailed(false);
+    setCapturesError(null);
+    setLockWithSystemFailed(false);
+    const deps = { prefs, setContentProtected: api.setContentProtected };
+    const { ok } = await (on ? turnOnReinforced(deps) : turnOffReinforced(deps));
+    setReinforced(prefs.getReinforced());
+    setReinforcedFailed(!ok);
+    setBlockCaptures(prefs.getBlockCaptures());
+    setLockWithSystem(prefs.getLockWithSystem());
+    onAutolockChanged?.(prefs.getAutolockMinutes());
+  };
 
   /** Shown as it changes, and back as it was if it cannot be kept. */
   const toggleLockWithSystem = (on: boolean) => {
@@ -183,6 +211,17 @@ export function PrivacySection({ api, prefs, platform, onContactsChanged, autoFo
               onCheckedChange={toggleLockWithSystem}
             />
             {lockWithSystemFailed ? <ErrorLine>{t('settings2.privacy.errLockWithSystem')}</ErrorLine> : null}
+            <Switch
+              className="border-b border-ui-line py-3.5"
+              label={t('settings2.privacy.reinforced')}
+              description={t(reinforced ? 'settings2.privacy.reinforcedOn' : 'settings2.privacy.reinforcedOff')}
+              checked={reinforced}
+              onCheckedChange={on => void toggleReinforced(on)}
+            />
+            {reinforcedFailed ? <ErrorLine>{t('settings2.privacy.errReinforced')}</ErrorLine> : null}
+            {reinforced ? (
+              <p className="m-0 text-ui-md leading-normal text-ui-muted">{t('settings2.privacy.reinforcedTip')}</p>
+            ) : null}
           </>
         ) : null}
       </div>

@@ -95,6 +95,13 @@ export const settings: AreaStrings = {
     'settings2.privacy.lockWithSystemBody':
       'También al suspender o hibernar el computador. Si estás en una llamada, al colgar.',
     'settings2.privacy.errLockWithSystem': 'No se pudo guardar el cambio. Sigue como estaba.',
+    'settings2.privacy.reinforced': 'Protección reforzada',
+    'settings2.privacy.reinforcedOff': 'Para cuando tu computador corre más riesgo. Cambia varios ajustes a la vez.',
+    'settings2.privacy.reinforcedOn':
+      'Se bloquea al minuto, las notificaciones no dicen quién escribe, las capturas de pantalla salen en negro y lo que copias se borra a los 30 segundos.',
+    'settings2.privacy.reinforcedTip':
+      'También ayuda activar el cifrado del dispositivo (BitLocker) y apagar o hibernar el computador cuando lo pierdas de vista.',
+    'settings2.privacy.errReinforced': 'No se pudieron cambiar todos los ajustes. Revisa cada uno.',
     'settings2.privacy.dataEncrypted': 'Cifrado con tu contraseña',
     'settings2.privacy.dataIdentity': 'Tu identidad y tus chats',
     'settings2.privacy.dataContacts': 'Tus contactos, tus grupos y a quién bloqueaste',
@@ -425,6 +432,13 @@ export const settings: AreaStrings = {
     'settings2.privacy.lockWithSystemBody':
       'Also when the computer sleeps or hibernates. If you are on a call, when it ends.',
     'settings2.privacy.errLockWithSystem': 'The change couldn’t be saved. It stays as it was.',
+    'settings2.privacy.reinforced': 'Enhanced protection',
+    'settings2.privacy.reinforcedOff': 'For when your computer is at greater risk. It changes several settings at once.',
+    'settings2.privacy.reinforcedOn':
+      'Locks after a minute, notifications do not say who is writing, screenshots come out black and what you copy is cleared after 30 seconds.',
+    'settings2.privacy.reinforcedTip':
+      'It also helps to turn on device encryption (BitLocker) and to shut down or hibernate the computer when it is out of your sight.',
+    'settings2.privacy.errReinforced': 'Not every setting could be changed. Check each one.',
     'settings2.privacy.dataEncrypted': 'Encrypted with your password',
     'settings2.privacy.dataIdentity': 'Your identity and your chats',
     'settings2.privacy.dataContacts': 'Your contacts, your groups and who you blocked',
@@ -748,6 +762,13 @@ export const settings: AreaStrings = {
     'settings2.privacy.lockWithSystemBody':
       'Também ao suspender ou hibernar o computador. Se você estiver em uma chamada, ao desligar.',
     'settings2.privacy.errLockWithSystem': 'Não foi possível salvar a mudança. Ela continua como estava.',
+    'settings2.privacy.reinforced': 'Proteção reforçada',
+    'settings2.privacy.reinforcedOff': 'Para quando seu computador corre mais risco. Muda vários ajustes de uma vez.',
+    'settings2.privacy.reinforcedOn':
+      'Bloqueia depois de um minuto, as notificações não dizem quem escreve, as capturas de tela ficam pretas e o que você copia é apagado depois de 30 segundos.',
+    'settings2.privacy.reinforcedTip':
+      'Também ajuda ativar a criptografia do dispositivo (BitLocker) e desligar ou hibernar o computador quando ele ficar fora da sua vista.',
+    'settings2.privacy.errReinforced': 'Não foi possível mudar todos os ajustes. Confira cada um.',
     'settings2.privacy.dataEncrypted': 'Criptografado com sua senha',
     'settings2.privacy.dataIdentity': 'Sua identidade e suas conversas',
     'settings2.privacy.dataContacts': 'Seus contatos, seus grupos e quem você bloqueou',

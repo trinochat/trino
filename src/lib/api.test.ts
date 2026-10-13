@@ -349,8 +349,13 @@ describe('locking', () => {
 // Cifrado local CL-6b: copies without the clipboard history (clipboard_cmds.rs).
 describe('the clipboard', () => {
   it.each([
-    ['clipboardWriteText', () => api.clipboardWriteText('hola'), 'clipboard_write_text', { text: 'hola' }],
-    ['clipboardWriteImage', () => api.clipboardWriteImage('iVBORw=='), 'clipboard_write_image', { png: 'iVBORw==' }],
+    ['clipboardWriteText', () => api.clipboardWriteText('hola', true), 'clipboard_write_text', { text: 'hola', clearAfter: true }],
+    [
+      'clipboardWriteImage',
+      () => api.clipboardWriteImage('iVBORw==', false),
+      'clipboard_write_image',
+      { png: 'iVBORw==', clearAfter: false },
+    ],
   ] as const)('%s calls its command', async (_name, call, command, args) => {
     await call();
     expect(invoke.mock.calls).toEqual([[command, args]]);

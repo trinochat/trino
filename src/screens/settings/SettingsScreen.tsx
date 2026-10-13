@@ -228,6 +228,7 @@ export function SettingsScreen({
             prefs={prefs}
             platform={platform}
             onContactsChanged={onContactsChanged}
+            onAutolockChanged={onAutolockChanged}
           />
         );
       case 'notifications':

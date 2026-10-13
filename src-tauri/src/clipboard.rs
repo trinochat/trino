@@ -125,6 +125,25 @@ pub(crate) fn image_fits(width: u32, height: u32, rgba_len: usize) -> bool {
     pixels > 0 && pixels <= MAX_IMAGE_PIXELS && rgba_len as u64 >= pixels * 4
 }
 
+/// Whether the copy noted at `written` is still what the clipboard holds:
+/// Windows counts every change of the clipboard.
+#[cfg_attr(not(windows), allow(dead_code))]
+pub(crate) fn still_ours(written: u32, now: u32) -> bool {
+    written == now
+}
+
+/// Empties the clipboard if it still holds the copy noted at `written`;
+/// returns whether it did. A copy made after it is left alone.
+#[cfg(windows)]
+pub(crate) fn clear_if_still(written: u32) -> Result<bool, String> {
+    win::clear_if_still(written)
+}
+
+#[cfg(not(windows))]
+pub(crate) fn clear_if_still(_written: u32) -> Result<bool, String> {
+    Ok(false)
+}
+
 /// Puts `items` on the clipboard, in that order, and returns the
 /// clipboard's count of changes after it.
 #[cfg(windows)]
@@ -217,6 +236,19 @@ mod win {
         Ok(())
     }
 
+    /// Opens the clipboard first, so nothing changes it between the check
+    /// and the emptying.
+    pub(super) fn clear_if_still(written: u32) -> Result<bool, String> {
+        let _open = Open::new()?;
+        // SAFETY: no arguments.
+        if !super::still_ours(written, unsafe { GetClipboardSequenceNumber() }) {
+            return Ok(false);
+        }
+        // SAFETY: the clipboard is open on this thread.
+        unsafe { EmptyClipboard() }.map_err(|e| e.to_string())?;
+        Ok(true)
+    }
+
     pub(super) fn write(items: &[Item]) -> Result<u32, String> {
         let open = Open::new()?;
         // SAFETY: the clipboard is open on this thread.
@@ -239,7 +271,7 @@ mod win {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
 
     fn dword(bytes: &[u8], at: usize) -> u32 {
@@ -323,6 +355,30 @@ mod tests {
             !image_fits(1 << 14, 1 << 14, (1usize << 28) * 4),
             "too many pixels"
         );
+    }
+
+    #[test]
+    fn a_copy_is_still_ours_only_while_nothing_changed_the_clipboard() {
+        assert!(still_ours(41, 41));
+        assert!(!still_ours(41, 42));
+    }
+
+    /// Design §10: with Protección reforzada a copy is cleared later, but
+    /// only while it is still the clipboard's.
+    #[cfg(windows)]
+    #[test]
+    fn a_copy_is_cleared_only_while_it_is_still_ours() {
+        let _clipboard = win_tests::exclusive();
+        let text = || win_tests::read_all(&[Format::Standard(CF_UNICODETEXT)]).remove(0);
+        let first = write(&text_items("trino: primera")).unwrap();
+        assert!(clear_if_still(first).unwrap());
+        assert_eq!(text(), None, "cleared");
+
+        let older = write(&text_items("trino: antes")).unwrap();
+        write(&text_items("trino: después")).unwrap();
+        assert!(!clear_if_still(older).unwrap());
+        assert!(text().is_some(), "a later copy stays");
+        win_tests::empty();
     }
 
     /// Design §12.6, test 50: the real clipboard on Windows. It replaces

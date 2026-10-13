@@ -475,8 +475,12 @@ export const api = {
   // Copies without the clipboard history (cifrado local CL-6b, design §8),
   // Windows only: a text, and a picture as its PNG in base64. Through
   // src/lib/clipboard.ts, which uses the webview's clipboard elsewhere.
-  clipboardWriteText: (text: string): Promise<void> => invoke('clipboard_write_text', { text }),
-  clipboardWriteImage: (png: string): Promise<void> => invoke('clipboard_write_image', { png }),
+  // `clearAfter`: Protección reforzada, so the backend clears the copy 30
+  // seconds later if nothing was copied after it (design §10).
+  clipboardWriteText: (text: string, clearAfter: boolean): Promise<void> =>
+    invoke('clipboard_write_text', { text, clearAfter }),
+  clipboardWriteImage: (png: string, clearAfter: boolean): Promise<void> =>
+    invoke('clipboard_write_image', { png, clearAfter }),
   // Clears the WebView's data, where removed values may linger (design
   // §5.3): through Tauri's own command, allowed in capabilities/default.json.
   clearBrowsingData: (): Promise<void> => getCurrentWebview().clearAllBrowsingData(),

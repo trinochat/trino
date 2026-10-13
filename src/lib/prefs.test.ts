@@ -217,6 +217,7 @@ const MEMBERS = [
   'getScanLines', 'setScanLines',
   'getBlockCaptures', 'setBlockCaptures',
   'getLockWithSystem', 'setLockWithSystem',
+  'getReinforced', 'setReinforced', 'getReinforcedBefore', 'setReinforcedBefore',
 ] as const;
 
 // With TURN the contact never sees your IP, so the warning "once per
@@ -282,6 +283,29 @@ describe('preferences of the redesign', () => {
     prefs.setLockWithSystem(true);
     expect(data.get('trino.pref.lockWithSystem')).toBe('1');
     expect(prefs.getLockWithSystem()).toBe(true);
+  });
+
+  // Cifrado local CL-6b (design §10): Protección reforzada, off by default,
+  // and what it changed, so turning it off gives that back.
+  it('keep Protección reforzada off by default, and what it changed, under trino.pref.*', () => {
+    const { storage, data } = memoryStorage();
+    const prefs = createPrefs(storage);
+    expect(prefs.getReinforced()).toBe(false);
+    expect(prefs.getReinforcedBefore()).toBeNull();
+    expect(prefs.setReinforced(true)).toBe(true);
+    expect(data.get('trino.pref.reinforced')).toBe('1');
+    expect(prefs.getReinforced()).toBe(true);
+    const before = { autolockMinutes: 15, lockWithSystem: false, notifPreview: 'full', blockCaptures: false } as const;
+    expect(prefs.setReinforcedBefore(before)).toBe(true);
+    expect(prefs.getReinforcedBefore()).toEqual(before);
+    for (const broken of ['{"autolockMinutes":"x"}', 'not json', '{"autolockMinutes":1,"lockWithSystem":true,"notifPreview":"all","blockCaptures":true}']) {
+      data.set('trino.pref.reinforcedBefore', broken);
+      expect(prefs.getReinforcedBefore(), broken).toBeNull();
+    }
+    expect(prefs.setReinforcedBefore(null)).toBe(true);
+    expect(data.has('trino.pref.reinforcedBefore')).toBe(false);
+    prefs.setReinforced(false);
+    expect(data.get('trino.pref.reinforced')).toBe('0');
   });
 
   it('are stored under trino.pref.*', () => {

@@ -105,6 +105,12 @@ const PRIVACY = [
   'settings2.privacy.lockWithSystem',
   'settings2.privacy.lockWithSystemBody',
   'settings2.privacy.errLockWithSystem',
+  // Cifrado local CL-6b (design §10 and §11.1): Protección reforzada.
+  'settings2.privacy.reinforced',
+  'settings2.privacy.reinforcedOff',
+  'settings2.privacy.reinforcedOn',
+  'settings2.privacy.reinforcedTip',
+  'settings2.privacy.errReinforced',
 ];
 
 /** Settings > Notificaciones (NotificationsSection.tsx). */

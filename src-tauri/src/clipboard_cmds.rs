@@ -4,12 +4,19 @@
 //! picture ("Copiar imagen"); `crate::clipboard` puts them on the clipboard
 //! with the marks that keep them out of the clipboard history and the
 //! cloud. Off Windows they refuse, and the frontend uses the webview's own
-//! clipboard.
+//! clipboard. With Protección reforzada (design §10) the frontend asks for
+//! the copy to be cleared after 30 seconds, which happens only if nothing
+//! was copied after it.
 //!
-//! A child module of `commands`, so it reaches the session's preferences.
+//! A child module of `commands`, as the other commands are.
 
 use crate::clipboard::{self, Item};
 use base64::Engine;
+use std::time::Duration;
+
+/// How long a copy stays on the clipboard with Protección reforzada
+/// (design §10), if nothing was copied after it.
+pub(crate) const CLEAR_AFTER: Duration = Duration::from_secs(30);
 
 /// The most text one copy takes, in bytes of UTF-8.
 pub(crate) const MAX_TEXT: usize = 16 * 1024 * 1024;
@@ -47,25 +54,43 @@ pub(crate) fn image_copy(png_base64: &str) -> Result<Vec<Item>, String> {
     Ok(clipboard::image_items(&png, width, height, rgba))
 }
 
+/// Puts `items` on the clipboard and, with `clear_after`, empties it that
+/// much later if the copy is still there; returns the clipboard's count of
+/// changes after the copy.
+pub(crate) fn copy(items: &[Item], clear_after: Option<Duration>) -> Result<u32, String> {
+    let written = clipboard::write(items)?;
+    if let Some(after) = clear_after {
+        std::thread::spawn(move || {
+            std::thread::sleep(after);
+            let _ = clipboard::clear_if_still(written);
+        });
+    }
+    Ok(written)
+}
+
 /// Puts `items` on the clipboard, away from the async runtime: opening the
 /// clipboard may wait for another program.
-async fn put(items: Vec<Item>) -> Result<u32, String> {
-    tauri::async_runtime::spawn_blocking(move || clipboard::write(&items))
+/// With `clear_after` (Protección reforzada), the copy is cleared
+/// `CLEAR_AFTER` later.
+async fn put(items: Vec<Item>, clear_after: Option<bool>) -> Result<(), String> {
+    let after = clear_after.unwrap_or(false).then_some(CLEAR_AFTER);
+    tauri::async_runtime::spawn_blocking(move || copy(&items, after))
         .await
         .map_err(|e| e.to_string())?
+        .map(drop)
 }
 
 /// Copies a text without the clipboard history (Windows only).
 #[tauri::command]
-pub async fn clipboard_write_text(text: String) -> Result<(), String> {
-    put(text_copy(&text)?).await.map(drop)
+pub async fn clipboard_write_text(text: String, clear_after: Option<bool>) -> Result<(), String> {
+    put(text_copy(&text)?, clear_after).await
 }
 
 /// Copies a picture, given as a PNG in base64, without the clipboard
 /// history (Windows only).
 #[tauri::command]
-pub async fn clipboard_write_image(png: String) -> Result<(), String> {
-    put(image_copy(&png)?).await.map(drop)
+pub async fn clipboard_write_image(png: String, clear_after: Option<bool>) -> Result<(), String> {
+    put(image_copy(&png)?, clear_after).await
 }
 
 #[cfg(test)]
@@ -75,6 +100,34 @@ mod tests {
 
     /// A PNG of one pixel.
     const ONE_PIXEL: &str = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==";
+
+    #[test]
+    fn protection_clears_after_30_seconds() {
+        assert_eq!(CLEAR_AFTER, Duration::from_secs(30));
+    }
+
+    /// Design §10: with Protección reforzada the copy goes after its time;
+    /// without it, it stays. The real clipboard, on Windows.
+    #[cfg(windows)]
+    #[test]
+    fn a_copy_with_protection_is_cleared_after_its_time_and_one_without_stays() {
+        use crate::clipboard::tests::win_tests;
+        let _clipboard = win_tests::exclusive();
+        let text = || win_tests::read_all(&[Format::Standard(CF_UNICODETEXT)]).remove(0);
+        copy(
+            &clipboard::text_items("trino: se borra"),
+            Some(Duration::from_millis(100)),
+        )
+        .unwrap();
+        assert!(text().is_some(), "there at first");
+        std::thread::sleep(Duration::from_millis(1500));
+        assert_eq!(text(), None, "gone after its time");
+
+        copy(&clipboard::text_items("trino: se queda"), None).unwrap();
+        std::thread::sleep(Duration::from_millis(300));
+        assert!(text().is_some());
+        win_tests::empty();
+    }
 
     #[test]
     fn a_text_copies_with_its_marks() {

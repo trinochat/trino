@@ -130,6 +130,9 @@ describe('the keys', () => {
       'trino.pref.callsSeenAt',
       // Cifrado local CL-6a: locking with Windows is the account's.
       'trino.pref.lockWithSystem',
+      // Cifrado local CL-6b: Protección reforzada and what it changed.
+      'trino.pref.reinforced',
+      'trino.pref.reinforcedBefore',
     ]) {
       expect(isAccountKey(key), key).toBe(true);
       expect(isDeviceKey(key), key).toBe(false);
