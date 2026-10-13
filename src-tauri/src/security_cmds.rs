@@ -6,17 +6,47 @@
 //! `session_gate`, as `forge`, `unseal`, `lock_vault` and `wipe` do: a wipe
 //! in between would otherwise find its vault written back. The slow key
 //! derivation runs off the async workers, and the new vault replaces the old
-//! one atomically (fsutil.rs), so a crash leaves one or the other.
+//! one atomically (fsutil.rs), so a crash leaves one or the other. Each
+//! re-seal is noted in the store's index first (design §4.9), so the next
+//! unlock does not take the new vault for another one.
 
 use crate::command_error::{CommandError, ErrorCode};
+use crate::commands::storage_cmds::write_vault_noted_in;
 use crate::commands::{open_vault, submitted_code};
-use crate::fsutil;
 use crate::passphrase::validate_passphrase;
 use crate::state::{vault_path, AppState, InnerState};
+use crate::store::session::StorageCell;
 use crate::vault::{encode_vault, seal_vault, UnsealedVault};
 use std::path::Path;
 use tauri::State;
 use zeroize::{Zeroize, Zeroizing};
+
+/// How a settings command writes the vault it sealed again: noted in the
+/// open session's store, with the signed prekey the vault holds (a re-seal
+/// here never rotates it).
+struct NotedWrite {
+    storage: StorageCell,
+    spk: u32,
+}
+
+impl NotedWrite {
+    fn write(&self, vault: &Path, bytes: &[u8]) -> std::io::Result<()> {
+        write_vault_noted_in(&self.storage, vault, bytes, self.spk)
+    }
+}
+
+/// The open session's `NotedWrite`; `no_vault` while it is locked.
+fn noting(inner: &InnerState) -> Result<NotedWrite, CommandError> {
+    require_session(inner)?;
+    let spk = inner
+        .identity
+        .as_ref()
+        .map_or(0, |identity| identity.signed_prekey.id);
+    Ok(NotedWrite {
+        storage: inner.storage.clone(),
+        spk,
+    })
+}
 
 /// Check a new passphrase against the policy (passphrase.rs) before any
 /// identity exists, so the first-run screens can tell what is wrong before
@@ -40,13 +70,16 @@ pub async fn totp_enable(
 ) -> Result<(), CommandError> {
     let passphrase = Zeroizing::new(passphrase);
     let _gate = state.session_gate.lock().await;
-    let secret = confirmed_secret(&*state.inner.lock().await)?;
+    let (secret, noted) = {
+        let inner = state.inner.lock().await;
+        (confirmed_secret(&inner)?, noting(&inner)?)
+    };
     let vault = vault_path();
     // The worker hands the secret back only once the vault holds it; on
     // any other way out it is dropped there, and wiped.
     let mut secret = run_blocking(move || {
         enable_totp(&vault, &passphrase, &secret, |bytes| {
-            fsutil::atomic_write(&vault, bytes)
+            noted.write(&vault, bytes)
         })?;
         Ok(secret)
     })
@@ -68,11 +101,11 @@ pub async fn totp_disable(
     let passphrase = Zeroizing::new(passphrase);
     let code = Zeroizing::new(code);
     let _gate = state.session_gate.lock().await;
-    require_session(&*state.inner.lock().await)?;
+    let noted = noting(&*state.inner.lock().await)?;
     let vault = vault_path();
     run_blocking(move || {
         disable_totp(&vault, &passphrase, &code, |bytes| {
-            fsutil::atomic_write(&vault, bytes)
+            noted.write(&vault, bytes)
         })
     })
     .await?;
@@ -94,12 +127,12 @@ pub async fn change_passphrase(
     let next = Zeroizing::new(next);
     let totp_code = totp_code.map(Zeroizing::new);
     let _gate = state.session_gate.lock().await;
-    require_session(&*state.inner.lock().await)?;
+    let noted = noting(&*state.inner.lock().await)?;
     let vault = vault_path();
     run_blocking(move || {
         let code = totp_code.as_deref().map(String::as_str);
         reseal_with_new_passphrase(&vault, &current, &next, code, |bytes| {
-            fsutil::atomic_write(&vault, bytes)
+            noted.write(&vault, bytes)
         })
     })
     .await
@@ -468,7 +501,21 @@ mod tests {
             .unwrap();
         let code: String = code.split_whitespace().collect();
         assert!(!code.contains("fs::write("), "a plain write");
-        assert!(code.contains("fsutil::atomic_write(&vault,bytes)"));
+        assert!(code.contains("write_vault_noted_in(&self.storage,vault,bytes,self.spk)"));
+        // That one notes the re-seal in the store and writes atomically.
+        let storage: String = include_str!("storage_cmds.rs")
+            .split("#[cfg(test)]")
+            .next()
+            .unwrap()
+            .split_whitespace()
+            .collect();
+        let noted = storage
+            .split("pub(crate)fnwrite_vault_noted(")
+            .nth(1)
+            .and_then(|rest| rest.split("pub(crate)fn").next())
+            .unwrap();
+        assert!(!noted.contains("fs::write("), "a plain write");
+        assert!(noted.contains("fsutil::atomic_write(vault,bytes)"));
     }
 
     // ---- K6: a new passphrase ----

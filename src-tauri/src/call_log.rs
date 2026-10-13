@@ -729,36 +729,37 @@ mod tests {
     #[test]
     fn a_recorded_call_travels_inside_the_encrypted_history() {
         use crate::fsutil::scratch::ScratchDir;
-        // Recorded without a history key, so nothing reaches the real data
-        // directory; then written as `save_history` writes history.bin, to
-        // a scratch path.
+        use crate::store::session::tests::{reopen, store_cell};
+        // Recorded without a storage, so nothing reaches the real data
+        // directory; then written as `save_history` writes the history, to
+        // a store in a scratch directory.
         let mut inner = session_with(&["ana"]);
         record(&mut inner, "ana", missed(ID), NOW, NOW).unwrap();
-        let key = [7u8; 32];
-        inner.history_key = Some(key);
         let scratch = ScratchDir::new("call-log-history");
-        let path = scratch.path().join("history.bin");
+        inner.storage = store_cell(scratch.path());
 
-        crate::commands::write_history(&inner, &path).unwrap();
+        crate::commands::write_history(&inner).unwrap();
 
-        let written = std::fs::read(&path).unwrap();
+        let written = std::fs::read(scratch.path().join("store").join("history.bin")).unwrap();
         assert!(
             !written.windows(ID.len()).any(|w| w == ID.as_bytes()),
             "the call id is in clear"
         );
-        let mut reloaded = InnerState {
-            history_key: Some(key),
-            ..InnerState::default()
-        };
-        crate::commands::load_history(&mut reloaded, &path);
+        let mut reloaded = InnerState::default();
+        crate::commands::load_history(&mut reloaded, reopen(scratch.path()).history);
         assert_eq!(list(&reloaded.history, None), list(&inner.history, None));
         assert_eq!(list(&reloaded.history, None).len(), 1);
-        // Read with another key, it is nothing.
-        let mut stranger = InnerState {
-            history_key: Some([8u8; 32]),
-            ..InnerState::default()
-        };
-        crate::commands::load_history(&mut stranger, &path);
-        assert!(stranger.history.is_empty());
+        // Under another data key, it is nothing: the store is another
+        // account's, and opens empty.
+        let other = crate::store::session::SessionStore::open(
+            scratch.path(),
+            &crate::store::session::tests::record(2),
+            None,
+        )
+        .unwrap();
+        assert!(matches!(
+            other.history,
+            crate::store::session::Found::Absent
+        ));
     }
 }

@@ -31,6 +31,10 @@ pub(crate) enum What {
     VaultChanged,
     /// The store belongs to another account: it was moved aside whole.
     OtherAccount,
+    /// The TOTP flag of a version 1 vault, which nothing authenticates,
+    /// said otherwise than the vault holds; sealed again, it is right
+    /// (design §4.9).
+    TotpFlag,
 }
 
 /// What the store did, or asks.
@@ -79,12 +83,14 @@ impl IntegrityReport {
 
     /// Whether the user has to choose: then the one dialog asks, once, for
     /// everything that waits.
+    #[cfg_attr(not(test), allow(dead_code))] // the dialog, CL-2b
     pub(crate) fn asks(&self) -> bool {
         self.findings
             .iter()
             .any(|finding| finding.action == Action::Ask)
     }
 
+    #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn find(&self, file: &str) -> Option<&Finding> {
         self.findings.iter().find(|finding| finding.file == file)
     }
@@ -112,7 +118,7 @@ impl IntegrityReport {
 pub(crate) fn action_for(slot: &Slot, what: What) -> Action {
     match (what, slot) {
         (What::Unreadable, _) => Action::KeepForLater,
-        (What::VaultChanged, _) => Action::Notice,
+        (What::VaultChanged | What::TotpFlag, _) => Action::Notice,
         (What::OtherAccount, _) => Action::SetAside,
         (_, Slot::Index) => Action::Notice,
         (_, Slot::Sessions) => Action::NewSessions,

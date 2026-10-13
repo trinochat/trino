@@ -5,11 +5,10 @@
 //! sending, persistence) without making them public.
 
 use super::contacts_cmds::{not_found, sealed};
-use super::{history_path, write_history};
+use super::write_history;
 use crate::command_error::CommandError;
 use crate::state::{AppState, HistItem, InnerState};
 use std::collections::HashMap;
-use std::path::Path;
 use tauri::State;
 
 /// Take out of `history[convo]` the first message sent at `ts` by `side`
@@ -52,20 +51,19 @@ pub(crate) fn delete_item(
     Ok((position, items.remove(position)))
 }
 
-/// Write history.bin to `path` without `removed`, the message `delete_item`
+/// Save the history without `removed`, the message `delete_item`
 /// took out of `convo` with where it was, then wipe it. A failure here is
 /// the caller's to know, unlike other saves: the message goes back where it
-/// was, so the chat shows what history.bin still holds and trying again
+/// was, so the chat shows what the saved history still holds and trying again
 /// finds it.
 pub(crate) fn write_without(
     inner: &mut InnerState,
-    path: &Path,
     convo: &str,
     removed: (usize, HistItem),
 ) -> Result<(), CommandError> {
     use zeroize::Zeroize;
     let (position, mut removed) = removed;
-    if let Err(error) = write_history(inner, path) {
+    if let Err(error) = write_history(inner) {
         let items = inner.history.entry(convo.to_string()).or_default();
         items.insert(position.min(items.len()), removed);
         return Err(CommandError::io(&error));
@@ -105,7 +103,7 @@ pub async fn delete_history_item(
         text.as_deref(),
         sha256.as_deref(),
     )?;
-    write_without(&mut inner, &history_path(), &convo, removed)
+    write_without(&mut inner, &convo, removed)
 }
 
 #[cfg(test)]
@@ -115,6 +113,7 @@ mod tests {
     use crate::commands::load_history;
     use crate::fsutil::scratch::ScratchDir;
     use crate::state::InnerState;
+    use crate::store::session::tests::{reopen, store_cell};
     use serde_json::json;
 
     const NOW: i64 = 1_760_000_000;
@@ -276,9 +275,9 @@ mod tests {
     #[test]
     fn a_deleted_message_stays_deleted_after_a_reload() {
         let scratch = ScratchDir::new("delete-for-me");
-        let path = scratch.path().join("history.bin");
+        let path = scratch.path().join("store").join("history.bin");
         let mut inner = InnerState {
-            history_key: Some([7; 32]),
+            storage: store_cell(scratch.path()),
             ..InnerState::default()
         };
         inner.history.insert(
@@ -296,18 +295,15 @@ mod tests {
             None,
         )
         .unwrap();
-        write_history(&inner, &path).unwrap();
+        write_history(&inner).unwrap();
 
         let bytes = std::fs::read(&path).unwrap();
         assert!(
             !String::from_utf8_lossy(&bytes).contains("se queda"),
             "in the clear"
         );
-        let mut reloaded = InnerState {
-            history_key: Some([7; 32]),
-            ..InnerState::default()
-        };
-        load_history(&mut reloaded, &path);
+        let mut reloaded = InnerState::default();
+        load_history(&mut reloaded, reopen(scratch.path()).history);
         assert_eq!(
             texts(&reloaded.history["ana"]),
             [("me".to_string(), Some("se queda"))]
@@ -318,13 +314,13 @@ mod tests {
     fn a_message_comes_back_where_it_was_when_history_bin_cannot_be_written() {
         let scratch = ScratchDir::new("delete-for-me-fails");
         // A directory where history.bin should go: no write can replace it.
-        let path = scratch.path().join("history.bin");
-        std::fs::create_dir(&path).unwrap();
-        std::fs::write(path.join("inside"), b"x").unwrap();
         let mut inner = InnerState {
-            history_key: Some([7; 32]),
+            storage: store_cell(scratch.path()),
             ..InnerState::default()
         };
+        let path = scratch.path().join("store").join("history.bin");
+        std::fs::create_dir(&path).unwrap();
+        std::fs::write(path.join("inside"), b"x").unwrap();
         inner.history.insert(
             "ana".into(),
             vec![
@@ -343,7 +339,7 @@ mod tests {
             None,
         );
 
-        let error = write_without(&mut inner, &path, "ana", removed.unwrap()).unwrap_err();
+        let error = write_without(&mut inner, "ana", removed.unwrap()).unwrap_err();
 
         assert_eq!(error.code, ErrorCode::Io);
         assert_eq!(
@@ -353,7 +349,7 @@ mod tests {
                 ("me".to_string(), Some("dos")),
                 ("me".to_string(), Some("tres")),
             ],
-            "the chat shows what history.bin still holds"
+            "the chat shows what the saved history still holds"
         );
         // Trying again finds it.
         let again = delete_item(

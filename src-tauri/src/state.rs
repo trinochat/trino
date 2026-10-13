@@ -65,9 +65,15 @@ pub struct InnerState {
     /// invite kept only in memory would be lost for good on restart.
     pub group_invites: HashMap<String, GroupInvite>,
     /// Chat history keyed by conversation id (handle for DMs, "grp:<gid>" for groups).
-    /// Persisted ENCRYPTED to history.bin with a key derived from the identity.
+    /// Persisted ENCRYPTED with the session's storage.
     pub history: HashMap<String, Vec<HistItem>>,
-    pub history_key: Option<[u8; 32]>,
+    /// Where the session keeps its data: the store, or the files of an
+    /// account not moved yet (store/session.rs). Empty with no session.
+    pub storage: crate::store::session::StorageCell,
+    /// The relays this account connects to, as its account file keeps them.
+    pub relay_urls: Vec<String>,
+    /// When this account was created, in unix seconds.
+    pub created_at: i64,
     /// Blocked senders, by nostr pubkey. Their events are dropped on arrival.
     pub blocked: HashSet<String>,
     /// Last time (unix secs) we auto-healed a desynced session per handle, to
@@ -261,11 +267,6 @@ pub fn history_path() -> PathBuf {
 
 pub fn ratchets_path() -> PathBuf {
     trino_home().join("ratchets.bin")
-}
-
-/// The shared profiles (K12), encrypted.
-pub fn profiles_path() -> PathBuf {
-    trino_home().join(crate::commands::profile::PROFILES_FILE)
 }
 
 pub fn default_relays() -> Vec<String> {

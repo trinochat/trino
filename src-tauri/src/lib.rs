@@ -233,6 +233,7 @@ pub fn run() {
             commands::dev_log,
             commands::wipe,
             commands::lock_vault,
+            commands::storage_cmds::store_choose,
             commands::resend_outbox,
             commands::resync_session,
             commands::set_autostart,

@@ -10,7 +10,7 @@
 
 use super::contacts_cmds::{not_found, sealed};
 use super::{
-    dbg_log, ensure_session_inner, fp, group_convo, group_info, persist_groups,
+    dbg_log, ensure_session_inner, fp, group_convo, group_info, persist_account,
     refresh_member_bindings, save_history, self_member_bundle, send_cipher_inner, zeroize_file_ref,
     GroupInfo,
 };
@@ -392,7 +392,7 @@ pub async fn remove_group_member(
 ) -> Result<GroupInfo, CommandError> {
     let plan =
         |inner: &InnerState, identity: &Identity| plan_removal(inner, identity, &gid, &ik_sign_pub);
-    apply_and_send(&state, &gid, plan, persist_groups).await
+    apply_and_send(&state, &gid, plan, persist_account).await
 }
 
 /// Rename a group I administer (K10).
@@ -403,7 +403,7 @@ pub async fn rename_group(
     name: String,
 ) -> Result<GroupInfo, CommandError> {
     let plan = |inner: &InnerState, identity: &Identity| plan_rename(inner, identity, &gid, &name);
-    apply_and_send(&state, &gid, plan, persist_groups).await
+    apply_and_send(&state, &gid, plan, persist_account).await
 }
 
 /// Leave a group (K10): forget it here, without telling anyone.
@@ -412,7 +412,7 @@ pub async fn leave_group(state: State<'_, AppState>, gid: String) -> Result<(), 
     let mut inner = state.inner.lock().await;
     open_identity(&inner)?;
     forget_group(&mut inner, &gid)?;
-    persist_groups(&inner).map_err(|e| CommandError::new(ErrorCode::Io, e))?;
+    persist_account(&inner).map_err(|e| CommandError::new(ErrorCode::Io, e))?;
     save_history(&inner);
     Ok(())
 }
@@ -431,7 +431,7 @@ pub async fn delete_group(state: State<'_, AppState>, gid: String) -> Result<(),
     let mut inner = state.inner.lock().await;
     // Gone already if a second delete raced this one: nothing left to do.
     if forget_group(&mut inner, &gid).is_ok() {
-        persist_groups(&inner).map_err(|e| CommandError::new(ErrorCode::Io, e))?;
+        persist_account(&inner).map_err(|e| CommandError::new(ErrorCode::Io, e))?;
         save_history(&inner);
     }
     Ok(())

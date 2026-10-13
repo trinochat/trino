@@ -19,9 +19,13 @@ use crate::ratchet::{
 };
 use crate::state::{
     config_path, default_relays, friends_path, group_invites_path, groups_path, history_path,
-    profiles_path, ratchets_path, trino_home, vault_path, AppState, ConfigFile, FriendRecord,
-    FriendsFile, GroupInvite, HandshakeMark, HistItem, InnerState,
+    ratchets_path, trino_home, vault_path, AppState, ConfigFile, FriendRecord, FriendsFile,
+    GroupInvite, HandshakeMark, HistItem, InnerState,
 };
+use crate::store::envelope::Slot;
+use crate::store::keys::StoreKeys;
+use crate::store::report::{Action, IntegrityReport, What};
+use crate::store::session::{AccountFile, Found, SessionStore, STORE_DIR};
 use crate::totp_enrollment::TotpBeginResponse;
 use crate::turn::TurnCache;
 use crate::vault::{
@@ -33,6 +37,10 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use storage_cmds::{
+    apply_loaded, load_session, persist_account, totp_flag_disagrees, write_vault_noted,
+    LoadedSession,
+};
 use tauri::{AppHandle, Emitter, State};
 use zeroize::{Zeroize, Zeroizing};
 
@@ -83,6 +91,14 @@ pub struct UnsealResponse {
     /// Whether this call started the relay connections: false when the
     /// session was open already, as the call that opened it started them.
     pub relay_connection_started: bool,
+    /// The account's preferences, there before the chats show (design §5.3;
+    /// CL-2a fills them).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub prefs: Option<serde_json::Value>,
+    /// What changed on disk since the last session, for the one dialog at
+    /// unlock (design §6.2); none when nothing did.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub integrity: Option<IntegrityReport>,
 }
 
 /// What `forge` returns: the session it opened, as `unseal` describes it, and
@@ -120,6 +136,9 @@ pub(crate) mod groups_cmds;
 pub(crate) mod history_cmds;
 #[path = "profile.rs"]
 pub(crate) mod profile;
+// Cifrado local (CL-1b): where the session keeps its data.
+#[path = "storage_cmds.rs"]
+pub(crate) mod storage_cmds;
 
 #[derive(Serialize)]
 pub struct NodeInfo {
@@ -342,10 +361,9 @@ fn clear_sensitive_state(inner: &mut InnerState) {
     }
     inner.totp_secret = None;
     inner.totp_enrollment.clear();
-    if let Some(key) = inner.history_key.as_mut() {
-        key.zeroize();
-    }
-    inner.history_key = None;
+    // The storage holds the data key: taken out, it is dropped and wiped,
+    // and nothing is written until the next unlock.
+    drop(inner.storage.take());
 
     for ratchet in inner.ratchets.values_mut() {
         ratchet.zeroize_secrets();
@@ -395,9 +413,12 @@ fn clear_sensitive_state(inner: &mut InnerState) {
         }
     }
 
+    storage_cmds::zeroize_names(inner);
     inner.identity = None;
     inner.handle = None;
     inner.avatar = None;
+    inner.relay_urls.clear();
+    inner.created_at = 0;
     inner.friends.clear();
     inner.groups.clear();
     inner.group_invites.clear();
@@ -411,132 +432,96 @@ fn clear_sensitive_state(inner: &mut InnerState) {
     inner.profiles.forget();
 }
 
-fn remove_file_for_wipe(path: &std::path::Path, failures: &mut Vec<String>) {
-    if let Err(error) = std::fs::remove_file(path) {
-        if error.kind() != std::io::ErrorKind::NotFound {
-            failures.push(format!("{}: {}", path.display(), error));
-        }
-    }
-}
-
-/// Delete `paths` for a wipe, together with any temporary copy of them that
-/// `fsutil::atomic_write` left behind because the app died while saving.
-fn remove_data_files(paths: &[PathBuf], failures: &mut Vec<String>) {
-    for path in paths {
-        for leftover in fsutil::leftover_temp_files(path) {
-            remove_file_for_wipe(&leftover, failures);
-        }
-        remove_file_for_wipe(path, failures);
-    }
-}
-
-fn remove_dir_for_wipe(path: &std::path::Path, failures: &mut Vec<String>) {
-    if let Err(error) = std::fs::remove_dir_all(path) {
-        if error.kind() != std::io::ErrorKind::NotFound {
-            failures.push(format!("{}: {}", path.display(), error));
-        }
-    }
-}
-
 #[tauri::command]
 pub async fn status(state: State<'_, AppState>) -> Result<StatusResponse, String> {
     let inner = state.inner.lock().await;
-    let has_vault = vault_path().exists();
-    // While the vault is sealed the handle is not in memory yet, so the unlock
-    // screen used to fall back to a placeholder and greet its own user as
-    // "local identity". The handle already sits unencrypted in config.json on
-    // this same device, so reading it here costs no secrecy — it is only ever
-    // shown to whoever already has the machine open.
-    let handle = inner.handle.clone().or_else(|| {
-        std::fs::read(config_path())
-            .ok()
-            .and_then(|bytes| serde_json::from_slice::<ConfigFile>(&bytes).ok())
-            .map(|cfg| cfg.handle)
-            .filter(|h| !h.is_empty())
-    });
-    Ok(StatusResponse {
-        has_vault,
-        is_unsealed: inner.identity.is_some(),
-        handle,
-        nostr_pub: inner
-            .identity
-            .as_ref()
-            .map(|i| hex::encode(i.nostr.pub_bytes)),
-        home_dir: trino_home().to_string_lossy().to_string(),
-        totp_enabled: totp_hint(&vault_path()),
-    })
+    Ok(storage_cmds::status_of(
+        &inner,
+        &trino_home(),
+        &vault_path(),
+    ))
 }
 
 /// Where the data files of the identity are. Passed in rather than read from
 /// `trino_home()` so tests can create and open an identity in a scratch
-/// directory.
+/// directory. The `.json` files, `history.bin`, `ratchets.bin`,
+/// `profiles.bin` and `stickers/` are those of earlier versions, which an
+/// account keeps until the migration moves it to `store/` (CL-1c).
 #[derive(Clone)]
-struct DataFiles {
-    home: PathBuf,
-    vault: PathBuf,
-    config: PathBuf,
-    friends: PathBuf,
-    groups: PathBuf,
-    group_invites: PathBuf,
-    history: PathBuf,
-    ratchets: PathBuf,
+pub(crate) struct DataFiles {
+    pub(crate) home: PathBuf,
+    pub(crate) vault: PathBuf,
+    pub(crate) config: PathBuf,
+    pub(crate) friends: PathBuf,
+    pub(crate) groups: PathBuf,
+    pub(crate) group_invites: PathBuf,
+    pub(crate) history: PathBuf,
+    pub(crate) ratchets: PathBuf,
+    pub(crate) profiles: PathBuf,
+    pub(crate) stickers: PathBuf,
 }
 
 impl DataFiles {
     fn in_trino_home() -> Self {
+        let files = DataFiles::in_home(trino_home());
+        debug_assert_eq!(files.vault, vault_path());
+        debug_assert_eq!(files.config, config_path());
+        debug_assert_eq!(files.friends, friends_path());
+        debug_assert_eq!(files.groups, groups_path());
+        debug_assert_eq!(files.group_invites, group_invites_path());
+        debug_assert_eq!(files.history, history_path());
+        debug_assert_eq!(files.ratchets, ratchets_path());
+        files
+    }
+
+    pub(crate) fn in_home(home: PathBuf) -> Self {
         DataFiles {
-            home: trino_home(),
-            vault: vault_path(),
-            config: config_path(),
-            friends: friends_path(),
-            groups: groups_path(),
-            group_invites: group_invites_path(),
-            history: history_path(),
-            ratchets: ratchets_path(),
+            vault: home.join("vault.bin"),
+            config: home.join("config.json"),
+            friends: home.join("friends.json"),
+            groups: home.join("groups.json"),
+            group_invites: home.join("group_invites.json"),
+            history: home.join("history.bin"),
+            ratchets: home.join("ratchets.bin"),
+            profiles: home.join(profile::PROFILES_FILE),
+            stickers: home.join("stickers"),
+            home,
         }
     }
 }
 
-/// Create the files of a new identity with `write`.
+/// Create the files of a new account: its store, with `account` in it under
+/// `keys`, then the vault with `write`.
 ///
 /// vault.bin goes LAST: `status` reports an identity as soon as it exists,
-/// and `unseal` cannot open one without config.json, so an interruption
-/// halfway must never leave a vault without the files it needs. If a step
-/// fails, the files and the data dir that this call created are removed
-/// again. Nothing that was there before is removed: a config.json or
-/// friends.json left by an earlier attempt is overwritten, as it always was.
+/// and the vault opens nothing without the store it carries the key to, so
+/// an interruption halfway must never leave a vault without its store. If a
+/// step fails, the store and the data dir that this call created are removed
+/// again. Nothing else that was there is touched; a store already there has
+/// no vault to open it, and goes (design §5.6).
 fn create_identity_files(
     files: &DataFiles,
-    config: &[u8],
-    friends: &[u8],
+    keys: StoreKeys,
+    account: &[u8],
     vault: &[u8],
-    mut write: impl FnMut(&Path, &[u8]) -> std::io::Result<()>,
+    write: impl FnOnce(&Path, &[u8]) -> std::io::Result<()>,
 ) -> std::io::Result<()> {
     let home_existed = files.home.exists();
     std::fs::create_dir_all(&files.home)?;
     harden_dir(&files.home);
-    let mut created: Vec<&Path> = Vec::new();
-    for (path, bytes) in [
-        (&files.config, config),
-        (&files.friends, friends),
-        (&files.vault, vault),
-    ] {
-        let existed = path.exists();
-        if let Err(error) = write(path, bytes) {
-            for path in created {
-                let _ = std::fs::remove_file(path);
-            }
-            if !home_existed {
-                // Only succeeds while empty, so nothing else can go with it.
-                let _ = std::fs::remove_dir(&files.home);
-            }
-            return Err(error);
+    let undo = || {
+        let _ = std::fs::remove_dir_all(files.home.join(STORE_DIR));
+        if !home_existed {
+            // Only succeeds while empty, so nothing else can go with it.
+            let _ = std::fs::remove_dir(&files.home);
         }
-        if !existed {
-            created.push(path);
-        }
+    };
+    let written =
+        SessionStore::create(&files.home, keys, account).and_then(|()| write(&files.vault, vault));
+    if written.is_err() {
+        undo();
     }
-    Ok(())
+    written
 }
 
 /// Whether opening the vault at `vault` will ask for a TOTP code, from its
@@ -563,15 +548,17 @@ pub(crate) fn submitted_code(code: Option<&str>) -> Option<&str> {
 }
 
 /// Create a new identity in `files`, its vault sealed with `passphrase` and,
-/// if given, `totp_secret`. Nothing is written if an identity exists there
-/// already or if the passphrase fails the policy.
+/// if given, `totp_secret`, and its store (cifrado local): the account
+/// never touches a `.json` file. Returns the identity and the vault's app
+/// data, the key to the store. Nothing is written if an identity exists
+/// there already or if the passphrase fails the policy.
 fn create_account(
     files: &DataFiles,
     handle: &str,
     passphrase: &str,
     totp_secret: Option<&[u8]>,
-    write: impl FnMut(&Path, &[u8]) -> std::io::Result<()>,
-) -> Result<Identity, CommandError> {
+    write: impl FnOnce(&Path, &[u8]) -> std::io::Result<()>,
+) -> Result<(Identity, Zeroizing<Vec<u8>>), CommandError> {
     if files.vault.exists() {
         return Err(CommandError::new(
             ErrorCode::VaultExists,
@@ -581,34 +568,22 @@ fn create_account(
     validate_passphrase(passphrase)?;
 
     let identity = create_identity();
-    // No app data yet: the key to store/ joins the vault with the store
-    // itself (cifrado local, CL-1b).
-    let sealed = seal_vault(&identity, totp_secret, None, passphrase)?;
-    let config = ConfigFile {
+    let keys = StoreKeys::generate();
+    let app = keys.to_vault_app();
+    let sealed = seal_vault(&identity, totp_secret, Some(&app), passphrase)?;
+    let account = AccountFile {
         handle: handle.to_string(),
         nostr_pub: hex::encode(identity.nostr.pub_bytes),
         relays: default_relays(),
         created_at: chrono::Utc::now().timestamp(),
-        avatar: None,
+        ..AccountFile::default()
     };
-    let friends = FriendsFile {
-        handle: handle.to_string(),
-        friends: vec![],
-        blocked: vec![],
-    };
-    let config_json =
-        serde_json::to_string_pretty(&config).map_err(|e| CommandError::internal(e.to_string()))?;
-    let friends_json = serde_json::to_string_pretty(&friends)
-        .map_err(|e| CommandError::internal(e.to_string()))?;
-    create_identity_files(
-        files,
-        config_json.as_bytes(),
-        friends_json.as_bytes(),
-        &encode_vault(&sealed),
-        write,
-    )
-    .map_err(|e| CommandError::io(&e))?;
-    Ok(identity)
+    let json = Zeroizing::new(
+        serde_json::to_vec(&account).map_err(|e| CommandError::internal(e.to_string()))?,
+    );
+    create_identity_files(files, keys, &json, &encode_vault(&sealed), write)
+        .map_err(|e| CommandError::io(&e))?;
+    Ok((identity, app))
 }
 
 /// Open the vault at `vault` with `passphrase` and, if it holds a TOTP
@@ -632,30 +607,37 @@ pub(crate) fn open_vault(
 }
 
 /// Rotate the signed prekey if it has aged out and expire retired ones; if
-/// that changed anything, seal the vault again, with the same passphrase, the
-/// same TOTP secret or lack of one and the same app data, and save it with
-/// `write`. `None` when nothing was due.
+/// that changed anything, or `fix_flag` says the vault's TOTP flag is wrong
+/// (design §4.9), seal the vault again, with the same passphrase, the same
+/// TOTP secret or lack of one and the same app data, and save it with
+/// `write`, which also gets the id of the signed prekey it holds. `None`
+/// when nothing was due.
 ///
 /// Without rotation, one leaked signed prekey would expose every initial
 /// message ever sent to us; retention is what keeps peers holding an older
 /// cached bundle (and their auto-heal re-handshakes) working across the
 /// change. It runs at unlock, the only point where the identity and the
 /// passphrase are both at hand.
-fn reseal_if_rotated(
+fn reseal_if_needed(
     identity: &mut Identity,
     totp_secret: Option<&[u8]>,
     app: Option<&[u8]>,
     passphrase: &str,
     now: i64,
-    write: impl FnOnce(&[u8]) -> std::io::Result<()>,
+    fix_flag: bool,
+    write: impl FnOnce(&[u8], u32) -> std::io::Result<()>,
 ) -> Option<Result<(), CommandError>> {
-    if !crate::identity::rotate_signed_prekey_if_due(identity, now) {
+    let rotated = crate::identity::rotate_signed_prekey_if_due(identity, now);
+    if !rotated && !fix_flag {
         return None;
     }
+    let spk = identity.signed_prekey.id;
     Some(
         seal_vault(identity, totp_secret, app, passphrase)
             .map_err(CommandError::from)
-            .and_then(|sealed| write(&encode_vault(&sealed)).map_err(|e| CommandError::io(&e))),
+            .and_then(|sealed| {
+                write(&encode_vault(&sealed), spk).map_err(|e| CommandError::io(&e))
+            }),
     )
 }
 
@@ -666,20 +648,21 @@ struct RelayStart {
     handle: String,
 }
 
-/// Load the session of an identity whose vault was just opened into `inner`,
-/// then give `start_relays` what to connect to. `unseal` and `forge` both end
-/// here, so the two always open a session the same way.
+/// Open the session of an identity whose vault was just opened in `inner`,
+/// with what `load_session` read for it, then give `start_relays` what to
+/// connect to. `unseal` and `forge` both end here, so the two always open a
+/// session the same way.
 ///
 /// If that identity's session is open already, nothing is loaded or started
-/// again: loading would throw away what changed in memory since (sessions
-/// with contacts, contacts added), and a second set of relay connections
-/// would deliver everything twice. Another identity's session is never
-/// replaced.
+/// again, and `loaded` is not needed: loading would throw away what changed
+/// in memory since (sessions with contacts, contacts added), and a second
+/// set of relay connections would deliver everything twice. Another
+/// identity's session is never replaced.
 async fn open_session(
     inner: &tokio::sync::Mutex<InnerState>,
-    files: &DataFiles,
     identity: Identity,
     totp_secret: Option<Zeroizing<Vec<u8>>>,
+    loaded: Option<LoadedSession>,
     start_relays: impl FnOnce(RelayStart),
 ) -> Result<UnsealResponse, CommandError> {
     let fingerprint = fp(
@@ -706,84 +689,50 @@ async fn open_session(
             fingerprint,
             nostr_pub,
             relay_connection_started: false,
+            prefs: None,
+            integrity: None,
         });
     }
+    let Some(LoadedSession {
+        storage,
+        account,
+        history,
+        sessions,
+        profiles,
+        prefs,
+        report,
+    }) = loaded
+    else {
+        return Err(CommandError::internal("nothing was loaded for the session"));
+    };
 
-    harden_dir(&files.home); // tighten perms on existing installs too
-    let cfg_bytes = std::fs::read(&files.config).map_err(|e| CommandError::io(&e))?;
-    let mut cfg: ConfigFile = serde_json::from_slice(&cfg_bytes)
-        .map_err(|e| CommandError::internal(format!("config.json: {e}")))?;
-    cfg.avatar = sanitized_inline_raster(cfg.avatar);
-
-    let friends_bytes = std::fs::read(&files.friends).unwrap_or_else(|_| {
-        serde_json::to_vec(&FriendsFile {
-            handle: cfg.handle.clone(),
-            friends: vec![],
-            blocked: vec![],
-        })
-        .unwrap()
-    });
-    let mut friends_file: FriendsFile = serde_json::from_slice(&friends_bytes)
-        .map_err(|e| CommandError::internal(format!("friends.json: {e}")))?;
-    for friend in &mut friends_file.friends {
-        friend.avatar = sanitized_inline_raster(friend.avatar.take());
-    }
-
-    inner.history_key = Some(derive_history_key(&identity));
     inner.identity = Some(identity);
     // Moved out of its wrapper, which wipes what is left: an empty vector.
     inner.totp_secret = totp_secret.map(|mut secret| std::mem::take(&mut *secret));
-    inner.handle = Some(cfg.handle.clone());
-    inner.avatar = cfg.avatar.clone();
-    inner.friends.clear();
-    for f in friends_file.friends {
-        inner.friends.insert(f.handle.clone(), f);
-    }
-    inner.blocked = friends_file.blocked.into_iter().collect();
-    inner.groups.clear();
-    if let Ok(bytes) = std::fs::read(&files.groups) {
-        if let Ok(list) = serde_json::from_slice::<Vec<GroupRoster>>(&bytes) {
-            for r in list {
-                let r = sanitize_roster(r);
-                inner.groups.insert(r.group_id.clone(), r);
-            }
-        }
-    }
-    inner.group_invites.clear();
-    if let Ok(bytes) = std::fs::read(&files.group_invites) {
-        if let Ok(list) = serde_json::from_slice::<Vec<GroupInvite>>(&bytes) {
-            for mut invite in list {
-                invite.roster = sanitize_roster(invite.roster);
-                inner
-                    .group_invites
-                    .insert(invite.roster.group_id.clone(), invite);
-            }
-        }
-    }
-    inner.history.clear();
-    load_history(&mut inner, &files.history);
-    load_ratchets(&mut inner, &files.ratchets);
-    // -- W8 (K12) --
-    let profiles = files.home.join(profile::PROFILES_FILE);
-    profile::load_into(&mut inner, &profiles, chrono::Utc::now().timestamp());
-    drop(inner);
-
-    let relays = if cfg.relays.is_empty() {
+    inner.storage.set(storage);
+    let now = chrono::Utc::now().timestamp();
+    apply_loaded(&mut inner, account, history, sessions, profiles, now);
+    let handle = inner.handle.clone().unwrap_or_default();
+    let relays = if inner.relay_urls.is_empty() {
         default_relays()
     } else {
-        cfg.relays
+        inner.relay_urls.clone()
     };
+    drop(inner);
+
     start_relays(RelayStart {
         relays,
         nostr_pub: nostr_pub.clone(),
-        handle: cfg.handle.clone(),
+        handle: handle.clone(),
     });
 
     Ok(UnsealResponse {
-        handle: cfg.handle,
+        handle,
         fingerprint,
         nostr_pub,
         relay_connection_started: true,
+        prefs,
+        integrity: (!report.is_empty()).then_some(report),
     })
 }
 
@@ -905,13 +854,15 @@ async fn forge_identity(
     crate::diag::remove_stale_log(&files.home, crate::diag::Build::CURRENT);
 
     // PBKDF2 is slow on purpose: off the async runtime, as in `unseal`.
-    let (identity, totp_secret) = tokio::task::spawn_blocking({
+    let (identity, totp_secret, loaded) = tokio::task::spawn_blocking({
         let files = files.clone();
         let handle = handle.clone();
         move || {
             let secret = totp_secret.as_deref().map(Vec::as_slice);
-            create_account(&files, &handle, &passphrase, secret, fsutil::atomic_write)
-                .map(|identity| (identity, totp_secret))
+            let (identity, app) =
+                create_account(&files, &handle, &passphrase, secret, fsutil::atomic_write)?;
+            let loaded = load_session(&files, &identity, Some(&app), None)?;
+            Ok::<_, CommandError>((identity, totp_secret, loaded))
         }
     })
     .await
@@ -924,7 +875,7 @@ async fn forge_identity(
     // A new session never inherits TURN credentials (lock and wipe clear them too).
     state.turn.clear();
     let starter = relay_starter(app, state);
-    let session = open_session(&state.inner, &files, identity, totp_secret, starter).await?;
+    let session = open_session(&state.inner, identity, totp_secret, Some(loaded), starter).await?;
     Ok(ForgeResponse {
         session,
         bundle_json,
@@ -1051,7 +1002,7 @@ pub async fn unseal(
     crate::diag::remove_stale_log(&files.home, crate::diag::Build::CURRENT);
     let vault = files.vault.clone();
 
-    let (identity, totp_secret) = tokio::task::spawn_blocking(move || {
+    let (identity, totp_secret, loaded) = tokio::task::spawn_blocking(move || {
         let code = submitted_code(totp_code.as_deref().map(String::as_str));
         let UnsealedVault {
             mut identity,
@@ -1059,25 +1010,37 @@ pub async fn unseal(
             app,
         } = open_vault(&vault, &passphrase, code)?;
         let totp_secret = totp_secret.map(Zeroizing::new);
-        if !session_open {
-            let now = chrono::Utc::now().timestamp();
-            let save = |bytes: &[u8]| fsutil::atomic_write(&vault, bytes);
-            let secret = totp_secret.as_deref().map(Vec::as_slice);
-            let app = app.as_deref().map(Vec::as_slice);
-            match reseal_if_rotated(&mut identity, secret, app, &passphrase, now, save) {
-                None => {}
-                Some(Ok(())) => crate::diag::note_with(
-                    "signed prekey rotated",
-                    &[
-                        ("spk_id", &identity.signed_prekey.id),
-                        ("retired", &identity.retired_signed_prekeys.len()),
-                    ],
-                ),
-                // Keep the session usable; we simply retry next unlock.
-                Some(Err(_)) => dbg_log("signed prekey rotation could not be saved"),
-            }
+        if session_open {
+            return Ok::<_, CommandError>((identity, totp_secret, None));
         }
-        Ok::<_, CommandError>((identity, totp_secret))
+        // The store opens before the vault is sealed again, so the re-seal
+        // is noted in its index (design §4.9).
+        let bytes = std::fs::read(&vault).ok();
+        let app = app.as_deref().map(Vec::as_slice);
+        let mut loaded = load_session(&files, &identity, app, bytes.as_deref())?;
+        let fix_flag = bytes
+            .as_deref()
+            .is_some_and(|bytes| totp_flag_disagrees(bytes, totp_secret.is_some()));
+        if fix_flag {
+            loaded.report.note("vault", What::TotpFlag, Action::Notice);
+        }
+        let now = chrono::Utc::now().timestamp();
+        let storage = &mut loaded.storage;
+        let save = |bytes: &[u8], spk: u32| write_vault_noted(Some(storage), &vault, bytes, spk);
+        let secret = totp_secret.as_deref().map(Vec::as_slice);
+        match reseal_if_needed(&mut identity, secret, app, &passphrase, now, fix_flag, save) {
+            None => {}
+            Some(Ok(())) => crate::diag::note_with(
+                "vault sealed again",
+                &[
+                    ("spk_id", &identity.signed_prekey.id),
+                    ("retired", &identity.retired_signed_prekeys.len()),
+                ],
+            ),
+            // Keep the session usable; we simply retry next unlock.
+            Some(Err(_)) => dbg_log("the vault could not be sealed again"),
+        }
+        Ok((identity, totp_secret, Some(loaded)))
     })
     .await
     .map_err(|_| CommandError::internal("vault unlock worker failed"))??;
@@ -1087,7 +1050,7 @@ pub async fn unseal(
         state.turn.clear();
     }
     let starter = relay_starter(app, &state);
-    open_session(&state.inner, &files, identity, totp_secret, starter).await
+    open_session(&state.inner, identity, totp_secret, loaded, starter).await
 }
 
 /// What the transport relay can see about one event. Deliberately metadata
@@ -1212,7 +1175,7 @@ pub async fn probe_node(
     let now = chrono::Utc::now().timestamp();
     let replace = replace_existing.unwrap_or(false);
     let (handle, added) = contacts_cmds::add_contact(&mut inner, code, &handle, replace, now)?;
-    persist_friends(&inner).map_err(|e| CommandError::new(ErrorCode::Io, e))?;
+    persist_account(&inner).map_err(|e| CommandError::new(ErrorCode::Io, e))?;
     if added != contacts_cmds::Added::Refreshed {
         // The old session is gone, and what the old keys shared: the
         // replaced contact's, or what a contact removed before left under
@@ -1367,27 +1330,11 @@ pub async fn wipe(state: State<'_, AppState>) -> Result<(), String> {
     // this deleted it.
     let _gate = state.session_gate.lock().await;
     let mut inner = state.inner.lock().await;
+    // The data key goes with the session's storage first.
     forget_session(&mut inner, &state.turn);
     drop(inner);
 
-    let mut failures = Vec::new();
-    remove_data_files(
-        &[
-            vault_path(),
-            friends_path(),
-            config_path(),
-            groups_path(),
-            group_invites_path(),
-            history_path(),
-            ratchets_path(),
-            profiles_path(),
-            trino_home().join(profile::DAMAGED_PROFILES_FILE),
-            trino_home().join(crate::diag::LOG_FILE),
-            trino_home().join(crate::diag::LEGACY_LOG_FILE),
-        ],
-        &mut failures,
-    );
-    remove_dir_for_wipe(&stickers_dir(), &mut failures);
+    let failures = storage_cmds::wipe_home(&trino_home(), &mut storage_cmds::RealWipe);
     if failures.is_empty() {
         Ok(())
     } else {
@@ -1456,9 +1403,11 @@ pub fn get_autostart() -> bool {
 pub async fn lock_vault(state: State<'_, AppState>) -> Result<(), String> {
     let _gate = state.session_gate.lock().await;
     let mut inner = state.inner.lock().await;
-    // Persist current session/history state before wiping it from memory.
+    // Persist current session/history state before wiping it from memory,
+    // with whatever waits for the store's index (design §4.6).
     save_ratchets(&inner);
     save_history(&inner);
+    inner.storage.flush_for_lock();
     forget_session(&mut inner, &state.turn);
     dbg_log("vault LOCKED (auto-lock)");
     Ok(())
@@ -1528,7 +1477,7 @@ pub async fn create_group(state: State<'_, AppState>, name: String) -> Result<Gr
     let me = self_member_bundle(&identity, &handle);
     let roster = group::create_group(&identity, me, name.trim()).map_err(|e| e.to_string())?;
     inner.groups.insert(roster.group_id.clone(), roster.clone());
-    persist_groups(&inner)?;
+    persist_account(&inner)?;
     Ok(group_info(&roster, &my_ik))
 }
 
@@ -1556,7 +1505,7 @@ pub async fn add_group_member(
     gid: String,
     friend_handle: String,
 ) -> Result<GroupInfo, CommandError> {
-    groups_cmds::add_member(&state, &gid, &friend_handle, persist_groups).await
+    groups_cmds::add_member(&state, &gid, &friend_handle, persist_account).await
 }
 
 /// A text to a group (K4). Every member is tried, whatever happens to the
@@ -1928,7 +1877,7 @@ async fn forward_to(
 pub async fn remove_node(state: State<'_, AppState>, handle: String) -> Result<(), String> {
     let mut inner = state.inner.lock().await;
     let profile_gone = contacts_cmds::remove_contact(&mut inner, &handle);
-    persist_friends(&inner)?;
+    persist_account(&inner)?;
     save_history(&inner);
     save_ratchets(&inner);
     // -- W8 (K12) --
@@ -1951,7 +1900,7 @@ pub async fn rename_node(
     else {
         return Ok(());
     };
-    persist_friends(&inner).map_err(|e| CommandError::new(ErrorCode::Io, e))?;
+    persist_account(&inner).map_err(|e| CommandError::new(ErrorCode::Io, e))?;
     save_history(&inner);
     save_ratchets(&inner);
     // -- W8 (K12) --
@@ -1980,7 +1929,7 @@ pub async fn block_node(
         } else {
             inner.blocked.remove(&pk);
         }
-        persist_friends(&inner)?;
+        persist_account(&inner)?;
     }
     Ok(())
 }
@@ -2032,7 +1981,7 @@ fn prune_history(history: &mut HashMap<String, Vec<HistItem>>, now: i64) -> bool
     changed
 }
 
-// ---- Sticker library (stored unencrypted in ~/.trino/stickers) ----
+// ---- Sticker library ----
 
 /// Restrict the data dir to the owner (0700) on Unix so other local users can't
 /// read the vault/history/log. No-op on Windows (uses NTFS ACLs by default).
@@ -2046,9 +1995,6 @@ fn harden_dir(dir: &Path) {
     let _ = dir;
 }
 
-fn stickers_dir() -> std::path::PathBuf {
-    crate::state::trino_home().join("stickers")
-}
 fn sticker_ext_for_mime(mime: &str) -> &'static str {
     match mime {
         "image/gif" => "gif",
@@ -2073,9 +2019,15 @@ pub struct StickerInfo {
     pub data_url: String,
 }
 
+/// Keep a sticker: in the store, sealed under a name that does not give the
+/// image away (H4), or as before for an account not moved yet. Needs the
+/// open session.
 #[tauri::command]
-pub async fn import_sticker(data_b64: String, mime: String) -> Result<StickerInfo, String> {
-    use base64::Engine as _;
+pub async fn import_sticker(
+    state: State<'_, AppState>,
+    data_b64: String,
+    mime: String,
+) -> Result<StickerInfo, String> {
     if !matches!(
         mime.as_str(),
         "image/jpeg" | "image/png" | "image/gif" | "image/webp"
@@ -2091,68 +2043,20 @@ pub async fn import_sticker(data_b64: String, mime: String) -> Result<StickerInf
     if bytes.len() > MAX_STICKER_BYTES {
         return Err("sticker is too large (5 MB max)".to_string());
     }
-    let id = hex::encode(&crate::crypto::sha256(&bytes)[..8]);
-    let ext = sticker_ext_for_mime(&mime);
-    let dir = stickers_dir();
-    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
-    std::fs::write(dir.join(format!("{id}.{ext}")), &bytes).map_err(|e| e.to_string())?;
-    let b64 = base64::engine::general_purpose::STANDARD.encode(&bytes);
-    Ok(StickerInfo {
-        id,
-        mime: mime.clone(),
-        data_url: format!("data:{mime};base64,{b64}"),
-    })
+    let inner = state.inner.lock().await;
+    storage_cmds::import_sticker_into(&inner.storage, &bytes, &mime)
 }
 
+/// The stickers of the open session.
 #[tauri::command]
-pub async fn list_stickers() -> Result<Vec<StickerInfo>, String> {
-    use base64::Engine as _;
-    let dir = stickers_dir();
-    let mut out = Vec::new();
-    if let Ok(rd) = std::fs::read_dir(&dir) {
-        for e in rd.flatten() {
-            let path = e.path();
-            let ext = path
-                .extension()
-                .and_then(|s| s.to_str())
-                .unwrap_or("")
-                .to_lowercase();
-            let id = path
-                .file_stem()
-                .and_then(|s| s.to_str())
-                .unwrap_or("")
-                .to_string();
-            if id.is_empty() {
-                continue;
-            }
-            let bytes = match std::fs::read(&path) {
-                Ok(b) => b,
-                Err(_) => continue,
-            };
-            let mime = sticker_mime_for_ext(&ext).to_string();
-            let b64 = base64::engine::general_purpose::STANDARD.encode(&bytes);
-            out.push(StickerInfo {
-                id,
-                mime: mime.clone(),
-                data_url: format!("data:{mime};base64,{b64}"),
-            });
-        }
-    }
-    Ok(out)
+pub async fn list_stickers(state: State<'_, AppState>) -> Result<Vec<StickerInfo>, String> {
+    storage_cmds::list_stickers_in(&state.inner.lock().await.storage)
 }
 
+/// Remove the sticker `id` of the open session.
 #[tauri::command]
-pub async fn delete_sticker(id: String) -> Result<(), String> {
-    let dir = stickers_dir();
-    if let Ok(rd) = std::fs::read_dir(&dir) {
-        for e in rd.flatten() {
-            let path = e.path();
-            if path.file_stem().and_then(|s| s.to_str()) == Some(id.as_str()) {
-                let _ = std::fs::remove_file(&path);
-            }
-        }
-    }
-    Ok(())
+pub async fn delete_sticker(state: State<'_, AppState>, id: String) -> Result<(), String> {
+    storage_cmds::delete_sticker_in(&state.inner.lock().await.storage, &id)
 }
 
 /// The single source of the default STUN servers for direct calls. Calls are
@@ -2597,7 +2501,7 @@ fn session_key(inner: &InnerState) -> Option<[u8; 32]> {
 /// session it started in (`session_key`) is open; `NoSession` if not.
 ///
 /// A lock during that wait ends the session: `lock_vault` saves the history
-/// without the message, wipes it, and leaves no history key to write with.
+/// without the message, wipes it, and leaves no storage to write with.
 /// So a message a relay accepted while its session was locked is not kept
 /// in the sender's history, nor in the outbox to replay, although its
 /// contact may receive it: the send answers `no_session` and wipes its
@@ -3372,20 +3276,19 @@ fn accept_incoming_roster(
     ) {
         RosterOutcome::Applied { gid, notes } => {
             log_skipped_members(&notes);
-            let _ = persist_friends(inner);
-            let _ = persist_groups(inner);
+            let _ = persist_account(inner);
             dbg_log("  OK: roster stored");
             let _ = app.emit("group-updated", GroupUpdatedEvent { gid });
         }
         RosterOutcome::Invited { gid } => {
-            let _ = persist_group_invites(inner);
+            let _ = persist_account(inner);
             dbg_log("  OK: group invite held");
             if let Some(invite) = inner.group_invites.get(&gid) {
                 let _ = app.emit("group-invite", invite_info(invite));
             }
         }
         RosterOutcome::Ended { gid } => {
-            let _ = persist_groups(inner);
+            let _ = persist_account(inner);
             dbg_log("  OK: group ended for us");
             let _ = app.emit("group-removed", groups_cmds::GroupRemovedEvent { gid });
         }
@@ -3476,18 +3379,6 @@ fn merge_group_members(
     notes
 }
 
-fn persist_groups(inner: &crate::state::InnerState) -> Result<(), String> {
-    let groups: Vec<&GroupRoster> = inner.groups.values().collect();
-    let json = serde_json::to_string_pretty(&groups).map_err(|e| e.to_string())?;
-    fsutil::atomic_write(&groups_path(), json.as_bytes()).map_err(|e| e.to_string())
-}
-
-fn persist_group_invites(inner: &InnerState) -> Result<(), String> {
-    let invites: Vec<&GroupInvite> = inner.group_invites.values().collect();
-    let json = serde_json::to_string_pretty(&invites).map_err(|e| e.to_string())?;
-    fsutil::atomic_write(&group_invites_path(), json.as_bytes()).map_err(|e| e.to_string())
-}
-
 fn invite_info(invite: &GroupInvite) -> GroupInviteInfo {
     GroupInviteInfo {
         gid: invite.roster.group_id.clone(),
@@ -3518,15 +3409,19 @@ pub async fn accept_group_invite(
     gid: String,
 ) -> Result<GroupInfo, String> {
     let mut inner = state.inner.lock().await;
+    accept_invite(&mut inner, &gid, chrono::Utc::now().timestamp())
+}
+
+/// `accept_group_invite` on the open session. The invite is consumed either
+/// way, and saved with the contacts and the group it brings in one write
+/// (design §4.1), so a cut never leaves them half done.
+fn accept_invite(inner: &mut InnerState, gid: &str, now: i64) -> Result<GroupInfo, String> {
     let identity = inner.identity.as_ref().ok_or("vault sealed")?;
     let my_ik = hex::encode(identity.ik_sign.pub_bytes);
-    let joined = take_group_invite(&mut inner, &gid, &my_ik, chrono::Utc::now().timestamp());
-    // The invite is consumed either way.
-    persist_group_invites(&inner)?;
+    let joined = take_group_invite(inner, gid, &my_ik, now);
+    persist_account(inner)?;
     let (roster, notes) = joined?;
     log_skipped_members(&notes);
-    persist_friends(&inner)?;
-    persist_groups(&inner)?;
     dbg_log("GROUP INVITE accepted");
     Ok(group_info(&roster, &my_ik))
 }
@@ -3542,13 +3437,15 @@ pub async fn decline_group_invite(state: State<'_, AppState>, gid: String) -> Re
         .group_invites
         .remove(&gid)
         .ok_or("unknown group invite")?;
-    persist_group_invites(&inner)
+    persist_account(&inner)
 }
 
 // ---- encrypted chat history -------------------------------------------------
 
 pub(crate) const HISTORY_CAP: usize = 500; // keep last N per conversation (bounds the file)
 
+/// The key earlier versions seal history.bin and ratchets.bin with, which an
+/// account not moved to the store yet still uses.
 fn derive_history_key(identity: &crate::identity::Identity) -> [u8; 32] {
     let okm = crate::crypto::hkdf_expand(
         &identity.ik_sign.priv_bytes,
@@ -3563,49 +3460,40 @@ fn derive_history_key(identity: &crate::identity::Identity) -> [u8; 32] {
 }
 
 pub(crate) fn save_history(inner: &InnerState) {
-    // Not fatal, as before: a failed write keeps the previous history.bin
-    // whole, and the next save writes everything again.
-    if write_history(inner, &history_path()).is_err() {
-        dbg_log("history.bin could not be saved");
+    // Not fatal, as before: a failed write keeps the previous history whole,
+    // and the next save writes everything again.
+    if write_history(inner).is_err() {
+        dbg_log("the history could not be saved");
     }
 }
 
-/// Encrypt the history with the history key and replace `path` with it,
-/// `nonce ‖ ciphertext`. Without a key (no session) nothing is written.
-pub(crate) fn write_history(inner: &InnerState, path: &Path) -> std::io::Result<()> {
-    let Some(key) = inner.history_key else {
-        return Ok(());
-    };
-    let json = serde_json::to_vec(&inner.history).map_err(std::io::Error::other)?;
-    let (ct, nonce) = crate::crypto::aes_gcm_encrypt(&key, &json, None)
-        .map_err(|error| std::io::Error::other(error.to_string()))?;
-    let mut blob = Vec::with_capacity(nonce.len() + ct.len());
-    blob.extend_from_slice(&nonce);
-    blob.extend_from_slice(&ct);
-    fsutil::atomic_write(path, &blob)
+/// Save the history where the session keeps it, sealed. With no session
+/// nothing is written.
+pub(crate) fn write_history(inner: &InnerState) -> std::io::Result<()> {
+    let json = Zeroizing::new(serde_json::to_vec(&inner.history).map_err(std::io::Error::other)?);
+    inner.storage.write_history(&json)
 }
 
-pub(crate) fn load_history(inner: &mut InnerState, path: &Path) {
-    let Some(key) = inner.history_key else {
+/// The history unlocking found. One that opens but does not read is held:
+/// never written over this session (H2).
+pub(crate) fn load_history(inner: &mut InnerState, found: Found) {
+    let Found::Ready(json) = found else {
         return;
     };
-    let Ok(blob) = std::fs::read(path) else {
-        return;
-    };
-    if blob.len() < 12 {
-        return;
-    }
-    let (nonce, ct) = blob.split_at(12);
-    if let Ok(json) = crate::crypto::aes_gcm_decrypt(&key, ct, nonce, None) {
-        if let Ok(mut h) = serde_json::from_slice::<HashMap<String, Vec<HistItem>>>(&json) {
-            for items in h.values_mut() {
+    match serde_json::from_slice::<HashMap<String, Vec<HistItem>>>(&json) {
+        Ok(mut history) => {
+            for items in history.values_mut() {
                 for item in items {
                     if let Some(file) = item.file.take() {
                         item.file = Some(sanitize_file_ref(file));
                     }
                 }
             }
-            inner.history = h;
+            inner.history = history;
+        }
+        Err(_) => {
+            dbg_log("the history does not read: kept as it is");
+            inner.storage.hold(&Slot::History);
         }
     }
 }
@@ -3654,40 +3542,28 @@ impl RatchetsFile {
 /// they survive app restarts. Without this, every restart forces a fresh X3DH
 /// handshake and desyncs the peer (messages silently fail to decrypt).
 fn save_ratchets(inner: &InnerState) {
-    let Some(key) = inner.history_key else {
-        return;
-    };
     let file = RatchetsFile::from_state(inner);
-    let Ok(json) = serde_json::to_vec(&file) else {
+    let Ok(json) = serde_json::to_vec(&file).map(Zeroizing::new) else {
         return;
     };
-    let Ok((ct, nonce)) = crate::crypto::aes_gcm_encrypt(&key, &json, None) else {
-        return;
-    };
-    let mut blob = Vec::with_capacity(nonce.len() + ct.len());
-    blob.extend_from_slice(&nonce);
-    blob.extend_from_slice(&ct);
-    // Not fatal, as before: a failed write keeps the previous ratchets.bin
+    // Not fatal, as before: a failed write keeps the previous sessions
     // whole, and the next save writes every session again.
-    if fsutil::atomic_write(&ratchets_path(), &blob).is_err() {
-        dbg_log("ratchets.bin could not be saved");
+    if inner.storage.write_sessions(&json).is_err() {
+        dbg_log("the sessions could not be saved");
     }
 }
 
-fn load_ratchets(inner: &mut InnerState, path: &Path) {
-    let Some(key) = inner.history_key else {
+/// The sessions unlocking found. Ones that open but do not read are held,
+/// and every contact gets a new session as it writes.
+fn load_ratchets(inner: &mut InnerState, found: Found) {
+    let Found::Ready(json) = found else {
         return;
     };
-    let Ok(blob) = std::fs::read(path) else {
-        return;
-    };
-    if blob.len() < 12 {
-        return;
-    }
-    let (nonce, ct) = blob.split_at(12);
-    if let Ok(json) = crate::crypto::aes_gcm_decrypt(&key, ct, nonce, None) {
-        if let Ok(f) = serde_json::from_slice::<RatchetsFile>(&json) {
-            f.restore_into(inner);
+    match serde_json::from_slice::<RatchetsFile>(&json) {
+        Ok(file) => file.restore_into(inner),
+        Err(_) => {
+            dbg_log("the sessions do not read: kept as they are");
+            inner.storage.hold(&Slot::Sessions);
         }
     }
 }
@@ -3859,18 +3735,9 @@ pub async fn update_profile(
             profile::try_save(&inner).map_err(|e| CommandError::io(&e))?;
         }
 
-        // Persist to config.json (keep nostr_pub / relays / created_at).
-        let cfg_bytes = std::fs::read(config_path()).map_err(|e| CommandError::io(&e))?;
-        let mut cfg: ConfigFile = serde_json::from_slice(&cfg_bytes)
-            .map_err(|e| CommandError::internal(format!("config.json: {e}")))?;
-        cfg.handle = inner.handle.clone().unwrap_or_default();
-        cfg.avatar = inner.avatar.clone();
-        let cfg_json = serde_json::to_string_pretty(&cfg)
-            .map_err(|e| CommandError::internal(e.to_string()))?;
-        fsutil::atomic_write(&config_path(), cfg_json.as_bytes())
-            .map_err(|e| CommandError::io(&e))?;
-        // friends.json also stores our own handle at the top level.
-        persist_friends(&inner).map_err(|e| CommandError::new(ErrorCode::Io, e))?;
+        // The name and the photo are saved with the rest of the account,
+        // which keeps the Nostr key, the relays and the date.
+        persist_account(&inner).map_err(|e| CommandError::new(ErrorCode::Io, e))?;
         if changed {
             profile::targets(&mut inner)
         } else {
@@ -3879,16 +3746,6 @@ pub async fn update_profile(
     };
     profile::send_in_background(&app, targets);
     Ok(())
-}
-
-fn persist_friends(inner: &crate::state::InnerState) -> Result<(), String> {
-    let file = FriendsFile {
-        handle: inner.handle.clone().unwrap_or_default(),
-        friends: inner.friends.values().cloned().collect(),
-        blocked: inner.blocked.iter().cloned().collect(),
-    };
-    let json = serde_json::to_string_pretty(&file).map_err(|e| e.to_string())?;
-    fsutil::atomic_write(&friends_path(), json.as_bytes()).map_err(|e| e.to_string())
 }
 
 #[allow(dead_code)]
@@ -3909,6 +3766,7 @@ mod tests {
     use crate::group::roster_signing_bytes;
     use crate::identity::{ed25519_sign, generate_nostr_keypair, generate_x25519, Identity};
     use crate::passphrase::MIN_PASSPHRASE_CHARS;
+    use crate::state::FriendsFile;
     use crate::totp::{generate_totp_secret, totp_now};
     use crate::vault::{SealedVault, UnsealedVault};
 
@@ -4556,126 +4414,7 @@ mod tests {
     }
 
     fn data_files_in(home: PathBuf) -> DataFiles {
-        DataFiles {
-            vault: home.join("vault.bin"),
-            config: home.join("config.json"),
-            friends: home.join("friends.json"),
-            groups: home.join("groups.json"),
-            group_invites: home.join("group_invites.json"),
-            history: home.join("history.bin"),
-            ratchets: home.join("ratchets.bin"),
-            home,
-        }
-    }
-
-    /// Writes like `forge` does, except that `target` fails, as on a full disk.
-    fn failing_on(target: &Path) -> impl FnMut(&Path, &[u8]) -> std::io::Result<()> + '_ {
-        move |path, bytes| {
-            if path == target {
-                Err(std::io::Error::other("disk full"))
-            } else {
-                fsutil::atomic_write(path, bytes)
-            }
-        }
-    }
-
-    #[test]
-    fn a_new_identity_writes_its_vault_last() {
-        let scratch = ScratchDir::new("identity-order");
-        let files = data_files_in(scratch.path().join("home"));
-        let mut order = Vec::new();
-
-        create_identity_files(&files, b"config", b"friends", b"vault", |path, bytes| {
-            order.push(path.to_path_buf());
-            fsutil::atomic_write(path, bytes)
-        })
-        .unwrap();
-
-        // `status` reports an identity once vault.bin exists, and `unseal`
-        // needs config.json: the vault must never exist without the rest.
-        assert_eq!(
-            order,
-            [
-                files.config.clone(),
-                files.friends.clone(),
-                files.vault.clone()
-            ]
-        );
-        assert_eq!(std::fs::read(&files.config).unwrap(), b"config");
-        assert_eq!(std::fs::read(&files.friends).unwrap(), b"friends");
-        assert_eq!(std::fs::read(&files.vault).unwrap(), b"vault");
-    }
-
-    #[test]
-    fn a_new_identity_that_cannot_be_finished_leaves_nothing_behind() {
-        let scratch = ScratchDir::new("identity-rollback");
-        let files = data_files_in(scratch.path().join("home"));
-
-        let result = create_identity_files(
-            &files,
-            b"config",
-            b"friends",
-            b"vault",
-            failing_on(&files.vault),
-        );
-
-        assert!(result.is_err());
-        assert!(!files.config.exists(), "config.json was left behind");
-        assert!(!files.friends.exists(), "friends.json was left behind");
-        assert!(!files.vault.exists(), "vault.bin was left behind");
-        assert!(
-            !files.home.exists(),
-            "the data dir this call created was left behind"
-        );
-    }
-
-    #[test]
-    fn a_failed_new_identity_keeps_what_was_already_there() {
-        let scratch = ScratchDir::new("identity-keep");
-        let files = data_files_in(scratch.path().to_path_buf());
-        // config.json from an earlier attempt that never reached the vault,
-        // and a file that forge never writes.
-        std::fs::write(&files.config, b"earlier attempt").unwrap();
-        let groups = scratch.path().join("groups.json");
-        std::fs::write(&groups, b"[]").unwrap();
-
-        let result = create_identity_files(
-            &files,
-            b"config",
-            b"friends",
-            b"vault",
-            failing_on(&files.vault),
-        );
-
-        assert!(result.is_err());
-        assert!(files.config.exists(), "config.json existed before");
-        assert!(
-            !files.friends.exists(),
-            "friends.json was created by this call"
-        );
-        assert!(!files.vault.exists());
-        assert_eq!(std::fs::read(&groups).unwrap(), b"[]");
-        assert!(files.home.exists(), "the data dir existed before");
-    }
-
-    #[test]
-    fn a_wipe_also_removes_copies_left_by_an_interrupted_save() {
-        let scratch = ScratchDir::new("wipe-leftovers");
-        let friends = scratch.path().join("friends.json");
-        // What `fsutil::atomic_write` leaves if the app dies mid-save.
-        let leftover = scratch.path().join(".friends.json.tmp-1-2-3");
-        let unrelated = scratch.path().join("notes.txt");
-        for path in [&friends, &leftover, &unrelated] {
-            std::fs::write(path, b"[]").unwrap();
-        }
-        let mut failures = Vec::new();
-
-        remove_data_files(std::slice::from_ref(&friends), &mut failures);
-
-        assert!(failures.is_empty(), "{failures:?}");
-        assert!(!friends.exists());
-        assert!(!leftover.exists(), "the temporary copy survived the wipe");
-        assert!(unrelated.exists());
+        DataFiles::in_home(home)
     }
 
     /// Every data file is replaced through `fsutil::atomic_write`: a plain
@@ -4710,10 +4449,6 @@ mod tests {
     // Each seal or unseal is a full PBKDF2 run, which takes seconds in a debug
     // build: the tests below use as few as they can.
     const PASSPHRASE: &str = "correct horse battery staple";
-
-    fn read_config(files: &DataFiles) -> ConfigFile {
-        serde_json::from_slice(&std::fs::read(&files.config).unwrap()).unwrap()
-    }
 
     /// Open `vault` with a code from `secret`, computed just before. The code
     /// is only checked after the slow key derivation; should that take it past
@@ -4777,7 +4512,7 @@ mod tests {
         let files = data_files_in(scratch.path().join("home"));
         let secret = generate_totp_secret();
 
-        let identity = create_account(
+        let (identity, app) = create_account(
             &files,
             "ana",
             PASSPHRASE,
@@ -4786,7 +4521,9 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(read_config(&files).handle, "ana");
+        // The account is in the store the vault carries the key to.
+        let loaded = storage_cmds::load_session(&files, &identity, Some(&app), None).unwrap();
+        assert_eq!(loaded.account.unwrap().handle, "ana");
         assert_eq!(totp_hint(&files.vault), Some(true));
         let error = open_vault(&files.vault, PASSPHRASE, None)
             .map(drop)
@@ -4805,7 +4542,7 @@ mod tests {
         let scratch = ScratchDir::new("forge-no-totp");
         let files = data_files_in(scratch.path().join("home"));
 
-        let identity =
+        let (identity, _) =
             create_account(&files, "ana", PASSPHRASE, None, fsutil::atomic_write).unwrap();
 
         assert_eq!(totp_hint(&files.vault), Some(false));
@@ -4847,7 +4584,7 @@ mod tests {
             std::fs::read(&files.vault).unwrap(),
             b"the vault already here"
         );
-        assert!(!files.config.exists());
+        assert!(!files.home.join(STORE_DIR).exists());
     }
 
     #[test]
@@ -4861,7 +4598,7 @@ mod tests {
         assert_eq!(damaged.code, ErrorCode::Internal);
     }
 
-    /// Runs `reseal_if_rotated` and returns what it would have saved.
+    /// Runs `reseal_if_needed` and returns what it would have saved.
     fn reseal_capturing(
         identity: &mut Identity,
         totp_secret: Option<&[u8]>,
@@ -4877,10 +4614,18 @@ mod tests {
         now: i64,
     ) -> (Option<Result<(), CommandError>>, Option<Vec<u8>>) {
         let mut saved = None;
-        let outcome = reseal_if_rotated(identity, totp_secret, app, PASSPHRASE, now, |bytes| {
-            saved = Some(bytes.to_vec());
-            Ok(())
-        });
+        let outcome = reseal_if_needed(
+            identity,
+            totp_secret,
+            app,
+            PASSPHRASE,
+            now,
+            false,
+            |bytes, _| {
+                saved = Some(bytes.to_vec());
+                Ok(())
+            },
+        );
         (outcome, saved)
     }
 
@@ -4940,7 +4685,8 @@ mod tests {
         assert_eq!(saved, None);
     }
 
-    /// The config.json and friends.json a new identity starts with.
+    /// The config.json and friends.json an account of an earlier version
+    /// starts with: one whose vault carries no key to a store yet.
     fn write_profile(files: &DataFiles, identity: &Identity, handle: &str) {
         let config = ConfigFile {
             handle: handle.to_string(),
@@ -4959,6 +4705,22 @@ mod tests {
         fsutil::atomic_write(&files.friends, &serde_json::to_vec(&friends).unwrap()).unwrap();
     }
 
+    /// Open the session of `identity` as `unseal` does, from the files of an
+    /// account of an earlier version: loaded only when no session is open.
+    async fn open_from(
+        inner: &tokio::sync::Mutex<InnerState>,
+        files: &DataFiles,
+        identity: Identity,
+        start_relays: impl FnOnce(RelayStart),
+    ) -> Result<UnsealResponse, CommandError> {
+        let loaded = if inner.lock().await.identity.is_some() {
+            None
+        } else {
+            Some(load_session(files, &identity, None, None)?)
+        };
+        open_session(inner, identity, None, loaded, start_relays).await
+    }
+
     #[tokio::test]
     async fn opening_the_open_session_again_starts_no_second_set_of_connections() {
         let scratch = ScratchDir::new("session-reuse");
@@ -4968,7 +4730,7 @@ mod tests {
         let inner = tokio::sync::Mutex::new(InnerState::default());
         let mut starts = Vec::new();
 
-        let first = open_session(&inner, &files, me.clone(), None, |start| starts.push(start))
+        let first = open_from(&inner, &files, me.clone(), |start| starts.push(start))
             .await
             .unwrap();
 
@@ -4987,7 +4749,7 @@ mod tests {
             .friends
             .insert("bob".to_string(), friend(&bob, "bob"));
 
-        let second = open_session(&inner, &files, me.clone(), None, |start| starts.push(start))
+        let second = open_from(&inner, &files, me.clone(), |start| starts.push(start))
             .await
             .unwrap();
 
@@ -5008,11 +4770,9 @@ mod tests {
         let me = create_identity();
         write_profile(&files, &me, "ana");
         let inner = tokio::sync::Mutex::new(InnerState::default());
-        open_session(&inner, &files, me.clone(), None, |_| {})
-            .await
-            .unwrap();
+        open_from(&inner, &files, me.clone(), |_| {}).await.unwrap();
 
-        let error = open_session(&inner, &files, create_identity(), None, |_| {
+        let error = open_from(&inner, &files, create_identity(), |_| {
             panic!("connections started for another identity")
         })
         .await
@@ -5032,7 +4792,7 @@ mod tests {
         let files = data_files_in(scratch.path().to_path_buf());
         let inner = tokio::sync::Mutex::new(InnerState::default());
 
-        let error = open_session(&inner, &files, create_identity(), None, |_| {
+        let error = open_from(&inner, &files, create_identity(), |_| {
             panic!("connections started without a session")
         })
         .await
@@ -5065,6 +4825,8 @@ mod tests {
                 fingerprint: "ab12.cd34".to_string(),
                 nostr_pub: "ff".to_string(),
                 relay_connection_started: true,
+                prefs: None,
+                integrity: None,
             },
             bundle_json: "{}".to_string(),
         };
@@ -5155,7 +4917,7 @@ mod tests {
     }
 
     /// The unlocked session of `me`, sending through `relays`. It has no
-    /// history key, so nothing is ever written to the real data directory.
+    /// storage, so nothing is ever written to the real data directory.
     async fn sending_state(me: &Identity, relays: Vec<Arc<NostrClient>>) -> AppState {
         let state = AppState::default();
         {

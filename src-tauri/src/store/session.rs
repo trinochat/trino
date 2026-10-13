@@ -526,6 +526,7 @@ impl StorageCell {
         self.lock().take()
     }
 
+    #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn is_open(&self) -> bool {
         self.lock().is_some()
     }
@@ -561,6 +562,7 @@ impl StorageCell {
 
     /// The account's preferences (CL-2a). An account the migration has not
     /// moved yet has nowhere sealed to keep them.
+    #[cfg_attr(not(test), allow(dead_code))] // the prefs commands, CL-2a
     pub(crate) fn write_prefs(&self, json: &[u8]) -> io::Result<()> {
         self.with(|storage| match storage {
             Storage::Store(store) => store.write(&Slot::Prefs, json),
@@ -579,6 +581,36 @@ impl StorageCell {
         .unwrap_or(Ok(()))
     }
 
+    /// Never write `slot` this session: what it held did not read.
+    pub(crate) fn hold(&self, slot: &Slot) {
+        self.with(|storage| match storage {
+            Storage::Store(store) => store.hold(slot),
+            Storage::Legacy(legacy) => {
+                legacy.held.insert(slot.clone());
+            }
+        });
+    }
+
+    /// Write `bytes` as the file in `slot`, whatever they are.
+    #[cfg(test)]
+    pub(crate) fn write_raw(&self, slot: &Slot, bytes: &[u8]) -> io::Result<()> {
+        self.with(|storage| match storage {
+            Storage::Store(store) => store.write(slot, bytes),
+            Storage::Legacy(_) => Err(io::Error::other("legacy")),
+        })
+        .unwrap_or(Ok(()))
+    }
+
+    /// The highest `seq` the store's index holds: how many writes it took.
+    #[cfg(test)]
+    pub(crate) fn index_seq(&self) -> Option<u64> {
+        self.with(|storage| match storage {
+            Storage::Store(store) => Some(store.store.index().seq),
+            Storage::Legacy(_) => None,
+        })
+        .flatten()
+    }
+
     /// At lock: write whatever waits for the index (design §4.6).
     pub(crate) fn flush_for_lock(&self) {
         self.with(|storage| {
@@ -590,11 +622,13 @@ impl StorageCell {
 
     /// Before the vault is sealed again: note the header it will have, so a
     /// cut before it is written is not taken for someone else's vault.
+    #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn note_vault_pending(&self, header: &VaultHeader) {
         self.with(|storage| storage.note_vault_pending(header));
     }
 
     /// After the vault was written: its header is the one noted.
+    #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn note_vault_written(&self, header: &VaultHeader) {
         self.with(|storage| storage.note_vault_written(header));
     }

@@ -204,18 +204,19 @@ mod tests {
 
     #[test]
     fn a_wipe_removes_both_logs() {
-        let commands: String = include_str!("commands.rs").split_whitespace().collect();
-        let wipe = commands
-            .split("pubasyncfnwipe(")
+        // The wipe lives in storage_cmds.rs since cifrado local (CL-1b).
+        let storage: String = include_str!("storage_cmds.rs").split_whitespace().collect();
+        let wipe = storage
+            .split("pub(super)fnwipe_home(")
             .nth(1)
-            .and_then(|rest| rest.split("#[tauri::command]").next())
+            .and_then(|rest| rest.split("#[cfg(test)]").next())
             .unwrap();
         assert!(
-            wipe.contains("trino_home().join(crate::diag::LOG_FILE),"),
+            wipe.contains("crate::diag::LOG_FILE"),
             "wipe leaves a debug build's log behind"
         );
         assert!(
-            wipe.contains("trino_home().join(crate::diag::LEGACY_LOG_FILE),"),
+            wipe.contains("crate::diag::LEGACY_LOG_FILE"),
             "wipe leaves the log from before T3 behind"
         );
     }

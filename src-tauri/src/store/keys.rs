@@ -51,6 +51,7 @@ pub(crate) enum KeyLabel {
 }
 
 impl KeyLabel {
+    #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) const ALL: [KeyLabel; 8] = [
         KeyLabel::Account,
         KeyLabel::Prefs,
@@ -102,8 +103,10 @@ impl std::fmt::Debug for StoreKeys {
     }
 }
 
-/// Where the keys of an opened vault come from.
+/// Where the keys of an opened vault come from. The migration (CL-1c)
+/// uses it; until then only the tests do.
 #[derive(Debug)]
+#[cfg_attr(not(test), allow(dead_code))]
 pub(crate) enum VaultKeys {
     /// The vault carries them: the account already has its store.
     InVault(StoreKeys),
@@ -117,6 +120,7 @@ pub(crate) enum VaultKeys {
     New(StoreKeys),
 }
 
+#[cfg_attr(not(test), allow(dead_code))]
 impl VaultKeys {
     /// The keys of a vault whose app data is `app`, or new ones if it has
     /// none. App data that is not a key record is an error, never a reason

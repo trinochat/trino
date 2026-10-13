@@ -6,7 +6,7 @@
 //! A child module of `commands`, so it reaches the helpers there (sessions,
 //! sending, persistence) without making them public.
 
-use super::{fp, persist_friends, sanitized_inline_raster, NodeInfo};
+use super::{fp, persist_account, sanitized_inline_raster, NodeInfo};
 use crate::command_error::{CommandError, ErrorCode};
 use crate::identity::{decode_array_32, verify_bundle_binding, PublicBundle};
 use crate::state::{AppState, FriendRecord, InnerState};
@@ -444,7 +444,7 @@ pub async fn acknowledge_key_change(
         return Err(sealed());
     }
     if acknowledge(&mut inner, &handle)? {
-        persist_friends(&inner).map_err(|e| CommandError::new(ErrorCode::Io, e))?;
+        persist_account(&inner).map_err(|e| CommandError::new(ErrorCode::Io, e))?;
     }
     Ok(())
 }

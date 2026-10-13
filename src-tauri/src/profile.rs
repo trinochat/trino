@@ -17,7 +17,8 @@
 //! - one received is kept when its revision is newer than the one kept, and
 //!   never goes further: no history, no `message-received`. One that breaks
 //!   a rule is dropped in silence;
-//! - all of it lives in profiles.bin, encrypted with a key of its own.
+//! - all of it lives in the store's profiles.bin, sealed under a key of its
+//!   own (cifrado local).
 //!
 //! Profiles live here, not in trino-core: changing the core takes a push and
 //! a new pin. A child module of `commands`.
@@ -25,7 +26,9 @@
 use super::{dbg_log, ensure_session_inner, send_cipher_inner};
 use crate::command_error::{CommandError, ErrorCode};
 use crate::identity::Identity;
-use crate::state::{profiles_path, AppState, InnerState};
+use crate::state::{AppState, InnerState};
+use crate::store::envelope::Slot;
+use crate::store::session::{legacy_open, Found};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use std::collections::{HashMap, HashSet};
@@ -39,7 +42,8 @@ pub(crate) const NAME_MAX_CHARS: usize = 64;
 pub(crate) const ABOUT_MAX_CHARS: usize = 140;
 pub(crate) const PHOTO_MAX_BYTES: usize = 20 * 1024;
 pub(crate) const PROFILES_FILE: &str = "profiles.bin";
-/// Where a profiles.bin that does not decrypt is kept (`load_into`).
+/// Where an earlier version's profiles.bin that does not decrypt is kept
+/// (`legacy_found`).
 pub(crate) const DAMAGED_PROFILES_FILE: &str = "profiles.bin.damaged";
 /// HKDF info of the profiles.bin key, apart from the history key's.
 const PROFILES_KEY_INFO: &[u8] = b"trino-profiles-key-v1";
@@ -61,7 +65,7 @@ pub(crate) struct Profiles {
     /// profile to. Memory only: a new session sends again where needed.
     #[serde(skip)]
     pub sent: HashSet<(String, u64)>,
-    /// profiles.bin was there at unlock but could not be read (`load_into`).
+    /// The profiles were there at unlock but could not be read (`load_found`).
     #[serde(skip)]
     pub not_loaded: bool,
 }
@@ -727,8 +731,10 @@ pub(crate) fn receive(
     }
 }
 
-/// The key of profiles.bin: HKDF of the identity, apart from the history key.
-fn profiles_key(identity: &Identity) -> std::io::Result<Zeroizing<[u8; 32]>> {
+/// The key earlier versions seal profiles.bin with: HKDF of the identity,
+/// apart from the history key. An account not moved to the store yet still
+/// uses it.
+pub(crate) fn profiles_key(identity: &Identity) -> std::io::Result<Zeroizing<[u8; 32]>> {
     let okm = Zeroizing::new(
         crate::crypto::hkdf_expand(
             &identity.ik_sign.priv_bytes,
@@ -743,87 +749,57 @@ fn profiles_key(identity: &Identity) -> std::io::Result<Zeroizing<[u8; 32]>> {
     Ok(key)
 }
 
-/// Write `profiles` to `path`, encrypted: `nonce ‖ ciphertext`, as
-/// history.bin, and atomically.
-pub(crate) fn save_at(
-    profiles: &Profiles,
-    identity: &Identity,
-    path: &Path,
-) -> std::io::Result<()> {
-    let key = profiles_key(identity)?;
-    let json = Zeroizing::new(serde_json::to_vec(profiles).map_err(std::io::Error::other)?);
-    let (ciphertext, nonce) = crate::crypto::aes_gcm_encrypt(&*key, &json, None)
-        .map_err(|error| std::io::Error::other(error.to_string()))?;
-    let mut blob = Vec::with_capacity(nonce.len() + ciphertext.len());
-    blob.extend_from_slice(&nonce);
-    blob.extend_from_slice(&ciphertext);
-    crate::fsutil::atomic_write(path, &blob)
-}
-
-/// Why profiles.bin did not load.
-enum NotLoaded {
-    /// There is none yet: the first open with profiles.
-    Missing,
-    /// It is there but could not be read: another program may hold it, so
-    /// it may read next time.
-    Unreadable,
-    /// It reads, but does not decrypt or parse: damaged, or another
-    /// identity's.
-    Damaged,
-}
-
-/// Read profiles.bin at `path`, or say why it did not load.
-fn read_at(path: &Path, identity: &Identity) -> Result<Profiles, NotLoaded> {
-    let blob = std::fs::read(path).map_err(|error| match error.kind() {
-        std::io::ErrorKind::NotFound => NotLoaded::Missing,
-        _ => NotLoaded::Unreadable,
-    })?;
-    let key = profiles_key(identity).map_err(|_| NotLoaded::Unreadable)?;
-    if blob.len() < crate::crypto::NONCE_SIZE {
-        return Err(NotLoaded::Damaged);
-    }
-    let (nonce, ciphertext) = blob.split_at(crate::crypto::NONCE_SIZE);
-    let json = crate::crypto::aes_gcm_decrypt(&*key, ciphertext, nonce, None)
-        .map(Zeroizing::new)
-        .map_err(|_| NotLoaded::Damaged)?;
-    serde_json::from_slice(&json).map_err(|_| NotLoaded::Damaged)
-}
-
-/// Read profiles.bin at `path`. A file that is missing, damaged or another
-/// identity's reads as no profiles at all.
-#[cfg_attr(not(test), allow(dead_code))]
-pub(crate) fn load_at(path: &Path, identity: &Identity) -> Profiles {
-    read_at(path, identity).unwrap_or_default()
-}
-
 /// Move the profiles.bin at `path` aside, to `DAMAGED_PROFILES_FILE` next to
 /// it, replacing any copy put there before.
 fn put_aside(path: &Path) -> std::io::Result<()> {
     std::fs::rename(path, path.with_file_name(DAMAGED_PROFILES_FILE))
 }
 
-/// Load profiles.bin into the session that `open_session` is opening. This
-/// identity's profile gets its first revision here, so contacts that
-/// announce support get it without waiting for an edit.
-///
-/// Only a profiles.bin that is not there starts afresh. One that does not
-/// decrypt (damaged, or another identity's) is put aside first, as
-/// `DAMAGED_PROFILES_FILE`, for whoever can still read it. One that cannot
-/// be read now, or put aside, stays as it is: this session neither writes it
-/// nor lets this profile change (`not_loaded`), and the next unlock reads it
-/// again.
-pub(crate) fn load_into(inner: &mut InnerState, path: &Path, now: i64) {
-    let Some(identity) = inner.identity.as_ref() else {
-        return;
+/// What an account not moved to the store yet has in its profiles.bin at
+/// `path`, as the store would say it. One that does not decrypt (damaged,
+/// or another identity's) is put aside first, as `DAMAGED_PROFILES_FILE`,
+/// for whoever can still read it, and the session starts afresh; one that
+/// cannot be read now, or put aside, is held.
+pub(crate) fn legacy_found(path: &Path, identity: &Identity) -> Found {
+    let blob = match std::fs::read(path) {
+        Ok(blob) => blob,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Found::Absent,
+        Err(_) => return Found::Held,
     };
-    let loaded = match read_at(path, identity) {
-        Ok(profiles) => Some(profiles),
-        Err(NotLoaded::Missing) => Some(Profiles::default()),
-        Err(NotLoaded::Damaged) => put_aside(path).ok().map(|()| Profiles::default()),
-        Err(NotLoaded::Unreadable) => None,
+    let Ok(key) = profiles_key(identity) else {
+        return Found::Held;
+    };
+    match legacy_open(&key, &blob) {
+        Some(json) => Found::Ready(json),
+        None => match put_aside(path) {
+            Ok(()) => Found::Absent,
+            Err(_) => Found::Held,
+        },
+    }
+}
+
+/// Load the profiles unlocking found into the session that `open_session`
+/// is opening. This identity's profile gets its first revision here, so
+/// contacts that announce support get it without waiting for an edit.
+///
+/// Only profiles that are not there start afresh. Profiles that wait for
+/// the user's choice, could not be read now, or open but do not read, stay
+/// as they are: this session neither writes them nor lets this profile
+/// change (`not_loaded`), and the next unlock reads them again.
+pub(crate) fn load_found(inner: &mut InnerState, found: Found, now: i64) {
+    let loaded = match found {
+        Found::Ready(json) => {
+            let profiles = serde_json::from_slice::<Profiles>(&json).ok();
+            if profiles.is_none() {
+                inner.storage.hold(&Slot::Profiles);
+            }
+            profiles
+        }
+        Found::Absent => Some(Profiles::default()),
+        Found::Held => None,
     };
     let Some(profiles) = loaded else {
-        dbg_log("profiles.bin could not be read: kept as it is");
+        dbg_log("the profiles could not be read: kept as they are");
         inner.profiles = Profiles {
             not_loaded: true,
             ..Profiles::default()
@@ -833,39 +809,30 @@ pub(crate) fn load_into(inner: &mut InnerState, path: &Path, now: i64) {
     inner.profiles = profiles;
     if inner.profiles.rev == 0 {
         inner.profiles.rev = now.max(1) as u64;
-        if save_at(&inner.profiles, identity, path).is_err() {
-            dbg_log("profiles.bin could not be saved");
-        }
+        save(inner);
     }
 }
 
-/// Write profiles.bin for the open session.
+/// Save the profiles of the open session, sealed. Never over profiles this
+/// session could not read (`load_found`).
 pub(crate) fn try_save(inner: &InnerState) -> std::io::Result<()> {
-    try_save_at(inner, &profiles_path())
-}
-
-/// `try_save`, to `path`. Never over a profiles.bin this session could not
-/// read (`load_into`).
-fn try_save_at(inner: &InnerState, path: &Path) -> std::io::Result<()> {
     if inner.profiles.not_loaded {
         return Err(std::io::Error::other(
-            "profiles.bin could not be read at unlock: it stays as it is",
+            "the profiles could not be read at unlock: they stay as they are",
         ));
     }
-    let Some(identity) = inner.identity.as_ref() else {
-        return Ok(());
-    };
-    save_at(&inner.profiles, identity, path)
+    let json = Zeroizing::new(serde_json::to_vec(&inner.profiles).map_err(std::io::Error::other)?);
+    inner.storage.write_profiles(&json)
 }
 
 /// Whether this identity's profile can be edited now: not while this
-/// session could not read profiles.bin, which holds its revision and its
-/// "about". `io` then: the next unlock reads it again.
+/// session could not read its profiles, which hold its revision and its
+/// "about". `io` then: the next unlock reads them again.
 pub(crate) fn check_editable(profiles: &Profiles) -> Result<(), CommandError> {
     if profiles.not_loaded {
         return Err(CommandError::new(
             ErrorCode::Io,
-            "profiles.bin could not be read at unlock",
+            "the profiles could not be read at unlock",
         ));
     }
     Ok(())
@@ -875,7 +842,7 @@ pub(crate) fn check_editable(profiles: &Profiles) -> Result<(), CommandError> {
 /// everything again.
 pub(crate) fn save(inner: &InnerState) {
     if try_save(inner).is_err() {
-        dbg_log("profiles.bin could not be saved");
+        dbg_log("the profiles could not be saved");
     }
 }
 
@@ -1333,27 +1300,49 @@ mod tests {
 
     // ---- On disk and in memory ----
 
+    /// The profiles of the store in `home`, as the next unlock reads them.
+    fn reloaded(home: &Path) -> Profiles {
+        match crate::store::session::tests::reopen(home).profiles {
+            Found::Ready(json) => serde_json::from_slice(&json).unwrap(),
+            _ => panic!("no profiles in the store"),
+        }
+    }
+
+    /// The files of an account not moved to the store yet, in `home`.
+    fn legacy_cell(home: &Path, me: &Identity) -> crate::store::session::StorageCell {
+        let files = crate::commands::DataFiles::in_home(home.to_path_buf());
+        let cell = crate::store::session::StorageCell::default();
+        cell.set(crate::store::session::Storage::Legacy(Box::new(
+            crate::commands::storage_cmds::legacy_files(&files, me),
+        )));
+        cell
+    }
+
     #[test]
-    fn profiles_bin_is_encrypted_and_comes_back_on_reload() {
+    fn profiles_are_sealed_in_the_store_and_come_back_on_reload() {
         let scratch = ScratchDir::new("profiles-bin");
-        let path = scratch.path().join(PROFILES_FILE);
-        let me = create_identity();
-        let mut profiles = Profiles {
+        let mut inner = InnerState {
+            identity: Some(create_identity()),
+            storage: crate::store::session::tests::store_cell(scratch.path()),
+            ..InnerState::default()
+        };
+        inner.profiles = Profiles {
             about: "Mi secreto sobre mí".into(),
             rev: 12,
             ..Profiles::default()
         };
         let theirs = msg(5, "Ana Nombre", "Sobre Ana", Some(&photo(PNG)));
-        receive(&mut profiles, "ana", &theirs, NOW);
+        receive(&mut inner.profiles, "ana", &theirs, NOW);
         receive(
-            &mut profiles,
+            &mut inner.profiles,
             "ana",
             &text_with(r#","prof":{"v":1,"have":12}"#),
             NOW,
         );
 
-        save_at(&profiles, &me, &path).unwrap();
+        try_save(&inner).unwrap();
 
+        let path = scratch.path().join("store").join(PROFILES_FILE);
         let raw = String::from_utf8_lossy(&std::fs::read(&path).unwrap()).to_string();
         for secret in [
             "Mi secreto",
@@ -1365,14 +1354,10 @@ mod tests {
         ] {
             assert!(!raw.contains(secret), "{secret} in the clear");
         }
-        let reloaded = load_at(&path, &me);
-        assert_eq!(reloaded.about, "Mi secreto sobre mí");
-        assert_eq!(reloaded.rev, 12);
-        assert_eq!(reloaded.contacts["ana"], profiles.contacts["ana"]);
-        // Another identity reads nothing, and neither does a damaged file.
-        assert_eq!(load_at(&path, &create_identity()).rev, 0);
-        std::fs::write(&path, b"short").unwrap();
-        assert_eq!(load_at(&path, &me).rev, 0);
+        let back = reloaded(scratch.path());
+        assert_eq!(back.about, "Mi secreto sobre mí");
+        assert_eq!(back.rev, 12);
+        assert_eq!(back.contacts["ana"], inner.profiles.contacts["ana"]);
     }
 
     #[test]
@@ -1388,28 +1373,50 @@ mod tests {
     #[test]
     fn opening_a_session_loads_the_profiles_and_gives_this_profile_a_first_revision() {
         let scratch = ScratchDir::new("profiles-open");
-        let path = scratch.path().join(PROFILES_FILE);
         let me = create_identity();
         let mut inner = InnerState {
             identity: Some(me.clone()),
+            storage: crate::store::session::tests::store_cell(scratch.path()),
             ..InnerState::default()
         };
 
-        load_into(&mut inner, &path, NOW);
+        load_found(&mut inner, Found::Absent, NOW);
 
         assert_eq!(inner.profiles.rev, NOW as u64);
-        assert_eq!(load_at(&path, &me).rev, NOW as u64, "saved");
+        assert_eq!(reloaded(scratch.path()).rev, NOW as u64, "saved");
         // Later sessions keep it.
+        drop(inner);
         let mut again = InnerState {
             identity: Some(me),
             ..InnerState::default()
         };
-        load_into(&mut again, &path, NOW + 999);
+        let found = crate::store::session::tests::reopen(scratch.path()).profiles;
+        load_found(&mut again, found, NOW + 999);
         assert_eq!(again.profiles.rev, NOW as u64);
     }
 
     #[test]
-    fn a_profiles_bin_that_does_not_decrypt_is_kept_aside_and_a_new_one_started() {
+    fn profiles_that_open_but_do_not_read_are_held_and_never_written() {
+        let scratch = ScratchDir::new("profiles-held");
+        let mut inner = InnerState {
+            identity: Some(create_identity()),
+            storage: crate::store::session::tests::store_cell(scratch.path()),
+            ..InnerState::default()
+        };
+
+        load_found(
+            &mut inner,
+            Found::Ready(Zeroizing::new(b"[1,2]".to_vec())),
+            NOW,
+        );
+
+        assert!(inner.profiles.not_loaded);
+        assert!(try_save(&inner).is_err());
+        assert!(inner.storage.write_profiles(b"{}").is_err(), "not held");
+    }
+
+    #[test]
+    fn a_legacy_profiles_bin_that_does_not_decrypt_is_kept_aside_and_a_new_one_started() {
         let scratch = ScratchDir::new("profiles-damaged");
         let path = scratch.path().join(PROFILES_FILE);
         // Damaged, or another identity's: no key here opens it.
@@ -1418,43 +1425,51 @@ mod tests {
         let me = create_identity();
         let mut inner = InnerState {
             identity: Some(me.clone()),
+            storage: legacy_cell(scratch.path(), &me),
             ..InnerState::default()
         };
 
-        load_into(&mut inner, &path, NOW);
+        let found = legacy_found(&path, &me);
+        load_found(&mut inner, found, NOW);
 
         // Its bytes stay, for whoever can still read them,
         let aside = scratch.path().join(DAMAGED_PROFILES_FILE);
         assert_eq!(std::fs::read(&aside).unwrap(), damaged);
-        // and the session goes on with a new profiles.bin.
+        // and the session goes on with a new profiles.bin, sealed as
+        // earlier versions seal it.
         assert!(!inner.profiles.not_loaded);
         assert_eq!(inner.profiles.rev, NOW as u64);
-        assert_eq!(load_at(&path, &me).rev, NOW as u64);
+        let Found::Ready(json) = legacy_found(&path, &me) else {
+            panic!("not saved")
+        };
+        let saved: Profiles = serde_json::from_slice(&json).unwrap();
+        assert_eq!(saved.rev, NOW as u64);
     }
 
     #[test]
-    fn a_profiles_bin_that_cannot_be_read_is_kept_and_never_written() {
+    fn a_legacy_profiles_bin_that_cannot_be_read_is_kept_and_never_written() {
         let scratch = ScratchDir::new("profiles-unreadable");
         // A directory where profiles.bin should be: reading it fails, and
         // not because it is missing, as a file another program holds would.
         let path = scratch.path().join(PROFILES_FILE);
         std::fs::create_dir(&path).unwrap();
         std::fs::write(path.join("inside"), b"keep").unwrap();
+        let me = create_identity();
         let mut inner = InnerState {
-            identity: Some(create_identity()),
+            identity: Some(me.clone()),
+            storage: legacy_cell(scratch.path(), &me),
             ..InnerState::default()
         };
 
-        load_into(&mut inner, &path, NOW);
+        let found = legacy_found(&path, &me);
+        load_found(&mut inner, found, NOW);
 
         assert!(inner.profiles.not_loaded);
         assert_eq!(inner.profiles.rev, 0, "no first revision over the old one");
         assert!(!scratch.path().join(DAMAGED_PROFILES_FILE).exists());
         // This session never writes profiles.bin, and the profile cannot be
         // edited: its revision would go back.
-        let elsewhere = scratch.path().join("other.bin");
-        assert!(try_save_at(&inner, &elsewhere).is_err());
-        assert!(!elsewhere.exists());
+        assert!(try_save(&inner).is_err());
         let error = check_editable(&inner.profiles).unwrap_err();
         assert_eq!(error.code, ErrorCode::Io);
         assert_eq!(std::fs::read(path.join("inside")).unwrap(), b"keep");
@@ -1515,29 +1530,32 @@ mod tests {
     }
 
     #[test]
-    fn profiles_bin_is_only_written_atomically_and_a_wipe_removes_it() {
+    fn the_profiles_are_written_only_through_the_storage_and_a_wipe_removes_them() {
+        // The store and the legacy files write atomically (store/disk.rs,
+        // store/session.rs); this file writes no file of its own.
         let code = include_str!("profile.rs")
             .split("#[cfg(test)]")
             .next()
             .unwrap();
         assert!(
-            !code.contains("fs::write"),
-            "a crash halfway would leave it half written"
+            !code.contains("fs::write") && !code.contains("atomic_write"),
+            "profiles written past the storage"
         );
-        assert!(code.contains("fsutil::atomic_write(path"));
-        let commands: String = include_str!("commands.rs").split_whitespace().collect();
-        let wipe = commands
-            .split("pubasyncfnwipe(")
+        assert!(code.contains("inner.storage.write_profiles("));
+        // A wipe removes store/ whole, and what earlier versions left.
+        let storage: String = include_str!("storage_cmds.rs").split_whitespace().collect();
+        let wipe = storage
+            .split("pub(super)fnwipe_home(")
             .nth(1)
-            .and_then(|rest| rest.split("#[tauri::command]").next())
+            .and_then(|rest| rest.split("#[cfg(test)]").next())
             .unwrap();
         assert!(
-            wipe.contains("profiles_path(),"),
+            wipe.contains("profile::PROFILES_FILE"),
             "wipe leaves profiles.bin behind"
         );
         assert!(
-            wipe.contains("profile::DAMAGED_PROFILES_FILE),"),
-            "wipe leaves the copy load_into kept aside behind"
+            wipe.contains("profile::DAMAGED_PROFILES_FILE"),
+            "wipe leaves the copy legacy_found kept aside behind"
         );
     }
 
