@@ -81,6 +81,24 @@ const PRIVACY = [
   'settings2.privacy.capturesBodyMac',
   'settings2.privacy.errCaptures',
   'settings2.privacy.errCapturesSave',
+  // Cifrado local CL-2b (design §11.1 and §11.2): "En este equipo" and the
+  // detail of what Trino keeps on this device.
+  'settings2.privacy.onDevice',
+  'settings2.privacy.data',
+  'settings2.privacy.dataBody',
+  'settings2.privacy.dataEncrypted',
+  'settings2.privacy.dataIdentity',
+  'settings2.privacy.dataContacts',
+  'settings2.privacy.dataProfile',
+  'settings2.privacy.dataNotes',
+  'settings2.privacy.dataPlain',
+  'settings2.privacy.dataAccount',
+  'settings2.privacy.dataLook',
+  'settings2.privacy.dataOutside',
+  'settings2.privacy.dataNotifications',
+  'settings2.privacy.dataNotificationsOther',
+  'settings2.privacy.dataDownloads',
+  'settings2.privacy.dataCopies',
 ];
 
 /** Settings > Notificaciones (NotificationsSection.tsx). */
@@ -401,6 +419,16 @@ describe.each(LANG_CODES)('the settings copy in %s', lang => {
   it('names no @name, no support page, no Tor and nothing coming soon', () => {
     const promises = texts()
       .filter(([, text]) => /@|apoyar|support|apoiar|(?<!\p{L})tor(?!\p{L})|pronto|soon|em breve/iu.test(text))
+      .map(([key]) => key);
+    expect(promises).toEqual([]);
+  });
+
+  // Design test 47: what Trino keeps on this device promises nothing it
+  // cannot keep.
+  it('never promises that the data on this device is unrecoverable, traceless or safe', () => {
+    const promises = texts()
+      .filter(([key]) => key.startsWith('settings2.privacy.data') || key === 'settings2.privacy.onDevice')
+      .filter(([, text]) => /irrecuperable|sin rastro|segur[oa]s?|unrecoverable|no trace|secure|safe|irrecuper[aá]vel|sem rastro/iu.test(text))
       .map(([key]) => key);
     expect(promises).toEqual([]);
   });

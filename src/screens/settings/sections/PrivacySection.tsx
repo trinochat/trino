@@ -11,13 +11,19 @@
  * phone. On macOS some recorders ignore it, and the text says so; Linux has
  * nothing for it, so the switch is not there.
  *
+ * "En este equipo" (cifrado local, design §11.1), under the blocked
+ * contacts: "Tus datos en este equipo", which opens what Trino keeps
+ * encrypted with your password, what stays in clear for the unlock screen
+ * and what lies outside Trino (LocalDataView.tsx). Locking with Windows
+ * (CL-6a) and "Protección reforzada" (CL-6b) join this group with their
+ * behaviour.
+ *
  * Not here, on purpose: the IP warning before a call (TURN made it
  * unnecessary), Tor and "Quién puede escribirte" (no Tor, no message
  * requests in this batch), the @name (§8) and the default timer of
- * disappearing messages (later). Nor a promise that everything on this
- * device is encrypted: config.json, friends.json and the like are not yet
- * (the parent's addendum). The rows come from an array, so the invitations
- * unit adds "Que me encuentren por @nombre" and its links there (§8).
+ * disappearing messages (later). The rows come from an array, so the
+ * invitations unit adds "Que me encuentren por @nombre" and its links there
+ * (§8).
  */
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { NodeInfo } from '../../../lib/api';
@@ -26,6 +32,7 @@ import type { Prefs } from '../../../lib/prefs';
 import { Switch } from '../../../ui';
 import { BlockedContactsView } from '../BlockedContactsView';
 import { ErrorLine } from '../ErrorLine';
+import { LocalDataView } from '../LocalDataView';
 import { SettingsRows, type SettingsRowItem } from '../SettingsRows';
 import { SettingsSection } from '../SettingsSection';
 import type { SettingsApi, SettingsPlatform } from '../types';
@@ -41,7 +48,7 @@ export interface PrivacySectionProps {
   autoFocus?: boolean;
 }
 
-type View = 'main' | 'blocked';
+type View = 'main' | 'blocked' | 'data';
 
 /** Why the switch of captures failed: the window refused, or the choice could not be kept. */
 type CapturesError = 'window' | 'save';
@@ -108,6 +115,21 @@ export function PrivacySection({ api, prefs, platform, onContactsChanged, autoFo
     [t, nodes, blocked],
   );
 
+  const onDevice = useMemo<SettingsRowItem[]>(
+    () => [
+      {
+        id: 'data',
+        label: t('settings2.privacy.data'),
+        body: t('settings2.privacy.dataBody'),
+        onSelect: () => {
+          setMoved(true);
+          setView('data');
+        },
+      },
+    ],
+    [t],
+  );
+
   if (view === 'blocked') {
     return (
       <BlockedContactsView
@@ -129,10 +151,18 @@ export function PrivacySection({ api, prefs, platform, onContactsChanged, autoFo
     );
   }
 
+  if (view === 'data') {
+    return <LocalDataView autoFocus platform={platform} onBack={() => setView('main')} />;
+  }
+
   return (
     <SettingsSection title={t('settings2.privacy.title')} autoFocus={autoFocus || moved}>
       {loadFailed ? <ErrorLine>{t('settings2.privacy.errLoad')}</ErrorLine> : null}
       <SettingsRows label={t('settings2.privacy.title')} items={rows} />
+      <div className="flex flex-col gap-2">
+        <h3 className="m-0 text-ui-lg font-bold text-ui-ink">{t('settings2.privacy.onDevice')}</h3>
+        <SettingsRows label={t('settings2.privacy.onDevice')} items={onDevice} />
+      </div>
       {platform === 'linux' ? null : (
         <div className="flex flex-col gap-2">
           <Switch

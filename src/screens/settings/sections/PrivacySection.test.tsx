@@ -233,3 +233,67 @@ describe('PrivacySection, the block of screen captures', () => {
     expect(descriptionOf(toggle)).toBe(body);
   });
 });
+
+// Cifrado local CL-2b (design §11.1 and §11.2): "En este equipo", under the
+// blocked contacts, with what Trino keeps on this device and how.
+describe('PrivacySection, your data on this device', () => {
+  it('has a group "En este equipo" with a row that says what is encrypted', () => {
+    setup([]);
+    expect(screen.getByRole('heading', { level: 3, name: 'En este equipo' })).toBeTruthy();
+    const rows = screen.getByRole('list', { name: 'En este equipo' });
+    expect(
+      within(rows).getByRole('button', {
+        name: /^Tus datos en este equipo\s*Cifrados con tu contraseña, menos lo que usa la pantalla de desbloqueo\.$/,
+      }),
+    ).toBeTruthy();
+  });
+
+  it('opens what is encrypted, what is not and why, and what is outside Trino', () => {
+    setup([]);
+    fireEvent.click(screen.getByRole('button', { name: /Tus datos en este equipo/ }));
+    const heading = screen.getByRole('heading', { level: 2, name: 'Tus datos en este equipo' });
+    expect(document.activeElement).toBe(heading);
+    const listed = (name: string) =>
+      within(screen.getByRole('list', { name }))
+        .getAllByRole('listitem')
+        .map(item => item.textContent);
+    expect(listed('Cifrado con tu contraseña')).toEqual([
+      'Tu identidad y tus chats',
+      'Tus contactos, tus grupos y a quién bloqueaste',
+      'Tu perfil y tus stickers',
+      'Tus notas, las marcas de verificado y los temporizadores',
+    ]);
+    expect(listed('Sin cifrar, para la pantalla de desbloqueo')).toEqual([
+      'Que hay una cuenta y si pide código',
+      'El idioma, la apariencia y la accesibilidad',
+    ]);
+    expect(listed('Fuera de Trino')).toEqual([
+      'Windows guarda una copia de cada notificación. Con «Solo el nombre», ahí quedan el nombre de quien te escribe o del grupo, y el de quien te llama.',
+      'Lo que descargas queda como cualquier archivo de tu computador.',
+    ]);
+    expect(screen.getByText('Si copiaste la carpeta .trino antes de esta versión, esa copia sigue sin cifrar.')).toBeTruthy();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Volver a Privacidad' }));
+    expect(screen.getByRole('button', { name: /Tus datos en este equipo/ })).toBeTruthy();
+  });
+
+  it('names the system that keeps the notifications only on Windows', () => {
+    renderEs(<PrivacySection api={fakeApi()} prefs={memoryPrefs().prefs} platform="macos" />);
+    fireEvent.click(screen.getByRole('button', { name: /Tus datos en este equipo/ }));
+    expect(
+      screen.getByText(
+        'Tu sistema puede guardar una copia de cada notificación. Con «Solo el nombre», ahí quedan el nombre de quien te escribe o del grupo, y el de quien te llama.',
+      ),
+    ).toBeTruthy();
+    expect(screen.queryByText(/Windows/)).toBeNull();
+  });
+
+  it.each([
+    ['en', 'Your data on this device', 'Encrypted with your password'],
+    ['pt', 'Seus dados neste dispositivo', 'Criptografado com sua senha'],
+  ] as const)('speaks %s', (lang, row, encrypted) => {
+    render(withLang(<PrivacySection api={fakeApi()} prefs={memoryPrefs().prefs} platform="windows" />, lang));
+    fireEvent.click(screen.getByRole('button', { name: new RegExp(row) }));
+    expect(screen.getByRole('list', { name: encrypted })).toBeTruthy();
+  });
+});

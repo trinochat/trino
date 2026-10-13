@@ -86,6 +86,25 @@ export const settings: AreaStrings = {
       'Trino le pide a macOS que no lo muestre en capturas, grabaciones ni al compartir pantalla, pero algunas apps de grabación no lo respetan. No evita que alguien le tome una foto a la pantalla con otro celular. Si necesitas compartir tu pantalla, apágalo.',
     'settings2.privacy.errCaptures': 'No se pudo cambiar la protección de la ventana. Sigue como estaba.',
     'settings2.privacy.errCapturesSave': 'No se pudo guardar en este equipo: el cambio dura hasta que cierres Trino.',
+    // Cifrado local CL-2b (design §11.1 and §11.2).
+    'settings2.privacy.onDevice': 'En este equipo',
+    'settings2.privacy.data': 'Tus datos en este equipo',
+    'settings2.privacy.dataBody': 'Cifrados con tu contraseña, menos lo que usa la pantalla de desbloqueo.',
+    'settings2.privacy.dataEncrypted': 'Cifrado con tu contraseña',
+    'settings2.privacy.dataIdentity': 'Tu identidad y tus chats',
+    'settings2.privacy.dataContacts': 'Tus contactos, tus grupos y a quién bloqueaste',
+    'settings2.privacy.dataProfile': 'Tu perfil y tus stickers',
+    'settings2.privacy.dataNotes': 'Tus notas, las marcas de verificado y los temporizadores',
+    'settings2.privacy.dataPlain': 'Sin cifrar, para la pantalla de desbloqueo',
+    'settings2.privacy.dataAccount': 'Que hay una cuenta y si pide código',
+    'settings2.privacy.dataLook': 'El idioma, la apariencia y la accesibilidad',
+    'settings2.privacy.dataOutside': 'Fuera de Trino',
+    'settings2.privacy.dataNotifications':
+      'Windows guarda una copia de cada notificación. Con «Solo el nombre», ahí quedan el nombre de quien te escribe o del grupo, y el de quien te llama.',
+    'settings2.privacy.dataNotificationsOther':
+      'Tu sistema puede guardar una copia de cada notificación. Con «Solo el nombre», ahí quedan el nombre de quien te escribe o del grupo, y el de quien te llama.',
+    'settings2.privacy.dataDownloads': 'Lo que descargas queda como cualquier archivo de tu computador.',
+    'settings2.privacy.dataCopies': 'Si copiaste la carpeta .trino antes de esta versión, esa copia sigue sin cifrar.',
 
     // Notificaciones (Settings:50-113).
     'settings2.notif.title': 'Notificaciones',
@@ -391,6 +410,25 @@ export const settings: AreaStrings = {
       'Trino asks macOS to keep it out of screenshots, recordings and screen sharing, but some recording apps ignore this. It does not stop someone from taking a photo of the screen with another phone. If you need to share your screen, turn it off.',
     'settings2.privacy.errCaptures': 'The window’s protection couldn’t be changed. It stays as it was.',
     'settings2.privacy.errCapturesSave': 'It couldn’t be saved on this device: the change lasts until you close Trino.',
+    // Cifrado local CL-2b (design §11.1 and §11.2).
+    'settings2.privacy.onDevice': 'On this device',
+    'settings2.privacy.data': 'Your data on this device',
+    'settings2.privacy.dataBody': 'Encrypted with your password, except what the unlock screen uses.',
+    'settings2.privacy.dataEncrypted': 'Encrypted with your password',
+    'settings2.privacy.dataIdentity': 'Your identity and your chats',
+    'settings2.privacy.dataContacts': 'Your contacts, your groups and who you blocked',
+    'settings2.privacy.dataProfile': 'Your profile and your stickers',
+    'settings2.privacy.dataNotes': 'Your notes, verified marks and timers',
+    'settings2.privacy.dataPlain': 'Not encrypted, for the unlock screen',
+    'settings2.privacy.dataAccount': 'That there is an account and whether it asks for a code',
+    'settings2.privacy.dataLook': 'The language, the appearance and the accessibility settings',
+    'settings2.privacy.dataOutside': 'Outside Trino',
+    'settings2.privacy.dataNotifications':
+      'Windows keeps a copy of each notification. With “Only the name”, it keeps the name of who writes to you or of the group, and of who calls you.',
+    'settings2.privacy.dataNotificationsOther':
+      'Your system may keep a copy of each notification. With “Only the name”, it keeps the name of who writes to you or of the group, and of who calls you.',
+    'settings2.privacy.dataDownloads': 'What you download stays like any other file on your computer.',
+    'settings2.privacy.dataCopies': 'If you copied the .trino folder before this version, that copy is still unencrypted.',
 
     'settings2.notif.title': 'Notifications',
     'settings2.notif.level': 'What a notification shows',
@@ -689,6 +727,25 @@ export const settings: AreaStrings = {
       'O Trino pede ao macOS que não o mostre em capturas, gravações e no compartilhamento de tela, mas alguns apps de gravação não respeitam isso. Não impede que alguém tire uma foto da tela com outro celular. Se você precisa compartilhar sua tela, desative.',
     'settings2.privacy.errCaptures': 'Não foi possível mudar a proteção da janela. Ela continua como estava.',
     'settings2.privacy.errCapturesSave': 'Não foi possível salvar neste dispositivo: a mudança dura até você fechar o Trino.',
+    // Cifrado local CL-2b (design §11.1 and §11.2).
+    'settings2.privacy.onDevice': 'Neste dispositivo',
+    'settings2.privacy.data': 'Seus dados neste dispositivo',
+    'settings2.privacy.dataBody': 'Criptografados com sua senha, menos o que a tela de desbloqueio usa.',
+    'settings2.privacy.dataEncrypted': 'Criptografado com sua senha',
+    'settings2.privacy.dataIdentity': 'Sua identidade e suas conversas',
+    'settings2.privacy.dataContacts': 'Seus contatos, seus grupos e quem você bloqueou',
+    'settings2.privacy.dataProfile': 'Seu perfil e suas figurinhas',
+    'settings2.privacy.dataNotes': 'Suas notas, as marcas de verificado e os temporizadores',
+    'settings2.privacy.dataPlain': 'Sem criptografia, para a tela de desbloqueio',
+    'settings2.privacy.dataAccount': 'Que existe uma conta e se ela pede código',
+    'settings2.privacy.dataLook': 'O idioma, a aparência e a acessibilidade',
+    'settings2.privacy.dataOutside': 'Fora do Trino',
+    'settings2.privacy.dataNotifications':
+      'O Windows guarda uma cópia de cada notificação. Com “Só o nome”, ali ficam o nome de quem escreve para você ou do grupo, e o de quem liga para você.',
+    'settings2.privacy.dataNotificationsOther':
+      'Seu sistema pode guardar uma cópia de cada notificação. Com “Só o nome”, ali ficam o nome de quem escreve para você ou do grupo, e o de quem liga para você.',
+    'settings2.privacy.dataDownloads': 'O que você baixa fica como qualquer arquivo do seu computador.',
+    'settings2.privacy.dataCopies': 'Se você copiou a pasta .trino antes desta versão, essa cópia continua sem criptografia.',
 
     'settings2.notif.title': 'Notificações',
     'settings2.notif.level': 'O que aparece na notificação',
