@@ -180,7 +180,12 @@ impl MainWindow for TauriMainWindow {
 
     fn renew(&self) {
         #[cfg(desktop)]
-        crate::window_renewal::renew(&self.0);
+        {
+            // The download history and the minidumps go with what the
+            // window showed (CL-6b); the new window clears them again.
+            crate::traces::clear(&self.0);
+            crate::window_renewal::renew(&self.0);
+        }
     }
 }
 

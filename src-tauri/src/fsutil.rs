@@ -149,6 +149,74 @@ pub fn destroy_file(path: &Path) -> io::Result<()> {
     fs::remove_file(path)
 }
 
+/// Asks Windows Search not to index `dir` nor what is in it now
+/// (`FILE_ATTRIBUTE_NOT_CONTENT_INDEXED`, design §5.4 and §8); what is
+/// created in it afterwards takes the mark from its folder. Links are not
+/// followed, and the other attributes stay. A folder that is not there is
+/// nothing to mark. Elsewhere nothing.
+pub fn mark_not_indexed(dir: &Path) -> io::Result<()> {
+    if !cfg!(windows) {
+        return Ok(());
+    }
+    let kind = match fs::symlink_metadata(dir) {
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
+        metadata => metadata?.file_type(),
+    };
+    mark_one_not_indexed(dir)?;
+    if kind.is_dir() {
+        for entry in fs::read_dir(dir)? {
+            let entry = entry?;
+            let kind = entry.file_type()?;
+            if kind.is_symlink() {
+                continue;
+            }
+            if kind.is_dir() {
+                mark_not_indexed(&entry.path())?;
+            } else {
+                mark_one_not_indexed(&entry.path())?;
+            }
+        }
+    }
+    Ok(())
+}
+
+/// The mark on one file or folder, keeping its other attributes.
+#[cfg(windows)]
+fn mark_one_not_indexed(path: &Path) -> io::Result<()> {
+    use std::os::windows::ffi::OsStrExt;
+    use std::os::windows::fs::MetadataExt;
+
+    #[link(name = "kernel32")]
+    extern "system" {
+        fn SetFileAttributesW(path: *const u16, attributes: u32) -> i32;
+    }
+    const NOT_CONTENT_INDEXED: u32 = 0x2000;
+    // What SetFileAttributesW takes: read-only, hidden, system, archive,
+    // temporary, offline and not indexed. The rest (a folder, a link) is
+    // the file system's own.
+    const SETTABLE: u32 = 0x1 | 0x2 | 0x4 | 0x20 | 0x100 | 0x1000 | NOT_CONTENT_INDEXED;
+
+    let attributes = fs::symlink_metadata(path)?.file_attributes();
+    if attributes & NOT_CONTENT_INDEXED != 0 {
+        return Ok(());
+    }
+    let wide: Vec<u16> = path.as_os_str().encode_wide().chain(Some(0)).collect();
+    // SAFETY: `wide` is a NUL-terminated UTF-16 string that lives until the
+    // call returns, and SetFileAttributesW keeps no pointer to it.
+    let set =
+        unsafe { SetFileAttributesW(wide.as_ptr(), (attributes & SETTABLE) | NOT_CONTENT_INDEXED) };
+    if set == 0 {
+        Err(io::Error::last_os_error())
+    } else {
+        Ok(())
+    }
+}
+
+#[cfg(not(windows))]
+fn mark_one_not_indexed(_path: &Path) -> io::Result<()> {
+    Ok(())
+}
+
 /// Temporary files `atomic_write` left next to `path`. That only happens if
 /// the process died between creating one and renaming it into place, but such
 /// a file holds a full copy of the data, so a wipe has to remove it as well.
@@ -325,6 +393,64 @@ mod tests {
     use super::scratch::ScratchDir;
     use super::*;
     use std::fs;
+
+    /// Design §8: the data folder out of the search index. What NTFS gives a
+    /// new file in a marked folder is checked too, since the writes of later
+    /// rely on it.
+    #[cfg(windows)]
+    #[test]
+    fn the_data_folder_and_what_is_in_it_are_not_indexed_and_what_comes_later_inherits() {
+        use std::os::windows::fs::MetadataExt;
+        const NOT_INDEXED: u32 = 0x2000;
+        const READ_ONLY: u32 = 0x1;
+        let attributes = |path: &Path| fs::symlink_metadata(path).unwrap().file_attributes();
+        let dir = ScratchDir::new("not-indexed");
+        let home = dir.path().join("home");
+        fs::create_dir_all(home.join("store").join("stickers")).unwrap();
+        fs::write(home.join("vault.bin"), b"v").unwrap();
+        fs::write(home.join("store").join("stickers").join("a.bin"), b"s").unwrap();
+        let read_only = home.join("store").join("index.bak");
+        fs::write(&read_only, b"r").unwrap();
+        let mut permissions = fs::metadata(&read_only).unwrap().permissions();
+        permissions.set_readonly(true);
+        fs::set_permissions(&read_only, permissions).unwrap();
+
+        mark_not_indexed(&home).unwrap();
+
+        for path in [
+            home.clone(),
+            home.join("vault.bin"),
+            home.join("store"),
+            home.join("store").join("stickers"),
+            home.join("store").join("stickers").join("a.bin"),
+            read_only.clone(),
+        ] {
+            assert_ne!(attributes(&path) & NOT_INDEXED, 0, "{}", path.display());
+        }
+        assert_ne!(
+            attributes(&read_only) & READ_ONLY,
+            0,
+            "the other attributes stay"
+        );
+        atomic_write(&home.join("store").join("account.bin"), b"later").unwrap();
+        fs::create_dir(home.join("store").join("aside")).unwrap();
+        for path in [
+            home.join("store").join("account.bin"),
+            home.join("store").join("aside"),
+        ] {
+            assert_ne!(attributes(&path) & NOT_INDEXED, 0, "{}", path.display());
+        }
+        let mut permissions = fs::metadata(&read_only).unwrap().permissions();
+        #[allow(clippy::permissions_set_readonly_false)]
+        permissions.set_readonly(false);
+        fs::set_permissions(&read_only, permissions).unwrap();
+    }
+
+    #[test]
+    fn a_missing_folder_is_nothing_to_mark() {
+        let dir = ScratchDir::new("not-indexed-none");
+        mark_not_indexed(&dir.path().join("absent")).unwrap();
+    }
 
     /// The names in `dir`, sorted, so a test can check nothing else is there.
     fn names_in(dir: &Path) -> Vec<String> {

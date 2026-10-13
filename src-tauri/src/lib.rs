@@ -25,6 +25,7 @@ mod security_cmds;
 mod system_events;
 // -- cifrado local CL-6b --
 mod clipboard;
+mod traces;
 #[cfg(desktop)]
 mod window_renewal;
 
@@ -177,9 +178,13 @@ pub fn run() {
                 }
             }
             // Windows: lock when Windows locks, sleeps or hibernates, unless
-            // the account turned it off (design §7.2).
+            // the account turned it off (design §7.2); and no heap in a crash
+            // report of this process, which WER leaves out for this user
+            // (design §8).
             #[cfg(windows)]
             {
+                traces::limit_crash_reports();
+                traces::exclude_from_crash_reports();
                 let app = _app.handle().clone();
                 system_events::listen(move |event| {
                     commands::lock_cmds::on_system_event(&app, event)

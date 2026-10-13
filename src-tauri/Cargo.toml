@@ -67,18 +67,24 @@ webkit2gtk = "=2.0.2"
 winreg = "0.55.0"
 # Locking with Windows (src/system_events.rs): the session and power
 # notifications, through a hidden window of our own; and copying without
-# the clipboard history (src/clipboard.rs). tao, wry and webview2-com
-# already build this version, so no new crate: only the features these
-# calls need.
+# the clipboard history (src/clipboard.rs); Windows Error Reporting
+# (src/traces.rs). tao, wry and webview2-com already build this version, so
+# no new crate: only the features these calls need.
 windows = { version = "0.61.3", features = [
     "Win32_Foundation",
     "Win32_System_DataExchange",
+    "Win32_System_ErrorReporting",
     "Win32_System_LibraryLoader",
     "Win32_System_Memory",
     "Win32_System_Power",
     "Win32_System_RemoteDesktop",
+    "Win32_System_Threading",
     "Win32_UI_WindowsAndMessaging",
 ] }
+# Clearing WebView2's download history and finding its minidumps
+# (src/traces.rs). Pinned to the version wry builds, so the webview types
+# unify and no new crate comes in.
+webview2-com = "=0.38.2"
 
 [dev-dependencies]
 proptest = "1"

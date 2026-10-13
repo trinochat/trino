@@ -1401,7 +1401,11 @@ async fn send_text(
 }
 
 #[tauri::command]
-pub async fn wipe(state: State<'_, AppState>) -> Result<(), String> {
+pub async fn wipe(_app: AppHandle, state: State<'_, AppState>) -> Result<(), String> {
+    // WebView2's download history and minidumps, outside the data folder
+    // (design §5.7, step 7).
+    #[cfg(desktop)]
+    crate::traces::clear(&_app);
     // An unlock in progress must not save the vault, or open a session, after
     // this deleted it.
     let _gate = state.session_gate.lock().await;
@@ -2063,6 +2067,9 @@ fn prune_history(history: &mut HashMap<String, Vec<HistItem>>, now: i64) -> bool
 /// Restrict the data dir to the owner (0700) on Unix so other local users can't
 /// read the vault/history/log. No-op on Windows (uses NTFS ACLs by default).
 fn harden_dir(dir: &Path) {
+    // Out of the search index, with what is in it (design §5.4 and §8).
+    // Best effort: the folder works the same without it.
+    let _ = crate::fsutil::mark_not_indexed(dir);
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
@@ -3854,6 +3861,27 @@ mod tests {
     use crate::vault::{SealedVault, UnsealedVault};
 
     const NOW: i64 = 1_760_000_000;
+
+    /// Design §5.4 and §8: hardening the data folder, as a new account and
+    /// every unlock do, keeps it and what is in it out of the search index.
+    #[cfg(windows)]
+    #[test]
+    fn the_data_folder_is_kept_out_of_the_search_index() {
+        use std::os::windows::fs::MetadataExt;
+        let dir = ScratchDir::new("harden-not-indexed");
+        let home = dir.path().join(".trino");
+        std::fs::create_dir_all(home.join("store")).unwrap();
+        std::fs::write(home.join("store").join("index.bin"), b"i").unwrap();
+        harden_dir(&home);
+        for path in [
+            home.clone(),
+            home.join("store"),
+            home.join("store").join("index.bin"),
+        ] {
+            let attributes = std::fs::metadata(&path).unwrap().file_attributes();
+            assert_ne!(attributes & 0x2000, 0, "{}", path.display());
+        }
+    }
 
     fn ik(id: &Identity) -> String {
         hex::encode(id.ik_sign.pub_bytes)

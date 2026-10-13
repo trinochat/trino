@@ -20,6 +20,7 @@
         "minHeight": 480,
         "decorations": false,
         "contentProtected": true,
+        "generalAutofillEnabled": false,
         "additionalBrowserArgs": "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection --autoplay-policy=no-user-gesture-required --force-webrtc-ip-handling-policy=default_public_interface_only"
       }
     ],

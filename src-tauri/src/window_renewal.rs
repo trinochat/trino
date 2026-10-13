@@ -188,6 +188,9 @@ fn open(app: &AppHandle, placement: Option<Placement>) -> tauri::Result<WebviewW
 
 /// What every new window needs before its page runs.
 pub(crate) fn prepare(_window: &WebviewWindow) {
+    // Its downloads leave no history, and the history and minidumps of
+    // before go (cifrado local CL-6b, src/traces.rs).
+    crate::traces::on_new_window(_window);
     // Linux: WebKitGTK denies getUserMedia (mic/camera) unless we handle
     // the permission-request signal. Without this, calls silently fail on
     // Ubuntu (the call button does nothing; accepting sends a reject that
