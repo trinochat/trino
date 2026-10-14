@@ -46,14 +46,16 @@ pub struct AppState {
 }
 
 impl AppState {
-    /// The app's state, with Tor (Arti) keeping its files in `tor_home()`.
+    /// The app's state, with Tor (Arti) keeping its files in `tor_home()`
+    /// and lyrebird as its bridge program.
     /// It starts nothing: `net_cmds::on_open` does, as decided.
     pub fn with_tor() -> Self {
         AppState {
             net: trino_net::Net::with_arti(trino_net::NetConfig {
                 tor_home: tor_home(),
-                // The bridge program comes with TOR-7.
-                pt: None,
+                // lyrebird next to TrinoChat.exe, with its pinned SHA-256
+                // (TOR-7); none in a build that does not ship it.
+                pt: crate::commands::bridges_cmds::lyrebird(),
             }),
             ..AppState::default()
         }

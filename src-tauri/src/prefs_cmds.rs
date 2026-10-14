@@ -16,6 +16,10 @@
 //!   nowhere sealed to keep them: both commands refuse with a clear error,
 //!   and the frontend keeps them where earlier versions did until a later
 //!   unlock moves the account.
+//! - A few entries are the backend's own (`BACKEND_PREFS`): the private
+//!   bridge lines (Tor design §2.5, bridges_cmds.rs). They are sealed in
+//!   the same `prefs.bin`, but the frontend never gets them, and what it
+//!   saves never changes or drops them.
 //!
 //! A child module of `commands`, so it reaches the helpers there.
 
@@ -37,6 +41,22 @@ const DEVICE_PREFS: [&str; 3] = [
     "trino.pref.textSize",
     "trino.pref.blockCaptures",
 ];
+
+/// The entries of `prefs.bin` only the backend writes: never handed to the
+/// frontend, never taken from it.
+pub(crate) const BACKEND_PREFS: [&str; 1] = [super::bridges_cmds::NET_BRIDGES];
+
+/// `prefs` without the backend's own entries, as the frontend gets them.
+pub(crate) fn for_frontend(prefs: Option<serde_json::Value>) -> Option<serde_json::Value> {
+    prefs.map(|mut prefs| {
+        if let Some(entries) = prefs.as_object_mut() {
+            for key in BACKEND_PREFS {
+                entries.remove(key);
+            }
+        }
+        prefs
+    })
+}
 
 /// What `prefs_import` did.
 #[derive(Debug, Default, PartialEq, Eq, Serialize)]
@@ -99,9 +119,9 @@ fn is_general(key: &str) -> bool {
         || (key.starts_with("trino.pref.") && !DEVICE_PREFS.contains(&key))
 }
 
-/// The session's preferences now, and where their import stands: none and
-/// `Unavailable` with no session.
-pub(super) fn prefs_of(inner: &InnerState) -> (Option<serde_json::Value>, PrefsImport) {
+/// The session's `prefs.bin` now, every entry, and where its import
+/// stands: none and `Unavailable` with no session.
+fn stored_prefs(inner: &InnerState) -> (Option<serde_json::Value>, PrefsImport) {
     match inner.storage.prefs_now() {
         Some((prefs, state)) => (
             prefs.and_then(|json| serde_json::from_slice(&json).ok()),
@@ -111,10 +131,19 @@ pub(super) fn prefs_of(inner: &InnerState) -> (Option<serde_json::Value>, PrefsI
     }
 }
 
-/// The session's preferences as a map, as the frontend keeps them: an entry
-/// that is not text, or a `prefs.bin` that is not a map, gives nothing.
+/// The session's preferences now, as the frontend gets them (without the
+/// backend's own), and where their import stands: none and `Unavailable`
+/// with no session.
+pub(super) fn prefs_of(inner: &InnerState) -> (Option<serde_json::Value>, PrefsImport) {
+    let (prefs, state) = stored_prefs(inner);
+    (for_frontend(prefs), state)
+}
+
+/// The session's preferences as a map, every entry, the backend's own
+/// included: an entry that is not text, or a `prefs.bin` that is not a map,
+/// gives nothing.
 pub(super) fn current_map(inner: &InnerState) -> BTreeMap<String, String> {
-    let (prefs, _) = prefs_of(inner);
+    let (prefs, _) = stored_prefs(inner);
     prefs
         .and_then(|value| serde_json::from_value::<BTreeMap<String, serde_json::Value>>(value).ok())
         .unwrap_or_default()
@@ -149,13 +178,51 @@ fn sealable(prefs: &BTreeMap<String, String>) -> Result<Zeroizing<Vec<u8>>, Comm
     Ok(json)
 }
 
+/// `prefs` with the backend's own entries as `current` has them, whatever
+/// the frontend sent for them.
+fn with_backend_entries(
+    prefs: &BTreeMap<String, String>,
+    current: &BTreeMap<String, String>,
+) -> BTreeMap<String, String> {
+    let mut kept = prefs.clone();
+    for key in BACKEND_PREFS {
+        match current.get(key) {
+            Some(value) => kept.insert(key.to_string(), value.clone()),
+            None => kept.remove(key),
+        };
+    }
+    kept
+}
+
 /// `prefs_save` on the session in `inner`.
 pub(super) fn save_in(
     inner: &InnerState,
     prefs: &BTreeMap<String, String>,
 ) -> Result<(), CommandError> {
     check_store(inner)?;
-    let json = sealable(prefs)?;
+    let prefs = with_backend_entries(prefs, &current_map(inner));
+    let json = sealable(&prefs)?;
+    inner
+        .storage
+        .write_prefs(&json)
+        .map_err(|e| CommandError::io(&e))
+}
+
+/// Set the backend's own entry `key` to `value` (or drop it) in the
+/// session's `prefs.bin`, keeping every other entry.
+pub(crate) fn set_backend_pref(
+    inner: &InnerState,
+    key: &str,
+    value: Option<&str>,
+) -> Result<(), CommandError> {
+    debug_assert!(BACKEND_PREFS.contains(&key));
+    check_store(inner)?;
+    let mut prefs = current_map(inner);
+    match value {
+        Some(value) => prefs.insert(key.to_string(), value.to_string()),
+        None => prefs.remove(key),
+    };
+    let json = sealable(&prefs)?;
     inner
         .storage
         .write_prefs(&json)
@@ -214,6 +281,7 @@ pub(super) fn get_in(inner: &InnerState) -> Result<Option<serde_json::Value>, Co
     if inner.storage.prefs_now().is_none() {
         return Err(super::contacts_cmds::sealed());
     }
+    // Without the backend's own entries.
     Ok(prefs_of(inner).0)
 }
 

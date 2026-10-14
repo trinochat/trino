@@ -487,7 +487,8 @@ pub(super) trait WipeOps {
     /// Overwrite the file at `path`, sync it and remove it.
     fn destroy(&mut self, path: &Path) -> std::io::Result<()>;
     fn remove_dir(&mut self, path: &Path) -> std::io::Result<()>;
-    /// Stop Tor, so Arti closes the files of tor/ (R-03).
+    /// Stop Tor, so Arti closes the files of tor/ (R-03), and lyrebird
+    /// with it; and forget the private bridges it held (R-01).
     fn stop_tor(&mut self);
 }
 
@@ -498,6 +499,7 @@ impl WipeOps for RealWipe {
     fn stop_tor(&mut self) {
         if let Some(net) = &self.0 {
             net.stop();
+            net.set_private_bridges(None);
         }
     }
 

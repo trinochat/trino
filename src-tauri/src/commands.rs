@@ -160,6 +160,9 @@ pub(crate) mod prefs_cmds;
 // Cifrado local (CL-6a): locking with the system, and renewing the window.
 #[path = "lock_cmds.rs"]
 pub(crate) mod lock_cmds;
+// Tor (TOR-7): bridges, kept in the store and handed to Tor.
+#[path = "bridges_cmds.rs"]
+pub(crate) mod bridges_cmds;
 // Cifrado local (CL-6b): copying without the clipboard history.
 #[path = "clipboard_cmds.rs"]
 pub(crate) mod clipboard_cmds;
@@ -671,11 +674,13 @@ fn reseal_if_needed(
     )
 }
 
-/// What a session that was just opened connects to, and as whom.
+/// What a session that was just opened connects to, as whom, and through
+/// which private bridges, if its store keeps some (Tor design §2.6).
 struct RelayStart {
     relays: Vec<String>,
     nostr_pub: String,
     handle: String,
+    bridges: Option<Vec<trino_net::BridgeLine>>,
 }
 
 /// Open the session of an identity whose vault was just opened in `inner`,
@@ -753,11 +758,15 @@ async fn open_session(
     let handle = inner.handle.clone().unwrap_or_default();
     let relays = crate::state::relays_to_use(&inner.relay_urls);
     drop(inner);
+    // The private bridges go to Tor, never to the frontend.
+    let bridges = bridges_cmds::stored_in(prefs.as_ref());
+    let prefs = prefs_cmds::for_frontend(prefs);
 
     start_relays(RelayStart {
         relays,
         nostr_pub: nostr_pub.clone(),
         handle: handle.clone(),
+        bridges,
     });
 
     Ok(UnsealResponse {
@@ -782,10 +791,12 @@ fn relay_starter(app: AppHandle, state: &AppState) -> impl FnOnce(RelayStart) {
             "session open, starting the relay connections",
             &[("relays", &start.relays.len())],
         );
-        // Tor starts if it had not (at unlock, or the account just made)
-        // and wakes (Tor design §2.6); the relays wait for it to be ready.
+        // The store's private bridges go to Tor, which starts if it had not
+        // (at unlock, or the account just made) and wakes (Tor design §2.6);
+        // the relays wait for it to be ready.
         let waking = Arc::clone(&net);
-        tauri::async_runtime::spawn_blocking(move || crate::net_cmds::on_unlock(&waking));
+        let bridges = start.bridges;
+        tauri::async_runtime::spawn_blocking(move || crate::net_cmds::on_unlock(&waking, bridges));
         // One network session per unlock: nothing this one opens shares a
         // Tor circuit with the last one's (Tor design §2.6, §2.7).
         let connector = relay_connector(Arc::clone(&net), net.session(), IsoKind::RELAY);
@@ -929,6 +940,11 @@ async fn forge_identity(
     state.turn.clear();
     let starter = relay_starter(app, state);
     let session = open_session(&state.inner, identity, totp_secret, Some(loaded), starter).await?;
+    // Private bridges pasted before the account existed (the first run's
+    // "Conexión" step) are sealed in it now (Tor design §2.5).
+    if bridges_cmds::keep_first_run_lines(&*state.inner.lock().await, &state.net).is_err() {
+        crate::diag::note("the first run's bridges could not be sealed");
+    }
     Ok(ForgeResponse {
         session,
         bundle_json,

@@ -291,6 +291,11 @@ pub fn run() {
             net_cmds::net_status,
             net_cmds::net_start,
             net_cmds::net_retry,
+            // -- Tor bridges (TOR-7) --
+            commands::bridges_cmds::net_bridges_get,
+            commands::bridges_cmds::net_bridges_check,
+            commands::bridges_cmds::net_bridges_set,
+            commands::bridges_cmds::net_bridges_try,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")

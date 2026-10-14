@@ -71,7 +71,22 @@ pub(crate) fn limit_crash_reports() {
     }
 }
 
-/// Excludes this program from Windows Error Reporting for this user
+/// The programs Windows Error Reporting leaves out for this user: this
+/// one, and the bridge program (Tor design §5.1, R-22) at every start,
+/// whatever the bridges, so the value in HKCU says only that Trino is
+/// installed, never that bridges are used.
+#[cfg_attr(not(windows), allow(dead_code))]
+pub(crate) fn excluded_from_crash_reports() -> Vec<std::ffi::OsString> {
+    let mut names: Vec<std::ffi::OsString> = std::env::current_exe()
+        .ok()
+        .and_then(|exe| exe.file_name().map(|name| name.to_owned()))
+        .into_iter()
+        .collect();
+    names.push("lyrebird.exe".into());
+    names
+}
+
+/// Excludes these programs from Windows Error Reporting for this user
 /// (`WerAddExcludedApplication`, under HKCU). Not in tests: it writes the
 /// registry.
 #[cfg(windows)]
@@ -79,16 +94,12 @@ pub(crate) fn exclude_from_crash_reports() {
     use std::os::windows::ffi::OsStrExt;
     use windows::core::PCWSTR;
     use windows::Win32::System::ErrorReporting::WerAddExcludedApplication;
-    let Some(name) = std::env::current_exe()
-        .ok()
-        .and_then(|exe| exe.file_name().map(|name| name.to_owned()))
-    else {
-        return;
-    };
-    let wide: Vec<u16> = name.encode_wide().chain(Some(0)).collect();
-    // SAFETY: `wide` ends in NUL and outlives the call, which keeps no
-    // pointer to it.
-    let _ = unsafe { WerAddExcludedApplication(PCWSTR(wide.as_ptr()), false) };
+    for name in excluded_from_crash_reports() {
+        let wide: Vec<u16> = name.encode_wide().chain(Some(0)).collect();
+        // SAFETY: `wide` ends in NUL and outlives the call, which keeps no
+        // pointer to it.
+        let _ = unsafe { WerAddExcludedApplication(PCWSTR(wide.as_ptr()), false) };
+    }
 }
 
 /// What every new window needs, at start and after each lock

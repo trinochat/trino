@@ -1,4 +1,4 @@
-# Tor en Trino (TOR-5)
+# Tor en Trino (TOR-5 y TOR-7)
 
 Todo lo que Trino abre en la red, salvo el audio y el video de las llamadas,
 sale por Tor. Lo hace `crates/trino-net`, que no depende de Tauri: dentro va
@@ -30,6 +30,7 @@ porque Tor puede arrancar antes del desbloqueo:
 - `state/` y `cache/`: las carpetas de Arti (guardas, tiempos de circuito y el
   directorio público de la red).
 - `run.marker`: ver "Arti obsoleto".
+- `run-<azar>/`: solo con puentes privados, ver "Puentes".
 
 Revela que usas Tor con Trino y tu guarda, no tus contactos ni tus mensajes.
 "Borrar todo" detiene Tor y destruye cada archivo de `tor/` (sobrescrito y
@@ -40,11 +41,11 @@ cuenta nueva entra a Tor por otra guarda.
 
 | Momento | Tor |
 |---|---|
-| Abrir Trino | Arranca, salvo la primera vez (sin cuenta) o si arranca al desbloquear |
-| Desbloquear | Arranca si no había arrancado, y se despierta |
-| Bloquear | Se duerme; si arranca al desbloquear, se detiene |
-| Salir | Se detiene |
-| Borrar todo | Se detiene y se destruye `tor/` |
+| Abrir Trino | Destruye los `run-*` que dejó un corte; arranca, salvo la primera vez (sin cuenta) o si arranca al desbloquear |
+| Desbloquear | Recibe los puentes privados del almacén; arranca si no había arrancado, y se despierta |
+| Bloquear | Se duerme; si arranca al desbloquear o usa puentes privados, se detiene (y `lyrebird` con él) y los olvida |
+| Salir | Se detiene, y `lyrebird` con él |
+| Borrar todo | Se detiene, olvida los puentes privados y se destruye `tor/` |
 
 La primera vez espera a la persona: el paso "Conexión" (TOR-6) o crear la
 cuenta lo arrancan, para que quien necesita un puente lo elija antes de
@@ -65,7 +66,7 @@ La interfaz los recibe con el evento `net-changed` y los pide con
 | `starting` (`pct`) | Arrancando |
 | `ready` (`transport`) | Listo |
 | `blocked` (`kind`, `pct`) | Arti dice que algo lo bloquea (`offline`, `filtering`, `cantReachTor`, `clockSkewed`, `cantBootstrap`), o no avanza en el tiempo de su transporte (`noProgress`): 45 s directo, 90 s con obfs4 o WebTunnel, 120 s con Snowflake o meek (spike S3). Tor sigue intentando debajo |
-| `ptMissing` | El transporte necesita el programa de puentes y no está (TOR-7) |
+| `ptMissing` | El transporte necesita el programa de puentes (`lyrebird`) y no está, o no es el que trae Trino |
 | `obsolete` (`confirmed`) | Arti es muy viejo para la red |
 | `direct` | "Conectar sin Tor (solo esta vez)" |
 
@@ -107,9 +108,85 @@ también ve las llamadas, y los tres respondieron por Tor 9 o 10 veces de 10
 antes (damus, nos.lol y snort) pasa a los nuevos, con los que comparte nos.lol
 y snort.
 
+## Puentes (TOR-7)
+
+Un puente es una entrada a Tor que no está en la lista pública; el programa
+que disfraza el tráfico hacia él es `lyrebird` (obfs4, Snowflake, WebTunnel y
+meek), del Proyecto Tor.
+
+### De dónde sale `lyrebird`
+
+- `scripts/fetch-lyrebird.sh <target>` baja el Tor Expert Bundle de
+  torproject.org, comprueba su firma OpenPGP con la llave de "Tor Browser
+  Developers" (`EF6E 286D DA85 EA2A 4BA7 DE68 4E2C 6E87 9329 8290`) en un
+  llavero propio que borra al terminar, y solo entonces saca `lyrebird`, su
+  licencia (GPL-3.0) y el `pt_config.json` de Tor Browser.
+- `src-tauri/binaries/lyrebird.pin` fija, por plataforma, la versión del
+  bundle y el SHA-256 de `lyrebird`. El script rechaza una descarga que no
+  coincida; `--update <versión>` reescribe el pin (y los puentes integrados)
+  para revisarlos y hacer commit. Hoy: Windows, bundle 15.0.25, lyrebird 0.8.1.
+  Linux no tiene pin todavía, así que esa versión no ofrece puentes.
+- El binario nunca va al repositorio. Una versión para publicar se arma con
+  `tauri build --config src-tauri/tauri.bridges.conf.json`, que lo agrega como
+  `externalBin` (queda al lado de `TrinoChat.exe` como `lyrebird.exe`) junto
+  con su licencia. El `tauri.conf.json` de siempre no lo nombra, así que
+  compilar y probar sin él funciona igual. El flujo de versiones de GitHub lo
+  hace en Windows.
+- Sin conexión, el script acepta `--bundle-dir` (el `.tar.gz` y su `.asc` ya
+  bajados) y `--key` (la llave pública): se comprueban igual.
+
+### Cómo lo corre Trino
+
+- Arti lanzaría `lyrebird` con una consola visible y lo dejaría vivo al
+  detenerse (spike S2 y S13). Por eso lo lanza Trino (`trino-net`,
+  `tor/pt.rs`): sin ventana (`CREATE_NO_WINDOW`), con el protocolo de
+  transportes, y le da a Arti el puerto SOCKS de cada transporte como
+  transporte no gestionado.
+- **Antes de cada lanzamiento** calcula el SHA-256 de `lyrebird.exe` y lo
+  compara con el pin, con el archivo abierto sin permitir escribirlo ni
+  borrarlo hasta lanzarlo. Si falta o no coincide, no lo lanza: el estado es
+  `ptMissing`, nunca una conexión sin el puente.
+- Al detener Tor (bloquear, salir, "Borrar todo") le cierra la entrada, y si
+  en 2 s no salió, lo mata.
+- `lyrebird.exe` queda excluido de los informes de errores de Windows en cada
+  arranque, uses o no puentes.
+
+### Integrados, privados y lo que funcionó
+
+- **Integrados**: los 7 obfs4 y los 2 Snowflake de Tor Browser
+  (`crates/trino-net/src/tor/pt_config.json`, copia exacta del bundle). El
+  meek integrado no sirve con Arti (le falta la huella) y no hay WebTunnel
+  integrado. "Probar con un puente" va en orden: Snowflake y obfs4.
+- **Privados** (pegados): se validan línea por línea (transporte conocido, IP
+  y puerto, huella de 40 hexadecimales, argumentos `clave=valor`, a lo sumo
+  510 bytes de argumentos y 20 líneas) y se guardan **cifrados** en
+  `prefs.bin` (`net.bridges`). La interfaz nunca recibe las líneas ni puede
+  cambiarlas con sus preferencias. `settings.json` solo dice el tipo y
+  `on_unlock`. Antes de tener cuenta viven en memoria y se guardan al crearla.
+- **Con puentes privados** Tor usa `tor/run-<azar>/state` y `cache`, porque
+  Arti guarda ahí la línea completa del puente. Al detenerse, cada archivo se
+  sobrescribe con bytes al azar y se borra; cada arranque usa una carpeta
+  nueva, y al abrir Trino se destruyen las que dejó un corte.
+- **Lo que funcionó se recuerda**: un puente integrado que se prueba con un
+  toque queda en `settings.json` cuando Tor conecta por él. Nada cambia sin un
+  toque: un arranque bloqueado sigue con su transporte.
+
+### Comandos (las pantallas son TOR-8)
+
+| Comando | Qué hace |
+|---|---|
+| `net_bridges_get` | El tipo en uso, si hay privados (y cuántos; desconocido si la cuenta está bloqueada), cuándo arranca Tor, si esta versión trae `lyrebird` y los integrados en orden. Nunca las líneas |
+| `net_bridges_check` (`text`) | Valida lo pegado sin guardar: cuántas líneas o los errores con su número de línea |
+| `net_bridges_set` (`choice`: `none`, `builtin` con `transport`, o `private` con `text`) | Guarda la elección y, si Tor estaba corriendo, lo arranca otra vez con ella. Con líneas malas no guarda nada |
+| `net_bridges_try` (`transport`) | "Probar con un puente": arranca otra vez por ese integrado y lo guarda si conecta. `net_retry` vuelve a lo guardado |
+
 ## Lo que falta
 
-- Los puentes y `lyrebird` (TOR-7): Trino lo lanzará él mismo, sin ventana.
-- Las pantallas (TOR-6).
-- La prueba con la red real de Tor se corre a mano:
-  `cargo test -p trino-net -- --ignored network_`.
+- Las pantallas (TOR-6 y TOR-8), y la opción propia de "Conectar a Tor solo
+  después de desbloquear": hoy, dejar los puentes privados devuelve el
+  arranque a "al abrir".
+- `lyrebird` para Linux (un pin con su SHA-256).
+- Pruebas a mano:
+  - con la red real de Tor: `cargo test -p trino-net -- --ignored network_`;
+  - con un `lyrebird` real, sin red:
+    `TRINO_LYREBIRD=<ruta> cargo test -p trino-net -- --ignored local_lyrebird`.

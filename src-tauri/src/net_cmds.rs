@@ -3,9 +3,9 @@
 //!
 //! | Moment | Tor |
 //! |---|---|
-//! | Trino opens | starts, unless there is no account yet (the first run waits for the person: the "Conexión" step of TOR-6, or creating the account) or it starts at unlock |
-//! | Unlock (`open_session`) | starts if it had not, and wakes |
-//! | Lock | sleeps; with "Conectar a Tor solo después de desbloquear", stops |
+//! | Trino opens | the session folders a cut left (`tor/run-*`, private bridges) are destroyed; Tor starts, unless there is no account yet (the first run waits for the person: the "Conexión" step of TOR-6, or creating the account) or it starts at unlock |
+//! | Unlock (`open_session`) | the private bridges sealed in the store go to Tor; it starts if it had not, and wakes |
+//! | Lock | sleeps; with "Conectar a Tor solo después de desbloquear", or private bridges, stops (lyrebird with it, and the session's folder is destroyed) and forgets the private bridges |
 //! | Quit | stops: Arti's runtime goes, and with it its files |
 //! | "Borrar todo" | stops, then every file of tor/ is destroyed (storage_cmds.rs) |
 //!
@@ -21,14 +21,15 @@ use crate::state::AppState;
 use std::path::Path;
 use std::sync::Arc;
 use tauri::{AppHandle, Emitter, State};
-use trino_net::{Net, NetStatus, StartWhen, TorSettings};
+use trino_net::{BridgeLine, Bridges, Net, NetStatus, StartWhen, TorSettings};
 
 /// What the frontend listens to: every change of `NetStatus`.
 pub const NET_CHANGED_EVENT: &str = "net-changed";
 
 /// Trino opened, with its data in `home`: make tor/ (kept out of the
-/// search index, like the rest of the data folder) and start Tor, unless
-/// this is the first run or it starts at unlock (decision 11).
+/// search index, like the rest of the data folder), destroy the session
+/// folders of private bridges a cut left behind (R-01), and start Tor,
+/// unless this is the first run or it starts at unlock (decision 11).
 pub(crate) fn on_open(net: &Net, home: &Path) {
     let Some(tor_home) = net.tor_home() else {
         return;
@@ -36,6 +37,7 @@ pub(crate) fn on_open(net: &Net, home: &Path) {
     if std::fs::create_dir_all(tor_home).is_ok() {
         let _ = crate::fsutil::mark_not_indexed(tor_home);
     }
+    net.destroy_leftover_runs();
     let first_run = !home.join("vault.bin").exists();
     if first_run || TorSettings::load(tor_home).start == StartWhen::OnUnlock {
         return;
@@ -43,22 +45,39 @@ pub(crate) fn on_open(net: &Net, home: &Path) {
     net.start();
 }
 
-/// A session opened: Tor starts if it had not (at unlock, or the first
-/// run's account was just made) and wakes. Starting one that runs, or
-/// that `run.marker` holds back, does nothing.
-pub(crate) fn on_unlock(net: &Net) {
+/// A session opened, with the private bridges its store keeps (`stored`):
+/// they go to Tor, and tor/settings.json is put back in step with them
+/// (their kind, started at unlock), since a choice made while locked could
+/// not reach the store. Then Tor starts if it had not (at unlock, or the
+/// first run's account was just made) and wakes. Starting one that runs,
+/// or that `run.marker` holds back, does nothing. Without stored lines,
+/// what `net` holds stays: the first run's, sealed once the account is.
+pub(crate) fn on_unlock(net: &Net, stored: Option<Vec<BridgeLine>>) {
+    if let (Some(lines), Some(tor_home)) = (stored, net.tor_home()) {
+        let in_step = TorSettings {
+            transport: Bridges::Private(lines.clone()).transport(),
+            start: StartWhen::OnUnlock,
+        };
+        if TorSettings::load(tor_home) != in_step {
+            let _ = in_step.save(tor_home);
+        }
+        net.set_private_bridges(Some(lines));
+    }
     net.start();
     net.set_dormant(false);
 }
 
 /// The session was locked: Tor sleeps while nothing uses it, or stops if
-/// it starts at unlock. Blocks while it stops.
+/// it starts at unlock or runs private bridges, which are then forgotten
+/// until the next unlock (R-01): stopping ends lyrebird and destroys the
+/// session's folder. Blocks while it stops.
 pub(crate) fn on_lock(net: &Net) {
     let start = net
         .tor_home()
         .map(|tor_home| TorSettings::load(tor_home).start);
-    if start == Some(StartWhen::OnUnlock) {
+    if start == Some(StartWhen::OnUnlock) || net.has_private_bridges() {
         net.stop();
+        net.set_private_bridges(None);
     } else {
         net.set_dormant(true);
     }
@@ -192,7 +211,7 @@ pub(crate) mod tests {
 
         assert!(fake.log().is_empty());
         assert_eq!(net.status_now(), NetStatus::Off);
-        on_unlock(&net);
+        on_unlock(&net, None);
         assert_eq!(fake.log(), ["launch", "wake"]);
         net.stop();
     }
@@ -213,7 +232,7 @@ pub(crate) mod tests {
         on_open(&net, scratch.path());
         assert!(fake.log().is_empty(), "started before the unlock");
 
-        on_unlock(&net);
+        on_unlock(&net, None);
         assert_eq!(fake.log(), ["launch", "wake"]);
 
         on_lock(&net);
@@ -241,7 +260,7 @@ pub(crate) mod tests {
         assert_eq!(fake.log(), ["launch", "sleep"]);
         assert!(net.status_now().is_ready(), "asleep, not stopped");
 
-        on_unlock(&net);
+        on_unlock(&net, None);
         assert_eq!(fake.log(), ["launch", "sleep", "wake"], "one Tor");
         net.stop();
     }
