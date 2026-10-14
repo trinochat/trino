@@ -19,7 +19,9 @@
 //!   copy it ships; whether a feed was served that did not verify; the
 //!   highest `latest` seen; and whether updates look frozen (§6.4).
 //! - Without Tor ("Conectar sin Tor") nothing is asked: the news wait
-//!   (§2.8). With Tor not ready, nothing is asked either, never direct.
+//!   (§2.8). With Tor not ready, nothing is asked either, never direct;
+//!   nor through the updater's permit (`HttpClient::for_update`), which is
+//!   for the manifests and the installer only.
 //!
 //! No Tauri here, so the engine M4 extracts and its Flutter UI reuse it
 //! (R-14).
@@ -237,8 +239,10 @@ pub async fn check(
     now: u64,
 ) -> News {
     let load = || tor_home.map(Seen::load).unwrap_or_default();
-    if client.net().mode() == Mode::Direct {
-        // "Conectar sin Tor": the news can wait for Tor (§2.8).
+    if client.net().mode() == Mode::Direct || client.is_for_update() {
+        // "Conectar sin Tor", or the updater's own permit, which is for
+        // the manifests and the installer only: the news wait for Tor
+        // (§2.8).
         return news(NewsStatus::Bundled, None, &load(), now);
     }
 

@@ -1,5 +1,5 @@
-//! The tests of the updater (Tor design §6 and §11.6–§11.8: tests 36–39,
-//! 42, 54, 56 and 59, with R-05, R-06 and R-07; spike S7). Tor is the
+//! The tests of the updater (Tor design §6 and §11.6–§11.8: tests 36–40,
+//! 42, 43, 54, 56 and 59, with R-05, R-06 and R-07; spike S7). Tor is the
 //! in-memory `Mock`, the mirrors are servers of mock_http.rs with the test
 //! CA, and the direct transport fails the test if anything touches it,
 //! except in the tests of the updater's own permit.
@@ -12,10 +12,11 @@
 
 use crate::mock::{FakeTor, Forbidden, Mock};
 use crate::mock_http::{self, Reply};
+use crate::news;
 use crate::news::Version;
 use crate::update::{
-    self, Check, HeldInstaller, Platform, SigError, Source, UpdateError, UpdateKey,
-    GITHUB_REDIRECTS, MANIFEST_MIRRORS, TRINO_UPDATER_KEY, TRINO_UPDATER_KEY_ID,
+    self, Check, HeldInstaller, Mirrors, Platform, SigError, Source, UpdateError, UpdateKey,
+    UpdateSettings, GITHUB_REDIRECTS, MANIFEST_MIRRORS, TRINO_UPDATER_KEY, TRINO_UPDATER_KEY_ID,
 };
 use crate::*;
 use base64::Engine;
@@ -963,4 +964,232 @@ async fn the_updater_permit_never_waits_for_tor() {
     .unwrap();
     assert_eq!(response.read_capped(10).await.unwrap(), b"{}");
     assert!(started.elapsed() < Duration::from_secs(5));
+}
+
+// ---- Design test 40: the daily check and its switch (§6.3) ----
+
+const DAY: u64 = 24 * 60 * 60;
+/// 14 Oct 2026, 12:00 UTC.
+const NOW: u64 = 1_792_065_600;
+
+fn today() -> u64 {
+    NOW - NOW % DAY
+}
+
+fn seeded(seed: u64) -> rand::rngs::StdRng {
+    use rand::SeedableRng;
+    rand::rngs::StdRng::seed_from_u64(seed)
+}
+
+fn distinct(times: &[u64]) -> usize {
+    times
+        .iter()
+        .collect::<std::collections::BTreeSet<_>>()
+        .len()
+}
+
+#[test]
+fn the_daily_check_runs_once_at_a_random_time_and_obeys_the_switch() {
+    // On by default (decision 4), and never checked.
+    let fresh = UpdateSettings::default();
+    assert!(fresh.daily);
+    assert_eq!(fresh.checked_day, None);
+
+    // Not checked today: some time in what is left of today.
+    let times: Vec<u64> = (0..32)
+        .map(|seed| fresh.next_check(NOW, &mut seeded(seed)).unwrap())
+        .collect();
+    assert!(times.iter().all(|&at| at >= NOW && at < today() + DAY));
+    assert!(distinct(&times) > 16, "drawn at random: {times:?}");
+
+    // Checked today: once a day, so some time tomorrow.
+    let mut checked = fresh;
+    checked.checked(NOW);
+    assert_eq!(checked.checked_day, Some(today()));
+    let tomorrow: Vec<u64> = (0..32)
+        .map(|seed| checked.next_check(NOW + 60, &mut seeded(seed)).unwrap())
+        .collect();
+    assert!(tomorrow
+        .iter()
+        .all(|&at| at >= today() + DAY && at < today() + 2 * DAY));
+    assert!(distinct(&tomorrow) > 16, "drawn at random: {tomorrow:?}");
+    // Checked yesterday: due again today.
+    let at = checked.next_check(NOW + DAY, &mut seeded(1)).unwrap();
+    assert!(at >= NOW + DAY && at < today() + 2 * DAY);
+
+    // The switch off: no daily check at all ("Buscar ahora" stays).
+    let off = UpdateSettings {
+        daily: false,
+        ..checked
+    };
+    assert_eq!(off.next_check(NOW, &mut seeded(1)), None);
+
+    // A check that gave nothing is tried again in an hour or so, never at
+    // once.
+    for seed in 0..32 {
+        let again = update::retry_at(NOW, &mut seeded(seed));
+        assert!((NOW + 30 * 60..=NOW + 90 * 60).contains(&again), "{again}");
+    }
+}
+
+#[test]
+fn the_switch_and_the_last_day_are_kept_in_tor_and_never_a_time_of_day() {
+    let scratch = Scratch::new("settings");
+    let home = scratch.path();
+    // Nothing kept, or something unreadable: on, never checked.
+    assert_eq!(UpdateSettings::load(home), UpdateSettings::default());
+    std::fs::write(UpdateSettings::path(home), b"{ not json").unwrap();
+    assert_eq!(UpdateSettings::load(home), UpdateSettings::default());
+
+    UpdateSettings::set_daily(home, false).unwrap();
+    UpdateSettings::record_check(home, NOW).unwrap();
+    let kept = UpdateSettings::load(home);
+    assert!(!kept.daily);
+    assert_eq!(kept.checked_day, Some(today()));
+    let text = std::fs::read_to_string(UpdateSettings::path(home)).unwrap();
+    assert!(!text.contains(&NOW.to_string()), "{text}");
+    assert_eq!(UpdateSettings::path(home), home.join(update::UPDATE_FILE));
+    assert_eq!(update::UPDATE_FILE, "update.json");
+
+    UpdateSettings::set_daily(home, true).unwrap();
+    assert_eq!(
+        UpdateSettings::load(home),
+        UpdateSettings {
+            daily: true,
+            checked_day: Some(today())
+        }
+    );
+}
+
+// ---- The daily check: the news and the mirrors together (§6.4, §7) ----
+
+const NEWS_URL: &str = "https://news.trino.invalid/feed.json";
+const ONLY_MIRROR: [&str; 1] = ["https://mirror.trino.invalid/latest.json"];
+
+fn mirrors<'a>(key: &'a UpdateKey, source: &'a Source) -> Mirrors<'a> {
+    Mirrors {
+        source,
+        key,
+        signer: news::Signer::trino_updates(),
+        feeds: std::slice::from_ref(&NEWS_URL),
+    }
+}
+
+/// Design test 43, with the mirrors' answer: the news say 0.3.0 is out,
+/// and no mirror offers more than 0.2.0.
+#[tokio::test]
+async fn the_daily_check_asks_the_news_and_the_mirrors_and_warns_of_a_freeze() {
+    let scratch = Scratch::new("daily");
+    let signer = TestSigner::new();
+    let key = signer.update_key();
+    let source = Source {
+        manifests: &ONLY_MIRROR,
+        ..TEST_SOURCE
+    };
+    let tor_home = scratch.path().join("tor");
+    let seen = news::Seen {
+        seq: 7,
+        latest: Some(v("0.3.0")),
+        valid_until: Some(NOW + 30 * DAY),
+        fresh_at: Some(today()),
+        since: Some(today()),
+    };
+    seen.save(&tor_home).unwrap();
+    let tor = Mock::new();
+    let signature = signer.sign_installer(b"x", "0.2.0");
+    let url = "https://mirror.trino.invalid/Trino.Chat_0.2.0_x64-setup.exe";
+    mock_http::serve(
+        &tor,
+        "https://mirror.trino.invalid",
+        vec![ok(&manifest("0.2.0", url, &signature))],
+    );
+    let fake = FakeTor::new(Arc::clone(&tor));
+    let net = Net::with_backend(
+        NetConfig {
+            tor_home: tor_home.clone(),
+            pt: None,
+        },
+        Arc::clone(&fake) as Arc<dyn TorBackend>,
+        Arc::new(Forbidden),
+    );
+    let client = client(Arc::clone(&net));
+
+    // No Tor yet: nothing direct, and no day recorded.
+    let early = within(update::daily(
+        &client,
+        &mirrors(&key, &source),
+        Platform::WindowsX64,
+        v("0.1.0"),
+        NOW,
+    ))
+    .await;
+    assert_eq!(early.check.err(), Some(UpdateError::TorNotReady));
+    assert_eq!(UpdateSettings::load(&tor_home).checked_day, None);
+
+    net.start();
+    fake.ready();
+    within(net.ready(Duration::from_secs(5))).await.unwrap();
+    let daily = within(update::daily(
+        &client,
+        &mirrors(&key, &source),
+        Platform::WindowsX64,
+        v("0.1.0"),
+        NOW,
+    ))
+    .await;
+
+    let check = daily.check.unwrap();
+    assert_eq!(check.offered, Some(v("0.2.0")));
+    assert_eq!(check.newer.map(|offer| offer.version), Some(v("0.2.0")));
+    // Nobody serves the news here: the bundled copy, and the freeze the
+    // mirrors' answer shows.
+    assert_eq!(daily.news.status, news::NewsStatus::Bundled);
+    assert_eq!(
+        daily.news.freeze,
+        Some(news::Freeze::NotOffered {
+            latest: "0.3.0".to_string()
+        })
+    );
+    // The day checked, kept beside seen.json.
+    assert_eq!(UpdateSettings::load(&tor_home).checked_day, Some(today()));
+    // The news and the manifest, each through Tor on its own kind.
+    let kinds: Vec<IsoKind> = tor
+        .connections()
+        .into_iter()
+        .map(|(_, iso)| iso.kind())
+        .collect();
+    assert!(kinds.contains(&IsoKind::NEWS), "{kinds:?}");
+    assert!(kinds.contains(&IsoKind::UPDATE), "{kinds:?}");
+    net.stop();
+}
+
+#[tokio::test]
+#[allow(clippy::disallowed_methods)] // the updater's permit is under test
+async fn the_news_never_go_through_the_updaters_permit() {
+    // The permit is for the manifests and the installer only (§2.8): the
+    // news wait for Tor.
+    let scratch = Scratch::new("permit-news");
+    let direct = Mock::new();
+    let net = obsolete_net(&scratch, &direct);
+    let client = HttpClient::for_update_with_tls(
+        Arc::clone(&net),
+        DirectPermit::for_updater(),
+        mock_http::test_tls(),
+    )
+    .unwrap();
+    mock_http::serve(&direct, "https://trinochat.org", vec![ok(b"{}")]);
+    let session = net.session();
+
+    let news = within(news::check(
+        &client,
+        &session,
+        news::Signer::trino_updates(),
+        &news::FEED_MIRRORS,
+        None,
+        NOW,
+    ))
+    .await;
+
+    assert_eq!(news.status, news::NewsStatus::Bundled);
+    assert!(direct.connections().is_empty());
 }

@@ -26,18 +26,25 @@
 //!   obsolete, goes direct, and only to these hosts
 //!   (`HttpClient::for_update`, §6.5).
 //!
-//! No Tauri here: when to check, asking before installing and running the
-//! installer are the app's (src-tauri/src/updater.rs).
+//! - **Once a day** (schedule.rs, §6.3): at a random time, with a switch
+//!   kept in `tor/update.json`; each daily check asks the news and the
+//!   mirrors in one session of its own (`daily`, §2.7, §7), so the news'
+//!   `latest` is weighed against what the mirrors offer (§6.4).
+//!
+//! No Tauri here: asking before installing and running the installer are
+//! the app's (src-tauri/src/updater.rs).
 
 mod manifest;
+mod schedule;
 mod sig;
 
 pub use manifest::Platform;
+pub use schedule::{retry_at, UpdateSettings, RETRY_MAX, RETRY_MIN, UPDATE_FILE};
 pub use sig::{
     HeldInstaller, SigError, SignedComment, UpdateKey, TRINO_UPDATER_KEY, TRINO_UPDATER_KEY_ID,
 };
 
-use crate::news::Version;
+use crate::news::{self, News, Seen, Signer, Version};
 use crate::{http::MAX_REDIRECTS, Session};
 use crate::{Deadlines, HostRule, HttpClient, HttpError, IsoKind, Mode, RedirectPolicy, Request};
 use std::path::Path;
@@ -347,6 +354,81 @@ pub async fn download(
             _ => UpdateError::Signature,
         }
     })
+}
+
+/// Where a daily check looks, and whose signatures it takes.
+#[derive(Clone, Copy)]
+pub struct Mirrors<'a> {
+    /// The manifests and the installers.
+    pub source: &'a Source,
+    /// The updater's key.
+    pub key: &'a UpdateKey,
+    /// The news' key.
+    pub signer: &'a Signer,
+    /// The news' feeds.
+    pub feeds: &'a [&'a str],
+}
+
+impl Mirrors<'static> {
+    /// Trino's: its mirrors, its updater key and "Trino Updates".
+    pub fn trino() -> Mirrors<'static> {
+        Mirrors {
+            source: &Source::TRINO,
+            key: UpdateKey::trino(),
+            signer: Signer::trino_updates(),
+            feeds: &news::FEED_MIRRORS,
+        }
+    }
+}
+
+/// What a daily check found.
+#[derive(Debug)]
+pub struct Daily {
+    /// The news, with the freeze weighed against what the mirrors offer.
+    pub news: News,
+    /// The mirrors.
+    pub check: Result<Check, UpdateError>,
+}
+
+/// One daily check (§6.3, §6.4, §7): the news and every mirror, through
+/// `client`, in a session of its own (§2.7), at `now`. When a mirror
+/// answered, the day is kept in `tor/update.json`, and the news' freeze is
+/// weighed against the highest version offered: a `latest` no mirror
+/// offers is "Hay una versión nueva que no pudimos bajar."
+pub async fn daily(
+    client: &HttpClient,
+    mirrors: &Mirrors<'_>,
+    platform: Platform,
+    installed: Version,
+    now: u64,
+) -> Daily {
+    let net = client.net();
+    let session = net.session();
+    let tor_home = net.tor_home();
+    let (mut news, check) = futures_util::join!(
+        news::check(
+            client,
+            &session,
+            mirrors.signer,
+            mirrors.feeds,
+            tor_home,
+            now
+        ),
+        check(
+            client,
+            &session,
+            mirrors.source,
+            mirrors.key,
+            platform,
+            installed
+        ),
+    );
+    if let (Ok(check), Some(tor_home)) = (&check, tor_home) {
+        news.freeze = Seen::load(tor_home).freeze(now, check.offered.as_ref());
+        // Not kept now (a full disk): checked again the same day.
+        let _ = UpdateSettings::record_check(tor_home, now);
+    }
+    Daily { news, check }
 }
 
 const _: () = assert!(
