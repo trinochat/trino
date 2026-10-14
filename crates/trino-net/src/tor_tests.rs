@@ -366,7 +366,19 @@ async fn the_transport_of_the_settings_is_the_one_started() {
     }
     .save(home.path())
     .unwrap();
-    let (net, fake, _mock) = fake_net(home.path());
+    // Bridges need their program (pt_tests.rs): one someone else runs.
+    let mock = Mock::new();
+    let fake = FakeTor::new(Arc::clone(&mock));
+    let net = Net::with_backend(
+        NetConfig {
+            tor_home: home.path().to_path_buf(),
+            pt: Some(PtLauncher::Unmanaged {
+                socks: "127.0.0.1:47200".parse().unwrap(),
+            }),
+        },
+        Arc::clone(&fake) as Arc<dyn TorBackend>,
+        Arc::new(Forbidden),
+    );
 
     net.start();
     fake.ready();
@@ -418,22 +430,6 @@ async fn a_bridge_without_its_program_is_its_own_state() {
     fake.fail_next(LaunchError::PtMissing);
     net.start();
     becomes(&net, NetStatus::PtMissing).await;
-}
-
-#[test]
-fn arti_needs_the_bridge_program_for_a_bridge() {
-    // TOR-7 brings lyrebird; until then a bridge transport cannot start,
-    // and nothing of Arti is made (no network).
-    let home = Scratch::new("arti-bridge");
-    let (progress, _reports) = std::sync::mpsc::channel();
-    let launched = tor::arti::Arti.launch(tor::Launch {
-        dirs: TorDirs::fixed(home.path()),
-        transport: TransportKind::Obfs4,
-        pt: None,
-        progress,
-    });
-    assert_eq!(launched.err(), Some(LaunchError::PtMissing));
-    assert!(files_under(home.path()).is_empty());
 }
 
 // ---- Test 22: run.marker ----
@@ -770,7 +766,7 @@ fn the_ring_provider_is_installed_for_arti() {
 fn arti_gets_the_folders_and_nothing_else_of_trino() {
     let home = Scratch::new("arti-config");
     let dirs = TorDirs::fixed(home.path());
-    let config = tor::arti::config(&dirs).expect("a configuration");
+    let config = tor::arti::config(&dirs, &[], &[]).expect("a configuration");
     let shown = format!("{config:?}");
     assert!(shown.contains("state"), "{shown}");
     assert!(shown.contains("cache"), "{shown}");

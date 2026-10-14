@@ -37,6 +37,11 @@ hyper-util = { version = "0.1", default-features = false, features = ["tokio"] }
 # TLS for wss:// and https://, with ring, the only provider in the tree, chosen here
 # rather than left to whichever features the process happens to enable.
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
+# Folder names for private bridges' sessions (tor/run-<random>, R-01), and the
+# bytes that overwrite their files before they go.
+rand = "0.8"
+# lyrebird's SHA-256, checked before each launch (src/tor/pt.rs, R-24).
+sha2 = "0.10"
 # tor/settings.json and tor/run.marker (src/tor/settings.rs, src/tor/marker.rs),
 # and the states the app hands its UI.
 serde = { version = "1", features = ["derive"] }

@@ -38,6 +38,8 @@ mod bridge_tests;
 #[cfg(test)]
 mod http_tests;
 #[cfg(test)]
+mod pt_tests;
+#[cfg(test)]
 mod tests;
 #[cfg(test)]
 mod tor_tests;
@@ -45,6 +47,7 @@ mod tor_tests;
 pub use http::{Deadlines, HostRule, HttpClient, HttpError, RedirectPolicy, Request, Response};
 pub use status::{BlockKind, NetStatus, Progress, TransportKind};
 pub use tor::bridges::{BridgeError, BridgeLine, Bridges};
+pub use tor::pt::{PtError, PtMethod};
 pub use tor::settings::{StartWhen, TorSettings};
 pub use tor::{LaunchError, NetConfig, PtLauncher, RunningTor, TorBackend, TorDirs};
 pub use transport::{BoxedIo, DirectPermit, Io, Iso, IsoKind, Session, Target, Transport};
@@ -57,6 +60,7 @@ use std::time::{Duration, Instant};
 use thiserror::Error;
 use tokio::sync::watch;
 use tor::marker::{self, RunMarker};
+use tor::pt::PtProcess;
 use tor::Launch;
 use transport::Scope;
 
@@ -208,6 +212,38 @@ pub struct Net {
     shared: Arc<Shared>,
     /// One `start` or `stop` at a time.
     life: Mutex<()>,
+    /// The person's private bridges, from the app's encrypted store:
+    /// memory only, handed in at unlock and dropped at lock (R-01).
+    private: Mutex<Option<Vec<BridgeLine>>>,
+    /// A built-in transport being tried by a tap ("Probar con un puente"),
+    /// kept in tor/settings.json once it works.
+    trial: Mutex<Option<TransportKind>>,
+    /// What the running start launched besides Tor: the bridge program,
+    /// and the session's folder with private bridges.
+    extras: Mutex<Extras>,
+    /// Tests run a fake bridge program with these arguments.
+    #[cfg(test)]
+    pt_args: Mutex<Vec<std::ffi::OsString>>,
+}
+
+/// What a start launched besides Tor, stopped and destroyed with it.
+#[derive(Default)]
+struct Extras {
+    pt: Option<PtProcess>,
+    run: Option<std::path::PathBuf>,
+}
+
+impl Extras {
+    /// After Tor stopped: the bridge program goes, then the session's
+    /// folder, file by file (R-01).
+    fn end(self) {
+        if let Some(pt) = self.pt {
+            pt.stop();
+        }
+        if let Some(run) = self.run {
+            let _ = tor::dirs::destroy_tree(&run);
+        }
+    }
 }
 
 impl Default for Net {
@@ -221,6 +257,11 @@ impl Default for Net {
             direct: Arc::new(direct::Direct),
             shared: Arc::new(Shared::new(NetStatus::Off)),
             life: Mutex::new(()),
+            private: Mutex::new(None),
+            trial: Mutex::new(None),
+            extras: Mutex::new(Extras::default()),
+            #[cfg(test)]
+            pt_args: Mutex::new(Vec::new()),
         }
     }
 }
@@ -366,43 +407,54 @@ impl Net {
         if lock(&self.tor).is_some() {
             return;
         }
-        let settings = TorSettings::load(&config.tor_home);
+        let bridges = self.bridges();
+        let transport = bridges.transport();
+        // Kept in tor/settings.json once it works: a tried built-in.
+        let remember = match &bridges {
+            Bridges::Builtin(kind) if *lock(&self.trial) == Some(*kind) => Some(*kind),
+            _ => None,
+        };
         let Ok(marker) = RunMarker::begin(&config.tor_home) else {
             self.shared
                 .next_generation(NetStatus::Obsolete { confirmed: false });
             return;
         };
         let generation = self.shared.next_generation(NetStatus::Starting { pct: 0 });
-        let dirs = TorDirs::fixed(&config.tor_home);
-        let made = std::fs::create_dir_all(&dirs.state)
-            .and_then(|()| std::fs::create_dir_all(&dirs.cache));
         let (progress, reports) = mpsc::channel();
-        let launched = match made {
-            Ok(()) => backend.launch(Launch {
-                dirs,
-                transport: settings.transport,
-                pt: config.pt.clone(),
-                progress,
-            }),
-            Err(_) => Err(LaunchError::Failed("folders")),
-        };
+        let mut extras = Extras::default();
+        let launched =
+            self.prepare(config, &bridges, &mut extras)
+                .and_then(|(dirs, transports)| {
+                    backend.launch(Launch {
+                        dirs,
+                        transport,
+                        bridges: bridges.lines(),
+                        transports,
+                        progress,
+                    })
+                });
         match launched {
             Ok(running) => {
                 *lock(&self.tor) = Some(running);
+                *lock(&self.extras) = extras;
                 let shared = Arc::clone(&self.shared);
-                let transport = settings.transport;
+                let remember = remember.map(|kind| (config.tor_home.clone(), kind));
                 let watcher = std::thread::Builder::new()
                     .name("tor-status".to_string())
-                    .spawn(move || watch_tor(&shared, generation, &reports, transport, &marker));
+                    .spawn(move || {
+                        watch_tor(&shared, generation, &reports, transport, &marker, remember)
+                    });
                 if watcher.is_err() {
                     // Without its watcher it would never be seen ready.
                     if let Some(running) = lock(&self.tor).take() {
                         running.stop();
                     }
+                    std::mem::take(&mut *lock(&self.extras)).end();
                     self.shared.update(generation, failed(), || {});
                 }
             }
             Err(error) => {
+                extras.end();
                 marker.clear();
                 let status = match error {
                     LaunchError::PtMissing => NetStatus::PtMissing,
@@ -412,6 +464,152 @@ impl Net {
                 self.shared.update(generation, status, || {});
             }
         }
+    }
+
+    /// What a start needs before Tor: its folders (a session's own with
+    /// private bridges, R-01) and, with bridges, the bridge program and
+    /// where each of their transports listens. What it launches goes in
+    /// `extras`, so that a failure later ends it too.
+    fn prepare(
+        &self,
+        config: &NetConfig,
+        bridges: &Bridges,
+        extras: &mut Extras,
+    ) -> Result<(TorDirs, Vec<PtMethod>), LaunchError> {
+        let dirs = if bridges.is_private() {
+            let (dirs, run) =
+                TorDirs::session(&config.tor_home).map_err(|_| LaunchError::Failed("folders"))?;
+            extras.run = Some(run);
+            dirs
+        } else {
+            let dirs = TorDirs::fixed(&config.tor_home);
+            std::fs::create_dir_all(&dirs.state)
+                .and_then(|()| std::fs::create_dir_all(&dirs.cache))
+                .map_err(|_| LaunchError::Failed("folders"))?;
+            dirs
+        };
+        if *bridges == Bridges::None {
+            return Ok((dirs, Vec::new()));
+        }
+        let protocols = bridges.protocols();
+        if protocols.is_empty() {
+            // A kind with no bridge to use (WebTunnel, meek): never start
+            // without one.
+            return Err(LaunchError::Failed("no bridges"));
+        }
+        let transports = match &config.pt {
+            None => return Err(LaunchError::PtMissing),
+            Some(PtLauncher::Unmanaged { socks }) => protocols
+                .iter()
+                .map(|protocol| PtMethod {
+                    protocol: protocol.to_string(),
+                    socks: *socks,
+                })
+                .collect(),
+            Some(PtLauncher::Managed { path, sha256 }) => {
+                let process = PtProcess::launch(
+                    path,
+                    sha256,
+                    &self.pt_args(),
+                    &protocols,
+                    &dirs.state.join("lyrebird"),
+                    tor::pt::HANDSHAKE,
+                )
+                .map_err(|error| match error {
+                    PtError::Missing | PtError::Mismatch => LaunchError::PtMissing,
+                    _ => LaunchError::Failed("bridge program"),
+                })?;
+                let transports = process.methods().to_vec();
+                extras.pt = Some(process);
+                transports
+            }
+        };
+        Ok((dirs, transports))
+    }
+
+    #[cfg(test)]
+    fn pt_args(&self) -> Vec<std::ffi::OsString> {
+        lock(&self.pt_args).clone()
+    }
+
+    #[cfg(not(test))]
+    fn pt_args(&self) -> Vec<std::ffi::OsString> {
+        Vec::new()
+    }
+
+    /// Tests: run the bridge program with `args` (a fake one).
+    #[cfg(test)]
+    pub(crate) fn set_pt_test_args(&self, args: Vec<std::ffi::OsString>) {
+        *lock(&self.pt_args) = args;
+    }
+
+    /// The bridges the next start uses: the private lines if the app
+    /// handed them in, else a built-in transport being tried, else the one
+    /// tor/settings.json keeps, else none.
+    pub fn bridges(&self) -> Bridges {
+        if let Some(lines) = lock(&self.private).as_ref() {
+            return Bridges::Private(lines.clone());
+        }
+        if let Some(kind) = *lock(&self.trial) {
+            return Bridges::Builtin(kind);
+        }
+        let kept = self
+            .config
+            .as_ref()
+            .map(|config| TorSettings::load(&config.tor_home).transport)
+            .unwrap_or_default();
+        match kept {
+            TransportKind::None => Bridges::None,
+            kind => Bridges::Builtin(kind),
+        }
+    }
+
+    /// Whether this build has a bridge program to run bridges with.
+    pub fn has_bridge_program(&self) -> bool {
+        self.config
+            .as_ref()
+            .is_some_and(|config| config.pt.is_some())
+    }
+
+    /// The person's private bridges, for the next start (or none): memory
+    /// only. The app hands them in from its encrypted store at unlock and
+    /// takes them away at lock; a start with them runs in a folder of the
+    /// session's own (R-01). A built-in being tried is dropped.
+    pub fn set_private_bridges(&self, lines: Option<Vec<BridgeLine>>) {
+        *lock(&self.trial) = None;
+        *lock(&self.private) = lines.filter(|lines| !lines.is_empty());
+    }
+
+    pub fn has_private_bridges(&self) -> bool {
+        lock(&self.private).is_some()
+    }
+
+    /// "Probar con un puente" (§5.3), by a tap: start again through the
+    /// built-in bridges of `kind`, and keep `kind` in tor/settings.json
+    /// once Tor is ready through them. Only the built-in kinds; never over
+    /// private bridges, which are the person's choice. `retry` goes back
+    /// to what is kept.
+    pub fn try_bridge(&self, kind: TransportKind) -> Result<(), NetError> {
+        if !tor::bridges::BUILTIN.contains(&kind) || self.has_private_bridges() {
+            return Err(NetError::NotPermitted);
+        }
+        let _life = lock(&self.life);
+        *lock(&self.trial) = Some(kind);
+        self.stop_locked();
+        self.start_locked();
+        Ok(())
+    }
+
+    /// When Trino opens: destroy the session folders (`run-*`) a cut left
+    /// behind (R-01). Returns how many.
+    pub fn destroy_leftover_runs(&self) -> usize {
+        let _life = lock(&self.life);
+        if lock(&self.tor).is_some() {
+            return 0;
+        }
+        self.config.as_ref().map_or(0, |config| {
+            tor::dirs::destroy_leftover_runs(&config.tor_home)
+        })
     }
 
     /// Stop Tor (R-03): its tasks end and its files close before this
@@ -429,6 +627,8 @@ impl Net {
         if let Some(running) = running {
             running.stop();
         }
+        // Then lyrebird, and the folder of a session with private bridges.
+        std::mem::take(&mut *lock(&self.extras)).end();
         // A clean stop: no death to count.
         if let Some(config) = &self.config {
             RunMarker::forgive(&config.tor_home);
@@ -436,10 +636,11 @@ impl Net {
     }
 
     /// "Volver a intentar" and, on the "old version" screen, "Intentar de
-    /// nuevo": stop Tor, forget the deaths `run.marker` counted, and start
-    /// again.
+    /// nuevo": stop Tor, forget the deaths `run.marker` counted and a
+    /// built-in being tried, and start again with what is kept.
     pub fn retry(&self) {
         let _life = lock(&self.life);
+        *lock(&self.trial) = None;
         self.stop_locked();
         self.start_locked();
     }
@@ -530,13 +731,15 @@ fn failed() -> NetStatus {
 
 /// Turns what one start of Tor reports into states, until that Tor stops
 /// or a newer start replaces it. Also keeps `run.marker`: "ready" once Tor
-/// is, and gone once Tor has run `SURVIVAL` since.
+/// is, and gone once Tor has run `SURVIVAL` since; and, once ready, the
+/// tried transport in `remember`.
 fn watch_tor(
     shared: &Shared,
     generation: u64,
     reports: &mpsc::Receiver<Progress>,
     transport: TransportKind,
     marker: &RunMarker,
+    remember: Option<(std::path::PathBuf, TransportKind)>,
 ) {
     let mut watch = Watch::new(transport, Instant::now());
     let mut ready_at: Option<Instant> = None;
@@ -584,6 +787,12 @@ fn watch_tor(
         let current = shared.update(generation, status, || {
             if first_ready {
                 marker.ready();
+                // What worked is kept (§5.2): the kind only (R-25).
+                if let Some((tor_home, kind)) = &remember {
+                    let mut kept = TorSettings::load(tor_home);
+                    kept.transport = *kind;
+                    let _ = kept.save(tor_home);
+                }
             }
             if lived {
                 marker.clear();

@@ -13,9 +13,12 @@
 //! Nothing here installs a log subscriber: Arti's `tracing` events go
 //! nowhere, and nothing reaches the disk (R-25).
 
+use super::bridges::BridgeLine;
+use super::pt::PtMethod;
 use super::{Launch, LaunchError, RunningTor, TorBackend, TorDirs};
-use crate::{BlockKind, BoxedIo, Iso, NetError, Progress, Target, Transport, TransportKind};
-use arti_client::config::TorClientConfigBuilder;
+use crate::{BlockKind, BoxedIo, Iso, NetError, Progress, Target, Transport};
+use arti_client::config::pt::TransportConfigBuilder;
+use arti_client::config::{BridgeConfigBuilder, TorClientConfigBuilder};
 use arti_client::isolation::IsolationHelper;
 use arti_client::status::{BlockageKind, BootstrapStatus};
 use arti_client::{DormantMode, ErrorKind, HasKind, StreamPrefs, TorClient, TorClientConfig};
@@ -44,23 +47,52 @@ pub fn install_crypto_provider() {
     let _ = rustls::crypto::ring::default_provider().install_default();
 }
 
-/// Arti's configuration: the folders of `dirs`, and everything else as
-/// Arti has it (circuits, guards, timeouts: Trino invents no network
-/// policy, §2.3). Bridges come with TOR-7.
-pub(crate) fn config(dirs: &TorDirs) -> Result<TorClientConfig, LaunchError> {
-    TorClientConfigBuilder::from_directories(&dirs.state, &dirs.cache)
+/// Arti's configuration: the folders of `dirs`, the `bridges`, each
+/// transport of theirs as an unmanaged one at its SOCKS port (pt.rs), and
+/// everything else as Arti has it (circuits, guards, timeouts: Trino
+/// invents no network policy, §2.3).
+pub(crate) fn config(
+    dirs: &TorDirs,
+    bridges: &[BridgeLine],
+    transports: &[PtMethod],
+) -> Result<TorClientConfig, LaunchError> {
+    let mut builder = TorClientConfigBuilder::from_directories(&dirs.state, &dirs.cache);
+    for line in bridges {
+        let bridge = line
+            .as_str()
+            .parse::<BridgeConfigBuilder>()
+            .map_err(|_| LaunchError::Failed("bridge"))?;
+        builder.bridges().bridges().push(bridge);
+    }
+    for method in transports {
+        let protocol = method
+            .protocol
+            .parse()
+            .map_err(|_| LaunchError::Failed("transport"))?;
+        let mut transport = TransportConfigBuilder::default();
+        transport.protocols(vec![protocol]).proxy_addr(method.socks);
+        builder.bridges().transports().push(transport);
+    }
+    builder
         .build()
         .map_err(|_| LaunchError::Failed("configuration"))
 }
 
 impl TorBackend for Arti {
     fn launch(&self, launch: Launch) -> Result<Arc<dyn RunningTor>, LaunchError> {
-        if launch.transport != TransportKind::None {
-            // Bridges need lyrebird, which Trino launches itself (TOR-7).
+        // Every bridge needs its transport's SOCKS port: the bridge
+        // program, which `Net` launches (pt.rs). Arti never runs one.
+        let unserved = launch.bridges.iter().any(|line| {
+            launch
+                .transports
+                .iter()
+                .all(|method| method.protocol != line.protocol())
+        });
+        if unserved {
             return Err(LaunchError::PtMissing);
         }
         install_crypto_provider();
-        let config = config(&launch.dirs)?;
+        let config = config(&launch.dirs, &launch.bridges, &launch.transports)?;
         let progress = launch.progress;
 
         let (created, client) = mpsc::channel();

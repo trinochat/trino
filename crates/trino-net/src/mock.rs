@@ -103,7 +103,17 @@ struct FakeState {
     progress: Option<std::sync::mpsc::Sender<crate::Progress>>,
     next_error: Option<crate::LaunchError>,
     launches: Vec<crate::TransportKind>,
+    last: Option<Launched>,
     log: Vec<&'static str>,
+}
+
+/// What a `FakeTor` was last launched with.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Launched {
+    pub dirs: crate::TorDirs,
+    pub transport: crate::TransportKind,
+    pub bridges: Vec<crate::BridgeLine>,
+    pub transports: Vec<crate::PtMethod>,
 }
 
 /// One start of a `FakeTor`.
@@ -155,6 +165,11 @@ impl FakeTor {
         lock(&self.state).launches.clone()
     }
 
+    /// What the last launch was given, if any.
+    pub fn last_launch(&self) -> Option<Launched> {
+        lock(&self.state).last.clone()
+    }
+
     /// What was asked of it, in order: "launch", "stop", "sleep", "wake".
     pub fn log(&self) -> Vec<&'static str> {
         lock(&self.state).log.clone()
@@ -169,6 +184,12 @@ impl crate::TorBackend for FakeTor {
         let mut state = lock(&self.state);
         state.log.push("launch");
         state.launches.push(launch.transport);
+        state.last = Some(Launched {
+            dirs: launch.dirs.clone(),
+            transport: launch.transport,
+            bridges: launch.bridges.clone(),
+            transports: launch.transports.clone(),
+        });
         if let Some(error) = state.next_error.take() {
             return Err(error);
         }

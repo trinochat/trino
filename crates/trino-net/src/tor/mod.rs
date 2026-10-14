@@ -7,10 +7,14 @@
 
 pub mod arti;
 pub mod bridges;
+pub mod dirs;
 pub(crate) mod marker;
+pub mod pt;
 pub mod settings;
 
 use crate::{Progress, Transport, TransportKind};
+use bridges::BridgeLine;
+use pt::PtMethod;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc;
 
@@ -18,9 +22,9 @@ use std::sync::mpsc;
 /// keys) and `cache/` (the network's directory, public), both under the
 /// Tor folder, `trino_home()/tor`.
 ///
-/// With private bridges (TOR-7) they will be `run-<random>/state` and
-/// `run-<random>/cache`, made at unlock and destroyed file by file at lock
-/// and exit (R-01); that is the one place where this changes.
+/// With private bridges they are `run-<random>/state` and
+/// `run-<random>/cache` instead, made at each start and destroyed file by
+/// file when Tor stops (R-01, dirs.rs).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct TorDirs {
     pub state: PathBuf,
@@ -37,13 +41,14 @@ impl TorDirs {
     }
 }
 
-/// How the bridge program is run (§5.1). TOR-7 builds it: the spike found
-/// that Arti shows lyrebird's console on Windows and that dropping Arti's
-/// runtime leaves lyrebird running (S2, S13), so Trino launches it itself
-/// and hands Arti its SOCKS port.
+/// The bridge program (§5.1). Either way Arti gets it as an unmanaged
+/// transport: a SOCKS port per transport, which Arti does not run.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum PtLauncher {
-    /// lyrebird at `path`, run only if its SHA-256 is `sha256` (R-24).
+    /// lyrebird at `path`, which `Net` runs itself (pt.rs), with no
+    /// window, and only if its SHA-256 is `sha256` (R-24): Arti would show
+    /// its console on Windows and leave it running when stopped (spike
+    /// S2, S13). The desktop's.
     Managed { path: PathBuf, sha256: [u8; 32] },
     /// A transport someone else runs, on this SOCKS address (iPhone's
     /// IPtProxy).
@@ -55,15 +60,21 @@ pub enum PtLauncher {
 pub struct NetConfig {
     /// `trino_home()/tor`: settings.json, run.marker, state/ and cache/.
     pub tor_home: PathBuf,
-    /// The bridge program, if this build has one (TOR-7).
+    /// The bridge program, if this build has one: without it a start with
+    /// bridges is "bridge program missing" (R-22).
     pub pt: Option<PtLauncher>,
 }
 
 /// Everything a backend needs to start Tor.
 pub struct Launch {
     pub dirs: TorDirs,
+    /// The transport the start counts its limit without progress by.
     pub transport: TransportKind,
-    pub pt: Option<PtLauncher>,
+    /// The bridges to reach Tor through; none goes straight to it.
+    pub bridges: Vec<BridgeLine>,
+    /// Where each transport of the bridges listens: the bridge program
+    /// `Net` launched, or the host's (`PtLauncher::Unmanaged`).
+    pub transports: Vec<PtMethod>,
     /// Where the running Tor reports its progress. When every copy is
     /// dropped (Tor stopped), `Net` stops listening.
     pub progress: mpsc::Sender<Progress>,
