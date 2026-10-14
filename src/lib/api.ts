@@ -192,6 +192,10 @@ export const COMMAND_ERROR_CODES = [
   // or a group (`channel`, `grp:…`), or with control, format or bidi
   // characters, or with nothing that shows (probe_node, rename_node).
   'invalid_name',
+  // Tor is still connecting: nothing was sent, and nothing went direct. Not
+  // "the server did not answer", and never a reason to offer going without
+  // Tor (Tor design §2.4, §9.3).
+  'tor_not_ready',
 ] as const;
 
 export type CommandErrorCode = (typeof COMMAND_ERROR_CODES)[number];

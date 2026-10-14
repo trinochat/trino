@@ -5,11 +5,11 @@
 //! - gives up connecting, and the whole exchange, at a deadline;
 //! - never follows a redirect, so a server cannot send a request on to a
 //!   host nobody chose;
-//! - is read with a cap: `read_capped`, which refuses an answer past a
-//!   size, or turn.rs's own, which also wipes the credential it reads.
+//! - is read with a cap: turn.rs's own, which also wipes the credential it
+//!   reads.
 //!
-//! Blossom (K2) and the TURN credentials use it. Tor will change the
-//! transport here, for every client at once.
+//! The TURN credentials use it. Blossom moved to trino-net's HttpClient
+//! (Tor design §3 B1, B2); this module leaves once turn.rs moves too.
 
 use std::time::Duration;
 use thiserror::Error;
@@ -30,22 +30,6 @@ pub(crate) struct Deadlines {
 pub(crate) enum NetError {
     #[error("could not build the HTTP client")]
     Build,
-    #[error("the answer is larger than {max} bytes")]
-    TooLarge { max: usize },
-    #[error("{0}")]
-    Transfer(&'static str),
-}
-
-/// A short reason for a failed request: never the URL, which reqwest puts
-/// in its own message.
-pub(crate) fn reason(error: &reqwest::Error) -> &'static str {
-    if error.is_timeout() {
-        "timeout"
-    } else if error.is_connect() {
-        "connect"
-    } else {
-        "network"
-    }
 }
 
 /// An HTTP client with the rules above.
@@ -63,34 +47,6 @@ pub(crate) fn client(deadlines: Deadlines) -> Result<reqwest::Client, NetError> 
     .map_err(|_| NetError::Build)
 }
 
-/// The body of `response`, refused as soon as it passes `max` bytes:
-/// before reading anything when the server says it is larger, and
-/// otherwise once the bytes read go past it.
-pub(crate) async fn read_capped(
-    response: &mut reqwest::Response,
-    max: usize,
-) -> Result<Vec<u8>, NetError> {
-    let too_large = NetError::TooLarge { max };
-    if response
-        .content_length()
-        .is_some_and(|length| length > max as u64)
-    {
-        return Err(too_large);
-    }
-    let mut body = Vec::new();
-    while let Some(chunk) = response
-        .chunk()
-        .await
-        .map_err(|e| NetError::Transfer(reason(&e)))?
-    {
-        if body.len() + chunk.len() > max {
-            return Err(too_large);
-        }
-        body.extend_from_slice(&chunk);
-    }
-    Ok(body)
-}
-
 /// A local HTTP/1.1 server for the tests of the clients built here.
 #[cfg(test)]
 pub(crate) mod mock {
@@ -99,7 +55,10 @@ pub(crate) mod mock {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio::net::{TcpListener, TcpStream};
 
-    /// What the server received on one connection.
+    /// What the server received on one connection. Only blossom.rs's tests
+    /// read it, and they moved to trino-net's servers; this module leaves
+    /// with reqwest, once turn.rs moves too (Tor design §3.2).
+    #[allow(dead_code)]
     pub(crate) struct Request {
         pub(crate) head: String,
         pub(crate) body: Vec<u8>,
@@ -120,13 +79,6 @@ pub(crate) mod mock {
             body.len()
         )
         .into_bytes();
-        bytes.extend_from_slice(body);
-        Reply::Bytes(bytes)
-    }
-
-    /// An answer without a length: the body ends when the connection closes.
-    pub(crate) fn until_close(status: &str, body: &[u8]) -> Reply {
-        let mut bytes = format!("HTTP/1.1 {status}\r\nConnection: close\r\n\r\n").into_bytes();
         bytes.extend_from_slice(body);
         Reply::Bytes(bytes)
     }
@@ -264,49 +216,20 @@ mod tests {
             .await
             .unwrap_err();
 
-        assert_eq!(reason(&error), "timeout", "{error}");
+        assert!(error.is_timeout(), "{error}");
         assert!(started.elapsed() < Duration::from_secs(3));
-    }
-
-    #[tokio::test]
-    async fn an_answer_over_the_cap_is_refused_with_or_without_a_length() {
-        let big = vec![b'x'; 4096];
-        for reply in [
-            mock::response("200 OK", "", &big),
-            mock::until_close("200 OK", &big),
-        ] {
-            let (base, _) = mock::serve(|_| vec![reply]).await;
-            let mut response = client(QUICK).unwrap().get(&base).send().await.unwrap();
-
-            let read = within(Duration::from_secs(5), read_capped(&mut response, 1024)).await;
-
-            // Lengths only: a failure must not print every byte.
-            assert_eq!(
-                read.map(|body| body.len()),
-                Err(NetError::TooLarge { max: 1024 })
-            );
-        }
-    }
-
-    #[tokio::test]
-    async fn an_answer_within_the_cap_is_read_whole() {
-        let (base, _) = mock::serve(|_| vec![mock::until_close("200 OK", b"{\"url\":1}")]).await;
-        let mut response = client(QUICK).unwrap().get(&base).send().await.unwrap();
-
-        let read = within(Duration::from_secs(5), read_capped(&mut response, 1024)).await;
-
-        assert_eq!(read.unwrap(), b"{\"url\":1}");
     }
 
     #[test]
     fn nothing_but_this_module_builds_an_http_client() {
-        // §8: Tor swaps the transport in one place.
+        // §8: Tor swaps the transport in one place. Blossom's client is
+        // trino-net's HttpClient, which this does not count.
         for (file, source) in [
             ("blossom.rs", include_str!("blossom.rs")),
             ("commands.rs", include_str!("commands.rs")),
             ("turn.rs", include_str!("turn.rs")),
         ] {
-            for builder in ["Client::new", "Client::builder", "reqwest::get"] {
+            for builder in ["reqwest::Client", "Client::builder", "reqwest::get"] {
                 assert!(!source.contains(builder), "{file} uses {builder}");
             }
         }

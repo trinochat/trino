@@ -1680,7 +1680,7 @@ async fn prepare_file(
 ) -> Result<FileRef, CommandError> {
     let (identity, blob, file) =
         encrypt_attachment(state, name, mime, data_b64, thumb, gid).await?;
-    let url = blossom::upload(&identity, &blob, &file.sha256).await?;
+    let url = blossom::upload(&state.net, &identity, &blob, &file.sha256).await?;
     Ok(FileRef { url, ..file })
 }
 
@@ -1890,14 +1890,16 @@ async fn announce_group_file(
 }
 
 /// Download + verify + decrypt a file, returning a `data:` URL for the frontend.
+/// The download goes through the app's `Net` (Tor design §3 B2).
 #[tauri::command]
 pub async fn fetch_file(
+    state: State<'_, AppState>,
     url: String,
     key: String,
     sha256: String,
     mime: String,
 ) -> Result<String, String> {
-    let blob = blossom::download(&url, &sha256)
+    let blob = blossom::download(&state.net, &url, &sha256)
         .await
         .map_err(|e| e.to_string())?;
     let mut plain = blossom::decrypt_file(&blob, &key).map_err(|e| e.to_string())?;

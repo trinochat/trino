@@ -59,6 +59,10 @@ pub enum ErrorCode {
     /// announcements channel (`channel`) or a group (`grp:…`), or one with
     /// a control, format or bidi character, or with nothing that shows.
     InvalidName,
+    // -- Tor (TOR-4) --
+    /// Tor is still connecting: nothing was sent, and nothing went direct.
+    /// Never a reason to offer going without Tor (Tor design §2.4, R-11).
+    TorNotReady,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
@@ -149,6 +153,9 @@ impl From<BlossomError> for CommandError {
     fn from(error: BlossomError) -> Self {
         match error {
             BlossomError::AllFailed { servers } => CommandError::upload_failed(servers),
+            BlossomError::TorNotReady => {
+                CommandError::new(ErrorCode::TorNotReady, error.to_string())
+            }
             // A bad key or blob, or a failure in the crypto: nothing a file
             // server did.
             other => CommandError::internal(other.to_string()),
@@ -356,6 +363,20 @@ mod tests {
                 "invalid_name"
             ]
         );
+    }
+
+    #[test]
+    fn tor_not_ready_has_the_name_the_ui_maps_and_comes_from_blossom() {
+        // Tor design §2.4 and §9.3: the UI tells "Tor is still connecting"
+        // apart from "the server did not answer". Also listed, last, in
+        // `COMMAND_ERROR_CODES` (src/lib/api.ts).
+        assert_eq!(
+            serde_json::to_value(ErrorCode::TorNotReady).unwrap(),
+            "tor_not_ready"
+        );
+        let error = CommandError::from(BlossomError::TorNotReady);
+        assert_eq!(error.code, ErrorCode::TorNotReady);
+        assert!(error.servers.is_none());
     }
 
     #[test]

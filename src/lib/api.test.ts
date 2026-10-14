@@ -97,14 +97,16 @@ describe('command errors', () => {
       'not_found',
       'profile_invalid',
       'invalid_name',
+      'tor_not_ready',
     ]);
   });
 
   // K12: a name, an "about" or a photo over its limit. Added at the end, so
-  // no earlier code moved; only the code of a contact's name came after it.
+  // no earlier code moved; only the codes of a contact's name and of Tor
+  // came after it.
   it('keep the code of the shared profile after the codes before it', () => {
     expect(COMMAND_ERROR_CODES.indexOf('profile_invalid')).toBe(21);
-    expect(COMMAND_ERROR_CODES[COMMAND_ERROR_CODES.length - 2]).toBe('profile_invalid');
+    expect(COMMAND_ERROR_CODES[COMMAND_ERROR_CODES.length - 3]).toBe('profile_invalid');
     expect(isCommandError({ code: 'profile_invalid', message: 'about is longer than 140' })).toBe(true);
   });
 
@@ -112,9 +114,18 @@ describe('command errors', () => {
   // or a group (`channel`, `grp:…`), with control, format or bidi
   // characters, or with nothing that shows. Added at the end, so no earlier
   // code moves.
-  it('end with the code of a name a contact cannot have', () => {
-    expect(COMMAND_ERROR_CODES[COMMAND_ERROR_CODES.length - 1]).toBe('invalid_name');
+  it('keep the code of a name a contact cannot have after the codes before it', () => {
+    expect(COMMAND_ERROR_CODES.indexOf('invalid_name')).toBe(22);
+    expect(COMMAND_ERROR_CODES[COMMAND_ERROR_CODES.length - 2]).toBe('invalid_name');
     expect(isCommandError({ code: 'invalid_name', message: 'that name is a group' })).toBe(true);
+  });
+
+  // Tor design §2.4 and §9.3: Tor is still connecting, which the UI tells
+  // apart from a server that did not answer and which never leads to an
+  // offer to go without Tor. Added at the end, so no earlier code moves.
+  it('end with the code of Tor still connecting', () => {
+    expect(COMMAND_ERROR_CODES[COMMAND_ERROR_CODES.length - 1]).toBe('tor_not_ready');
+    expect(isCommandError({ code: 'tor_not_ready', message: 'Tor is not ready yet' })).toBe(true);
   });
 
   it('are recognised with their extra fields', () => {

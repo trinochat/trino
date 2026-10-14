@@ -138,11 +138,13 @@ impl RedirectPolicy {
         RedirectPolicy { hosts }
     }
 
+    /// Whether a redirect may go to `host` (over https).
+    pub fn allows_host(&self, host: &str) -> bool {
+        self.hosts.iter().any(|rule| rule.allows(host))
+    }
+
     fn allows(&self, url: &Url) -> bool {
-        url.scheme() == "https"
-            && url
-                .host_str()
-                .is_some_and(|host| self.hosts.iter().any(|rule| rule.allows(host)))
+        url.scheme() == "https" && url.host_str().is_some_and(|host| self.allows_host(host))
     }
 }
 
