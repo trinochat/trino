@@ -33,12 +33,13 @@ allow = [
 ]
 confidence-threshold = 0.8
 
-# The allow-list above governs DEPENDENCIES. These two crates are the project's
+# The allow-list above governs DEPENDENCIES. These crates are the project's
 # own, and are AGPL by design; cargo-deny evaluates the whole graph including
 # the roots, so without this the policy rejects the very code it protects.
 exceptions = [
     { name = "trino-gui", allow = ["AGPL-3.0-only"] },
     { name = "trino-core", allow = ["AGPL-3.0-only"] },
+    { name = "trino-net", allow = ["AGPL-3.0-only"] },
 ]
 
 [bans]

@@ -1,6 +1,9 @@
 # Workspace root.
 #
-#   src-tauri  — the desktop client (Tauri 2)
+#   src-tauri          — the desktop client (Tauri 2)
+#   crates/trino-net   — every connection the client opens: Tor, and the two
+#                        permits to go without it (no Tauri in it, so the
+#                        engine M4 extracts takes it as it is)
 #
 # The protocol and cryptography live in their own repository so they can be
 # reviewed without this application around them:
@@ -12,7 +15,7 @@
 
 [workspace]
 resolver = "2"
-members = ["src-tauri"]
+members = ["src-tauri", "crates/trino-net"]
 
 # The TURN proof of work (src-tauri/src/turn.rs) hashes about a million times
 # per request. Unoptimized that takes ~20 s instead of ~1 s, and the Worker

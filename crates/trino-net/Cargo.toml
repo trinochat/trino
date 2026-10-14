@@ -1,0 +1,31 @@
+[package]
+name = "trino-net"
+version = "0.1.0"
+description = "Trino Chat's network: every connection the app opens, through Tor unless a permit says otherwise"
+authors = ["davidalmeidac"]
+edition = "2021"
+license = "AGPL-3.0-only"
+publish = false
+
+# No Tauri and nothing of the app in here (Tor design §2.1): the engine that
+# M4 extracts for Android and iPhone takes this crate as it is.
+
+[features]
+# The in-memory transports for tests (src/mock.rs), and building a `Net` on
+# them. Only the app's dev-dependencies turn it on.
+test-util = []
+
+[dependencies]
+futures-util = "0.3"
+# TLS for wss://, with ring, the only provider in the tree, chosen here
+# rather than left to whichever features the process happens to enable.
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
+thiserror = "1"
+tokio = { version = "1", features = ["io-util", "net", "sync"] }
+# The same version and features as the app's, so the WebSocket types are one.
+tokio-tungstenite = { version = "0.24", features = ["rustls-tls-webpki-roots"] }
+# The roots tokio-tungstenite checks against, as before Tor.
+webpki-roots = "0.26"
+
+[dev-dependencies]
+tokio = { version = "1", features = ["io-util", "macros", "net", "rt-multi-thread", "sync", "time"] }

@@ -1,0 +1,37 @@
+# Read by clippy for every crate of the workspace.
+#
+# Tor design §2.8 and §3.2 (R-07, R-21): with Tor, nothing opens a connection
+# that does not go through trino-net's `Net`. Clippy runs with -D warnings in
+# the CI and in the checks of every step, so naming any of these outside an
+# `#[allow(clippy::disallowed_methods)]` (or `disallowed_types`) fails:
+#
+# - the two `DirectPermit` constructors, allowed only in the app's
+#   `net_connect_without_tor` command and in its updater (the app's test
+#   `only_two_files_name_direct_permit` keeps it to those two files);
+# - every way to open a socket or resolve a name directly, allowed only in
+#   trino-net's direct.rs, the one direct transport.
+#
+# Clippy does not look inside dependencies; what they do is covered by
+# trino-net's tests and the per-process audit of §3.2.
+# `allow-invalid`: hyper-util is not a dependency yet (TOR-4 brings it); the
+# entries are in place before it arrives.
+
+disallowed-methods = [
+    { path = "trino_net::DirectPermit::for_session", reason = "only `net_connect_without_tor` builds the session's permit (Tor design §2.8)" },
+    { path = "trino_net::DirectPermit::for_updater", reason = "only the updater builds its permit (Tor design §2.8)" },
+    { path = "tokio::net::TcpStream::connect", reason = "connections go through trino_net::Net (Tor design §3.2)" },
+    { path = "std::net::TcpStream::connect", reason = "connections go through trino_net::Net (Tor design §3.2)" },
+    { path = "std::net::TcpStream::connect_timeout", reason = "connections go through trino_net::Net (Tor design §3.2)" },
+    { path = "std::net::ToSocketAddrs::to_socket_addrs", reason = "a name is resolved by Tor's exit, never here (Tor design §3.2)" },
+    { path = "tokio::net::lookup_host", reason = "a name is resolved by Tor's exit, never here (Tor design §3.2)" },
+    { path = "tokio::net::UdpSocket::bind", reason = "connections go through trino_net::Net (Tor design §3.2)" },
+    { path = "std::net::UdpSocket::bind", reason = "connections go through trino_net::Net (Tor design §3.2)" },
+    { path = "tokio_tungstenite::connect_async", reason = "WebSockets open with trino_net::ws_connect (Tor design §3 R1)" },
+    { path = "tokio_tungstenite::connect_async_with_config", reason = "WebSockets open with trino_net::ws_connect (Tor design §3 R1)" },
+    { path = "tokio_tungstenite::connect_async_tls_with_config", reason = "WebSockets open with trino_net::ws_connect (Tor design §3 R1)" },
+]
+
+disallowed-types = [
+    { path = "hyper_util::client::legacy::connect::HttpConnector", reason = "HTTP goes through trino-net's client (Tor design §3.2, R-21)", allow-invalid = true },
+    { path = "hyper_util::client::legacy::connect::dns::GaiResolver", reason = "a name is resolved by Tor's exit, never here (R-21)", allow-invalid = true },
+]

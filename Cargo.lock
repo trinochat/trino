@@ -4756,6 +4756,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "trino-net"
+version = "0.1.0"
+dependencies = [
+ "futures-util",
+ "rustls",
+ "thiserror 1.0.69",
+ "tokio",
+ "tokio-tungstenite",
+ "webpki-roots 0.26.11",
+]
+
+[[package]]
 name = "try-lock"
 version = "0.2.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
