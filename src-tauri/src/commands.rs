@@ -27,7 +27,7 @@ use crate::store::keys::{StoreKeys, VaultKeys};
 use crate::store::report::{Action, IntegrityReport, What};
 use crate::store::session::{AccountFile, Found, PrefsImport, SessionStore, STORE_DIR};
 use crate::totp_enrollment::TotpBeginResponse;
-use crate::turn::TurnCache;
+use crate::turn::TurnGate;
 use crate::vault::{
     decode_vault, encode_vault, seal_vault, unseal_vault, vault_requires_totp, UnsealedVault,
 };
@@ -364,8 +364,8 @@ fn zeroize_file_ref(file: &mut FileRef) {
 }
 
 /// What `lock_vault` and `wipe` drop from memory: the relay connections,
-/// the secrets and the TURN credentials, with any fetch of them in flight.
-fn forget_session(inner: &mut InnerState, turn: &TurnCache) {
+/// the secrets and any request for TURN credentials in flight.
+fn forget_session(inner: &mut InnerState, turn: &TurnGate) {
     for relay in inner.relays.drain(..) {
         relay.close();
     }
@@ -4978,28 +4978,22 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn locking_or_wiping_forgets_the_turn_credentials() {
+    async fn locking_or_wiping_voids_the_turn_requests_of_the_session() {
         use crate::turn::{TurnError, TurnServers};
-        let owner = [9u8; 32];
         let servers = || async {
             Ok(TurnServers {
                 ice_servers: Vec::new(),
                 expires_at: NOW + 14_400,
             })
         };
-        let turn = TurnCache::default();
+        let turn = TurnGate::default();
         let session = turn.session();
-        turn.get_or_fetch(owner, session, NOW, servers)
-            .await
-            .unwrap();
+        turn.request(session, servers).await.unwrap();
 
         forget_session(&mut InnerState::default(), &turn);
 
-        // Neither the cache nor a request begun before it may serve them now.
-        assert_eq!(
-            turn.get_or_fetch(owner, session, NOW, servers).await,
-            Err(TurnError::Locked)
-        );
+        // No request of the session before it may get credentials now.
+        assert_eq!(turn.request(session, servers).await, Err(TurnError::Locked));
         assert_ne!(turn.session(), session);
     }
 
@@ -5014,7 +5008,7 @@ mod tests {
         inner.relays.push(unreachable_client(Arc::clone(&attempts)));
         wait_until("a second attempt", || attempts.load(Ordering::SeqCst) >= 2).await;
 
-        forget_session(&mut inner, &TurnCache::default());
+        forget_session(&mut inner, &TurnGate::default());
         tokio::time::sleep(std::time::Duration::from_millis(50)).await;
         let after_lock = attempts.load(Ordering::SeqCst);
         tokio::time::sleep(std::time::Duration::from_millis(250)).await;
@@ -5608,7 +5602,7 @@ mod tests {
 
     /// What `lock_vault` does to the session, as a test can do it.
     fn lock(inner: &mut InnerState) {
-        forget_session(inner, &TurnCache::default());
+        forget_session(inner, &TurnGate::default());
     }
 
     /// Me, with a session with bob, sending through a relay that holds its

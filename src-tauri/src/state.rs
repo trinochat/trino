@@ -4,7 +4,7 @@ use crate::identity::{Identity, PublicBundle};
 use crate::nostr::NostrClient;
 use crate::ratchet::RatchetState;
 use crate::totp_enrollment::TotpEnrollment;
-use crate::turn::TurnCache;
+use crate::turn::TurnGate;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::PathBuf;
@@ -32,8 +32,9 @@ pub struct AppState {
     /// Kept apart from `inner` because they hold it across the slow key
     /// derivation, which must not stall everything else.
     pub session_gate: Mutex<()>,
-    /// TURN credentials for protected calls, in memory only (see turn.rs).
-    pub turn: TurnCache,
+    /// Ties the requests for TURN credentials to the unlocked session; it
+    /// keeps none (see turn.rs).
+    pub turn: TurnGate,
     /// Windows was locked during a call: Trino locks when the call ends
     /// (cifrado local CL-6a, design §7.2). Cleared by every lock.
     pub lock_after_call: Arc<AtomicBool>,

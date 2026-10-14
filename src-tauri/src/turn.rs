@@ -3,6 +3,12 @@
 //! Trino's credential Worker hands out short-lived Cloudflare TURN servers to
 //! a NIP-98 request with NIP-13 proof of work. Why, the contract and the
 //! limits: docs/llamadas-turn.md.
+//!
+//! With Tor (design §3 T1, decision 18): each call signs its request with a
+//! key made for it alone, never the account's, sends it through Tor on a
+//! token of its own, and gets credentials of its own. Nothing is kept from
+//! one call for the next, so Cloudflare can tie neither two calls nor a
+//! call and the account by the key or by the exit.
 
 use crate::command_error::{CommandError, ErrorCode};
 use crate::crypto::sha256;
@@ -17,7 +23,8 @@ use std::sync::Arc;
 use std::time::Duration;
 use tauri::State;
 use thiserror::Error;
-use tokio::sync::{watch, Mutex};
+use tokio::sync::watch;
+use trino_net::{Deadlines, HttpClient, HttpError, Iso, IsoKind, Net, Request, Response};
 use zeroize::{Zeroize, ZeroizeOnDrop, Zeroizing};
 
 /// The only endpoint production talks to; tests point a `TurnClient` elsewhere.
@@ -31,7 +38,12 @@ const POW_BITS: u32 = 20;
 const MAX_POW_ATTEMPTS: u64 = 1 << 26;
 /// How many hashes the miner tries between looks at its stop flag.
 const STOP_CHECK_INTERVAL: u64 = 1 << 12;
-const HTTP_TIMEOUT: Duration = Duration::from_secs(10);
+/// To reach the Worker and have its answer (Tor design §3.1). Through Tor
+/// the spike measured a GET to trinochat.org on a fresh circuit at 1.6-5.3 s
+/// and a first stream up to 13 s (S3, S6): 30 s leaves twice that. The proof
+/// of work is mined before, so the event is at most ~31 s old when it
+/// arrives, within the 60 s the Worker accepts.
+const HTTP_TIMEOUT: Duration = Duration::from_secs(30);
 const MAX_RESPONSE_BYTES: usize = 16 * 1024;
 /// The Worker accepts `created_at` within 60 s; past this, a 401 is our clock.
 const CLOCK_TOLERANCE_SECS: i64 = 30;
@@ -44,10 +56,26 @@ const MAX_TTL_SECS: i64 = 86_400;
 /// Stands for the NIP-13 counter while mining; never sent.
 const NONCE_PLACEHOLDER: &str = "__trino_nonce__";
 
-/// The Nostr keys that sign a request, copied out of the unlocked identity.
+/// The Nostr keys that sign a request: made for one call alone
+/// (`one_time`), never the account's (decision 18).
 pub struct SigningKeys {
     pub priv_bytes: Zeroizing<[u8; 32]>,
     pub pub_bytes: [u8; 32],
+}
+
+impl SigningKeys {
+    /// A key of its own, for one call. The Worker takes any key with the
+    /// proof of work (trino-infra turn/README.md), so this needs no change
+    /// there; its per-key limits stop being per person, and the proof of
+    /// work and the global cap remain.
+    pub fn one_time() -> Self {
+        let secp = secp256k1::Secp256k1::new();
+        let pair = secp256k1::Keypair::new(&secp, &mut rand::thread_rng());
+        SigningKeys {
+            priv_bytes: Zeroizing::new(pair.secret_bytes()),
+            pub_bytes: pair.x_only_public_key().0.serialize(),
+        }
+    }
 }
 
 /// One TURN server, as `RTCPeerConnection` takes it. Wiped when dropped.
@@ -97,6 +125,9 @@ pub enum TurnError {
     InvalidResponse(&'static str),
     #[error("the local clock is {offset} s off the credential service's")]
     ClockSkew { offset: i64 },
+    /// Tor is still connecting. Never a reason to offer a direct call (R-11).
+    #[error("Tor is not ready yet")]
+    TorNotReady,
 }
 
 /// The UI only needs to know that protection failed; the message is for the log.
@@ -113,6 +144,7 @@ impl From<TurnError> for CommandError {
             TurnError::Signing(_) | TurnError::ProofOfWork | TurnError::InvalidResponse(_) => {
                 ErrorCode::Internal
             }
+            TurnError::TorNotReady => ErrorCode::TorNotReady,
         };
         CommandError::new(code, format!("turn: {error}"))
     }
@@ -349,78 +381,94 @@ fn error_code(body: &[u8]) -> String {
         .unwrap_or_default()
 }
 
-fn network(error: reqwest::Error) -> TurnError {
-    TurnError::Network(error.to_string())
+fn network(error: HttpError) -> TurnError {
+    match error {
+        HttpError::TorNotReady => TurnError::TorNotReady,
+        other => TurnError::Network(other.to_string()),
+    }
 }
 
 /// The body, wiped when dropped: a 200 carries the credential.
-async fn read_capped(response: &mut reqwest::Response) -> Result<Zeroizing<Vec<u8>>, TurnError> {
-    let too_large = TurnError::InvalidResponse("the response is too large");
-    if response
-        .content_length()
-        .is_some_and(|length| length > MAX_RESPONSE_BYTES as u64)
-    {
-        return Err(too_large);
-    }
-    // Allocated once, so growing it leaves no unwiped copy behind.
+async fn read_capped(response: &mut Response) -> Result<Zeroizing<Vec<u8>>, TurnError> {
+    // Allocated once, so growing it leaves no unwiped copy behind. hyper's
+    // own buffers are not ours to wipe, as reqwest's were not.
     let mut body = Zeroizing::new(Vec::with_capacity(MAX_RESPONSE_BYTES));
-    while let Some(chunk) = response.chunk().await.map_err(network)? {
-        if body.len() + chunk.len() > MAX_RESPONSE_BYTES {
-            return Err(too_large);
+    match response
+        .read_capped_into(MAX_RESPONSE_BYTES, &mut body)
+        .await
+    {
+        Ok(()) => Ok(body),
+        Err(HttpError::TooLarge { .. }) => {
+            Err(TurnError::InvalidResponse("the response is too large"))
         }
-        body.extend_from_slice(&chunk);
+        Err(other) => Err(network(other)),
     }
-    Ok(body)
 }
 
-/// Where credentials are requested from, and how long to wait.
+/// Where credentials are requested from, through which `Net`, and how long
+/// to wait.
 pub struct TurnClient {
+    net: Arc<Net>,
+    http: HttpClient,
     url: String,
     timeout: Duration,
 }
 
 impl TurnClient {
-    pub fn production() -> Self {
+    pub fn production(net: Arc<Net>) -> Self {
         TurnClient {
+            http: HttpClient::new(Arc::clone(&net)),
+            net,
             url: TURN_ENDPOINT.to_string(),
             timeout: HTTP_TIMEOUT,
         }
     }
 
     #[cfg(test)]
-    fn local(url: String, timeout: Duration) -> Self {
-        TurnClient { url, timeout }
+    fn local(net: Arc<Net>, http: HttpClient, url: String, timeout: Duration) -> Self {
+        TurnClient {
+            net,
+            http,
+            url,
+            timeout,
+        }
     }
 
-    /// POST the request; redirects are not followed and the answer is capped.
-    /// `now` is the local clock when the request was signed. The client is
-    /// net.rs's, like every HTTP client of the app.
-    async fn request(&self, authorization: &str, now: i64) -> Result<TurnServers, TurnError> {
-        let client = crate::net::client(crate::net::Deadlines {
+    /// The token of one call: a session of its own, so it shares a Tor
+    /// circuit with nothing else (design §2.7).
+    fn call_iso(&self) -> Iso {
+        self.net.session().iso(IsoKind::TURN, "credentials")
+    }
+
+    /// POST the request through `Net` on `iso`, the call's token;
+    /// redirects are not followed and the answer is capped. `now` is the
+    /// local clock when the request was signed.
+    async fn request(
+        &self,
+        authorization: &str,
+        now: i64,
+        iso: &Iso,
+    ) -> Result<TurnServers, TurnError> {
+        let request = Request::post(&self.url)
+            .and_then(|request| request.header("authorization", authorization))
+            .and_then(|request| request.header("content-type", "application/json"))
+            .map_err(network)?
+            .body(REQUEST_BODY);
+        let deadlines = Deadlines {
             connect: self.timeout,
             total: self.timeout,
             idle: None,
-        })
-        .map_err(|error| TurnError::Network(error.to_string()))?;
-        let mut response = client
-            .post(&self.url)
-            .header(reqwest::header::AUTHORIZATION, authorization)
-            .header(reqwest::header::CONTENT_TYPE, "application/json")
-            .body(REQUEST_BODY)
-            .send()
+        };
+        let mut response = self
+            .http
+            .send(request, iso, deadlines)
             .await
             .map_err(network)?;
-        let status = response.status().as_u16();
+        let status = response.status();
         let retry_after = response
-            .headers()
-            .get(reqwest::header::RETRY_AFTER)
-            .and_then(|value| value.to_str().ok())
+            .header("retry-after")
             .and_then(|value| value.trim().parse::<u64>().ok());
-        let server_now = response
-            .headers()
-            .get(reqwest::header::DATE)
-            .and_then(|value| value.to_str().ok())
-            .and_then(http_date);
+        let server_now = response.header("date").and_then(http_date);
         let body = read_capped(&mut response).await;
         match status {
             200 => parse_credentials(&body?, now, server_now),
@@ -444,115 +492,66 @@ impl TurnClient {
     }
 }
 
-/// Credentials in the cache, and when to stop handing them out.
-struct Cached {
-    owner: [u8; 32],
-    renew_at: i64,
-    servers: TurnServers,
-}
-
-/// Which unlocked session a request belongs to: taken together with the
-/// identity's keys, and void once `TurnCache::clear` runs.
+/// Which unlocked session a request belongs to: taken while the identity
+/// is known to be unlocked, and void once `TurnGate::clear` runs.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Session(u64);
 
-/// In-memory TURN credentials of the identity that asked for them. Locking
-/// or wiping clears them and cancels any fetch in flight (docs/llamadas-turn.md).
-pub struct TurnCache {
-    /// One fetch at a time; held across signing and the HTTP request.
-    flight: Mutex<()>,
-    /// Held only briefly, never across an await, so `clear` never waits.
-    slot: std::sync::Mutex<Option<Cached>>,
+/// Ties the requests for TURN credentials to the unlocked session. It keeps
+/// no credentials: each call asks for its own (design §3 T1). Locking or
+/// wiping cancels any request in flight (docs/llamadas-turn.md).
+pub struct TurnGate {
     /// Bumped by `clear`; wakes and voids every request of an older session.
     epoch: watch::Sender<u64>,
 }
 
-impl Default for TurnCache {
+impl Default for TurnGate {
     fn default() -> Self {
-        TurnCache {
-            flight: Mutex::new(()),
-            slot: std::sync::Mutex::new(None),
+        TurnGate {
             epoch: watch::Sender::new(0),
         }
     }
 }
 
-impl TurnCache {
+impl TurnGate {
     /// The current session. Read it while the identity is read, under the
     /// same lock that `lock_vault` and `wipe` take, so no lock slips between.
     pub fn session(&self) -> Session {
         Session(*self.epoch.borrow())
     }
 
-    /// Forget the credentials and void every request of the current session:
-    /// one in flight returns `Locked` at once and caches nothing.
+    /// Void every request of the current session: one in flight returns
+    /// `Locked` at once.
     pub fn clear(&self) {
-        let mut slot = self.lock_slot();
         self.epoch.send_modify(|epoch| *epoch += 1);
-        *slot = None;
-    }
-
-    fn lock_slot(&self) -> std::sync::MutexGuard<'_, Option<Cached>> {
-        self.slot
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 
     fn is_current(&self, session: Session) -> bool {
         *self.epoch.borrow() == session.0
     }
 
-    /// The cached servers of `owner` until halfway through their lifetime,
-    /// so a call always starts with at least half of it (two hours with the
-    /// Worker's four); otherwise new ones from `fetch`. One fetch at a time,
-    /// so two calls placed together spend one request of the daily quota.
-    /// Failures are not cached. A `session` voided by `clear`, before or
-    /// during the fetch, gets `Locked`.
-    pub async fn get_or_fetch<F, Fut>(
+    /// Credentials from `fetch`, for `session`. A session voided by
+    /// `clear`, before or during the fetch, gets `Locked`, and whatever the
+    /// fetch got is dropped (and wiped).
+    pub async fn request<F, Fut>(
         &self,
-        owner: [u8; 32],
         session: Session,
-        now: i64,
         fetch: F,
     ) -> Result<TurnServers, TurnError>
     where
         F: FnOnce() -> Fut,
         Fut: Future<Output = Result<TurnServers, TurnError>>,
     {
-        let mut epoch = self.epoch.subscribe();
-        let _flight = tokio::select! {
-            flight = self.flight.lock() => flight,
-            () = voided(&mut epoch, session) => return Err(TurnError::Locked),
-        };
-        {
-            let mut slot = self.lock_slot();
-            if !self.is_current(session) {
-                return Err(TurnError::Locked);
-            }
-            if let Some(cached) = slot.as_ref() {
-                if cached.owner == owner && now < cached.renew_at {
-                    return Ok(cached.servers.clone());
-                }
-            }
-            *slot = None;
+        if !self.is_current(session) {
+            return Err(TurnError::Locked);
         }
+        let mut epoch = self.epoch.subscribe();
         let servers = tokio::select! {
             servers = fetch() => servers?,
             () = voided(&mut epoch, session) => return Err(TurnError::Locked),
         };
-        let mut slot = self.lock_slot();
-        // `clear` bumps the epoch under this lock: checked here, nothing is
-        // stored after it ran.
         if !self.is_current(session) {
             return Err(TurnError::Locked);
-        }
-        let renew_at = now + (servers.expires_at - now) / 2;
-        if now < renew_at {
-            *slot = Some(Cached {
-                owner,
-                renew_at,
-                servers: servers.clone(),
-            });
         }
         Ok(servers)
     }
@@ -560,7 +559,7 @@ impl TurnCache {
 
 /// Resolves once `clear` has voided `session`.
 async fn voided(epoch: &mut watch::Receiver<u64>, session: Session) {
-    // The sender lives in the cache, which outlives every request.
+    // The sender lives in the gate, which outlives every request.
     let _ = epoch.wait_for(|epoch| *epoch != session.0).await;
 }
 
@@ -599,53 +598,56 @@ async fn mined_authorization(
     .map_err(|e| TurnError::Signing(e.to_string()))?
 }
 
-/// Sign (with proof of work) and send one request, dated `created_at`.
+/// Sign (with proof of work) and send one request, dated `created_at`, on
+/// the call's token.
 async fn signed_request(
     client: &TurnClient,
     keys: &SigningKeys,
     created_at: i64,
+    iso: &Iso,
 ) -> Result<TurnServers, TurnError> {
     let header = mined_authorization(keys, created_at, POW_BITS, MAX_POW_ATTEMPTS).await?;
-    client.request(&header, unix_now()).await
+    client.request(&header, unix_now(), iso).await
 }
 
-/// TURN servers for `keys`: from the cache, or signed, mined and fetched.
-/// The keys are dropped (and wiped) when this returns or a lock cancels it.
+/// TURN servers for one call: signed with a key made for it, mined, and
+/// fetched on a token of its own. The key is dropped (and wiped) when this
+/// returns or a lock cancels it.
 pub async fn turn_servers(
-    cache: &TurnCache,
+    gate: &TurnGate,
     client: &TurnClient,
-    keys: SigningKeys,
     session: Session,
 ) -> Result<TurnServers, TurnError> {
-    let owner = keys.pub_bytes;
-    cache
-        .get_or_fetch(owner, session, unix_now(), move || async move {
-            match signed_request(client, &keys, unix_now()).await {
-                // A skewed clock: sign once more, dated by the Worker's clock.
-                Err(TurnError::ClockSkew { offset }) => {
-                    signed_request(client, &keys, unix_now() + offset).await
-                }
-                result => result,
+    let keys = SigningKeys::one_time();
+    let iso = client.call_iso();
+    gate.request(session, move || async move {
+        match signed_request(client, &keys, unix_now(), &iso).await {
+            // A skewed clock: sign once more, dated by the Worker's clock,
+            // still as the same call.
+            Err(TurnError::ClockSkew { offset }) => {
+                signed_request(client, &keys, unix_now() + offset, &iso).await
             }
-        })
-        .await
+            result => result,
+        }
+    })
+    .await
 }
 
-/// TURN servers for a protected (relay-only) call, signed with the unlocked
-/// identity's Nostr key. Calls go direct (STUN) only after the user agrees.
+/// TURN servers for a protected (relay-only) call, asked for this call
+/// alone. Only an unlocked session asks, but never with the account's key.
+/// Calls go direct (STUN) only after the user agrees.
 #[tauri::command]
 pub async fn get_turn_servers(state: State<'_, AppState>) -> Result<TurnServers, CommandError> {
-    let (keys, session) = {
+    let session = {
         let inner = state.inner.lock().await;
-        let identity = inner.identity.as_ref().ok_or(TurnError::Locked)?;
-        let keys = SigningKeys {
-            priv_bytes: Zeroizing::new(identity.nostr.priv_bytes),
-            pub_bytes: identity.nostr.pub_bytes,
-        };
+        if inner.identity.is_none() {
+            return Err(TurnError::Locked.into());
+        }
         // Under `inner`, like the identity: a later lock voids this session.
-        (keys, state.turn.session())
+        state.turn.session()
     };
-    Ok(turn_servers(&state.turn, &TurnClient::production(), keys, session).await?)
+    let client = TurnClient::production(Arc::clone(&state.net));
+    Ok(turn_servers(&state.turn, &client, session).await?)
 }
 
 #[cfg(test)]
@@ -659,8 +661,9 @@ mod tests {
     use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
     use std::sync::{Arc, Mutex as StdMutex};
     use std::time::Instant;
-    use tokio::io::{AsyncReadExt, AsyncWriteExt};
-    use tokio::net::{TcpListener, TcpStream};
+    use trino_net::mock::{Forbidden, Mock};
+    use trino_net::mock_http::{self, Received, Reply};
+    use trino_net::Transport;
 
     // A fixed throwaway key, never a real identity.
     const TEST_PRIV: [u8; 32] = [7u8; 32];
@@ -1014,120 +1017,70 @@ mod tests {
         );
     }
 
-    // ── HTTP ────────────────────────────────────────────────────────────────
+    // ── HTTP, through Tor ───────────────────────────────────────────────────
 
-    struct Captured {
-        head: String,
-        body: Vec<u8>,
+    /// The Worker, on an in-memory Tor whose trinochat.org speaks TLS with
+    /// the test CA: each connection gets the next reply. Its client, what
+    /// it saw, and every connection made with its token.
+    struct Worker {
+        client: TurnClient,
+        seen: Arc<StdMutex<Vec<Received>>>,
+        tor: Arc<Mock>,
     }
 
-    fn find(haystack: &[u8], needle: &[u8]) -> Option<usize> {
-        haystack.windows(needle.len()).position(|w| w == needle)
-    }
-
-    async fn read_request(socket: &mut TcpStream) -> Captured {
-        let mut buf = Vec::new();
-        let mut chunk = [0u8; 4096];
-        loop {
-            if let Some(end) = find(&buf, b"\r\n\r\n") {
-                let head = String::from_utf8_lossy(&buf[..end]).to_string();
-                let length = head
-                    .lines()
-                    .find_map(|line| {
-                        let (name, value) = line.split_once(':')?;
-                        name.eq_ignore_ascii_case("content-length")
-                            .then(|| value.trim().parse::<usize>().ok())?
-                    })
-                    .unwrap_or(0);
-                while buf.len() < end + 4 + length {
-                    let n = socket.read(&mut chunk).await.unwrap_or(0);
-                    if n == 0 {
-                        break;
-                    }
-                    buf.extend_from_slice(&chunk[..n]);
-                }
-                return Captured {
-                    head,
-                    body: buf[end + 4..].to_vec(),
-                };
-            }
-            let n = socket.read(&mut chunk).await.unwrap_or(0);
-            if n == 0 {
-                return Captured {
-                    head: String::from_utf8_lossy(&buf).to_string(),
-                    body: Vec::new(),
-                };
-            }
-            buf.extend_from_slice(&chunk[..n]);
-        }
-    }
-
-    /// A local HTTP/1.1 server: each connection gets the next canned response
-    /// (an empty one means: never answer). Returns its URL and what it saw.
-    async fn mock_server(
-        responses: impl FnOnce(&str) -> Vec<Vec<u8>>,
-    ) -> (String, Arc<StdMutex<Vec<Captured>>>) {
-        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let url = format!(
-            "http://{}/api/v1/turn/credentials",
-            listener.local_addr().unwrap()
+    fn worker(replies: Vec<Reply>, timeout: Duration) -> Worker {
+        let tor = Mock::new();
+        let net = Net::with_transports(
+            Some(Arc::clone(&tor) as Arc<dyn Transport>),
+            Arc::new(Forbidden),
         );
-        let responses = responses(&url);
-        let seen = Arc::new(StdMutex::new(Vec::new()));
-        let log = Arc::clone(&seen);
-        tokio::spawn(async move {
-            for response in responses {
-                let Ok((mut socket, _)) = listener.accept().await else {
-                    return;
-                };
-                let request = read_request(&mut socket).await;
-                log.lock().unwrap().push(request);
-                if response.is_empty() {
-                    tokio::time::sleep(Duration::from_secs(30)).await;
-                    continue;
-                }
-                let _ = socket.write_all(&response).await;
-                let _ = socket.shutdown().await;
-            }
-        });
-        (url, seen)
+        let seen = mock_http::serve(&tor, "https://trinochat.org", replies);
+        let http = HttpClient::with_tls(Arc::clone(&net), mock_http::test_tls());
+        let client = TurnClient::local(net, http, TURN_ENDPOINT.to_string(), timeout);
+        Worker { client, seen, tor }
     }
 
-    fn response(status: &str, headers: &str, body: &str) -> Vec<u8> {
-        format!(
-            "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n{headers}\r\n{body}",
-            body.len()
+    fn response(status: &str, headers: &str, body: &str) -> Reply {
+        mock_http::response(
+            status,
+            &format!("Content-Type: application/json\r\n{headers}"),
+            body.as_bytes(),
         )
-        .into_bytes()
     }
 
     fn header_value(head: &str, name: &str) -> Option<String> {
-        head.lines().find_map(|line| {
-            let (key, value) = line.split_once(':')?;
-            key.eq_ignore_ascii_case(name)
-                .then(|| value.trim().to_string())
-        })
+        mock_http::header(head, name)
+    }
+
+    /// A token of its own, as each call has.
+    fn call_iso() -> Iso {
+        Net::with_transports(None, Arc::new(Forbidden))
+            .session()
+            .iso(IsoKind::TURN, "")
     }
 
     #[test]
-    fn production_uses_the_fixed_endpoint_and_a_ten_second_timeout() {
-        let client = TurnClient::production();
+    fn production_uses_the_fixed_endpoint_and_a_thirty_second_timeout() {
+        // Tor design §3.1 with the spike's times: a GET to trinochat.org on
+        // a fresh circuit took 1.6-5.3 s, a first stream up to 13 s (S3,
+        // S6). The proof of work is mined before, so the event is at most
+        // ~31 s old when it arrives, within the Worker's 60 s.
+        let client = TurnClient::production(Net::new());
         assert_eq!(client.url, "https://trinochat.org/api/v1/turn/credentials");
-        assert_eq!(client.timeout, Duration::from_secs(10));
+        assert_eq!(client.timeout, Duration::from_secs(30));
     }
 
     #[tokio::test]
     async fn posts_the_exact_body_with_nip98_auth_and_returns_the_servers() {
         let n = now();
         let ok = worker_body(cloudflare_servers(), 14_400, n + 14_400);
-        let (url, seen) =
-            mock_server(|_| vec![response("200 OK", "Cache-Control: no-store\r\n", &ok)]).await;
-        let servers = TurnClient::local(url, Duration::from_secs(5))
-            .request("Nostr abc", n)
-            .await
-            .unwrap();
+        let w = worker(
+            vec![response("200 OK", "Cache-Control: no-store\r\n", &ok)],
+            Duration::from_secs(5),
+        );
+        let servers = w.client.request("Nostr abc", n, &call_iso()).await.unwrap();
         assert_eq!(servers.ice_servers[0].username, "u-test");
-        let seen = seen.lock().unwrap();
+        let seen = w.seen.lock().unwrap();
         assert_eq!(seen.len(), 1);
         let request = &seen[0];
         assert!(request
@@ -1141,7 +1094,43 @@ mod tests {
             header_value(&request.head, "content-type").as_deref(),
             Some("application/json")
         );
+        // R-20: trinochat.org gets the fixed User-Agent, and only it.
+        assert_eq!(
+            header_value(&request.head, "user-agent").as_deref(),
+            Some("Trino")
+        );
         assert_eq!(request.body, br#"{"v":1}"#);
+    }
+
+    #[tokio::test]
+    async fn the_request_goes_through_tor_to_trinochat_org_on_the_calls_token() {
+        let n = now();
+        let ok = worker_body(cloudflare_servers(), 14_400, n + 14_400);
+        let w = worker(vec![response("200 OK", "", &ok)], Duration::from_secs(5));
+        let iso = call_iso();
+
+        w.client.request("Nostr abc", n, &iso).await.unwrap();
+
+        assert_eq!(
+            w.tor.connections(),
+            [(trino_net::Target::new("trinochat.org", 443), iso)]
+        );
+    }
+
+    #[tokio::test]
+    async fn with_tor_not_ready_the_request_is_tor_not_ready_and_never_direct() {
+        // R-11: the call keeps ringing and never offers to go direct for
+        // this; the direct transport fails the test if touched.
+        let net = Net::with_transports(None, Arc::new(Forbidden));
+        let client = TurnClient::production(net);
+
+        let error = client
+            .request("Nostr x", now(), &call_iso())
+            .await
+            .unwrap_err();
+
+        assert_eq!(error, TurnError::TorNotReady);
+        assert_eq!(CommandError::from(error).code, ErrorCode::TorNotReady);
     }
 
     #[tokio::test]
@@ -1191,9 +1180,10 @@ mod tests {
             ),
         ];
         for (canned, expected) in cases {
-            let (url, _) = mock_server(|_| vec![canned]).await;
-            let error = TurnClient::local(url, Duration::from_secs(5))
-                .request("Nostr x", now())
+            let w = worker(vec![canned], Duration::from_secs(5));
+            let error = w
+                .client
+                .request("Nostr x", now(), &call_iso())
                 .await
                 .unwrap_err();
             assert_eq!(error, expected);
@@ -1204,15 +1194,16 @@ mod tests {
     async fn does_not_follow_redirects() {
         let n = now();
         let ok = worker_body(cloudflare_servers(), 14_400, n + 14_400);
-        let (url, seen) = mock_server(|url| {
+        let w = worker(
             vec![
-                response("302 Found", &format!("Location: {url}\r\n"), ""),
+                response("302 Found", &format!("Location: {TURN_ENDPOINT}\r\n"), ""),
                 response("200 OK", "", &ok),
-            ]
-        })
-        .await;
-        let error = TurnClient::local(url, Duration::from_secs(5))
-            .request("Nostr x", n)
+            ],
+            Duration::from_secs(5),
+        );
+        let error = w
+            .client
+            .request("Nostr x", n, &call_iso())
             .await
             .unwrap_err();
         assert_eq!(
@@ -1222,18 +1213,19 @@ mod tests {
                 code: String::new()
             }
         );
-        assert_eq!(seen.lock().unwrap().len(), 1);
+        assert_eq!(w.seen.lock().unwrap().len(), 1);
     }
 
     #[tokio::test]
     async fn refuses_a_response_larger_than_16_kib() {
         let big = "x".repeat(MAX_RESPONSE_BYTES + 1);
         let with_length = response("200 OK", "", &big);
-        let until_close = format!("HTTP/1.1 200 OK\r\nConnection: close\r\n\r\n{big}").into_bytes();
+        let until_close = mock_http::until_close("200 OK", big.as_bytes());
         for canned in [with_length, until_close] {
-            let (url, _) = mock_server(|_| vec![canned]).await;
-            let error = TurnClient::local(url, Duration::from_secs(5))
-                .request("Nostr x", now())
+            let w = worker(vec![canned], Duration::from_secs(5));
+            let error = w
+                .client
+                .request("Nostr x", now(), &call_iso())
                 .await
                 .unwrap_err();
             assert!(matches!(error, TurnError::InvalidResponse(_)), "{error:?}");
@@ -1242,13 +1234,14 @@ mod tests {
 
     #[tokio::test]
     async fn gives_up_when_the_service_does_not_answer_in_time() {
-        let (url, _) = mock_server(|_| vec![Vec::new()]).await;
+        let w = worker(vec![Reply::Never], Duration::from_millis(300));
         let start = Instant::now();
-        let error = TurnClient::local(url, Duration::from_millis(300))
-            .request("Nostr x", now())
+        let error = w
+            .client
+            .request("Nostr x", now(), &call_iso())
             .await
             .unwrap_err();
-        assert!(matches!(error, TurnError::Network(_)), "{error:?}");
+        assert_eq!(error, TurnError::Network("timeout".to_string()));
         assert!(start.elapsed() < Duration::from_secs(5));
     }
 
@@ -1259,7 +1252,7 @@ mod tests {
             .to_string()
     }
 
-    fn bad_auth_at(server: i64) -> Vec<u8> {
+    fn bad_auth_at(server: i64) -> Reply {
         response(
             "401 Unauthorized",
             &format!("Date: {}\r\n", http_date(server)),
@@ -1270,9 +1263,10 @@ mod tests {
     #[tokio::test]
     async fn a_401_from_a_distant_clock_reports_the_offset() {
         let n = now();
-        let (url, _) = mock_server(|_| vec![bad_auth_at(n + 3_600)]).await;
-        let error = TurnClient::local(url, Duration::from_secs(5))
-            .request("Nostr x", n)
+        let w = worker(vec![bad_auth_at(n + 3_600)], Duration::from_secs(5));
+        let error = w
+            .client
+            .request("Nostr x", n, &call_iso())
             .await
             .unwrap_err();
         match error {
@@ -1284,9 +1278,10 @@ mod tests {
     #[tokio::test]
     async fn a_401_from_a_close_clock_is_a_plain_refusal() {
         let n = now();
-        let (url, _) = mock_server(|_| vec![bad_auth_at(n + 10)]).await;
-        let error = TurnClient::local(url, Duration::from_secs(5))
-            .request("Nostr x", n)
+        let w = worker(vec![bad_auth_at(n + 10)], Duration::from_secs(5));
+        let error = w
+            .client
+            .request("Nostr x", n, &call_iso())
             .await
             .unwrap_err();
         assert_eq!(
@@ -1304,9 +1299,10 @@ mod tests {
         let local = server + 5 * 3_600;
         let ok = worker_body(cloudflare_servers(), 14_400, server + 14_400);
         let date = format!("Date: {}\r\n", http_date(server));
-        let (url, _) = mock_server(|_| vec![response("200 OK", &date, &ok)]).await;
-        let servers = TurnClient::local(url, Duration::from_secs(5))
-            .request("Nostr x", local)
+        let w = worker(vec![response("200 OK", &date, &ok)], Duration::from_secs(5));
+        let servers = w
+            .client
+            .request("Nostr x", local, &call_iso())
             .await
             .unwrap();
         assert!((servers.expires_at - (local + 14_400)).abs() <= 5);
@@ -1316,15 +1312,16 @@ mod tests {
     async fn signs_again_on_the_workers_clock_after_a_skewed_401() {
         let n = now();
         let ok = worker_body(cloudflare_servers(), 14_400, n + 3_600 + 14_400);
-        let (url, seen) =
-            mock_server(|_| vec![bad_auth_at(n + 3_600), response("200 OK", "", &ok)]).await;
-        let cache = TurnCache::default();
-        let client = TurnClient::local(url, Duration::from_secs(5));
-        let servers = turn_servers(&cache, &client, test_keys(), cache.session())
+        let w = worker(
+            vec![bad_auth_at(n + 3_600), response("200 OK", "", &ok)],
+            Duration::from_secs(5),
+        );
+        let gate = TurnGate::default();
+        let servers = turn_servers(&gate, &w.client, gate.session())
             .await
             .unwrap();
         assert_eq!(servers.ice_servers[0].username, "u-test");
-        let seen = seen.lock().unwrap();
+        let seen = w.seen.lock().unwrap();
         assert_eq!(seen.len(), 2);
         let first = decode_auth(&header_value(&seen[0].head, "authorization").unwrap());
         let second = decode_auth(&header_value(&seen[1].head, "authorization").unwrap());
@@ -1332,194 +1329,106 @@ mod tests {
         assert!((second.created_at - (n + 3_600)).abs() <= 5);
         assert!(verify_event(&second));
         assert_ne!(first.id, second.id, "a new event, so no replay");
+        // Still the same call: its key and its circuit.
+        assert_eq!(first.pubkey, second.pubkey);
+        let tokens: Vec<Iso> = w.tor.connections().into_iter().map(|(_, i)| i).collect();
+        assert_eq!(tokens[0], tokens[1]);
     }
 
     #[tokio::test]
     async fn signs_again_only_once() {
         let n = now();
         let ok = worker_body(cloudflare_servers(), 14_400, n + 14_400);
-        let (url, seen) = mock_server(|_| {
+        let w = worker(
             vec![
                 bad_auth_at(n + 3_600),
                 bad_auth_at(n + 3_600),
                 response("200 OK", "", &ok),
-            ]
-        })
-        .await;
-        let cache = TurnCache::default();
-        let client = TurnClient::local(url, Duration::from_secs(5));
-        let error = turn_servers(&cache, &client, test_keys(), cache.session())
+            ],
+            Duration::from_secs(5),
+        );
+        let gate = TurnGate::default();
+        let error = turn_servers(&gate, &w.client, gate.session())
             .await
             .unwrap_err();
         assert!(matches!(error, TurnError::ClockSkew { .. }), "{error:?}");
-        assert_eq!(seen.lock().unwrap().len(), 2);
+        assert_eq!(w.seen.lock().unwrap().len(), 2);
     }
 
-    // ── cache ───────────────────────────────────────────────────────────────
-
-    /// A fetch that counts its calls and returns `sample(expires_at)`.
-    fn counted(
-        counter: &AtomicUsize,
-        expires_at: i64,
-    ) -> impl Fn() -> std::future::Ready<Result<TurnServers, TurnError>> + Copy + '_ {
-        move || {
-            counter.fetch_add(1, Ordering::SeqCst);
-            std::future::ready(Ok(sample(expires_at)))
-        }
-    }
+    // ── one key, one token and fresh credentials per call (R-02, R-04) ──────
 
     #[tokio::test]
-    async fn renews_credentials_halfway_through_their_lifetime() {
-        let cache = TurnCache::default();
-        let counter = AtomicUsize::new(0);
-        let fetch = counted(&counter, 15_400); // fetched at 1 000: 4 h left
-        let owner = [1u8; 32];
-        let session = cache.session();
-        cache
-            .get_or_fetch(owner, session, 1_000, fetch)
-            .await
-            .unwrap();
-        // A call placed now still has at least two hours of credentials.
-        cache
-            .get_or_fetch(owner, session, 8_199, fetch)
-            .await
-            .unwrap();
-        assert_eq!(counter.load(Ordering::SeqCst), 1);
-        cache
-            .get_or_fetch(owner, session, 8_200, fetch)
-            .await
-            .unwrap();
-        assert_eq!(counter.load(Ordering::SeqCst), 2);
-    }
-
-    #[tokio::test]
-    async fn another_identity_never_gets_the_cached_credentials() {
-        let cache = TurnCache::default();
-        let counter = AtomicUsize::new(0);
-        let fetch = counted(&counter, 10_000);
-        let session = cache.session();
-        cache
-            .get_or_fetch([1u8; 32], session, 1_000, fetch)
-            .await
-            .unwrap();
-        cache
-            .get_or_fetch([2u8; 32], session, 1_000, fetch)
-            .await
-            .unwrap();
-        assert_eq!(counter.load(Ordering::SeqCst), 2);
-    }
-
-    #[tokio::test]
-    async fn a_failure_is_not_cached() {
-        let cache = TurnCache::default();
-        let owner = [1u8; 32];
-        let session = cache.session();
-        let failed = cache
-            .get_or_fetch(owner, session, 1_000, || async { Err(TurnError::Disabled) })
-            .await;
-        assert_eq!(failed, Err(TurnError::Disabled));
-        let counter = AtomicUsize::new(0);
-        let fetch = counted(&counter, 10_000);
-        cache
-            .get_or_fetch(owner, session, 1_000, fetch)
-            .await
-            .unwrap();
-        cache
-            .get_or_fetch(owner, session, 1_001, fetch)
-            .await
-            .unwrap();
-        assert_eq!(counter.load(Ordering::SeqCst), 1);
-    }
-
-    #[tokio::test]
-    async fn short_lived_credentials_are_also_renewed_halfway() {
-        let cache = TurnCache::default();
-        let counter = AtomicUsize::new(0);
-        let fetch = counted(&counter, 1_300);
-        let owner = [1u8; 32];
-        let session = cache.session();
-        assert_eq!(
-            cache.get_or_fetch(owner, session, 1_000, fetch).await,
-            Ok(sample(1_300))
+    async fn turn_credentials_are_asked_per_call_with_a_fresh_key_and_their_own_token() {
+        // Design test 29 and decision 18: Cloudflare must not tie two calls,
+        // nor a call to the account, by the key that signs the request or
+        // by the exit it comes from. So every call signs with a key made
+        // for it alone, goes on a token of its own, and gets credentials of
+        // its own: none are kept from one call for the next, though the
+        // first ones would have lasted four hours.
+        let n = now();
+        let ok = worker_body(cloudflare_servers(), 14_400, n + 14_400);
+        let w = worker(
+            vec![response("200 OK", "", &ok), response("200 OK", "", &ok)],
+            Duration::from_secs(5),
         );
-        cache
-            .get_or_fetch(owner, session, 1_149, fetch)
+        let gate = TurnGate::default();
+
+        let first = turn_servers(&gate, &w.client, gate.session())
             .await
             .unwrap();
-        assert_eq!(counter.load(Ordering::SeqCst), 1);
-        cache
-            .get_or_fetch(owner, session, 1_150, fetch)
+        let second = turn_servers(&gate, &w.client, gate.session())
             .await
             .unwrap();
-        assert_eq!(counter.load(Ordering::SeqCst), 2);
+
+        assert_eq!(first.ice_servers[0].username, "u-test");
+        assert_eq!(second.ice_servers[0].username, "u-test");
+        let seen = w.seen.lock().unwrap();
+        assert_eq!(seen.len(), 2, "the second call reused the first's");
+        let keys: Vec<String> = seen
+            .iter()
+            .map(|request| {
+                let event = decode_auth(&header_value(&request.head, "authorization").unwrap());
+                assert!(verify_event(&event));
+                assert_eq!(tag(&event, "u"), [TURN_ENDPOINT]);
+                event.pubkey
+            })
+            .collect();
+        assert_ne!(keys[0], keys[1], "two calls signed with one key");
+        let tokens: Vec<Iso> = w.tor.connections().into_iter().map(|(_, i)| i).collect();
+        assert_eq!(tokens.len(), 2);
+        assert!(tokens.iter().all(|iso| iso.kind() == IsoKind::TURN));
+        assert_ne!(tokens[0], tokens[1], "two calls on one token");
     }
 
-    #[tokio::test]
-    async fn concurrent_requests_share_one_fetch() {
-        let cache = TurnCache::default();
-        let counter = AtomicUsize::new(0);
-        let calls = &counter;
-        let fetch = move || async move {
-            calls.fetch_add(1, Ordering::SeqCst);
-            tokio::time::sleep(Duration::from_millis(50)).await;
-            Ok(sample(10_000))
-        };
-        let owner = [1u8; 32];
-        let session = cache.session();
-        let (a, b) = tokio::join!(
-            cache.get_or_fetch(owner, session, 1_000, fetch),
-            cache.get_or_fetch(owner, session, 1_000, fetch)
-        );
-        assert_eq!(a, b);
-        assert_eq!(counter.load(Ordering::SeqCst), 1);
+    #[test]
+    fn a_one_time_key_is_new_every_time_and_signs_what_it_says() {
+        let a = SigningKeys::one_time();
+        let b = SigningKeys::one_time();
+        assert_ne!(*a.priv_bytes, *b.priv_bytes);
+        assert_ne!(a.pub_bytes, b.pub_bytes);
+        let secp = secp256k1::Secp256k1::new();
+        let pair = secp256k1::Keypair::from_seckey_slice(&secp, &*a.priv_bytes).unwrap();
+        assert_eq!(pair.x_only_public_key().0.serialize(), a.pub_bytes);
     }
 
-    #[tokio::test]
-    async fn a_lock_forgets_the_credentials_of_the_same_identity() {
-        let cache = TurnCache::default();
-        let counter = AtomicUsize::new(0);
-        let fetch = counted(&counter, 20_000);
-        let owner = [1u8; 32];
-        cache
-            .get_or_fetch(owner, cache.session(), 1_000, fetch)
-            .await
-            .unwrap();
-        cache.clear(); // lock, then unlock the same identity
-        cache
-            .get_or_fetch(owner, cache.session(), 1_001, fetch)
-            .await
-            .unwrap();
-        assert_eq!(counter.load(Ordering::SeqCst), 2);
+    #[test]
+    fn the_command_never_signs_with_the_identity() {
+        // Decision 18: the account's key never reaches the Worker. The
+        // command reads only whether a session is open.
+        let source = include_str!("turn.rs");
+        let command = &source[source
+            .find("pub async fn get_turn_servers")
+            .expect("the command")..];
+        let command = &command[..command.find("\n}\n").expect("its end")];
+        assert!(!command.contains("priv_bytes"), "{command}");
+        assert!(!command.contains("nostr."), "{command}");
     }
 
-    #[tokio::test]
-    async fn a_session_from_before_a_lock_gets_nothing() {
-        let cache = TurnCache::default();
-        let counter = AtomicUsize::new(0);
-        let fetch = counted(&counter, 20_000);
-        let owner = [1u8; 32];
-        let stale = cache.session();
-        cache
-            .get_or_fetch(owner, stale, 1_000, fetch)
-            .await
-            .unwrap();
-        cache.clear();
-        cache
-            .get_or_fetch(owner, cache.session(), 1_001, fetch)
-            .await
-            .unwrap();
-        // Not even what the new session cached.
-        assert_eq!(
-            cache.get_or_fetch(owner, stale, 1_002, fetch).await,
-            Err(TurnError::Locked)
-        );
-        assert_eq!(counter.load(Ordering::SeqCst), 2);
-    }
+    // ── the session gate ────────────────────────────────────────────────────
 
     #[tokio::test]
-    async fn a_lock_cancels_a_fetch_in_flight_and_nothing_is_cached() {
-        let cache = TurnCache::default();
-        let owner = [1u8; 32];
+    async fn a_lock_cancels_a_request_in_flight() {
+        let gate = TurnGate::default();
         let finished = AtomicBool::new(false);
         let (started_tx, started_rx) = tokio::sync::oneshot::channel();
         let slow = || async {
@@ -1528,48 +1437,57 @@ mod tests {
             finished.store(true, Ordering::SeqCst);
             Ok(sample(20_000))
         };
-        let (result, ()) = tokio::join!(
-            cache.get_or_fetch(owner, cache.session(), 1_000, slow),
-            async {
-                started_rx.await.unwrap();
-                cache.clear(); // returns at once, while the fetch is in flight
-            }
-        );
+        let (result, ()) = tokio::join!(gate.request(gate.session(), slow), async {
+            started_rx.await.unwrap();
+            gate.clear(); // returns at once, while the request is in flight
+        });
         assert_eq!(result, Err(TurnError::Locked));
         assert!(
             !finished.load(Ordering::SeqCst),
             "the request in flight is dropped"
         );
-        let counter = AtomicUsize::new(0);
-        cache
-            .get_or_fetch(owner, cache.session(), 1_001, counted(&counter, 20_000))
-            .await
-            .unwrap();
-        assert_eq!(counter.load(Ordering::SeqCst), 1, "nothing was cached");
     }
 
     #[tokio::test]
-    async fn turn_servers_signs_fetches_and_caches() {
-        let n = now();
-        let ok = worker_body(cloudflare_servers(), 14_400, n + 14_400);
-        let (url, seen) = mock_server(|_| vec![response("200 OK", "", &ok)]).await;
-        let cache = TurnCache::default();
-        let client = TurnClient::local(url, Duration::from_secs(5));
-        let first = turn_servers(&cache, &client, test_keys(), cache.session())
+    async fn a_session_from_before_a_lock_gets_nothing() {
+        let gate = TurnGate::default();
+        let counter = AtomicUsize::new(0);
+        let fetch = || {
+            counter.fetch_add(1, Ordering::SeqCst);
+            std::future::ready(Ok(sample(20_000)))
+        };
+        let stale = gate.session();
+        gate.request(stale, fetch).await.unwrap();
+        gate.clear();
+        gate.request(gate.session(), fetch).await.unwrap();
+
+        assert_eq!(gate.request(stale, fetch).await, Err(TurnError::Locked));
+        assert_eq!(
+            counter.load(Ordering::SeqCst),
+            2,
+            "a voided session asks nothing"
+        );
+    }
+
+    #[tokio::test]
+    async fn every_request_is_asked_anew_and_a_failure_is_only_returned() {
+        let gate = TurnGate::default();
+        let session = gate.session();
+        assert_eq!(
+            gate.request(session, || async { Err(TurnError::Disabled) })
+                .await,
+            Err(TurnError::Disabled)
+        );
+        let counter = AtomicUsize::new(0);
+        for _ in 0..3 {
+            gate.request(session, || {
+                counter.fetch_add(1, Ordering::SeqCst);
+                std::future::ready(Ok(sample(20_000)))
+            })
             .await
             .unwrap();
-        let second = turn_servers(&cache, &client, test_keys(), cache.session())
-            .await
-            .unwrap();
-        assert_eq!(first, second);
-        assert_eq!(first.ice_servers[0].username, "u-test");
-        let seen = seen.lock().unwrap();
-        assert_eq!(seen.len(), 1, "the second call is served from the cache");
-        let auth = header_value(&seen[0].head, "authorization").unwrap();
-        let event = decode_auth(&auth);
-        assert!(verify_event(&event));
-        assert_eq!(tag(&event, "u"), [TURN_ENDPOINT]);
-        assert!((event.created_at - n).abs() <= 5);
+        }
+        assert_eq!(counter.load(Ordering::SeqCst), 3, "nothing is kept");
     }
 
     // ── what the UI sees ────────────────────────────────────────────────────

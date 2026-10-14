@@ -19,7 +19,6 @@ mod turn;
 mod call_log;
 mod connection;
 mod diag;
-mod net;
 mod security_cmds;
 // -- cifrado local CL-6a --
 mod system_events;
@@ -308,6 +307,75 @@ mod tests {
             !app.join("Cargo.lock").exists(),
             "src-tauri/Cargo.lock is never read: the workspace's lock is the root one"
         );
+    }
+
+    /// Tor design §3.2, layer 2, and test 11: no reqwest in the desktop
+    /// build. It cannot take a connection from Arti, so any HTTP it made
+    /// would go direct; every request goes through trino-net's
+    /// `HttpClient` instead. Tauri still depends on reqwest 0.13, but only
+    /// on Android and iOS, so the desktop targets are asked one by one
+    /// (normal and build dependencies; the tests' own are not shipped).
+    #[test]
+    fn reqwest_is_not_in_the_desktop_build() {
+        const DESKTOP: [&str; 4] = [
+            "x86_64-pc-windows-msvc",
+            "x86_64-unknown-linux-gnu",
+            "x86_64-apple-darwin",
+            "aarch64-apple-darwin",
+        ];
+        let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".to_string());
+        let manifest = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("Cargo.toml");
+        for target in DESKTOP {
+            let out = std::process::Command::new(&cargo)
+                .args(["tree", "--locked", "--manifest-path"])
+                .arg(&manifest)
+                .args(["-p", "trino-gui", "-i", "reqwest", "-e", "normal,build"])
+                .args(["--target", target])
+                .output()
+                .expect("cargo runs");
+            let stdout = String::from_utf8_lossy(&out.stdout);
+            let stderr = String::from_utf8_lossy(&out.stderr);
+            // Nothing to print, or no reqwest in the lock at all.
+            let absent = (out.status.success() && stdout.trim().is_empty())
+                || stderr.contains("did not match any packages");
+            assert!(
+                absent,
+                "{target}: reqwest is in the build\n{stdout}{stderr}"
+            );
+        }
+    }
+
+    /// The app neither depends on reqwest nor uses it: HTTP is trino-net's.
+    /// The patterns are spelled in pieces so this file does not hold them.
+    #[test]
+    fn the_app_neither_depends_on_nor_uses_reqwest() {
+        const DEPENDENCY: &str = concat!("req", "west", " =");
+        const USE: &str = concat!("req", "west", "::");
+        fn sources(dir: &std::path::Path, found: &mut Vec<std::path::PathBuf>) {
+            for entry in std::fs::read_dir(dir).unwrap() {
+                let path = entry.unwrap().path();
+                if path.is_dir() {
+                    sources(&path, found);
+                } else if path.extension().is_some_and(|e| e == "rs") {
+                    found.push(path);
+                }
+            }
+        }
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let manifest = std::fs::read_to_string(root.join("Cargo.toml")).unwrap();
+        assert!(
+            !manifest
+                .lines()
+                .any(|line| line.trim_start().starts_with(DEPENDENCY)),
+            "src-tauri/Cargo.toml depends on it"
+        );
+        let mut files = vec![root.join("build.rs")];
+        sources(&root.join("src"), &mut files);
+        assert!(files.len() > 20, "the sources were not found");
+        for file in files {
+            let source = std::fs::read_to_string(&file).unwrap();
+            assert!(!source.contains(USE), "{} uses it", file.display());
+        }
     }
 
     /// Tor design §2.8 and test 2 (R-07): clippy.toml disallows building
