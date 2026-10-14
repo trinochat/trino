@@ -298,11 +298,14 @@ pub fn run() {
             net_cmds::net_status,
             net_cmds::net_start,
             net_cmds::net_retry,
+            net_cmds::net_back_to_tor,
+            commands::net_connect_without_tor,
             // -- Tor bridges (TOR-7) --
             commands::bridges_cmds::net_bridges_get,
             commands::bridges_cmds::net_bridges_check,
             commands::bridges_cmds::net_bridges_set,
             commands::bridges_cmds::net_bridges_try,
+            commands::bridges_cmds::net_set_start_on_unlock,
             // -- The news (TOR-10) --
             news_cmds::news_fetch,
             // -- The updater (TOR-9) --

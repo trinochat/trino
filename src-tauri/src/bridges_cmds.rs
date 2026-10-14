@@ -238,13 +238,17 @@ pub(crate) fn choose(
             settings.start = StartWhen::OnUnlock;
         }
         None => {
+            let had_private = net.has_private_bridges()
+                || (has_store(inner) && prefs_cmds::current_map(inner).contains_key(NET_BRIDGES));
             if has_store(inner) {
                 prefs_cmds::set_backend_pref(inner, NET_BRIDGES, None)?;
             }
             // Private lines are what made Tor start at unlock; leaving them
-            // goes back to starting at open (the option of its own, "Conectar
-            // a Tor solo después de desbloquear", comes with TOR-6).
-            settings.start = StartWhen::Open;
+            // goes back to starting at open. Any other choice keeps what the
+            // person chose with "Conectarse solo después de desbloquear".
+            if had_private {
+                settings.start = StartWhen::Open;
+            }
         }
     }
     settings.save(&tor_home).map_err(|e| CommandError::io(&e))?;
@@ -296,6 +300,35 @@ pub(crate) fn info(inner: &InnerState, net: &Net) -> BridgesInfo {
     }
 }
 
+/// "Conectarse solo después de desbloquear" (Tor design §10.2, R-25): Tor
+/// starts at unlock and stops at lock, or starts when Trino opens. With
+/// private lines it always starts at unlock, so turning it off is refused.
+/// What the UI shows after it.
+pub(crate) fn set_start_on_unlock(
+    inner: &InnerState,
+    net: &Net,
+    on: bool,
+) -> Result<BridgesInfo, CommandError> {
+    let tor_home = net
+        .tor_home()
+        .ok_or_else(|| CommandError::internal("no Tor in this build"))?
+        .to_path_buf();
+    let shown = info(inner, net);
+    if !on && shown.private != Some(false) {
+        return Err(CommandError::internal(
+            "with private bridges Tor starts at unlock",
+        ));
+    }
+    let mut settings = TorSettings::load(&tor_home);
+    settings.start = if on {
+        StartWhen::OnUnlock
+    } else {
+        StartWhen::Open
+    };
+    settings.save(&tor_home).map_err(|e| CommandError::io(&e))?;
+    Ok(info(inner, net))
+}
+
 /// Whether this device has an account.
 fn has_account() -> bool {
     vault_path().exists()
@@ -343,6 +376,17 @@ pub async fn net_bridges_set(
         set.status = restart_if_running(&state.net).await?;
     }
     Ok(set)
+}
+
+/// "Conectarse solo después de desbloquear", in Ajustes › Privacidad ›
+/// Conexión › Opciones avanzadas. It takes effect at the next lock or
+/// opening: Tor keeps running now.
+#[tauri::command]
+pub async fn net_set_start_on_unlock(
+    state: State<'_, AppState>,
+    on: bool,
+) -> Result<BridgesInfo, CommandError> {
+    set_start_on_unlock(&*state.inner.lock().await, &state.net, on)
 }
 
 /// "Probar con un puente" (§5.3): start again through the built-in
@@ -640,6 +684,55 @@ mod tests {
         ] {
             assert!(choose(&inner, &net, true, BridgeChoice::Builtin { transport }).is_err());
         }
+    }
+
+    // ---- §10.2 and R-25: "Conectarse solo después de desbloquear" ----
+
+    #[test]
+    fn the_start_at_unlock_option_is_kept_and_a_bridge_choice_keeps_it() {
+        let scratch = ScratchDir::new("bridges-start-option");
+        let inner = unlocked_account(scratch.path());
+        let (net, _fake) = bridged(scratch.path());
+
+        let shown = set_start_on_unlock(&inner, &net, true).unwrap();
+        assert_eq!(shown.start, StartWhen::OnUnlock);
+        assert_eq!(settings_of(scratch.path()).start, StartWhen::OnUnlock);
+
+        // A built-in bridge, or none, keeps what the person chose.
+        let builtin = BridgeChoice::Builtin {
+            transport: TransportKind::Snowflake,
+        };
+        choose(&inner, &net, true, builtin).unwrap();
+        assert_eq!(
+            settings_of(scratch.path()),
+            TorSettings {
+                transport: TransportKind::Snowflake,
+                start: StartWhen::OnUnlock,
+            }
+        );
+        choose(&inner, &net, true, BridgeChoice::None).unwrap();
+        assert_eq!(settings_of(scratch.path()).start, StartWhen::OnUnlock);
+
+        let shown = set_start_on_unlock(&inner, &net, false).unwrap();
+        assert_eq!(shown.start, StartWhen::Open);
+        assert_eq!(settings_of(scratch.path()), TorSettings::default());
+    }
+
+    #[test]
+    fn with_private_lines_tor_always_starts_at_unlock() {
+        // The switch is on and fixed (PropTorSimple, card 6): turning it off
+        // is refused and changes nothing.
+        let scratch = ScratchDir::new("bridges-start-private");
+        let inner = unlocked_account(scratch.path());
+        let (net, _fake) = bridged(scratch.path());
+        choose(&inner, &net, true, private(OBFS4)).unwrap();
+
+        assert!(set_start_on_unlock(&inner, &net, false).is_err());
+        assert_eq!(settings_of(scratch.path()).start, StartWhen::OnUnlock);
+        assert_eq!(
+            set_start_on_unlock(&inner, &net, true).unwrap().start,
+            StartWhen::OnUnlock
+        );
     }
 
     #[test]

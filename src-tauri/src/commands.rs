@@ -811,6 +811,7 @@ fn relay_starter(app: AppHandle, state: &AppState) -> impl FnOnce(RelayStart) {
             inner,
             connector,
             ready_gate(Arc::clone(&net)),
+            Arc::clone(&net),
             start.relays,
             start.nostr_pub,
             start.handle,
@@ -965,11 +966,13 @@ async fn forge_identity(
 /// socket comes up or goes down, the UI gets a debounced
 /// `connection-changed`. Each relay is opened by `connector`, through the
 /// app's `Net`.
+#[allow(clippy::too_many_arguments)]
 fn start_relay_connections(
     app: AppHandle,
     state_inner: Arc<tokio::sync::Mutex<InnerState>>,
     connector: Connector,
     ready: ReadyGate,
+    net: Arc<trino_net::Net>,
     relays: Vec<String>,
     expected_nostr_pub: String,
     expected_handle: String,
@@ -987,11 +990,7 @@ fn start_relay_connections(
                 let changes = Arc::clone(&changes);
                 Arc::new(move |_up| changes.poke())
             };
-            let options = ClientOptions {
-                connect_deadline: relay_deadline(&relay_url),
-                ready: Some(Arc::clone(&ready)),
-                ..ClientOptions::new(Arc::clone(&connector), Some(on_state))
-            };
+            let options = relay_options(&relay_url, &connector, &ready, &net, Some(on_state));
             let client = NostrClient::start(&relay_url, on_event, options);
             // Catch up on messages sent while this device was offline: the
             // whole window on the first connection, and on every reconnect
@@ -1032,6 +1031,49 @@ fn start_relay_connections(
             }
         }
     });
+}
+
+/// How a session's client of `relay_url` connects through `net`: with its
+/// deadline, once `net` is ready (Tor design §2.4), and opened again the
+/// other way whenever `net` goes without Tor or back to it, so the sockets
+/// already open move too (§2.8, design test 15).
+fn relay_options(
+    relay_url: &str,
+    connector: &Connector,
+    ready: &ReadyGate,
+    net: &trino_net::Net,
+    on_state: Option<StateHandler>,
+) -> ClientOptions {
+    ClientOptions {
+        connect_deadline: relay_deadline(relay_url),
+        ready: Some(Arc::clone(ready)),
+        route: Some(net.route()),
+        ..ClientOptions::new(Arc::clone(connector), on_state)
+    }
+}
+
+/// "Conectar sin protección (solo esta vez)" (Tor design §2.8, §10.4;
+/// decision 10), after its confirmation: everything goes without Tor until
+/// Trino closes or "Volver a conectarse de forma privada". Nothing keeps
+/// it: the permit lives in memory, and the next start goes through Tor.
+/// The relays' sockets already open follow at once (`relay_options`).
+/// This is the one place the session's permit is built (design test 2).
+#[allow(clippy::disallowed_methods)]
+pub(crate) fn connect_without_tor(
+    net: &trino_net::Net,
+) -> Result<trino_net::NetStatus, CommandError> {
+    net.allow_direct(trino_net::DirectPermit::for_session())
+        .map_err(|_| CommandError::internal("the session's permit was refused"))?;
+    Ok(net.status_now())
+}
+
+/// "Conectar sin protección (solo esta vez)", once the person confirmed
+/// it in its dialog (whose safe answer is Cancelar).
+#[tauri::command]
+pub async fn net_connect_without_tor(
+    state: State<'_, AppState>,
+) -> Result<trino_net::NetStatus, CommandError> {
+    connect_without_tor(&state.net)
 }
 
 /// What a relay of the session delivers goes to `handle_incoming_event`.
@@ -1233,7 +1275,11 @@ pub async fn relay_inspect_start(
             );
         });
 
-        match NostrClient::connect(&url, on_event, Arc::clone(&connector)).await {
+        let options = ClientOptions {
+            route: Some(state.net.route()),
+            ..ClientOptions::new(Arc::clone(&connector), None)
+        };
+        match NostrClient::connect_with(&url, on_event, options).await {
             Ok(client) => {
                 let _ = client
                     .subscribe(&NostrFilter {
@@ -6283,5 +6329,87 @@ mod tests {
         // Each would end past the last second there is: none has ended.
         assert!(!prune_history(&mut history, NOW));
         assert_eq!(history["ana"].len(), 3);
+    }
+
+    // ---- Tor design §2.8, §10.4 and test 15: "Conectar sin protección" ----
+
+    /// A relay served on both ways out of `net`, Tor's and the direct one,
+    /// counting each way's connections.
+    fn relay_on_both_ways(tor: &trino_net::mock::Mock, direct: &trino_net::mock::Mock) {
+        for mock in [tor, direct] {
+            let mut listener = mock.listen("relay.trino.invalid", 80);
+            tokio::spawn(async move {
+                while let Some(io) = listener.accept().await {
+                    tokio::spawn(async move {
+                        if let Ok(mut ws) = tokio_tungstenite::accept_async(io).await {
+                            use futures_util::StreamExt;
+                            while let Some(Ok(_)) = ws.next().await {}
+                        }
+                    });
+                }
+            });
+        }
+    }
+
+    /// Design test 15 in the app: "Conectar sin protección" goes without
+    /// Tor for this process only, moving the session's relay sockets
+    /// already open, and "Volver a conectarse de forma privada" moves them
+    /// back. Nothing in it is kept.
+    #[tokio::test]
+    async fn without_tor_moves_the_open_relays_and_back_to_tor_moves_them_again() {
+        use crate::nostr::test_relay::wait_until;
+        let (tor, direct) = (trino_net::mock::Mock::new(), trino_net::mock::Mock::new());
+        relay_on_both_ways(&tor, &direct);
+        let net = trino_net::Net::with_transports(
+            Some(Arc::clone(&tor) as Arc<dyn trino_net::Transport>),
+            Arc::clone(&direct) as Arc<dyn trino_net::Transport>,
+        );
+        let connector = relay_connector(Arc::clone(&net), net.session(), IsoKind::RELAY);
+        let options = relay_options(
+            "ws://relay.trino.invalid",
+            &connector,
+            &ready_gate(Arc::clone(&net)),
+            &net,
+            None,
+        );
+        let client = NostrClient::start("ws://relay.trino.invalid", Arc::new(|_| {}), options);
+        wait_until("the relay through Tor", || client.is_connected()).await;
+        assert_eq!(
+            (tor.connections().len(), direct.connections().len()),
+            (1, 0)
+        );
+
+        let status = connect_without_tor(&net).unwrap();
+        assert_eq!(status, trino_net::NetStatus::Direct);
+        wait_until("the relay without Tor", || direct.connections().len() == 1).await;
+        wait_until("it to be up", || client.is_connected()).await;
+
+        let status = crate::net_cmds::back_to_tor(&net);
+        assert!(status.is_ready(), "{status:?}");
+        assert_eq!(net.mode(), trino_net::Mode::Tor);
+        wait_until("the relay through Tor again", || {
+            tor.connections().len() == 2
+        })
+        .await;
+        wait_until("it to be up again", || client.is_connected()).await;
+        assert_eq!(direct.connections().len(), 1, "it went without Tor again");
+        client.close();
+    }
+
+    /// Only "Conectar sin protección" builds the session's permit, and only
+    /// here (design test 2): the command's own function.
+    #[test]
+    fn the_escape_is_the_sessions_permit_and_never_the_updaters() {
+        let net = trino_net::Net::new();
+        assert_eq!(
+            connect_without_tor(&net).unwrap(),
+            trino_net::NetStatus::Direct
+        );
+        assert_eq!(net.mode(), trino_net::Mode::Direct);
+        // Asked again, it stays as it is.
+        assert_eq!(
+            connect_without_tor(&net).unwrap(),
+            trino_net::NetStatus::Direct
+        );
     }
 }

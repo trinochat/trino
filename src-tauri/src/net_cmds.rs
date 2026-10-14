@@ -10,11 +10,12 @@
 //! | "Borrar todo" | stops, then every file of tor/ is destroyed (storage_cmds.rs) |
 //!
 //! The UI gets every state as `net-changed` and asks for it with
-//! `net_status` (TOR-6 builds the screens). "Conectar sin Tor" and "Volver
-//! a usar Tor" are trino-net's `allow_direct` and `back_to_tor`; their
-//! commands come with their screens (TOR-6), together with moving the
-//! relays already connected, and the first goes in commands.rs, the one
-//! file of the app allowed to build that permit.
+//! `net_status`. "Conectar sin protección" and "Volver a conectarse de
+//! forma privada" are trino-net's `allow_direct` and `back_to_tor`: the
+//! first is `net_connect_without_tor`, in commands.rs, the one file of the
+//! app allowed to build that permit; the second is `net_back_to_tor`, here.
+//! Either way the relays' sockets already open move to the new way, since
+//! each client follows `Net::route` (commands.rs, `relay_options`).
 
 use crate::command_error::CommandError;
 use crate::state::AppState;
@@ -125,6 +126,25 @@ pub async fn net_start(state: State<'_, AppState>) -> Result<NetStatus, CommandE
     })
     .await
     .map_err(|_| CommandError::internal("tor worker failed"))
+}
+
+/// "Volver a conectarse de forma privada" (Tor design §2.8): everything
+/// goes through Tor again, the relays' open sockets included, and Tor
+/// starts if it was not running. Blocks while it starts one.
+pub(crate) fn back_to_tor(net: &Net) -> NetStatus {
+    net.back_to_tor();
+    net.start();
+    status_of(net)
+}
+
+/// "Volver a conectarse de forma privada", in Ajustes › Privacidad ›
+/// Conexión while "Sin protección" lasts.
+#[tauri::command]
+pub async fn net_back_to_tor(state: State<'_, AppState>) -> Result<NetStatus, CommandError> {
+    let net = Arc::clone(&state.net);
+    tokio::task::spawn_blocking(move || back_to_tor(&net))
+        .await
+        .map_err(|_| CommandError::internal("tor worker failed"))
 }
 
 /// "Volver a intentar", and "Intentar de nuevo" on the "old version"

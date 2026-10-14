@@ -11,7 +11,7 @@ use std::time::Duration;
 use thiserror::Error;
 use tokio::sync::{mpsc, oneshot, watch, RwLock};
 use tokio_tungstenite::tungstenite::Message;
-use trino_net::{IsoKind, Net, Session};
+use trino_net::{IsoKind, Mode, Net, Session};
 
 pub const TRINO_KIND: u32 = 4848;
 
@@ -344,6 +344,12 @@ pub struct ClientOptions {
     /// Waited for before every attempt, outside its deadline: Tor being
     /// ready (§2.4). `None` attempts at once.
     pub ready: Option<ReadyGate>,
+    /// The way out of the `Net` the connector uses (`Net::route`): a socket
+    /// opened one way is opened again, at once, once it changes, so
+    /// "Conectar sin Tor" and "Volver a usar Tor" move the sockets already
+    /// open, not only the next ones (Tor design §2.8, test 15). `None`
+    /// keeps a socket whatever the mode.
+    pub route: Option<watch::Receiver<Mode>>,
     pub on_state: Option<StateHandler>,
 }
 
@@ -356,6 +362,7 @@ impl ClientOptions {
             reconnection: RECONNECTION,
             connect_deadline: CONNECT_DEADLINE,
             ready: None,
+            route: None,
             on_state,
         }
     }
@@ -460,7 +467,7 @@ impl NostrClient {
     }
 
     /// `connect`, with `options`: given up at its connect deadline.
-    async fn connect_with(
+    pub async fn connect_with(
         url: &str,
         on_event: EventHandler,
         options: ClientOptions,
@@ -640,26 +647,33 @@ impl Connection {
         mut closed: watch::Receiver<bool>,
     ) {
         let mut book = SubscriptionBook::default();
-        let mut next = first;
+        let mut route = self.options.route.clone();
+        // A socket handed in was opened the way the route says now.
+        let mut next = first.map(|ws| (ws, route.as_mut().map(|r| *r.borrow_and_update())));
         // The first connection is tried at once; after a drop, a pause first.
         let (mut backoff, mut at_once) = (self.options.first_connection, true);
         loop {
-            let ws = match next.take() {
-                Some(ws) => ws,
+            let (ws, opened) = match next.take() {
+                Some(opened) => opened,
                 None => match self
-                    .connect_with_retries(backoff, at_once, &mut closed)
+                    .connect_with_retries(backoff, at_once, &mut closed, &mut route)
                     .await
                 {
-                    Some(ws) => ws,
+                    Some(opened) => opened,
                     None => break, // closed while waiting
                 },
             };
-            (backoff, at_once) = (self.options.reconnection, false);
+            backoff = self.options.reconnection;
             self.set_connected(true);
-            let closing = self.serve(ws, &mut book, &mut receiver).await;
+            let end = self
+                .serve(ws, &mut book, &mut receiver, &mut route, opened)
+                .await;
             self.set_connected(false);
-            if closing {
-                break;
+            match end {
+                Served::Closed => break,
+                Served::Dropped => at_once = false,
+                // The other way, at once: nothing to wait out.
+                Served::Moved => at_once = true,
             }
         }
     }
@@ -675,24 +689,30 @@ impl Connection {
 
     /// Connect, pausing between attempts as `backoff` says, until it works;
     /// `None` once the client is closed. An attempt still going at the
-    /// connect deadline counts as failed.
+    /// connect deadline counts as failed. A change of the route ends a
+    /// pause, and a socket that opened after the route changed is closed
+    /// and opened again the new way. Gives the socket and the mode it was
+    /// opened in.
     async fn connect_with_retries(
         &self,
         backoff: Backoff,
         at_once: bool,
         closed: &mut watch::Receiver<bool>,
-    ) -> Option<WsStream> {
+        route: &mut Option<watch::Receiver<Mode>>,
+    ) -> Option<(WsStream, Option<Mode>)> {
         let mut pause = backoff.first;
         let mut wait = !at_once;
         loop {
             if wait {
                 tokio::select! {
                     () = tokio::time::sleep(pause) => {}
+                    () = route_changed(route) => {}
                     () = until_closed(closed) => return None,
                 }
                 pause = backoff.after(pause);
             }
             wait = true;
+            let opened = route.as_mut().map(|r| *r.borrow_and_update());
             // With Tor, the deadline counts from when it is ready (§2.4).
             if let Some(ready) = &self.options.ready {
                 tokio::select! {
@@ -707,8 +727,16 @@ impl Connection {
             };
             match attempt {
                 Ok(Ok(ws)) => {
+                    let now = route.as_mut().map(|r| *r.borrow_and_update());
+                    if now != opened {
+                        // Opened the old way: dropped, and opened again now.
+                        dlog("WS opened the old way, opening it again");
+                        drop(ws);
+                        wait = false;
+                        continue;
+                    }
                     dlog("WS connected");
-                    return Some(ws);
+                    return Some((ws, opened));
                 }
                 Ok(Err(_)) => {
                     crate::diag::note_with("WS connection failed", &[("retry_s", &pause.as_secs())])
@@ -721,14 +749,16 @@ impl Connection {
         }
     }
 
-    /// Serve one socket until it drops (`false`) or the client is closed
-    /// (`true`).
+    /// Serve one socket, opened in mode `opened`, until it drops, the
+    /// client is closed, or the route goes another way.
     async fn serve(
         &self,
         ws: WsStream,
         book: &mut SubscriptionBook,
         receiver: &mut mpsc::UnboundedReceiver<ClientCommand>,
-    ) -> bool {
+        route: &mut Option<watch::Receiver<Mode>>,
+        opened: Option<Mode>,
+    ) -> Served {
         let (mut write, mut read) = ws.split();
         // Re-send the subscriptions so the fresh socket delivers events.
         for req in book.on_connected(unix_now()) {
@@ -749,21 +779,21 @@ impl Connection {
                     }
                     Some(Ok(Message::Close(_))) | None => {
                         dlog("WS dropped, reconnecting");
-                        return false;
+                        return Served::Dropped;
                     }
                     // Pong / Binary / Frame: nothing to do, but the relay is
                     // evidently still there.
                     Some(Ok(_)) => book.on_frame(None, unix_now()),
                     Some(Err(_)) => {
                         dlog("WS read error, reconnecting");
-                        return false;
+                        return Served::Dropped;
                     }
                 },
                 cmd = receiver.recv() => match cmd {
                     Some(ClientCommand::Send(text)) => {
                         self.queued.fetch_sub(1, Ordering::SeqCst);
                         if write.send(Message::Text(text)).await.is_err() {
-                            return false; // socket dead → reconnect
+                            return Served::Dropped; // socket dead → reconnect
                         }
                     }
                     Some(ClientCommand::Subscribe(sub)) => {
@@ -771,17 +801,22 @@ impl Connection {
                         // reconnect re-sends it.
                         let req = book.add(sub, unix_now());
                         if write.send(Message::Text(req)).await.is_err() {
-                            return false; // socket dead → reconnect
+                            return Served::Dropped; // socket dead → reconnect
                         }
                     }
                     Some(ClientCommand::Close) | None => {
                         let _ = write.close().await;
-                        return true; // shut down for good
+                        return Served::Closed; // shut down for good
                     }
                 },
+                () = route_moved(route, opened) => {
+                    // The socket goes, and nothing more is sent the old way.
+                    dlog("WS route changed, opening it again");
+                    return Served::Moved;
+                }
                 _ = ping.tick() => {
                     if write.send(Message::Ping(Vec::new())).await.is_err() {
-                        return false; // socket dead → reconnect
+                        return Served::Dropped; // socket dead → reconnect
                     }
                 }
             }
@@ -792,6 +827,39 @@ impl Connection {
 /// Resolves once the client is closed, or dropped.
 async fn until_closed(closed: &mut watch::Receiver<bool>) {
     let _ = closed.wait_for(|closed| *closed).await;
+}
+
+/// How serving a socket ended.
+enum Served {
+    /// The client was closed.
+    Closed,
+    /// The socket dropped: open it again after a pause.
+    Dropped,
+    /// The route goes another way: open it again at once.
+    Moved,
+}
+
+/// Resolves at the next change of `route`; never without one, or once its
+/// `Net` is gone.
+async fn route_changed(route: &mut Option<watch::Receiver<Mode>>) {
+    let changed = match route {
+        Some(route) => route.changed().await.is_ok(),
+        None => false,
+    };
+    if !changed {
+        futures_util::future::pending::<()>().await;
+    }
+}
+
+/// Resolves once `route` goes a way other than `opened`.
+async fn route_moved(route: &mut Option<watch::Receiver<Mode>>, opened: Option<Mode>) {
+    loop {
+        route_changed(route).await;
+        let now = route.as_mut().map(|r| *r.borrow_and_update());
+        if now != opened {
+            return;
+        }
+    }
 }
 
 /// A line for the diagnostic log: fixed text only, and only debug builds
@@ -1033,6 +1101,7 @@ pub(crate) mod test_relay {
             // handshake over the in-memory pipe.
             connect_deadline: Duration::from_secs(1),
             ready: None,
+            route: None,
             on_state,
         }
     }
@@ -1313,6 +1382,7 @@ mod tests {
     use std::sync::Mutex as StdMutex;
     use std::time::Duration;
     use trino_net::mock::Mock;
+    use trino_net::Mode;
 
     fn ignore_events() -> EventHandler {
         Arc::new(|_| {})
@@ -1494,6 +1564,7 @@ mod tests {
             reconnection: slow,
             connect_deadline: Duration::from_millis(300),
             ready: Some(ready_gate(Arc::clone(&net))),
+            route: None,
             on_state: None,
         };
 
@@ -1615,6 +1686,129 @@ mod tests {
         let seen = tor.connections();
         assert_eq!(seen[0].1.kind(), IsoKind::INSPECTOR);
         assert_ne!(seen[0].1, seen[1].1);
+    }
+
+    // ---- Tor design §2.8 and test 15: a socket follows the route ----
+
+    /// A connector that reaches `on_tor` while `route` says Tor and
+    /// `direct` while it says Direct, noting the mode of each attempt. The
+    /// app's is `relay_connector` over the `Net` whose `route` this is.
+    fn routed_connector(
+        route: watch::Receiver<Mode>,
+        on_tor: &TestRelay,
+        direct: &TestRelay,
+        attempts: Arc<StdMutex<Vec<Mode>>>,
+    ) -> Connector {
+        let real = test_relay::connector();
+        let (on_tor, direct) = (on_tor.url.clone(), direct.url.clone());
+        Arc::new(move |_url| {
+            let mode = *route.borrow();
+            attempts.lock().unwrap().push(mode);
+            real(match mode {
+                Mode::Tor => on_tor.clone(),
+                Mode::Direct => direct.clone(),
+            })
+        })
+    }
+
+    #[tokio::test]
+    async fn an_open_relay_socket_is_opened_again_when_the_mode_changes() {
+        let (on_tor, direct) = (
+            TestRelay::start(Answer::Accept).await,
+            TestRelay::start(Answer::Accept).await,
+        );
+        let (mode, route) = watch::channel(Mode::Tor);
+        let attempts = Arc::new(StdMutex::new(Vec::new()));
+        let options = ClientOptions {
+            connector: routed_connector(route.clone(), &on_tor, &direct, Arc::clone(&attempts)),
+            route: Some(route),
+            // A drop pauses a long time first: a move must not wait for it.
+            reconnection: Backoff {
+                first: Duration::from_secs(30),
+                max: Duration::from_secs(30),
+            },
+            ..quick_options(None)
+        };
+        let client = NostrClient::start("ws://relay.trino.invalid", ignore_events(), options);
+        wait_until("the socket through Tor", || client.is_connected()).await;
+        client.publish(&some_event()).await.unwrap();
+        wait_until("the event through Tor", || on_tor.events().len() == 1).await;
+
+        // "Conectar sin protección": the socket opened through Tor goes, and
+        // a new one opens the other way, at once.
+        mode.send(Mode::Direct).unwrap();
+        wait_until("an attempt without Tor", || {
+            attempts.lock().unwrap().last() == Some(&Mode::Direct)
+        })
+        .await;
+        wait_until("the socket without Tor", || client.is_connected()).await;
+        client.publish(&some_event()).await.unwrap();
+        wait_until("the event without Tor", || direct.events().len() == 1).await;
+
+        // "Volver a conectarse de forma privada": back through Tor, and
+        // nothing more goes the direct way.
+        mode.send(Mode::Tor).unwrap();
+        wait_until("an attempt through Tor again", || {
+            attempts.lock().unwrap().last() == Some(&Mode::Tor)
+        })
+        .await;
+        wait_until("the socket through Tor again", || client.is_connected()).await;
+        client.publish(&some_event()).await.unwrap();
+        wait_until("the event through Tor again", || on_tor.events().len() == 2).await;
+        assert_eq!(direct.events().len(), 1, "an event went the old way");
+        assert_eq!(
+            *attempts.lock().unwrap(),
+            [Mode::Tor, Mode::Direct, Mode::Tor]
+        );
+        client.close();
+    }
+
+    #[tokio::test]
+    async fn a_socket_that_opens_after_the_mode_changed_is_opened_again() {
+        // An attempt begun through Tor that ends after "Conectar sin
+        // protección" (or the other way) must not stay up the old way.
+        let (on_tor, direct) = (
+            TestRelay::start(Answer::Accept).await,
+            TestRelay::start(Answer::Accept).await,
+        );
+        let (mode, route) = watch::channel(Mode::Tor);
+        let attempts = Arc::new(StdMutex::new(Vec::new()));
+        let release = Arc::new(tokio::sync::Notify::new());
+        let routed = routed_connector(route.clone(), &on_tor, &direct, Arc::clone(&attempts));
+        let gate = Arc::clone(&release);
+        let connector: Connector = Arc::new(move |url| {
+            let (attempt, gate) = (routed(url), Arc::clone(&gate));
+            Box::pin(async move {
+                let ws = attempt.await;
+                gate.notified().await;
+                ws
+            })
+        });
+        let options = ClientOptions {
+            connector,
+            route: Some(route),
+            connect_deadline: Duration::from_secs(5),
+            ..quick_options(None)
+        };
+        let client = NostrClient::start("ws://relay.trino.invalid", ignore_events(), options);
+        wait_until("the first attempt", || attempts.lock().unwrap().len() == 1).await;
+
+        mode.send(Mode::Direct).unwrap();
+        release.notify_one();
+        wait_until("an attempt without Tor", || {
+            attempts.lock().unwrap().len() == 2
+        })
+        .await;
+        assert!(
+            !client.is_connected(),
+            "the socket opened through Tor stayed"
+        );
+        release.notify_one();
+        wait_until("the socket without Tor", || client.is_connected()).await;
+        client.publish(&some_event()).await.unwrap();
+        wait_until("the event without Tor", || direct.events().len() == 1).await;
+        assert!(on_tor.events().is_empty());
+        client.close();
     }
 
     // ---- B2: a handshake that never ends, and a relay that stays down ----

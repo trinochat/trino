@@ -142,6 +142,9 @@ struct Shared {
     generation: AtomicU64,
     /// What the app sees: `Direct` without Tor, Tor's state otherwise.
     seen: watch::Sender<NetStatus>,
+    /// The mode, for whoever holds a socket open: a change means its
+    /// socket went the other way and must be opened again (§2.8).
+    route: watch::Sender<Mode>,
 }
 
 impl Shared {
@@ -151,7 +154,21 @@ impl Shared {
             tor: Mutex::new(tor),
             generation: AtomicU64::new(0),
             seen: watch::Sender::new(tor),
+            route: watch::Sender::new(Mode::Tor),
         }
+    }
+
+    /// Go without Tor, or back to it: the app sees it, and so does every
+    /// socket open on the old way.
+    fn set_without_tor(&self, on: bool) {
+        self.without_tor.store(on, Ordering::SeqCst);
+        self.republish();
+        let mode = if on { Mode::Direct } else { Mode::Tor };
+        self.route.send_if_modified(|current| {
+            let changed = *current != mode;
+            *current = mode;
+            changed
+        });
     }
 
     fn publish(&self, tor: NetStatus) {
@@ -377,8 +394,7 @@ impl Net {
     pub fn allow_direct(&self, permit: DirectPermit) -> Result<(), NetError> {
         match permit.scope {
             Scope::Session => {
-                self.shared.without_tor.store(true, Ordering::SeqCst);
-                self.shared.republish();
+                self.shared.set_without_tor(true);
                 Ok(())
             }
             Scope::Updater => Err(NetError::NotPermitted),
@@ -386,9 +402,18 @@ impl Net {
     }
 
     /// "Volver a usar Tor": every connection from now on goes through Tor.
+    /// A socket opened without it is not moved here: its holder hears the
+    /// change on `route` and opens it again.
     pub fn back_to_tor(&self) {
-        self.shared.without_tor.store(false, Ordering::SeqCst);
-        self.shared.republish();
+        self.shared.set_without_tor(false);
+    }
+
+    /// Every change of mode, for whoever keeps a socket open (the relays):
+    /// a socket opened in one mode is opened again once it changes, so
+    /// "Conectar sin Tor" and "Volver a usar Tor" reach the sockets already
+    /// open, not only the next ones (§2.8, design test 15).
+    pub fn route(&self) -> watch::Receiver<Mode> {
+        self.shared.route.subscribe()
     }
 
     /// A new session: nothing it opens shares a circuit with another's.

@@ -244,6 +244,35 @@ async fn the_session_permit_sends_everything_direct_until_back_to_tor() {
     );
 }
 
+/// "Volver a conectarse de forma privada" must move the sockets already
+/// open (design §2.8, test 15): whoever holds one hears every change of
+/// mode, and only changes.
+#[tokio::test]
+#[allow(clippy::disallowed_methods)] // the permits are what is under test
+async fn the_route_tells_every_change_of_mode_and_only_changes() {
+    let (tor, direct) = (Mock::new(), Mock::new());
+    let net = both(&tor, &direct);
+    let mut route = net.route();
+    assert_eq!(*route.borrow_and_update(), Mode::Tor);
+
+    net.allow_direct(DirectPermit::for_session()).unwrap();
+    within(route.changed()).await.unwrap();
+    assert_eq!(*route.borrow_and_update(), Mode::Direct);
+
+    // Asked again, nothing changes, and nobody is told.
+    net.allow_direct(DirectPermit::for_session()).unwrap();
+    assert!(!route.has_changed().unwrap());
+
+    net.back_to_tor();
+    within(route.changed()).await.unwrap();
+    assert_eq!(*route.borrow_and_update(), Mode::Tor);
+
+    // The updater's permit never changes the mode, so nothing moves.
+    let _ = net.allow_direct(DirectPermit::for_updater());
+    net.back_to_tor();
+    assert!(!route.has_changed().unwrap());
+}
+
 #[tokio::test]
 #[allow(clippy::disallowed_methods)]
 async fn the_updater_permit_never_changes_the_mode() {
