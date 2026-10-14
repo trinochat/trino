@@ -387,6 +387,13 @@ fn no_file_outside_direct_names_a_socket_or_a_resolver() {
         ("mock.rs", include_str!("mock.rs")),
         ("mock_http.rs", include_str!("mock_http.rs")),
         ("http_tests.rs", include_str!("http_tests.rs")),
+        ("status.rs", include_str!("status.rs")),
+        ("onion_map.rs", include_str!("onion_map.rs")),
+        ("tor/mod.rs", include_str!("tor/mod.rs")),
+        ("tor/arti.rs", include_str!("tor/arti.rs")),
+        ("tor/settings.rs", include_str!("tor/settings.rs")),
+        ("tor/marker.rs", include_str!("tor/marker.rs")),
+        ("tor_tests.rs", include_str!("tor_tests.rs")),
     ] {
         for name in banned {
             assert!(!source.contains(name), "{file} names {name}");

@@ -89,3 +89,118 @@ impl Transport for Forbidden {
         panic!("the direct transport was used where only Tor may be");
     }
 }
+
+/// A Tor for tests (design test 12): it starts at once, connects through
+/// its `Mock`, and reports only what the test tells it to. It records
+/// what was asked of it.
+pub struct FakeTor {
+    mock: Arc<Mock>,
+    state: Arc<Mutex<FakeState>>,
+}
+
+#[derive(Default)]
+struct FakeState {
+    progress: Option<std::sync::mpsc::Sender<crate::Progress>>,
+    next_error: Option<crate::LaunchError>,
+    launches: Vec<crate::TransportKind>,
+    log: Vec<&'static str>,
+}
+
+/// One start of a `FakeTor`.
+struct FakeRunning {
+    mock: Arc<Mock>,
+    state: Arc<Mutex<FakeState>>,
+}
+
+impl FakeTor {
+    pub fn new(mock: Arc<Mock>) -> Arc<FakeTor> {
+        Arc::new(FakeTor {
+            mock,
+            state: Arc::default(),
+        })
+    }
+
+    /// Report `progress`, as the running Tor would. Nothing if none runs.
+    pub fn report(&self, progress: crate::Progress) {
+        if let Some(sender) = lock(&self.state).progress.as_ref() {
+            let _ = sender.send(progress);
+        }
+    }
+
+    /// Report that Tor is at `pct` %.
+    pub fn at(&self, pct: u8) {
+        self.report(crate::Progress::Bootstrap {
+            frac: f32::from(pct) / 100.0,
+            ready: false,
+            blocked: None,
+        });
+    }
+
+    /// Report that Tor is ready.
+    pub fn ready(&self) {
+        self.report(crate::Progress::Bootstrap {
+            frac: 1.0,
+            ready: true,
+            blocked: None,
+        });
+    }
+
+    /// The next `launch` fails with `error`.
+    pub fn fail_next(&self, error: crate::LaunchError) {
+        lock(&self.state).next_error = Some(error);
+    }
+
+    /// The transport of every launch so far.
+    pub fn launches(&self) -> Vec<crate::TransportKind> {
+        lock(&self.state).launches.clone()
+    }
+
+    /// What was asked of it, in order: "launch", "stop", "sleep", "wake".
+    pub fn log(&self) -> Vec<&'static str> {
+        lock(&self.state).log.clone()
+    }
+}
+
+impl crate::TorBackend for FakeTor {
+    fn launch(
+        &self,
+        launch: crate::tor::Launch,
+    ) -> Result<Arc<dyn crate::RunningTor>, crate::LaunchError> {
+        let mut state = lock(&self.state);
+        state.log.push("launch");
+        state.launches.push(launch.transport);
+        if let Some(error) = state.next_error.take() {
+            return Err(error);
+        }
+        state.progress = Some(launch.progress);
+        Ok(Arc::new(FakeRunning {
+            mock: Arc::clone(&self.mock),
+            state: Arc::clone(&self.state),
+        }))
+    }
+}
+
+impl Transport for FakeRunning {
+    fn connect<'a>(
+        &'a self,
+        target: &'a Target,
+        iso: &'a Iso,
+    ) -> BoxFuture<'a, Result<BoxedIo, NetError>> {
+        self.mock.connect(target, iso)
+    }
+}
+
+impl crate::RunningTor for FakeRunning {
+    fn set_dormant(&self, on: bool) {
+        lock(&self.state)
+            .log
+            .push(if on { "sleep" } else { "wake" });
+    }
+
+    fn stop(&self) {
+        let mut state = lock(&self.state);
+        state.log.push("stop");
+        // As Arti's runtime going: nothing reports any more.
+        state.progress = None;
+    }
+}

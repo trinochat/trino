@@ -653,3 +653,64 @@ fn errors_never_print_an_address() {
         "the answer is larger than 1024 bytes"
     );
 }
+
+// ---- §2.4 and §3.1: deadlines count from when Tor is ready ----
+
+#[tokio::test]
+async fn a_request_waits_for_a_starting_tor_and_its_deadlines_count_from_ready() {
+    let tor = Mock::new();
+    let seen = mock_http::serve(
+        &tor,
+        "https://a.trino.invalid",
+        vec![mock_http::response("200 OK", "", b"hi")],
+    );
+    let fake = mock::FakeTor::new(Arc::clone(&tor));
+    let home = std::env::temp_dir().join(format!("trino-net-http-ready-{}", std::process::id()));
+    let net = Net::with_backend(
+        NetConfig {
+            tor_home: home.clone(),
+            pt: None,
+        },
+        Arc::clone(&fake) as Arc<dyn TorBackend>,
+        Arc::new(Forbidden),
+    );
+    let client = HttpClient::with_tls(Arc::clone(&net), mock_http::test_tls());
+    net.start();
+
+    let sending = tokio::spawn(async move {
+        client
+            .send(
+                Request::get("https://a.trino.invalid/x").unwrap(),
+                &iso(),
+                QUICK,
+            )
+            .await
+            .map(|response| response.status())
+    });
+    // Starting for longer than the whole of QUICK (500 ms).
+    tokio::time::sleep(Duration::from_millis(700)).await;
+    assert!(!sending.is_finished(), "gave up before Tor was ready");
+    fake.ready();
+
+    assert_eq!(within(sending).await.unwrap(), Ok(200));
+    assert_eq!(seen.lock().unwrap().len(), 1);
+    net.stop();
+    let _ = std::fs::remove_dir_all(home);
+}
+
+#[tokio::test]
+async fn a_request_with_no_tor_started_is_not_ready_at_once() {
+    let client = HttpClient::new(Net::new());
+    let started = Instant::now();
+
+    let refused = client
+        .send(
+            Request::get("https://a.trino.invalid/x").unwrap(),
+            &iso(),
+            QUICK,
+        )
+        .await;
+
+    assert!(matches!(refused, Err(HttpError::TorNotReady)));
+    assert!(started.elapsed() < Duration::from_secs(1));
+}

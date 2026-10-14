@@ -15,9 +15,9 @@
 //! - No Tauri and nothing of the app (§2.1): the host hands everything in,
 //!   so the engine M4 extracts takes this crate as it is.
 //!
-//! Tor itself (Arti, its own runtime, bootstrap and states) comes with
-//! TOR-5; until then a `Net` has no Tor and every connection without a
-//! permit is `TorNotReady`.
+//! - Tor itself (`tor/`, TOR-5): Arti on a runtime of its own, started and
+//!   stopped by the app, with its states (`NetStatus`) on a watch channel
+//!   and a limit without progress for each transport.
 
 mod direct;
 mod http;
@@ -25,6 +25,9 @@ mod http;
 pub mod mock;
 #[cfg(any(test, feature = "test-util"))]
 pub mod mock_http;
+pub mod onion_map;
+mod status;
+pub mod tor;
 mod transport;
 mod ws;
 
@@ -32,15 +35,30 @@ mod ws;
 mod http_tests;
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod tor_tests;
 
 pub use http::{Deadlines, HostRule, HttpClient, HttpError, RedirectPolicy, Request, Response};
+pub use status::{BlockKind, NetStatus, Progress, TransportKind};
+pub use tor::settings::{StartWhen, TorSettings};
+pub use tor::{LaunchError, NetConfig, PtLauncher, RunningTor, TorBackend, TorDirs};
 pub use transport::{BoxedIo, DirectPermit, Io, Iso, IsoKind, Session, Target, Transport};
 pub use ws::{ws_connect, WsStream};
 
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
+use status::Watch;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::{mpsc, Arc, Mutex, MutexGuard, PoisonError};
+use std::time::{Duration, Instant};
 use thiserror::Error;
+use tokio::sync::watch;
+use tor::marker::{self, RunMarker};
+use tor::Launch;
 use transport::Scope;
+
+/// How long an HTTP request waits for a starting Tor before it gives up
+/// with `TorNotReady` (§2.4). Its own deadlines count from when Tor is
+/// ready (§3.1).
+pub const READY_WAIT: Duration = Duration::from_secs(30);
 
 /// Why a connection was not made. Never the URL or the host: these end up
 /// in the app's messages.
@@ -92,53 +110,213 @@ const UPDATER_HOSTS: [&str; 4] = [
     "objects.githubusercontent.com",
 ];
 
-/// The network of the app: Tor, and the direct transport behind its
-/// permits.
-pub struct Net {
-    tor: Option<Arc<dyn Transport>>,
-    direct: Arc<dyn Transport>,
+fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
+    mutex.lock().unwrap_or_else(PoisonError::into_inner)
+}
+
+/// What a `Net` and the thread that watches its Tor share.
+struct Shared {
     /// Set only by `allow_direct` with the session's permit. Memory only:
     /// nothing here can save it.
     without_tor: AtomicBool,
+    /// Tor's own state. Its lock also guards `generation` and the marker
+    /// writes, so a stopped Tor's watcher never writes after `stop`.
+    tor: Mutex<NetStatus>,
+    /// Which start of Tor is current: `stop` and every start move it on,
+    /// and a watcher of an older one changes nothing.
+    generation: AtomicU64,
+    /// What the app sees: `Direct` without Tor, Tor's state otherwise.
+    seen: watch::Sender<NetStatus>,
+}
+
+impl Shared {
+    fn new(tor: NetStatus) -> Self {
+        Shared {
+            without_tor: AtomicBool::new(false),
+            tor: Mutex::new(tor),
+            generation: AtomicU64::new(0),
+            seen: watch::Sender::new(tor),
+        }
+    }
+
+    fn publish(&self, tor: NetStatus) {
+        let seen = if self.without_tor.load(Ordering::SeqCst) {
+            NetStatus::Direct
+        } else {
+            tor
+        };
+        self.seen.send_if_modified(|current| {
+            let changed = *current != seen;
+            *current = seen;
+            changed
+        });
+    }
+
+    fn republish(&self) {
+        let tor = *lock(&self.tor);
+        self.publish(tor);
+    }
+
+    /// A new start of Tor, in `status`: the watchers of earlier ones stop
+    /// counting.
+    fn next_generation(&self, status: NetStatus) -> u64 {
+        let mut tor = lock(&self.tor);
+        let generation = self.generation.fetch_add(1, Ordering::SeqCst) + 1;
+        *tor = status;
+        drop(tor);
+        self.publish(status);
+        generation
+    }
+
+    /// Set Tor's state, and run `also` under the same lock, if
+    /// `generation` is still the current start. Whether it was.
+    fn update(&self, generation: u64, status: NetStatus, also: impl FnOnce()) -> bool {
+        let mut tor = lock(&self.tor);
+        if self.generation.load(Ordering::SeqCst) != generation {
+            return false;
+        }
+        also();
+        let changed = *tor != status;
+        *tor = status;
+        drop(tor);
+        if changed {
+            self.publish(status);
+        }
+        true
+    }
+
+    fn tor_ready(&self) -> bool {
+        matches!(*lock(&self.tor), NetStatus::Ready { .. })
+    }
+}
+
+/// The network of the app: Tor, and the direct transport behind its
+/// permits.
+pub struct Net {
+    /// What starts Tor: Arti in the app, a fake in tests, none in a `Net`
+    /// that never has Tor.
+    backend: Option<Arc<dyn TorBackend>>,
+    config: Option<NetConfig>,
+    /// The running Tor, between `start` and `stop`.
+    tor: Mutex<Option<Arc<dyn RunningTor>>>,
+    direct: Arc<dyn Transport>,
+    shared: Arc<Shared>,
+    /// One `start` or `stop` at a time.
+    life: Mutex<()>,
 }
 
 impl Default for Net {
-    /// No Tor yet, the real direct transport, `Mode::Tor`.
+    /// No Tor at all, the real direct transport, `Mode::Tor`: nothing
+    /// connects without the session's permit.
     fn default() -> Self {
         Net {
-            tor: None,
+            backend: None,
+            config: None,
+            tor: Mutex::new(None),
             direct: Arc::new(direct::Direct),
-            without_tor: AtomicBool::new(false),
+            shared: Arc::new(Shared::new(NetStatus::Off)),
+            life: Mutex::new(()),
         }
     }
 }
 
+/// A transport handed in whole, as Tor (tests): always there, never
+/// stopped.
+#[cfg(any(test, feature = "test-util"))]
+struct Fixed(Arc<dyn Transport>);
+
+#[cfg(any(test, feature = "test-util"))]
+impl Transport for Fixed {
+    fn connect<'a>(
+        &'a self,
+        target: &'a Target,
+        iso: &'a Iso,
+    ) -> futures_util::future::BoxFuture<'a, Result<BoxedIo, NetError>> {
+        self.0.connect(target, iso)
+    }
+}
+
+#[cfg(any(test, feature = "test-util"))]
+impl RunningTor for Fixed {
+    fn set_dormant(&self, _on: bool) {}
+    fn stop(&self) {}
+}
+
 impl Net {
-    /// A `Net` in `Mode::Tor`. It starts nothing.
+    /// A `Net` with no Tor at all, in `Mode::Tor`: nothing connects
+    /// without the session's permit.
     pub fn new() -> Arc<Net> {
         Arc::new(Net::default())
     }
 
-    /// A `Net` on the given transports, for tests: `Mock` for Tor and
-    /// `Forbidden` (or another `Mock`) for direct.
+    /// The app's `Net`: Tor is Arti, with its folders in
+    /// `config.tor_home`. It starts nothing until `start`.
+    pub fn with_arti(config: NetConfig) -> Arc<Net> {
+        Arc::new(Net {
+            backend: Some(Arc::new(tor::arti::Arti)),
+            config: Some(config),
+            ..Net::default()
+        })
+    }
+
+    /// A `Net` on the given transports, for tests: a ready `Mock` for Tor
+    /// (or no Tor) and `Forbidden` (or another `Mock`) for direct.
     #[cfg(any(test, feature = "test-util"))]
     pub fn with_transports(
         tor: Option<Arc<dyn Transport>>,
         direct: Arc<dyn Transport>,
     ) -> Arc<Net> {
+        let status = match tor {
+            Some(_) => NetStatus::Ready {
+                transport: TransportKind::None,
+            },
+            None => NetStatus::Off,
+        };
         Arc::new(Net {
-            tor,
+            tor: Mutex::new(tor.map(|tor| Arc::new(Fixed(tor)) as Arc<dyn RunningTor>)),
             direct,
-            without_tor: AtomicBool::new(false),
+            shared: Arc::new(Shared::new(status)),
+            ..Net::default()
         })
     }
 
+    /// A `Net` whose Tor `backend` starts, for tests (`mock::FakeTor`).
+    #[cfg(any(test, feature = "test-util"))]
+    pub fn with_backend(
+        config: NetConfig,
+        backend: Arc<dyn TorBackend>,
+        direct: Arc<dyn Transport>,
+    ) -> Arc<Net> {
+        Arc::new(Net {
+            backend: Some(backend),
+            config: Some(config),
+            direct,
+            ..Net::default()
+        })
+    }
+
+    /// Where this `Net` keeps Tor's files, if it has Tor.
+    pub fn tor_home(&self) -> Option<&std::path::Path> {
+        self.config.as_ref().map(|config| config.tor_home.as_path())
+    }
+
     pub fn mode(&self) -> Mode {
-        if self.without_tor.load(Ordering::SeqCst) {
+        if self.shared.without_tor.load(Ordering::SeqCst) {
             Mode::Direct
         } else {
             Mode::Tor
         }
+    }
+
+    /// The state as it is now.
+    pub fn status_now(&self) -> NetStatus {
+        *self.shared.seen.borrow()
+    }
+
+    /// Every change of state, as the app's UI gets it (§2.2). No Tauri:
+    /// the app turns it into its own event.
+    pub fn status(&self) -> watch::Receiver<NetStatus> {
+        self.shared.seen.subscribe()
     }
 
     /// Go without Tor until `back_to_tor` or the end of the process. Only
@@ -147,7 +325,8 @@ impl Net {
     pub fn allow_direct(&self, permit: DirectPermit) -> Result<(), NetError> {
         match permit.scope {
             Scope::Session => {
-                self.without_tor.store(true, Ordering::SeqCst);
+                self.shared.without_tor.store(true, Ordering::SeqCst);
+                self.shared.republish();
                 Ok(())
             }
             Scope::Updater => Err(NetError::NotPermitted),
@@ -156,7 +335,8 @@ impl Net {
 
     /// "Volver a usar Tor": every connection from now on goes through Tor.
     pub fn back_to_tor(&self) {
-        self.without_tor.store(false, Ordering::SeqCst);
+        self.shared.without_tor.store(false, Ordering::SeqCst);
+        self.shared.republish();
     }
 
     /// A new session: nothing it opens shares a circuit with another's.
@@ -164,15 +344,156 @@ impl Net {
         Session::next()
     }
 
+    /// Start Tor, unless it runs already or this `Net` has none. It
+    /// returns at once: the start goes on underneath, and `status` tells
+    /// how it goes. With `tor/run.marker` saying Arti likely died twice
+    /// for being too old, it does not start (`Obsolete`, not confirmed);
+    /// `retry` does.
+    pub fn start(&self) {
+        let _life = lock(&self.life);
+        self.start_locked();
+    }
+
+    fn start_locked(&self) {
+        let (Some(backend), Some(config)) = (&self.backend, &self.config) else {
+            return;
+        };
+        if lock(&self.tor).is_some() {
+            return;
+        }
+        let settings = TorSettings::load(&config.tor_home);
+        let Ok(marker) = RunMarker::begin(&config.tor_home) else {
+            self.shared
+                .next_generation(NetStatus::Obsolete { confirmed: false });
+            return;
+        };
+        let generation = self.shared.next_generation(NetStatus::Starting { pct: 0 });
+        let dirs = TorDirs::fixed(&config.tor_home);
+        let made = std::fs::create_dir_all(&dirs.state)
+            .and_then(|()| std::fs::create_dir_all(&dirs.cache));
+        let (progress, reports) = mpsc::channel();
+        let launched = match made {
+            Ok(()) => backend.launch(Launch {
+                dirs,
+                transport: settings.transport,
+                pt: config.pt.clone(),
+                progress,
+            }),
+            Err(_) => Err(LaunchError::Failed("folders")),
+        };
+        match launched {
+            Ok(running) => {
+                *lock(&self.tor) = Some(running);
+                let shared = Arc::clone(&self.shared);
+                let transport = settings.transport;
+                let watcher = std::thread::Builder::new()
+                    .name("tor-status".to_string())
+                    .spawn(move || watch_tor(&shared, generation, &reports, transport, &marker));
+                if watcher.is_err() {
+                    // Without its watcher it would never be seen ready.
+                    if let Some(running) = lock(&self.tor).take() {
+                        running.stop();
+                    }
+                    self.shared.update(generation, failed(), || {});
+                }
+            }
+            Err(error) => {
+                marker.clear();
+                let status = match error {
+                    LaunchError::PtMissing => NetStatus::PtMissing,
+                    LaunchError::Obsolete => NetStatus::Obsolete { confirmed: true },
+                    LaunchError::Failed(_) => failed(),
+                };
+                self.shared.update(generation, status, || {});
+            }
+        }
+    }
+
+    /// Stop Tor (R-03): its tasks end and its files close before this
+    /// returns. The state is `Off` until the next `start`. Blocks: from
+    /// async code, call it on a blocking thread.
+    pub fn stop(&self) {
+        let _life = lock(&self.life);
+        self.stop_locked();
+    }
+
+    fn stop_locked(&self) {
+        let running = lock(&self.tor).take();
+        // Whatever the old start's watcher sees from now on is dropped.
+        self.shared.next_generation(NetStatus::Off);
+        if let Some(running) = running {
+            running.stop();
+        }
+        // A clean stop: no death to count.
+        if let Some(config) = &self.config {
+            RunMarker::forgive(&config.tor_home);
+        }
+    }
+
+    /// "Volver a intentar" and, on the "old version" screen, "Intentar de
+    /// nuevo": stop Tor, forget the deaths `run.marker` counted, and start
+    /// again.
+    pub fn retry(&self) {
+        let _life = lock(&self.life);
+        self.stop_locked();
+        self.start_locked();
+    }
+
+    /// Put Tor to sleep while nothing uses it (at lock, §2.6), or wake it.
+    pub fn set_dormant(&self, on: bool) {
+        if let Some(tor) = lock(&self.tor).as_ref() {
+            tor.set_dormant(on);
+        }
+    }
+
+    /// Wait for the network to be ready, at most `limit`: `Ok` at once
+    /// without Tor (the session's permit) or with Tor ready; a starting or
+    /// blocked Tor is waited for; with none started, obsolete or without
+    /// its bridge program, `TorNotReady` at once. Never a reason to go
+    /// direct.
+    pub async fn ready(&self, limit: Duration) -> Result<(), NetError> {
+        let mut seen = self.shared.seen.subscribe();
+        let wait = async move {
+            loop {
+                let now = *seen.borrow_and_update();
+                if now.is_ready() {
+                    return Ok(());
+                }
+                if !now.may_become_ready() || seen.changed().await.is_err() {
+                    return Err(NetError::TorNotReady);
+                }
+            }
+        };
+        tokio::time::timeout(limit, wait)
+            .await
+            .unwrap_or(Err(NetError::TorNotReady))
+    }
+
+    /// Wait, with no limit, until the network is ready: what a relay does
+    /// before its own deadline starts (§2.4, design test 13).
+    pub async fn until_ready(&self) {
+        let mut seen = self.shared.seen.subscribe();
+        loop {
+            if seen.borrow_and_update().is_ready() || seen.changed().await.is_err() {
+                return;
+            }
+        }
+    }
+
     /// A connection to `target`, isolated by `iso`: through Tor in
     /// `Mode::Tor` (`TorNotReady` while it is not ready, never direct), and
     /// direct in `Mode::Direct`.
     pub async fn connect(&self, target: &Target, iso: &Iso) -> Result<BoxedIo, NetError> {
-        let transport = match self.mode() {
-            Mode::Direct => Arc::clone(&self.direct),
-            Mode::Tor => self.tor.clone().ok_or(NetError::TorNotReady)?,
-        };
-        transport.connect(target, iso).await
+        match self.mode() {
+            Mode::Direct => self.direct.connect(target, iso).await,
+            Mode::Tor => {
+                if !self.shared.tor_ready() {
+                    return Err(NetError::TorNotReady);
+                }
+                let tor = lock(&self.tor).clone().ok_or(NetError::TorNotReady)?;
+                tor.connect(target, iso).await
+            }
+        }
     }
 
     /// A direct connection for the updater, with its permit, to one of its
@@ -190,5 +511,81 @@ impl Net {
         }
         let iso = transport::detached_iso(IsoKind::UPDATE);
         self.direct.connect(target, &iso).await
+    }
+}
+
+/// A start that could not even begin: told as Tor not finishing to
+/// connect (§10.3, "Otro").
+fn failed() -> NetStatus {
+    NetStatus::Blocked {
+        kind: BlockKind::CantBootstrap,
+        pct: 0,
+    }
+}
+
+/// Turns what one start of Tor reports into states, until that Tor stops
+/// or a newer start replaces it. Also keeps `run.marker`: "ready" once Tor
+/// is, and gone once Tor has run `SURVIVAL` since.
+fn watch_tor(
+    shared: &Shared,
+    generation: u64,
+    reports: &mpsc::Receiver<Progress>,
+    transport: TransportKind,
+    marker: &RunMarker,
+) {
+    let mut watch = Watch::new(transport, Instant::now());
+    let mut ready_at: Option<Instant> = None;
+    let mut survived = false;
+    loop {
+        let now = Instant::now();
+        let survival = ready_at
+            .filter(|_| !survived)
+            .map(|at| at + marker::SURVIVAL);
+        let wake = match (watch.next_change(now), survival) {
+            (Some(a), Some(b)) => Some(a.min(b)),
+            (a, b) => a.or(b),
+        };
+        let report = match wake {
+            Some(at) => reports.recv_timeout(at.saturating_duration_since(now)),
+            None => reports
+                .recv()
+                .map_err(|_| mpsc::RecvTimeoutError::Disconnected),
+        };
+        let now = Instant::now();
+        match report {
+            Ok(Progress::Bootstrap {
+                frac,
+                ready,
+                blocked,
+            }) => watch.on(frac, ready, blocked, now),
+            Ok(Progress::Obsolete) => {
+                shared.update(generation, NetStatus::Obsolete { confirmed: true }, || {
+                    marker.clear()
+                });
+                return;
+            }
+            Err(mpsc::RecvTimeoutError::Timeout) => {}
+            Err(mpsc::RecvTimeoutError::Disconnected) => return,
+        }
+        let status = watch.status(now);
+        let first_ready = status.is_ready() && ready_at.is_none();
+        if first_ready {
+            ready_at = Some(now);
+        }
+        let lived = ready_at.is_some_and(|at| !survived && now >= at + marker::SURVIVAL);
+        if lived {
+            survived = true;
+        }
+        let current = shared.update(generation, status, || {
+            if first_ready {
+                marker.ready();
+            }
+            if lived {
+                marker.clear();
+            }
+        });
+        if !current {
+            return;
+        }
     }
 }

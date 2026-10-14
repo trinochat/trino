@@ -7,8 +7,9 @@
 //! Every request:
 //! - goes through `Net::connect` with the caller's isolation token, the
 //!   host by name: with Tor, the exit resolves it (design test 3);
-//! - gives up connecting (TLS included), the whole exchange and, if asked,
-//!   a silence between two reads, at its `Deadlines`;
+//! - waits up to `READY_WAIT` for a starting Tor, and only then counts its
+//!   `Deadlines`: it gives up connecting (TLS included), the whole exchange
+//!   and, if asked, a silence between two reads, at them;
 //! - opens its own connection and asks the server to close it after the
 //!   answer (`Connection: close`): nothing is reused, so two requests never
 //!   share a connection (invitations need this, design §8.1);
@@ -286,6 +287,9 @@ impl HttpClient {
         iso: &Iso,
         deadlines: Deadlines,
     ) -> Result<Response, HttpError> {
+        // A starting Tor is waited for, and the deadlines count from when
+        // it is ready (design §2.4, §3.1); with none, `TorNotReady` at once.
+        self.net.ready(crate::READY_WAIT).await?;
         let deadline = Instant::now() + deadlines.total;
         let mut request = request;
         let mut redirects = 0;
