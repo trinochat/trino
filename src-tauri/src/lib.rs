@@ -10,6 +10,7 @@ mod a11y;
 mod command_error;
 mod commands;
 mod fsutil;
+mod net_cmds;
 mod passphrase;
 mod state;
 mod store;
@@ -92,7 +93,20 @@ fn quit_app(app: &tauri::AppHandle) {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
+    let builder = tauri::Builder::default();
+    // First of all, one Trino per user (Tor design §2.5, R-17): a second
+    // start hands over to the first, which shows its window, and exits, so
+    // two processes never share tor/. With `TRINO_HOME`, each data folder
+    // has its own tor/, and test accounts may run side by side.
+    #[cfg(desktop)]
+    let builder = if crate::state::custom_data_dir() {
+        builder
+    } else {
+        builder.plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+            window_renewal::show(app)
+        }))
+    };
+    builder
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_notification::init())
         .on_window_event(|window, event| {
@@ -129,6 +143,15 @@ pub fn run() {
                     let _ = std::fs::create_dir_all(&trino_dir);
                     crate::state::set_trino_home(trino_dir);
                 }
+            }
+            // Tor (Tor design §2.6): the UI hears every state, and Tor
+            // starts now unless this is the first run or it starts at
+            // unlock. Nothing goes out before.
+            {
+                use tauri::Manager;
+                let net = std::sync::Arc::clone(&_app.state::<AppState>().net);
+                net_cmds::forward_status(_app.handle().clone(), &net);
+                net_cmds::on_open(&net, &crate::state::trino_home());
             }
             // Desktop: a system-tray icon so trino keeps running (connected,
             // receiving messages, ringing for calls) when the window is closed.
@@ -191,7 +214,7 @@ pub fn run() {
             }
             Ok(())
         })
-        .manage(AppState::default())
+        .manage(AppState::with_tor())
         .invoke_handler(tauri::generate_handler![
             commands::status,
             commands::totp_begin,
@@ -264,6 +287,10 @@ pub fn run() {
             commands::groups_cmds::leave_group,
             commands::groups_cmds::delete_group,
             commands::history_cmds::delete_history_item,
+            // -- Tor (TOR-5) --
+            net_cmds::net_status,
+            net_cmds::net_start,
+            net_cmds::net_retry,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
@@ -271,6 +298,11 @@ pub fn run() {
             // Each lock renews the window (cifrado local CL-6a).
             #[cfg(desktop)]
             window_renewal::on_run_event(_app, &_event);
+            // Quitting stops Tor, so Arti closes its files (§2.6).
+            if let tauri::RunEvent::Exit = _event {
+                use tauri::Manager;
+                net_cmds::on_quit(&_app.state::<AppState>().net);
+            }
         });
 }
 
@@ -411,6 +443,68 @@ mod tests {
                 "{} names {PERMIT}: only {ALLOWED:?} may",
                 file.display()
             );
+        }
+    }
+
+    /// Tor design §2.5 and test 66 (R-17): with two Trino processes on
+    /// one tor/, Arti does not fail but quietly goes read-only. The
+    /// single-instance plugin hands a second start over to the first one,
+    /// which shows its window, and the second exits. Two real processes
+    /// are checked by hand (TOR-12); here, that the plugin is the first
+    /// one registered, as its documentation asks, and what it does. With
+    /// `TRINO_HOME` (another data folder, each with its own tor/) it stays
+    /// off, so two test accounts can run side by side.
+    #[test]
+    fn a_second_instance_hands_over_and_exits() {
+        let source = include_str!("lib.rs");
+        let run = &source[source.find("pub fn run()").unwrap()..];
+        let single = run
+            .find("tauri_plugin_single_instance::init(")
+            .expect("the plugin is registered");
+        let first_other = run.find(".plugin(tauri_plugin_opener").unwrap();
+        assert!(single < first_other, "registered after another plugin");
+        assert!(run[..single].contains("custom_data_dir()"));
+        assert!(run[single..first_other].contains("window_renewal::show"));
+    }
+
+    /// Tor design §2.3 and test 74 (R-25): nothing writes logs to disk but
+    /// diag.rs (in debug builds, fixed text). No code installs a tracing
+    /// subscriber, so Arti's events go nowhere, and no logging crate is a
+    /// dependency of the app or of trino-net. (Arti's own tree carries a
+    /// subscriber crate, through tor-proto's tor-rtmock; nothing calls it.)
+    #[test]
+    fn nothing_outside_diag_writes_logs() {
+        const SIGNS: [&str; 8] = [
+            concat!("tracing_", "subscriber"),
+            concat!("tracing-", "subscriber"),
+            concat!("set_global_", "default"),
+            concat!("tracing_", "appender"),
+            concat!("env_", "logger"),
+            concat!("log4", "rs"),
+            concat!("simple", "log"),
+            concat!("fern", "::"),
+        ];
+        fn sources(dir: &std::path::Path, found: &mut Vec<std::path::PathBuf>) {
+            for entry in std::fs::read_dir(dir).unwrap() {
+                let path = entry.unwrap().path();
+                if path.is_dir() {
+                    sources(&path, found);
+                } else if path.extension().is_some_and(|e| e == "rs" || e == "toml") {
+                    found.push(path);
+                }
+            }
+        }
+        let app = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let net = app.join("../crates/trino-net");
+        let mut files = vec![app.join("Cargo.toml"), net.join("Cargo.toml")];
+        sources(&app.join("src"), &mut files);
+        sources(&net.join("src"), &mut files);
+        assert!(files.len() > 30, "the sources were not found");
+        for file in files {
+            let text = std::fs::read_to_string(&file).unwrap();
+            for sign in SIGNS {
+                assert!(!text.contains(sign), "{} names {sign}", file.display());
+            }
         }
     }
 

@@ -57,6 +57,12 @@ thiserror = "1"
 chrono = { version = "0.4", features = ["serde"] }
 dirs = "5"
 
+# One Trino at a time per user (Tor design §2.5, R-17): a second one hands
+# over to the first and exits, so two processes never share tor/, where
+# Arti would quietly go read-only. The invitations add `deep-link` later.
+[target.'cfg(any(target_os = "windows", target_os = "linux", target_os = "macos"))'.dependencies]
+tauri-plugin-single-instance = "2"
+
 # On Linux, Tauri uses WebKitGTK, which denies getUserMedia (mic/camera) unless
 # the app handles the permission-request signal. Pinned to wry's version so the
 # webview types unify (no second copy of the crate).

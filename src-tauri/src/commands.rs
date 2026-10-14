@@ -9,8 +9,9 @@ use crate::identity::{
     create_identity, decode_array_32, public_bundle_for, verify_bundle_binding, Identity,
 };
 use crate::nostr::{
-    build_and_sign_event, inspector_connector, relay_connector, CatchUp, ClientOptions, Connector,
-    NostrClient, NostrEvent, NostrFilter, StateHandler, TRINO_KIND,
+    build_and_sign_event, inspector_connector, ready_gate, relay_connector, relay_deadline,
+    CatchUp, ClientOptions, Connector, NostrClient, NostrEvent, NostrFilter, ReadyGate,
+    StateHandler, TRINO_KIND,
 };
 use crate::passphrase::validate_passphrase;
 use crate::ratchet::{
@@ -750,11 +751,7 @@ async fn open_session(
     apply_loaded(&mut inner, account, history, sessions, profiles, now);
     let (_, prefs_import) = prefs_cmds::prefs_of(&inner);
     let handle = inner.handle.clone().unwrap_or_default();
-    let relays = if inner.relay_urls.is_empty() {
-        default_relays()
-    } else {
-        inner.relay_urls.clone()
-    };
+    let relays = crate::state::relays_to_use(&inner.relay_urls);
     drop(inner);
 
     start_relays(RelayStart {
@@ -785,6 +782,10 @@ fn relay_starter(app: AppHandle, state: &AppState) -> impl FnOnce(RelayStart) {
             "session open, starting the relay connections",
             &[("relays", &start.relays.len())],
         );
+        // Tor starts if it had not (at unlock, or the account just made)
+        // and wakes (Tor design §2.6); the relays wait for it to be ready.
+        let waking = Arc::clone(&net);
+        tauri::async_runtime::spawn_blocking(move || crate::net_cmds::on_unlock(&waking));
         // One network session per unlock: nothing this one opens shares a
         // Tor circuit with the last one's (Tor design §2.6, §2.7).
         let connector = relay_connector(Arc::clone(&net), net.session(), IsoKind::RELAY);
@@ -792,6 +793,7 @@ fn relay_starter(app: AppHandle, state: &AppState) -> impl FnOnce(RelayStart) {
             app,
             inner,
             connector,
+            ready_gate(Arc::clone(&net)),
             start.relays,
             start.nostr_pub,
             start.handle,
@@ -945,6 +947,7 @@ fn start_relay_connections(
     app: AppHandle,
     state_inner: Arc<tokio::sync::Mutex<InnerState>>,
     connector: Connector,
+    ready: ReadyGate,
     relays: Vec<String>,
     expected_nostr_pub: String,
     expected_handle: String,
@@ -962,7 +965,11 @@ fn start_relay_connections(
                 let changes = Arc::clone(&changes);
                 Arc::new(move |_up| changes.poke())
             };
-            let options = ClientOptions::new(Arc::clone(&connector), Some(on_state));
+            let options = ClientOptions {
+                connect_deadline: relay_deadline(&relay_url),
+                ready: Some(Arc::clone(&ready)),
+                ..ClientOptions::new(Arc::clone(&connector), Some(on_state))
+            };
             let client = NostrClient::start(&relay_url, on_event, options);
             // Catch up on messages sent while this device was offline: the
             // whole window on the first connection, and on every reconnect
@@ -1432,7 +1439,10 @@ pub async fn wipe(_app: AppHandle, state: State<'_, AppState>) -> Result<(), Str
     inner.lock_reason = None;
     drop(inner);
 
-    let failures = storage_cmds::wipe_home(&trino_home(), &mut storage_cmds::RealWipe);
+    // Tor last: stopped, then every file of tor/ destroyed (Tor design
+    // §2.6, R-03).
+    let mut disk = storage_cmds::RealWipe(Some(Arc::clone(&state.net)));
+    let failures = storage_cmds::wipe_home(&trino_home(), &mut disk);
     if failures.is_empty() {
         Ok(())
     } else {

@@ -38,10 +38,26 @@ pub struct AppState {
     /// Windows was locked during a call: Trino locks when the call ends
     /// (cifrado local CL-6a, design §7.2). Cleared by every lock.
     pub lock_after_call: Arc<AtomicBool>,
-    /// Every connection to a relay goes through it (Tor design §2). It
-    /// starts in Tor mode; until Tor itself arrives (TOR-5) it has no Tor,
-    /// so the relays wait with `TorNotReady` and nothing goes direct.
+    /// Every connection of the app goes through it (Tor design §2): Tor,
+    /// started and stopped with the app (net_cmds.rs), and the two permits
+    /// to go without it. `AppState::default()` has none, so tests never
+    /// start Arti; the app's own is `AppState::with_tor()`.
     pub net: Arc<trino_net::Net>,
+}
+
+impl AppState {
+    /// The app's state, with Tor (Arti) keeping its files in `tor_home()`.
+    /// It starts nothing: `net_cmds::on_open` does, as decided.
+    pub fn with_tor() -> Self {
+        AppState {
+            net: trino_net::Net::with_arti(trino_net::NetConfig {
+                tor_home: tor_home(),
+                // The bridge program comes with TOR-7.
+                pt: None,
+            }),
+            ..AppState::default()
+        }
+    }
 }
 
 #[derive(Default)]
@@ -286,10 +302,96 @@ pub fn ratchets_path() -> PathBuf {
     trino_home().join("ratchets.bin")
 }
 
+/// Tor's folder (Tor design §2.5): in clear, outside the encrypted store,
+/// in the data folder, so each `TRINO_HOME` has its own Tor.
+pub const TOR_DIR: &str = "tor";
+
+pub fn tor_home() -> PathBuf {
+    trino_home().join(TOR_DIR)
+}
+
+/// The relays of a new account (Tor design decision 13, as updated on 14
+/// Oct 2026): none behind Cloudflare, which also fronts TURN and would see
+/// a call's IP next to the account's traffic (R-02); all three answered
+/// through Tor exits 9 or 10 times in 10 (spike S6). relay.damus.io only if
+/// the person adds it; nostr.oxtr.dev only by its onion once checked;
+/// offchain.pub not at all (0 in 15 through Tor).
 pub fn default_relays() -> Vec<String> {
     vec![
-        "wss://relay.damus.io".to_string(),
         "wss://nos.lol".to_string(),
         "wss://relay.snort.social".to_string(),
+        "wss://nostr.mom".to_string(),
     ]
+}
+
+/// What `default_relays` was before decision 13. No screen ever let anyone
+/// choose relays, so an account holding exactly these has the old
+/// defaults, not a choice.
+const EARLIER_DEFAULT_RELAYS: [&str; 3] = [
+    "wss://relay.damus.io",
+    "wss://nos.lol",
+    "wss://relay.snort.social",
+];
+
+/// The relays a session connects to: the account's own, except none or
+/// the old defaults, which become today's (decision 13 is for everyone,
+/// design §17.2). Old and new share nos.lol and relay.snort.social, so
+/// contacts on an earlier version are still reached.
+pub fn relays_to_use(account: &[String]) -> Vec<String> {
+    let earlier = account.len() == EARLIER_DEFAULT_RELAYS.len()
+        && EARLIER_DEFAULT_RELAYS
+            .iter()
+            .all(|relay| account.iter().any(|own| own == relay));
+    if account.is_empty() || earlier {
+        default_relays()
+    } else {
+        account.to_vec()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Tor design decision 13, as updated on 14 Oct 2026 (spike S6).
+    #[test]
+    fn the_default_relays_are_none_behind_cloudflare() {
+        assert_eq!(
+            default_relays(),
+            [
+                "wss://nos.lol",
+                "wss://relay.snort.social",
+                "wss://nostr.mom"
+            ]
+        );
+        for relay in default_relays() {
+            assert!(!relay.contains("damus"), "damus only if added by hand");
+            assert!(!relay.contains("offchain"));
+            assert!(
+                !relay.contains("oxtr"),
+                "oxtr only by its onion, once checked"
+            );
+        }
+    }
+
+    #[test]
+    fn an_account_with_the_earlier_defaults_gets_todays() {
+        let earlier = [
+            "wss://relay.damus.io",
+            "wss://nos.lol",
+            "wss://relay.snort.social",
+        ]
+        .map(String::from);
+        assert_eq!(relays_to_use(&earlier), default_relays());
+        // In another order, the same three.
+        let mut shuffled = earlier.to_vec();
+        shuffled.reverse();
+        assert_eq!(relays_to_use(&shuffled), default_relays());
+        assert_eq!(relays_to_use(&[]), default_relays());
+        // Anything else is the account's own, damus included.
+        let own = ["wss://relay.damus.io".to_string()];
+        assert_eq!(relays_to_use(&own), own);
+        let more = [earlier.to_vec(), vec!["wss://nostr.mom".to_string()]].concat();
+        assert_eq!(relays_to_use(&more), more);
+    }
 }

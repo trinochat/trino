@@ -266,6 +266,19 @@ pub type Connector =
 /// Told `true` when a client's socket comes up and `false` when it goes down.
 pub type StateHandler = Arc<dyn Fn(bool) + Send + Sync>;
 
+/// Resolves when a connection may be attempted: with Tor, once it is
+/// ready (`ready_gate`).
+pub type ReadyGate = Arc<dyn Fn() -> BoxFuture<'static, ()> + Send + Sync>;
+
+/// Waits for `net` to be ready, with no limit: Tor ready, or the session's
+/// permit to go without it. Never a reason to go direct.
+pub fn ready_gate(net: Arc<Net>) -> ReadyGate {
+    Arc::new(move || {
+        let net = Arc::clone(&net);
+        Box::pin(async move { net.until_ready().await })
+    })
+}
+
 /// The pauses between attempts to connect: `first`, then twice as long each
 /// time, up to `max`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -302,11 +315,16 @@ pub const RECONNECTION: Backoff = Backoff {
 /// Through Tor it also builds a circuit (design §3.1): the spike had a
 /// relay's WebSocket up in 2.5-3.7 s (median) and 10 s at most, and a first
 /// stream on a fresh circuit in up to 13 s (S3, S6), so 30 s leaves twice
-/// that. A relay's onion address will get 45 s once onion_map comes (TOR-5).
-/// Counting it from when Tor is ready (§2.4) comes with TOR-5's wait for
-/// Tor; until then, with no Tor, an attempt fails at once with
-/// `TorNotReady`.
+/// that. It counts from when Tor is ready (§2.4): the relay's clients wait
+/// for it first (`ClientOptions::ready`). A relay with an onion gets its
+/// onion's 45 s on top (`relay_deadline`).
 pub const CONNECT_DEADLINE: Duration = Duration::from_secs(30);
+
+/// How long one attempt to reach the relay at `url` may take: its onion
+/// first, if it has one, then its domain through Tor.
+pub fn relay_deadline(url: &str) -> Duration {
+    trino_net::onion_map::relay_deadline(url, CONNECT_DEADLINE)
+}
 
 /// The most events a client keeps for a relay while it is down. Kept
 /// events go out once it is back (K3); past this many, `publish` refuses
@@ -323,6 +341,9 @@ pub struct ClientOptions {
     pub reconnection: Backoff,
     /// How long one attempt to connect may take.
     pub connect_deadline: Duration,
+    /// Waited for before every attempt, outside its deadline: Tor being
+    /// ready (§2.4). `None` attempts at once.
+    pub ready: Option<ReadyGate>,
     pub on_state: Option<StateHandler>,
 }
 
@@ -334,6 +355,7 @@ impl ClientOptions {
             first_connection: FIRST_CONNECTION,
             reconnection: RECONNECTION,
             connect_deadline: CONNECT_DEADLINE,
+            ready: None,
             on_state,
         }
     }
@@ -341,15 +363,17 @@ impl ClientOptions {
 
 /// Relay WebSockets through `net`: each relay URL gets its own isolation
 /// token of `kind` within `session`, so two relays never share a Tor
-/// circuit, nor this session with another (design §2.7). With Tor not
-/// ready an attempt fails with `TorNotReady` and is tried again later;
-/// nothing here ever goes direct on its own.
+/// circuit, nor this session with another (design §2.7). A relay with an
+/// onion is tried there first, then by its domain through Tor (§3 R1).
+/// With Tor not ready an attempt fails with `TorNotReady` and is tried
+/// again later; nothing here ever goes direct on its own.
 pub fn relay_connector(net: Arc<Net>, session: Session, kind: IsoKind) -> Connector {
     Arc::new(move |url: String| {
         let net = Arc::clone(&net);
         let iso = session.iso(kind, url.as_bytes());
         Box::pin(async move {
-            trino_net::ws_connect(&net, &url, &iso)
+            let onion = trino_net::onion_map::ONION_DEADLINE;
+            trino_net::onion_map::ws_connect_relay(&net, &url, &iso, onion)
                 .await
                 .map_err(|e| e.to_string())
         })
@@ -669,6 +693,13 @@ impl Connection {
                 pause = backoff.after(pause);
             }
             wait = true;
+            // With Tor, the deadline counts from when it is ready (§2.4).
+            if let Some(ready) = &self.options.ready {
+                tokio::select! {
+                    () = ready() => {}
+                    () = until_closed(closed) => return None,
+                }
+            }
             let deadline = self.options.connect_deadline;
             let attempt = tokio::select! {
                 attempt = tokio::time::timeout(deadline, (self.options.connector)(self.url.clone())) => attempt,
@@ -1001,6 +1032,7 @@ pub(crate) mod test_relay {
             // Short, yet long enough for a loaded machine to finish a
             // handshake over the in-memory pipe.
             connect_deadline: Duration::from_secs(1),
+            ready: None,
             on_state,
         }
     }
@@ -1426,6 +1458,88 @@ mod tests {
     }
 
     // ---- Tor design §3 R1/R2: relays go through trino-net ----
+
+    /// Design test 13 (§2.4): a relay's first attempt waits for Tor to be
+    /// ready, and only then does its deadline count. Without the wait it
+    /// would fail with TorNotReady at once and be tried again only after
+    /// its pause (here 10 s).
+    #[tokio::test]
+    async fn a_relay_deadline_starts_when_tor_is_ready() {
+        use crate::fsutil::scratch::ScratchDir;
+        use crate::net_cmds::tests::fake_tor;
+
+        let scratch = ScratchDir::new("relay-ready");
+        let (net, fake, tor) = fake_tor(&scratch.path().join("tor"));
+        let mut server = tor.listen("relay.trino.invalid", 80);
+        tokio::spawn(async move {
+            while let Some(io) = server.accept().await {
+                tokio::spawn(tokio_tungstenite::accept_async(io));
+            }
+        });
+        net.start();
+        let attempts = Arc::new(AtomicUsize::new(0));
+        let real = relay_connector(Arc::clone(&net), net.session(), IsoKind::RELAY);
+        let counted = Arc::clone(&attempts);
+        let connector: Connector = Arc::new(move |url| {
+            counted.fetch_add(1, Ordering::SeqCst);
+            real(url)
+        });
+        let slow = Backoff {
+            first: Duration::from_secs(10),
+            max: Duration::from_secs(10),
+        };
+        let options = ClientOptions {
+            connector,
+            first_connection: slow,
+            reconnection: slow,
+            connect_deadline: Duration::from_millis(300),
+            ready: Some(ready_gate(Arc::clone(&net))),
+            on_state: None,
+        };
+
+        let client = NostrClient::start("ws://relay.trino.invalid", ignore_events(), options);
+        // Tor takes longer to start than the relay's deadline.
+        tokio::time::sleep(Duration::from_millis(600)).await;
+        assert_eq!(
+            attempts.load(Ordering::SeqCst),
+            0,
+            "tried before Tor was ready"
+        );
+        fake.ready();
+
+        wait_until("the relay once Tor is ready", || client.is_connected()).await;
+        assert_eq!(attempts.load(Ordering::SeqCst), 1);
+        client.close();
+        net.stop();
+    }
+
+    /// Tor design §3 R1: a relay with an onion is reached there first,
+    /// through Tor (trino-net's onion_map).
+    #[tokio::test]
+    async fn the_relay_connector_tries_a_relays_onion_first() {
+        let (tor, direct) = (Mock::new(), Mock::new());
+        let net = net_on(Some(&tor), &direct);
+        let connector = relay_connector(Arc::clone(&net), net.session(), IsoKind::RELAY);
+
+        assert!(connector("wss://relay.trinochat.org".to_string())
+            .await
+            .is_err());
+
+        let hosts: Vec<String> = tor
+            .connections()
+            .into_iter()
+            .map(|(target, _)| target.host)
+            .collect();
+        assert_eq!(hosts.len(), 2);
+        assert!(hosts[0].ends_with(".onion"), "{hosts:?}");
+        assert_eq!(hosts[1], "relay.trinochat.org");
+        assert!(direct.connections().is_empty());
+        assert_eq!(
+            relay_deadline("wss://relay.trinochat.org"),
+            trino_net::onion_map::ONION_DEADLINE + CONNECT_DEADLINE
+        );
+        assert_eq!(relay_deadline("wss://nos.lol"), CONNECT_DEADLINE);
+    }
 
     /// A `Net` whose Tor is `tor` and whose direct transport is `direct`.
     fn net_on(tor: Option<&Arc<Mock>>, direct: &Arc<Mock>) -> Arc<Net> {

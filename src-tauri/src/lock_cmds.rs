@@ -161,6 +161,9 @@ pub(crate) async fn lock_and_renew(
         return false;
     }
     dbg_log("vault LOCKED");
+    // Tor sleeps, or stops if it starts at unlock (Tor design §2.6).
+    let net = Arc::clone(&state.net);
+    let _ = tokio::task::spawn_blocking(move || crate::net_cmds::on_lock(&net)).await;
     if origin == LockOrigin::Backend {
         if let Some(reason) = reason {
             window.announce(reason);
@@ -303,7 +306,11 @@ mod tests {
     /// An open session over a new store in `home`, with one message in
     /// memory that nothing saved yet.
     fn unlocked(home: &Path) -> Arc<AppState> {
-        let state = AppState::default();
+        unlocked_on(home, AppState::default())
+    }
+
+    /// `unlocked`, in `state`.
+    fn unlocked_on(home: &Path, state: AppState) -> Arc<AppState> {
         {
             let mut inner = state.inner.try_lock().unwrap();
             inner.identity = Some(create_identity());
@@ -497,6 +504,58 @@ mod tests {
             let mut expected: Vec<String> = announced.map(str::to_owned).into_iter().collect();
             expected.push("renew, session closed: true".into());
             assert_eq!(window.calls(), expected, "{reason:?} from {origin:?}");
+        }
+    }
+
+    /// Tor design §2.6 and test 20: the lock drops the session (its relays
+    /// close, as before Tor) and puts a Tor that started at open to sleep;
+    /// with "Conectar a Tor solo después de desbloquear", it stops it
+    /// (test 73).
+    #[tokio::test]
+    async fn lock_drops_the_session_and_puts_tor_to_sleep() {
+        use crate::net_cmds::tests::fake_tor;
+        use trino_net::{NetStatus, StartWhen, TorSettings, TransportKind};
+
+        for (start, expected) in [
+            (StartWhen::Open, ["launch", "sleep"]),
+            (StartWhen::OnUnlock, ["launch", "stop"]),
+        ] {
+            let scratch = ScratchDir::new("lock-tor");
+            let tor_home = scratch.path().join(crate::state::TOR_DIR);
+            TorSettings {
+                transport: TransportKind::None,
+                start,
+            }
+            .save(&tor_home)
+            .unwrap();
+            let (net, fake, _) = fake_tor(&tor_home);
+            net.start();
+            let state = unlocked_on(
+                scratch.path(),
+                AppState {
+                    net: Arc::clone(&net),
+                    ..AppState::default()
+                },
+            );
+            let relay = crate::nostr::test_relay::unreachable_client(Arc::default());
+            state.inner.lock().await.relays.push(relay);
+
+            assert!(
+                lock_and_renew(
+                    &state,
+                    &Recording::default(),
+                    Some(LockReason::Manual),
+                    LockOrigin::Frontend
+                )
+                .await
+            );
+
+            assert!(state.inner.lock().await.relays.is_empty());
+            assert_eq!(fake.log(), expected, "{start:?}");
+            if start == StartWhen::OnUnlock {
+                assert_eq!(net.status_now(), NetStatus::Off);
+            }
+            net.stop();
         }
     }
 

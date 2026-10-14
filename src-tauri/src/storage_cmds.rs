@@ -487,12 +487,20 @@ pub(super) trait WipeOps {
     /// Overwrite the file at `path`, sync it and remove it.
     fn destroy(&mut self, path: &Path) -> std::io::Result<()>;
     fn remove_dir(&mut self, path: &Path) -> std::io::Result<()>;
+    /// Stop Tor, so Arti closes the files of tor/ (R-03).
+    fn stop_tor(&mut self);
 }
 
-/// The real disk.
-pub(super) struct RealWipe;
+/// The real disk, and the app's Tor.
+pub(super) struct RealWipe(pub(super) Option<Arc<trino_net::Net>>);
 
 impl WipeOps for RealWipe {
+    fn stop_tor(&mut self) {
+        if let Some(net) = &self.0 {
+            net.stop();
+        }
+    }
+
     fn destroy(&mut self, path: &Path) -> std::io::Result<()> {
         destroy_file(path)
     }
@@ -519,6 +527,31 @@ fn remove_dir_with(ops: &mut dyn WipeOps, path: &Path, failures: &mut Vec<String
     if let Err(error) = ops.remove_dir(path) {
         failures.push(format!("{}: {}", path.display(), error));
     }
+}
+
+/// Destroy every file under `dir`, one by one, then remove its folders.
+/// A link is removed, never followed: what it points to is not Trino's.
+fn destroy_tree(ops: &mut dyn WipeOps, dir: &Path, failures: &mut Vec<String>) {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    let mut paths: Vec<PathBuf> = entries.flatten().map(|entry| entry.path()).collect();
+    paths.sort();
+    for path in paths {
+        let kind = std::fs::symlink_metadata(&path).map(|meta| meta.file_type());
+        let done = match kind {
+            Ok(kind) if kind.is_symlink() => std::fs::remove_file(&path),
+            Ok(kind) if kind.is_dir() => {
+                destroy_tree(ops, &path, failures);
+                continue;
+            }
+            _ => ops.destroy(&path),
+        };
+        if let Err(error) = done {
+            failures.push(format!("{}: {}", path.display(), error));
+        }
+    }
+    remove_dir_with(ops, dir, failures);
 }
 
 /// Everything of the account in `home`, in the order of design §5.7: the
@@ -564,6 +597,13 @@ pub(super) fn wipe_home(home: &Path, ops: &mut dyn WipeOps) -> Vec<String> {
         destroy_with_leftovers(ops, &home.join(name), &mut failures);
     }
     remove_dir_with(ops, &home.join("stickers"), &mut failures);
+    // Tor last (Tor design §2.6, R-03): stopped first, so Arti closes its
+    // SQLite and its locks, then every file of tor/ destroyed one by one
+    // (the -wal, -journal and lock files included) and its folders removed.
+    // Its guard goes with it, so a new account does not enter Tor by the
+    // same one.
+    ops.stop_tor();
+    destroy_tree(ops, &home.join(crate::state::TOR_DIR), &mut failures);
     failures
 }
 
@@ -1455,7 +1495,7 @@ mod tests {
                 "destroy {}",
                 path.file_name().unwrap().to_string_lossy()
             ));
-            RealWipe.destroy(path)
+            RealWipe(None).destroy(path)
         }
 
         fn remove_dir(&mut self, path: &Path) -> std::io::Result<()> {
@@ -1463,8 +1503,68 @@ mod tests {
                 "remove {}",
                 path.file_name().unwrap().to_string_lossy()
             ));
-            RealWipe.remove_dir(path)
+            RealWipe(None).remove_dir(path)
         }
+
+        fn stop_tor(&mut self) {
+            self.0.push("stop tor".to_string());
+        }
+    }
+
+    /// Tor design §2.6 and test 17 (R-03): after everything of the account,
+    /// "Borrar todo" stops Tor, so Arti closes its files, then destroys
+    /// every file of tor/ one by one (its SQLite's -wal and -journal, and
+    /// the locks, included) and removes its folders.
+    #[test]
+    fn wipe_stops_tor_then_destroys_every_tor_file() {
+        let scratch = ScratchDir::new("wipe-tor");
+        let home = scratch.path();
+        let files = data_files_in(home.to_path_buf());
+        let (_, _) = new_account(&files, "ana");
+        let tor = home.join("tor");
+        let tor_files = [
+            "settings.json",
+            "run.marker",
+            "state/state.lock",
+            "state/guards.json",
+            "state/circuit_timeouts.json",
+            "cache/dir.lock",
+            "cache/dir.sqlite3",
+            "cache/dir.sqlite3-wal",
+            "cache/dir.sqlite3-journal",
+            "cache/dir_blobs/con_md_0123",
+        ];
+        for name in tor_files {
+            let path = tor.join(name);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(&path, b"tor").unwrap();
+        }
+        let mut ops = Recording::default();
+
+        let failures = wipe_home(home, &mut ops);
+
+        assert!(failures.is_empty(), "{failures:?}");
+        let stop = ops
+            .0
+            .iter()
+            .position(|op| op == "stop tor")
+            .expect("stopped");
+        let vault = ops
+            .0
+            .iter()
+            .position(|op| op == "destroy vault.bin")
+            .unwrap();
+        assert!(vault < stop, "the account goes first");
+        for name in tor_files {
+            let leaf = Path::new(name).file_name().unwrap().to_string_lossy();
+            let destroyed = ops
+                .0
+                .iter()
+                .position(|op| *op == format!("destroy {leaf}"))
+                .unwrap_or_else(|| panic!("{name} was not destroyed"));
+            assert!(stop < destroyed, "{name} before Tor stopped");
+        }
+        assert!(!tor.exists(), "tor/ is still there");
     }
 
     /// Design §12.3, test 26, without keys.bin and keys.bak: the data key
@@ -2005,7 +2105,7 @@ mod tests {
 
         std::fs::create_dir_all(&leftover).unwrap();
         std::fs::write(leftover.join("index.bin"), b"x").unwrap();
-        let failures = wipe_home(&files.home, &mut RealWipe);
+        let failures = wipe_home(&files.home, &mut RealWipe(None));
         assert!(failures.is_empty(), "{failures:?}");
         assert!(
             names_in(&files.home).is_empty(),
