@@ -6349,12 +6349,17 @@ name = "trino-net"
 version = "0.1.0"
 dependencies = [
  "futures-util",
+ "http-body-util",
+ "hyper",
+ "hyper-util",
  "rustls",
  "saturating-time",
  "thiserror 1.0.69",
  "tokio",
+ "tokio-rustls",
  "tokio-tungstenite",
  "tor-netdoc",
+ "url",
  "webpki-roots 0.26.11",
 ]
 

@@ -9,6 +9,9 @@
 //! - The direct transport (direct.rs) is reached in two ways only, each
 //!   with its permit: the whole `Net` in `Mode::Direct` after "Conectar
 //!   sin Tor", or the updater's HTTPS to its hosts when Arti is obsolete.
+//! - HTTP goes through `HttpClient` (http.rs), over the same `Net`: no
+//!   redirects unless a policy allows them, a capped answer, deadlines, and
+//!   the User-Agent `Trino` to trinochat.org only.
 //! - No Tauri and nothing of the app (§2.1): the host hands everything in,
 //!   so the engine M4 extracts takes this crate as it is.
 //!
@@ -17,14 +20,20 @@
 //! permit is `TorNotReady`.
 
 mod direct;
+mod http;
 #[cfg(any(test, feature = "test-util"))]
 pub mod mock;
+#[cfg(any(test, feature = "test-util"))]
+pub mod mock_http;
 mod transport;
 mod ws;
 
 #[cfg(test)]
+mod http_tests;
+#[cfg(test)]
 mod tests;
 
+pub use http::{Deadlines, HostRule, HttpClient, HttpError, RedirectPolicy, Request, Response};
 pub use transport::{BoxedIo, DirectPermit, Io, Iso, IsoKind, Session, Target, Transport};
 pub use ws::{ws_connect, WsStream};
 

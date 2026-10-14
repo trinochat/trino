@@ -12,3 +12,6 @@
 # but for their patch.
 /crates/trino-net/tests/data/** text eol=lf
 /vendor/** text eol=lf
+
+# Test certificates (crates/trino-net/src/testdata): DER bytes, never text.
+/crates/trino-net/src/testdata/*.der binary

@@ -11,19 +11,32 @@ publish = false
 # M4 extracts for Android and iPhone takes this crate as it is.
 
 [features]
-# The in-memory transports for tests (src/mock.rs), and building a `Net` on
-# them. Only the app's dev-dependencies turn it on.
+# The in-memory transports and HTTP servers for tests (src/mock.rs,
+# src/mock_http.rs), and building a `Net` or an `HttpClient` on them. Only the
+# app's dev-dependencies turn it on.
 test-util = []
 
 [dependencies]
 futures-util = "0.3"
-# TLS for wss://, with ring, the only provider in the tree, chosen here
+# HTTP/1.1 over whatever `Net` gives (src/http.rs, Tor design §2.1): hyper's
+# low-level client, over a connection it is handed, never one it opens.
+# hyper-util only for its tokio adapter; its connectors are disallowed in
+# clippy.toml (R-21) and their features stay off.
+http-body-util = "0.1"
+hyper = { version = "1", default-features = false, features = ["client", "http1"] }
+hyper-util = { version = "0.1", default-features = false, features = ["tokio"] }
+# TLS for wss:// and https://, with ring, the only provider in the tree, chosen here
 # rather than left to whichever features the process happens to enable.
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
 thiserror = "1"
-tokio = { version = "1", features = ["io-util", "net", "sync"] }
+tokio = { version = "1", features = ["io-util", "net", "rt", "sync", "time"] }
+# rustls over a connection, for https:// (the default features would bring
+# aws-lc-rs).
+tokio-rustls = { version = "0.26", default-features = false, features = ["ring", "tls12"] }
 # The same version and features as the app's, so the WebSocket types are one.
 tokio-tungstenite = { version = "0.24", features = ["rustls-tls-webpki-roots"] }
+# Parses addresses and resolves a redirect's Location against them.
+url = "2"
 # The roots tokio-tungstenite checks against, as before Tor.
 webpki-roots = "0.26"
 

@@ -383,7 +383,10 @@ fn no_file_outside_direct_names_a_socket_or_a_resolver() {
         ("lib.rs", include_str!("lib.rs")),
         ("transport.rs", include_str!("transport.rs")),
         ("ws.rs", include_str!("ws.rs")),
+        ("http.rs", include_str!("http.rs")),
         ("mock.rs", include_str!("mock.rs")),
+        ("mock_http.rs", include_str!("mock_http.rs")),
+        ("http_tests.rs", include_str!("http_tests.rs")),
     ] {
         for name in banned {
             assert!(!source.contains(name), "{file} names {name}");
