@@ -20,6 +20,9 @@
 //!   bridge lines (Tor design §2.5, bridges_cmds.rs). They are sealed in
 //!   the same `prefs.bin`, but the frontend never gets them, and what it
 //!   saves never changes or drops them.
+//! - A few are retired (`RETIRED_PREFS`): the news' old `minSeq`, which the
+//!   unlock takes into tor/seen.json (news_cmds.rs). The frontend never
+//!   gets them, and the next save drops them.
 //!
 //! A child module of `commands`, so it reaches the helpers there.
 
@@ -46,12 +49,18 @@ const DEVICE_PREFS: [&str; 3] = [
 /// frontend, never taken from it.
 pub(crate) const BACKEND_PREFS: [&str; 1] = [super::bridges_cmds::NET_BRIDGES];
 
-/// `prefs` without the backend's own entries, as the frontend gets them.
+/// Entries no one uses any more: the unlock takes what they held
+/// elsewhere, the frontend never gets them, and the next save drops them.
+/// The news' old `minSeq`, now in tor/seen.json (Tor design §7).
+pub(crate) const RETIRED_PREFS: [&str; 1] = [crate::news_cmds::OLD_MIN_SEQ];
+
+/// `prefs` without the backend's own entries or the retired ones, as the
+/// frontend gets them.
 pub(crate) fn for_frontend(prefs: Option<serde_json::Value>) -> Option<serde_json::Value> {
     prefs.map(|mut prefs| {
         if let Some(entries) = prefs.as_object_mut() {
-            for key in BACKEND_PREFS {
-                entries.remove(key);
+            for key in BACKEND_PREFS.iter().chain(&RETIRED_PREFS) {
+                entries.remove(*key);
             }
         }
         prefs
@@ -179,7 +188,7 @@ fn sealable(prefs: &BTreeMap<String, String>) -> Result<Zeroizing<Vec<u8>>, Comm
 }
 
 /// `prefs` with the backend's own entries as `current` has them, whatever
-/// the frontend sent for them.
+/// the frontend sent for them, and without the retired ones.
 fn with_backend_entries(
     prefs: &BTreeMap<String, String>,
     current: &BTreeMap<String, String>,
@@ -190,6 +199,9 @@ fn with_backend_entries(
             Some(value) => kept.insert(key.to_string(), value.clone()),
             None => kept.remove(key),
         };
+    }
+    for key in RETIRED_PREFS {
+        kept.remove(key);
     }
     kept
 }
@@ -301,7 +313,14 @@ pub async fn prefs_import(
     state: State<'_, AppState>,
     entries: BTreeMap<String, String>,
 ) -> Result<PrefsImported, CommandError> {
-    import_in(&*state.inner.lock().await, entries)
+    let imported = import_in(&*state.inner.lock().await, entries)?;
+    // The news' old minSeq, kept by the WebView before the store, goes to
+    // tor/seen.json now: the next save drops it from the preferences.
+    crate::news_cmds::take_old_min_seq(
+        &state.net,
+        crate::news_cmds::old_min_seq_in(&imported.taken),
+    );
+    Ok(imported)
 }
 
 /// The account's preferences as the session has them now: after the user
@@ -584,6 +603,44 @@ mod tests {
             &BTreeSet::new(),
             &mine
         ));
+    }
+
+    /// Tor design §7 and test 57: the WebView's old `minSeq` went to
+    /// tor/seen.json. The unlock still finds it in the store and takes it
+    /// (news_cmds.rs); the frontend never gets it, and the next save drops
+    /// it whatever the frontend sends.
+    #[test]
+    fn the_old_min_seq_is_taken_at_unlock_then_retired() {
+        let scratch = ScratchDir::new("prefs-min-seq");
+        let (files, me, app) = new_account(scratch.path());
+        let inner = unlocked(&files, &me, &app);
+        import_in(
+            &inner,
+            map(&[("trino:announcements:minSeq", "7"), ("autolock", "1")]),
+        )
+        .unwrap();
+
+        // The unlock sees it, the frontend does not.
+        let stored = prefs_on_disk(&files, &me, &app);
+        assert_eq!(crate::news_cmds::old_min_seq(stored.as_ref()), Some(7));
+        let inner = unlocked(&files, &me, &app);
+        let (frontend, _) = prefs_of(&inner);
+        assert_eq!(
+            frontend,
+            Some(serde_json::json!({ "autolock": "1" })),
+            "the frontend got the old minSeq"
+        );
+
+        // The next save drops it, even if the frontend sends it.
+        save_in(
+            &inner,
+            &map(&[("trino:announcements:minSeq", "9"), ("autolock", "0")]),
+        )
+        .unwrap();
+        assert_eq!(
+            prefs_on_disk(&files, &me, &app),
+            Some(serde_json::json!({ "autolock": "0" }))
+        );
     }
 
     /// Design §5.3: `prefs.bin` and `prefs_imported` in one step, and once.

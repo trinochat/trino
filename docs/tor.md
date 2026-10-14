@@ -1,4 +1,4 @@
-# Tor en Trino (TOR-5 y TOR-7)
+# Tor en Trino (TOR-5, TOR-7 y TOR-10)
 
 Todo lo que Trino abre en la red, salvo el audio y el video de las llamadas,
 sale por Tor. Lo hace `crates/trino-net`, que no depende de Tauri: dentro va
@@ -31,6 +31,8 @@ porque Tor puede arrancar antes del desbloqueo:
   directorio público de la red).
 - `run.marker`: ver "Arti obsoleto".
 - `run-<azar>/`: solo con puentes privados, ver "Puentes".
+- `seen.json`: lo más alto que este equipo vio de las novedades, ver
+  "Novedades".
 
 Revela que usas Tor con Trino y tu guarda, no tus contactos ni tus mensajes.
 "Borrar todo" detiene Tor y destruye cada archivo de `tor/` (sobrescrito y
@@ -180,12 +182,38 @@ meek), del Proyecto Tor.
 | `net_bridges_set` (`choice`: `none`, `builtin` con `transport`, o `private` con `text`) | Guarda la elección y, si Tor estaba corriendo, lo arranca otra vez con ella. Con líneas malas no guarda nada |
 | `net_bridges_try` (`transport`) | "Probar con un puente": arranca otra vez por ese integrado y lo guarda si conecta. `net_retry` vuelve a lo guardado |
 
+## Novedades (TOR-10)
+
+"Novedades de Trino" ya no se bajan ni se verifican en el WebView:
+
+- `crates/trino-net/src/news/` baja `https://trinochat.org/updates/feed.json`
+  por Tor (un GET, como mucho 512 KB), cada espejo por su propio circuito, y lo
+  verifica con rPGP contra la llave "Trino Updates" que va dentro del programa
+  (`4DE8E4BC5872E37566FA4114A62EE5607F666A6B`). Nunca usa una llave de la red.
+- Si hay varios espejos, pregunta a todos y gana el feed verificado más alto.
+- `tor/seen.json` guarda, por equipo, el `seq`, el `latest` y el `validUntil`
+  más altos verificados, más dos días sin hora. Un feed por debajo es una
+  repetición y queda como `untrusted`. Funciona con la app bloqueada.
+- Congelamiento: un feed vencido (`validUntil`), más de 14 días sin un feed
+  vigente o, cuando el actualizador lo diga (TOR-9), un `latest` que ningún
+  espejo ofrece. La app recibe el motivo en `freeze`; el aviso en pantalla
+  llega con las maquetas.
+- Sin Tor ("Conectar sin Tor") no se pregunta nada. Con Tor sin conectar,
+  tampoco; nunca se va directo.
+- El WebView pide `news_fetch` y recibe `{ status, items, signerFingerprint,
+  latest, freeze }`, con avisos solo si están verificados. openpgp.js salió del
+  frontend.
+
+El formato y la publicación están en `docs/announcement-channel.md`.
+
 ## Lo que falta
 
 - Las pantallas (TOR-6 y TOR-8), y la opción propia de "Conectar a Tor solo
   después de desbloquear": hoy, dejar los puentes privados devuelve el
   arranque a "al abrir".
 - `lyrebird` para Linux (un pin con su SHA-256).
+- La revisión diaria de las novedades, junto con la del actualizador (TOR-9).
+  Hoy se piden al desbloquear, como antes.
 - Pruebas a mano:
   - con la red real de Tor: `cargo test -p trino-net -- --ignored network_`;
   - con un `lyrebird` real, sin red:

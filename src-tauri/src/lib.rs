@@ -11,6 +11,7 @@ mod command_error;
 mod commands;
 mod fsutil;
 mod net_cmds;
+mod news_cmds;
 mod passphrase;
 mod state;
 mod store;
@@ -296,6 +297,8 @@ pub fn run() {
             commands::bridges_cmds::net_bridges_check,
             commands::bridges_cmds::net_bridges_set,
             commands::bridges_cmds::net_bridges_try,
+            // -- The news (TOR-10) --
+            news_cmds::news_fetch,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")

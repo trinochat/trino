@@ -681,6 +681,8 @@ struct RelayStart {
     nostr_pub: String,
     handle: String,
     bridges: Option<Vec<trino_net::BridgeLine>>,
+    /// The news' old `minSeq` from the store, for tor/seen.json.
+    news_min_seq: Option<u64>,
 }
 
 /// Open the session of an identity whose vault was just opened in `inner`,
@@ -760,6 +762,7 @@ async fn open_session(
     drop(inner);
     // The private bridges go to Tor, never to the frontend.
     let bridges = bridges_cmds::stored_in(prefs.as_ref());
+    let news_min_seq = crate::news_cmds::old_min_seq(prefs.as_ref());
     let prefs = prefs_cmds::for_frontend(prefs);
 
     start_relays(RelayStart {
@@ -767,6 +770,7 @@ async fn open_session(
         nostr_pub: nostr_pub.clone(),
         handle: handle.clone(),
         bridges,
+        news_min_seq,
     });
 
     Ok(UnsealResponse {
@@ -791,6 +795,8 @@ fn relay_starter(app: AppHandle, state: &AppState) -> impl FnOnce(RelayStart) {
             "session open, starting the relay connections",
             &[("relays", &start.relays.len())],
         );
+        // The news' old minSeq goes to tor/seen.json (Tor design §7).
+        crate::news_cmds::take_old_min_seq(&net, start.news_min_seq);
         // The store's private bridges go to Tor, which starts if it had not
         // (at unlock, or the account just made) and wakes (Tor design §2.6);
         // the relays wait for it to be ready.

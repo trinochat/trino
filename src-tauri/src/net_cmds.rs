@@ -308,9 +308,9 @@ pub(crate) mod tests {
     /// Every way out the app has today, on a `Net` in Tor mode whose
     /// direct transport panics: relays, the inspector, an upload, a
     /// download (a sticker without a thumbnail is fetched the same way,
-    /// by `fetch_file`) and a call's TURN credentials. Each reaches Tor,
-    /// by name. The @name, invitations, news and the updater come with
-    /// TOR-9 to TOR-11 and join this test then.
+    /// by `fetch_file`), a call's TURN credentials and the news (TOR-10).
+    /// Each reaches Tor, by name. The @name, invitations and the updater
+    /// come with TOR-9 and TOR-11 and join this test then.
     #[tokio::test]
     async fn the_whole_app_in_tor_mode_opens_nothing_direct() {
         use crate::nostr::{inspector_connector, relay_connector};
@@ -345,6 +345,17 @@ pub(crate) mod tests {
         assert!(crate::turn::turn_servers(&gate, &client, gate.session())
             .await
             .is_err());
+        let news = trino_net::HttpClient::new(Arc::clone(&net));
+        assert_eq!(
+            crate::news_cmds::fetch(&news, 1_792_065_600).await.status,
+            trino_net::news::NewsStatus::Bundled
+        );
+        assert!(
+            tor.connections()
+                .iter()
+                .any(|(target, iso)| target.host == "trinochat.org" && iso.kind() == IsoKind::NEWS),
+            "the news did not go through Tor"
+        );
 
         let mut hosts: Vec<String> = tor
             .connections()
