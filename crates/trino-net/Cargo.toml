@@ -29,3 +29,7 @@ webpki-roots = "0.26"
 
 [dev-dependencies]
 tokio = { version = "1", features = ["io-util", "macros", "net", "rt-multi-thread", "sync", "time"] }
+# tests/arti_windows_smoke.rs: Arti's consensus parser and the crate whose
+# Windows loop the workspace patches. TOR-5 brings them in as Arti's own.
+saturating-time = "0.5"
+tor-netdoc = { version = "0.47", default-features = false }

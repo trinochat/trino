@@ -1,0 +1,29 @@
+--- a/saturating-time/src/internal.rs
++++ b/saturating-time/src/internal.rs
+@@ -25,7 +25,7 @@
+ static MIN_INSTANT: LazyLock<Instant> = LazyLock::new(find_min);
+ 
+ /// An internal trait implementing the actual magic behind this.
+-pub trait SaturatingTime: Sized + Copy {
++pub trait SaturatingTime: Sized + Copy + PartialEq {
+     /// Anchor method to obtain an instance of this type.
+     fn anchor() -> Self;
+ 
+@@ -142,11 +142,15 @@
+         // (2) Call f().
+         let next = f(&res, step);
+         match next {
+-            Some(st) => {
++            // TRINO PATCH (see vendor/README.md): a step that leaves `res`
++            // unchanged counts as None. On Windows `SystemTime` moves in
++            // 100 ns steps, so `checked_sub` of less than that returns
++            // `Some(res)` itself and, without this, the loop never ends.
++            Some(st) if st != res => {
+                 // (2.1) If Some, set res to the returned value and continue.
+                 res = st;
+             }
+-            None => {
++            _ => {
+                 if step == ONE_NS {
+                     // (2.2) If None and step == 1ns, return res.
+                     return res;

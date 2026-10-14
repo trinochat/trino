@@ -6,3 +6,9 @@
 /scripts/gen-sas-assets.mjs text eol=lf
 /scripts/gen-sas-assets.d.mts text eol=lf
 /scripts/sas_vectors.py text eol=lf
+
+# Arti's test consensus (crates/trino-net/tests/data) is parsed as it is, and
+# the parser expects LF. The vendored crates stay byte for byte as published
+# but for their patch.
+/crates/trino-net/tests/data/** text eol=lf
+/vendor/** text eol=lf

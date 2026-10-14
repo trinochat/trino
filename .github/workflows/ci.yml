@@ -105,6 +105,14 @@ jobs:
       - run: npm ci
       - run: npm run build
 
+      # Tor spike S0: Arti 0.47 hangs on Windows unless the vendored
+      # saturating-time fix (vendor/README.md) is in the build. The workspace
+      # tests below run this too; it goes first, by name, so a lost patch or
+      # an Arti update that brings the loop back says so at once.
+      - name: Arti starts on Windows (saturating-time patch)
+        if: matrix.os == 'windows-latest'
+        run: cargo test -p trino-net --test arti_windows_smoke --locked
+
       # --locked: the root Cargo.lock is the only lock of the workspace
       # (src-tauri is a member of it, so `tauri build` reads it too), and a
       # change to it must be committed, never made up by the runner.
