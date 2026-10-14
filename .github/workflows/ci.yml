@@ -105,15 +105,18 @@ jobs:
       - run: npm ci
       - run: npm run build
 
+      # --locked: the root Cargo.lock is the only lock of the workspace
+      # (src-tauri is a member of it, so `tauri build` reads it too), and a
+      # change to it must be committed, never made up by the runner.
       - name: Workspace tests
-        run: cargo test --workspace
+        run: cargo test --workspace --locked
 
       # Clippy needs the same system libraries as the build, so it runs here
       # rather than in a job of its own. Once is enough — the lints are not
       # platform-specific.
       - name: Clippy
         if: matrix.os == 'ubuntu-22.04'
-        run: cargo clippy --workspace --all-targets -- -D warnings
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings
 
   mobile:
     name: Mobile (Flutter)

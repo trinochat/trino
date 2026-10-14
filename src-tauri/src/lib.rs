@@ -293,6 +293,20 @@ mod tests {
         );
     }
 
+    /// Tor design §15, open question 4. src-tauri is a member of the
+    /// workspace at the root, so every cargo command, the CI and `tauri
+    /// build` included, reads the root Cargo.lock; a lock in src-tauri is
+    /// never read and only drifts away from the real one.
+    #[test]
+    fn the_workspace_has_one_lockfile_at_the_root() {
+        let app = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        assert!(app.join("../Cargo.lock").is_file(), "no Cargo.lock at the root");
+        assert!(
+            !app.join("Cargo.lock").exists(),
+            "src-tauri/Cargo.lock is never read: the workspace's lock is the root one"
+        );
+    }
+
     #[test]
     fn quit_does_not_wait_when_no_call_is_active() {
         let flag = AtomicBool::new(false);
