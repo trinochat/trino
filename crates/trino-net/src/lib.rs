@@ -32,6 +32,7 @@ pub mod onion_map;
 mod status;
 pub mod tor;
 mod transport;
+pub mod update;
 mod ws;
 
 #[cfg(test)]
@@ -46,6 +47,8 @@ mod pt_tests;
 mod tests;
 #[cfg(test)]
 mod tor_tests;
+#[cfg(test)]
+mod update_tests;
 
 pub use http::{Deadlines, HostRule, HttpClient, HttpError, RedirectPolicy, Request, Response};
 pub use status::{BlockKind, NetStatus, Progress, TransportKind};

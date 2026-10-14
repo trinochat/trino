@@ -162,7 +162,8 @@ pub(crate) fn detached_iso(kind: IsoKind) -> Iso {
 ///   `Mode::Direct` until `back_to_tor` or the end of the process; it is
 ///   never saved, and there is nothing in it to save.
 /// - `for_updater`: the "old version" screen, after its confirmation, when
-///   Arti is obsolete. Only `Net::connect_for_update` takes it: HTTPS to
+///   Arti is obsolete. Only `Net::connect_for_update` takes it, through
+///   `HttpClient::for_update`: HTTPS to
 ///   trinochat.org and GitHub's release hosts, never a WebSocket, and the
 ///   mode of everything else stays as it was.
 ///
@@ -201,5 +202,10 @@ impl DirectPermit {
         DirectPermit {
             scope: Scope::Updater,
         }
+    }
+
+    /// Whether this is the updater's permit.
+    pub fn is_for_updater(&self) -> bool {
+        self.scope == Scope::Updater
     }
 }

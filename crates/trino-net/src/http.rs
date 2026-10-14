@@ -23,7 +23,7 @@
 //!
 //! Errors never carry the address or anything the server said.
 
-use crate::{BoxedIo, Iso, Net, NetError, Target};
+use crate::{BoxedIo, DirectPermit, Iso, Net, NetError, NetStatus, Target};
 use http_body_util::{BodyExt, Full};
 use hyper::body::{Bytes, Incoming};
 use hyper::header::{self, HeaderMap, HeaderName, HeaderValue};
@@ -261,6 +261,9 @@ impl Request {
 pub struct HttpClient {
     net: Arc<Net>,
     tls: Arc<ClientConfig>,
+    /// The updater's permit (§2.8, §6.5): every request goes direct, and
+    /// only to the updater's hosts on 443 (`Net::connect_for_update`).
+    updater: Option<Arc<DirectPermit>>,
 }
 
 impl HttpClient {
@@ -269,13 +272,62 @@ impl HttpClient {
         HttpClient {
             net,
             tls: Arc::clone(&TLS),
+            updater: None,
         }
     }
 
     /// https:// checked against `tls` instead: the test CA of mock_http.rs.
     #[cfg(any(test, feature = "test-util"))]
     pub fn with_tls(net: Arc<Net>, tls: Arc<ClientConfig>) -> Self {
-        HttpClient { net, tls }
+        HttpClient {
+            net,
+            tls,
+            updater: None,
+        }
+    }
+
+    /// The updater's client without Tor (§2.8, §6.5, R-15): "Buscar la
+    /// versión nueva sin Tor…" on the "old version" screen, after its
+    /// confirmation. It takes only the updater's permit, and only while
+    /// Arti is obsolete (`NetStatus::Obsolete`, confirmed or not); then
+    /// every request goes direct, to trinochat.org and GitHub's release
+    /// hosts on 443 only, and anything else is `NotPermitted` before a
+    /// connection is made. It never waits for Tor, and it changes the mode
+    /// of nothing else: relays, WebSockets and every other client stay on
+    /// Tor, or nowhere.
+    pub fn for_update(net: Arc<Net>, permit: DirectPermit) -> Result<Self, HttpError> {
+        HttpClient::for_update_inner(net, permit, Arc::clone(&TLS))
+    }
+
+    /// `for_update`, with https:// checked against `tls`.
+    #[cfg(any(test, feature = "test-util"))]
+    pub fn for_update_with_tls(
+        net: Arc<Net>,
+        permit: DirectPermit,
+        tls: Arc<ClientConfig>,
+    ) -> Result<Self, HttpError> {
+        HttpClient::for_update_inner(net, permit, tls)
+    }
+
+    fn for_update_inner(
+        net: Arc<Net>,
+        permit: DirectPermit,
+        tls: Arc<ClientConfig>,
+    ) -> Result<Self, HttpError> {
+        let obsolete = matches!(net.status_now(), NetStatus::Obsolete { .. });
+        if !permit.is_for_updater() || !obsolete {
+            return Err(HttpError::NotPermitted);
+        }
+        Ok(HttpClient {
+            net,
+            tls,
+            updater: Some(Arc::new(permit)),
+        })
+    }
+
+    /// Whether this is the updater's client without Tor (`for_update`).
+    pub fn is_for_update(&self) -> bool {
+        self.updater.is_some()
     }
 
     /// The `Net` it goes through: its mode decides whether a check that
@@ -295,7 +347,10 @@ impl HttpClient {
     ) -> Result<Response, HttpError> {
         // A starting Tor is waited for, and the deadlines count from when
         // it is ready (design §2.4, §3.1); with none, `TorNotReady` at once.
-        self.net.ready(crate::READY_WAIT).await?;
+        // The updater's permit has no Tor to wait for: Arti is obsolete.
+        if self.updater.is_none() {
+            self.net.ready(crate::READY_WAIT).await?;
+        }
         let deadline = Instant::now() + deadlines.total;
         let mut request = request;
         let mut redirects = 0;
@@ -379,7 +434,10 @@ impl HttpClient {
             .port_or_known_default()
             .ok_or(HttpError::BadUrl)?;
         let target = Target::new(request.host(), port);
-        let io = self.net.connect(&target, iso).await?;
+        let io = match &self.updater {
+            Some(permit) => self.net.connect_for_update(permit, &target).await?,
+            None => self.net.connect(&target, iso).await?,
+        };
         if request.url.scheme() != "https" {
             return Ok(io);
         }

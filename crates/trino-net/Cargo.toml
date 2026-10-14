@@ -48,6 +48,15 @@ rand = "0.8"
 pgp = { version = "0.21", default-features = false }
 # lyrebird's SHA-256, checked before each launch (src/tor/pt.rs, R-24).
 sha2 = "0.10"
+# The updater (src/update/, Tor design §6, TOR-9): the minisign signatures
+# `tauri signer sign` makes, in the base64 form Tauri writes them.
+# minisign-verify (MIT, no dependencies) checks an installer whole;
+# ed25519-dalek, already in the tree, checks a signature's trusted comment
+# alone, so the signed version is known before the installer is downloaded
+# (spike S7).
+base64 = "0.22"
+ed25519-dalek = "2"
+minisign-verify = "0.3"
 # tor/settings.json and tor/run.marker (src/tor/settings.rs, src/tor/marker.rs),
 # and the states the app hands its UI.
 serde = { version = "1", features = ["derive"] }
@@ -68,6 +77,9 @@ zeroize = "1"
 webpki-roots = "0.26"
 
 [dev-dependencies]
+# The updater's tests sign as `tauri signer sign` does: a BLAKE2b-512 of the
+# file, signed with Ed25519 (src/update_tests.rs).
+blake2 = "0.10"
 tokio = { version = "1", features = ["io-util", "macros", "net", "rt-multi-thread", "sync", "time"] }
 # tests/arti_windows_smoke.rs: Arti's consensus parser and the crate whose
 # Windows loop the workspace patches, the same ones Arti builds with.

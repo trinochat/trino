@@ -21,3 +21,9 @@
 /crates/trino-net/src/tor/pt_config.json text eol=lf
 /scripts/fetch-lyrebird.sh text eol=lf
 /src-tauri/binaries/lyrebird.pin text eol=lf
+
+# The updater's test vectors (crates/trino-net/src/update/testdata): signed
+# byte for byte by `tauri signer sign`, so never text.
+/crates/trino-net/src/update/testdata/*.bin binary
+/crates/trino-net/src/update/testdata/*.sig binary
+/crates/trino-net/src/update/testdata/*.pub binary
