@@ -393,6 +393,8 @@ fn no_file_outside_direct_names_a_socket_or_a_resolver() {
         ("tor/arti.rs", include_str!("tor/arti.rs")),
         ("tor/settings.rs", include_str!("tor/settings.rs")),
         ("tor/marker.rs", include_str!("tor/marker.rs")),
+        ("tor/bridges.rs", include_str!("tor/bridges.rs")),
+        ("bridge_tests.rs", include_str!("bridge_tests.rs")),
         ("tor_tests.rs", include_str!("tor_tests.rs")),
     ] {
         for name in banned {

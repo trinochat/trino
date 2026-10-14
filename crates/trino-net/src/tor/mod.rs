@@ -6,6 +6,7 @@
 //! the lifecycle and the fail-closed rules are tested without the network.
 
 pub mod arti;
+pub mod bridges;
 pub(crate) mod marker;
 pub mod settings;
 

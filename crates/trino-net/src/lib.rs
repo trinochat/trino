@@ -18,6 +18,8 @@
 //! - Tor itself (`tor/`, TOR-5): Arti on a runtime of its own, started and
 //!   stopped by the app, with its states (`NetStatus`) on a watch channel
 //!   and a limit without progress for each transport.
+//! - Bridges (`tor/bridges.rs`, TOR-7): Tor Browser's built-in ones, and
+//!   the lines a person pastes, checked strictly.
 
 mod direct;
 mod http;
@@ -32,6 +34,8 @@ mod transport;
 mod ws;
 
 #[cfg(test)]
+mod bridge_tests;
+#[cfg(test)]
 mod http_tests;
 #[cfg(test)]
 mod tests;
@@ -40,6 +44,7 @@ mod tor_tests;
 
 pub use http::{Deadlines, HostRule, HttpClient, HttpError, RedirectPolicy, Request, Response};
 pub use status::{BlockKind, NetStatus, Progress, TransportKind};
+pub use tor::bridges::{BridgeError, BridgeLine, Bridges};
 pub use tor::settings::{StartWhen, TorSettings};
 pub use tor::{LaunchError, NetConfig, PtLauncher, RunningTor, TorBackend, TorDirs};
 pub use transport::{BoxedIo, DirectPermit, Io, Iso, IsoKind, Session, Target, Transport};
