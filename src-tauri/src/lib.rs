@@ -300,7 +300,10 @@ mod tests {
     #[test]
     fn the_workspace_has_one_lockfile_at_the_root() {
         let app = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
-        assert!(app.join("../Cargo.lock").is_file(), "no Cargo.lock at the root");
+        assert!(
+            app.join("../Cargo.lock").is_file(),
+            "no Cargo.lock at the root"
+        );
         assert!(
             !app.join("Cargo.lock").exists(),
             "src-tauri/Cargo.lock is never read: the workspace's lock is the root one"
