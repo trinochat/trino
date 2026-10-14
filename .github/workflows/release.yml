@@ -43,7 +43,8 @@ jobs:
           - label: Windows
             os: windows-latest
             target: ""
-            args: ""
+            # lyrebird, the bridge program (docs/tor.md, "Puentes").
+            args: "--config src-tauri/tauri.bridges.conf.json"
           - label: Linux
             os: ubuntu-22.04
             target: ""
@@ -81,6 +82,14 @@ jobs:
           key: release-${{ matrix.label }}
 
       - run: npm ci
+
+      # lyrebird from the Tor Expert Bundle, checked against the Tor Browser
+      # Developers' signature and src-tauri/binaries/lyrebird.pin before it
+      # is shipped. Linux has no pin yet, so its bundle has no bridges.
+      - name: lyrebird (Tor bridges)
+        if: matrix.os == 'windows-latest'
+        shell: bash
+        run: scripts/fetch-lyrebird.sh x86_64-pc-windows-msvc
 
       - uses: tauri-apps/tauri-action@v0
         env:

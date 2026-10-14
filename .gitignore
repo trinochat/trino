@@ -43,3 +43,7 @@ src-tauri/gen/android/.idea
 *.pgp
 *.gpg
 secring.*
+
+# lyrebird (Tor bridges), fetched and checked by scripts/fetch-lyrebird.sh for
+# release builds; never committed. binaries/lyrebird.pin, its SHA-256, is.
+src-tauri/binaries/lyrebird-*

@@ -20,3 +20,4 @@
 # Expert Bundle ships it, and the script that refreshes it.
 /crates/trino-net/src/tor/pt_config.json text eol=lf
 /scripts/fetch-lyrebird.sh text eol=lf
+/src-tauri/binaries/lyrebird.pin text eol=lf

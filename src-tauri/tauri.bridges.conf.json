@@ -1,0 +1,8 @@
+{
+  "bundle": {
+    "externalBin": ["binaries/lyrebird"],
+    "resources": {
+      "binaries/lyrebird-LICENSE.txt": "licenses/lyrebird.txt"
+    }
+  }
+}

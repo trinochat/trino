@@ -1,0 +1,13 @@
+# lyrebird, the bridge program (Tor design §5.1, decision 7), from the Tor
+# Expert Bundle, whose OpenPGP signature scripts/fetch-lyrebird.sh checks with
+# the Tor Browser Developers key (EF6E286DDA85EA2A4BA7DE684E2C6E8793298290).
+#
+# One line per target: <target triple> <Expert Bundle version> <SHA-256 of lyrebird>.
+# The script refuses a download that does not match, and only --update rewrites
+# a line. The app takes this file in at build time and checks lyrebird's
+# SHA-256 against it before each launch (R-24); a target with no line has no
+# bridge program.
+#
+# Windows: Expert Bundle 15.0.25, lyrebird 0.8.1, signature checked on 14 Oct
+# 2026 (spike S1).
+x86_64-pc-windows-msvc 15.0.25 6e218e85f9a7ae2481f5402ded822471a9a9d0c7e66b05db3842b93fa5c1f02e
