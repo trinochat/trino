@@ -298,7 +298,15 @@ pub const RECONNECTION: Backoff = Backoff {
 /// included. A captive portal, or a NAT mapping that died across sleep, can
 /// take the TCP connection and never finish the handshake: past this, the
 /// attempt counts as failed and the next one is tried.
-pub const CONNECT_DEADLINE: Duration = Duration::from_secs(15);
+///
+/// Through Tor it also builds a circuit (design §3.1): the spike had a
+/// relay's WebSocket up in 2.5-3.7 s (median) and 10 s at most, and a first
+/// stream on a fresh circuit in up to 13 s (S3, S6), so 30 s leaves twice
+/// that. A relay's onion address will get 45 s once onion_map comes (TOR-5).
+/// Counting it from when Tor is ready (§2.4) comes with TOR-5's wait for
+/// Tor; until then, with no Tor, an attempt fails at once with
+/// `TorNotReady`.
+pub const CONNECT_DEADLINE: Duration = Duration::from_secs(30);
 
 /// The most events a client keeps for a relay while it is down. Kept
 /// events go out once it is back (K3); past this many, `publish` refuses
@@ -1538,10 +1546,13 @@ mod tests {
     }
 
     #[test]
-    fn a_real_connection_is_given_fifteen_seconds() {
+    fn a_real_connection_is_given_thirty_seconds() {
+        // Tor design §3.1 with the spike's times (S6): through Tor a relay's
+        // WebSocket was up in 2.5-3.7 s (median) and 10 s at most, and a
+        // first stream on a fresh circuit took up to 13 s (S3).
         assert_eq!(
             ClientOptions::new(test_relay::connector(), None).connect_deadline,
-            Duration::from_secs(15)
+            Duration::from_secs(30)
         );
     }
 
