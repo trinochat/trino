@@ -1,0 +1,4 @@
+{
+  "payload": "{\"announcements\":[{\"id\":\"2026-10-14-test\",\"title\":\"Un aviso de prueba\",\"body\":\"Firmado con GnuPG por scripts/sign-announcement.mjs, con una llave hecha solo para las pruebas.\",\"publishedAt\":\"2026-10-14T12:00:00-05:00\",\"version\":\"0.2.0\",\"url\":\"https://trinochat.org/\"}],\"seq\":1790000000,\"latest\":\"0.2.0\",\"validUntil\":1794603881}",
+  "signature": "-----BEGIN PGP SIGNATURE-----\n\niHUEABYKAB0WIQQS9cA7u/IyvTZlgYilBhLxr7raegUCas/uagAKCRClBhLxr7ra\nelavAP995IFSz7R1d4KYqrSHxHjx+ChjRE8mO1KO4savJIdorQD/Y/PbTtGTc7g7\nj2QgGsiYsOHmOHjZQnAUdj8s+raM/Q0=\n=s/hA\n-----END PGP SIGNATURE-----\n"
+}

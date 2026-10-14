@@ -40,6 +40,12 @@ rustls = { version = "0.23", default-features = false, features = ["ring", "std"
 # Folder names for private bridges' sessions (tor/run-<random>, R-01), and the
 # bytes that overwrite their files before they go.
 rand = "0.8"
+# The news feed's OpenPGP signature, checked here against the "Trino
+# Updates" key built into the program (src/news/, Tor design §7, R-06):
+# rPGP, MIT OR Apache-2.0. Without its default bzip2 (a C library whose
+# licence deny.toml does not allow): a detached signature is never
+# compressed.
+pgp = { version = "0.21", default-features = false }
 # lyrebird's SHA-256, checked before each launch (src/tor/pt.rs, R-24).
 sha2 = "0.10"
 # tor/settings.json and tor/run.marker (src/tor/settings.rs, src/tor/marker.rs),

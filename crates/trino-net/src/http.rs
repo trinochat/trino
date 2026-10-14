@@ -278,6 +278,12 @@ impl HttpClient {
         HttpClient { net, tls }
     }
 
+    /// The `Net` it goes through: its mode decides whether a check that
+    /// can wait for Tor runs at all (news.rs).
+    pub fn net(&self) -> &Net {
+        &self.net
+    }
+
     /// Send `request` through `Net`, isolated by `iso`, within `deadlines`;
     /// with its policy, follow its redirects on the same token. The answer
     /// is the head; read the body with `Response::read_capped`.

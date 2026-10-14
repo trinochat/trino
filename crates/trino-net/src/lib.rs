@@ -27,6 +27,7 @@ mod http;
 pub mod mock;
 #[cfg(any(test, feature = "test-util"))]
 pub mod mock_http;
+pub mod news;
 pub mod onion_map;
 mod status;
 pub mod tor;
@@ -37,6 +38,8 @@ mod ws;
 mod bridge_tests;
 #[cfg(test)]
 mod http_tests;
+#[cfg(test)]
+mod news_tests;
 #[cfg(test)]
 mod pt_tests;
 #[cfg(test)]

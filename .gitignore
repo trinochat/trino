@@ -39,6 +39,9 @@ src-tauri/gen/android/.idea
 # (see docs/announcement-channel.md). The public key is intentionally allowed.
 *.asc
 !public/updates/public-key.asc
+# The news' signer, built into the program, and the tests' throwaway key.
+!crates/trino-net/src/news/trino-updates.asc
+!crates/trino-net/src/news/testdata/gpg-test-key.asc
 *.key
 *.pgp
 *.gpg
