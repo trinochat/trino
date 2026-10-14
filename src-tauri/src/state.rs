@@ -43,6 +43,9 @@ pub struct AppState {
     /// to go without it. `AppState::default()` has none, so tests never
     /// start Arti; the app's own is `AppState::with_tor()`.
     pub net: Arc<trino_net::Net>,
+    /// Trino's own updater (Tor design §6, updater.rs): the daily check,
+    /// the verified installer held until the yes, and installing it.
+    pub updater: Arc<crate::updater::Updater>,
 }
 
 impl AppState {

@@ -74,18 +74,20 @@ immediately and costs substantially more. Configure via
 
 ### Updater
 
-`TAURI_SIGNING_PRIVATE_KEY` signs the update manifest so the app only installs
-updates you produced. Generate the pair once:
+Trino has its own updater, through Tor (Tor design §6; not Tauri's plugin,
+which cannot go through Tor). Its minisign key was generated once by David
+with `tauri signer generate`, password-protected; the public half is built
+into the program (`crates/trino-net/src/update/sig.rs`, key id
+`2A6861FC701B75D7`) and the private half stays with him: it is **not** a
+repository secret and CI never signs updates. Each release's installer is
+signed by hand with `tauri signer sign`, which asks for the password, and
+published with its `latest.json`: the steps are in
+[`updater.md`](./updater.md). **This is separate from the OpenPGP key that
+signs the announcement channel** — see
+[`announcement-channel.md`](./announcement-channel.md). Do not reuse one for
+the other; they have different threat models and different rotation stories.
 
-```bash
-npm run tauri signer generate
-```
-
-Store the private key as a secret. The public key goes into `tauri.conf.json`
-under the updater plugin. **This is separate from the OpenPGP key that signs the
-announcement channel** — see [`announcement-channel.md`](./announcement-channel.md).
-Do not reuse one for the other; they have different threat models and different
-rotation stories.
+Windows ships one NSIS installer, per user (`bundle.targets` has no `msi`).
 
 ## Before tagging a public beta
 

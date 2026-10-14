@@ -1,4 +1,4 @@
-# Tor en Trino (TOR-5, TOR-7 y TOR-10)
+# Tor en Trino (TOR-5, TOR-7, TOR-9 y TOR-10)
 
 Todo lo que Trino abre en la red, salvo el audio y el video de las llamadas,
 sale por Tor. Lo hace `crates/trino-net`, que no depende de Tauri: dentro va
@@ -195,8 +195,8 @@ meek), del Proyecto Tor.
   más altos verificados, más dos días sin hora. Un feed por debajo es una
   repetición y queda como `untrusted`. Funciona con la app bloqueada.
 - Congelamiento: un feed vencido (`validUntil`), más de 14 días sin un feed
-  vigente o, cuando el actualizador lo diga (TOR-9), un `latest` que ningún
-  espejo ofrece. La app recibe el motivo en `freeze`; el aviso en pantalla
+  vigente o un `latest` que ningún espejo ofrece; esto último lo dice la
+  revisión diaria del actualizador, que pregunta a los espejos. La app recibe el motivo en `freeze`; el aviso en pantalla
   llega con las maquetas.
 - Sin Tor ("Conectar sin Tor") no se pregunta nada. Con Tor sin conectar,
   tampoco; nunca se va directo.
@@ -206,14 +206,25 @@ meek), del Proyecto Tor.
 
 El formato y la publicación están en `docs/announcement-channel.md`.
 
+## Actualizador (TOR-9)
+
+Trino revisa una vez al día, a una hora al azar y por Tor, las novedades y
+todos los espejos de `latest.json`; comprueba la firma minisign de la versión
+antes de bajar y la del instalador después, y siempre pregunta antes de
+instalar. Con Arti obsoleto, la pantalla de "versión vieja" tiene un permiso
+propio sin Tor que solo llega a trinochat.org y a GitHub. Todo, y cómo firmas
+una versión, está en `docs/updater.md`.
+
 ## Lo que falta
 
 - Las pantallas (TOR-6 y TOR-8), y la opción propia de "Conectar a Tor solo
   después de desbloquear": hoy, dejar los puentes privados devuelve el
   arranque a "al abrir".
 - `lyrebird` para Linux (un pin con su SHA-256).
-- La revisión diaria de las novedades, junto con la del actualizador (TOR-9).
-  Hoy se piden al desbloquear, como antes.
+- Las pantallas del actualizador (el aviso de "listo para instalar", el
+  interruptor en Ajustes y la de "versión vieja"). Mientras tanto, el WebView
+  sigue pidiendo las novedades al desbloquear, como antes, además de la
+  revisión diaria.
 - Pruebas a mano:
   - con la red real de Tor: `cargo test -p trino-net -- --ignored network_`;
   - con un `lyrebird` real, sin red:

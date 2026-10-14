@@ -17,6 +17,7 @@ mod state;
 mod store;
 mod totp_enrollment;
 mod turn;
+mod updater;
 // -- W7 --
 mod call_log;
 mod connection;
@@ -154,6 +155,11 @@ pub fn run() {
                 net_cmds::forward_status(_app.handle().clone(), &net);
                 net_cmds::on_open(&net, &crate::state::trino_home());
             }
+            // The updater (Tor design §6.3): once a day through Tor, at a
+            // random time, while its switch is on; it never installs
+            // without the person's yes.
+            #[cfg(desktop)]
+            updater::on_open(_app.handle());
             // Desktop: a system-tray icon so trino keeps running (connected,
             // receiving messages, ringing for calls) when the window is closed.
             // "Bloquear" locks from there (cifrado local CL-6a).
@@ -299,6 +305,12 @@ pub fn run() {
             commands::bridges_cmds::net_bridges_try,
             // -- The news (TOR-10) --
             news_cmds::news_fetch,
+            // -- The updater (TOR-9) --
+            updater::update_status,
+            updater::update_set_daily,
+            updater::update_check_now,
+            updater::update_check_without_tor,
+            updater::update_install,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
