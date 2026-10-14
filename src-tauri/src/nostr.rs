@@ -9,9 +9,9 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex as StdMutex};
 use std::time::Duration;
 use thiserror::Error;
-use tokio::net::TcpStream;
 use tokio::sync::{mpsc, oneshot, watch, RwLock};
-use tokio_tungstenite::{connect_async, tungstenite::Message, MaybeTlsStream, WebSocketStream};
+use tokio_tungstenite::tungstenite::Message;
+use trino_net::{IsoKind, Net, Session};
 
 pub const TRINO_KIND: u32 = 4848;
 
@@ -254,11 +254,12 @@ fn unix_now() -> i64 {
     chrono::Utc::now().timestamp()
 }
 
-/// A relay's WebSocket.
-pub type WsStream = WebSocketStream<MaybeTlsStream<TcpStream>>;
+/// A relay's WebSocket, over whatever trino-net carries it on: Tor, or the
+/// direct transport with its permit (Tor design §3 R1).
+pub type WsStream = trino_net::WsStream;
 
-/// Opens the WebSocket of a relay. Production uses `websocket_connector`;
-/// tests inject one that fails.
+/// Opens the WebSocket of a relay. Production uses `relay_connector`; tests
+/// inject one that fails.
 pub type Connector =
     Arc<dyn Fn(String) -> BoxFuture<'static, Result<WsStream, String>> + Send + Sync>;
 
@@ -318,10 +319,10 @@ pub struct ClientOptions {
 }
 
 impl ClientOptions {
-    /// The real WebSocket and the pauses and deadline above.
-    pub fn new(on_state: Option<StateHandler>) -> Self {
+    /// `connector`, with the pauses and deadline above.
+    pub fn new(connector: Connector, on_state: Option<StateHandler>) -> Self {
         ClientOptions {
-            connector: websocket_connector(),
+            connector,
             first_connection: FIRST_CONNECTION,
             reconnection: RECONNECTION,
             connect_deadline: CONNECT_DEADLINE,
@@ -330,16 +331,27 @@ impl ClientOptions {
     }
 }
 
-/// `connect_async`, as a `Connector`.
-pub fn websocket_connector() -> Connector {
-    Arc::new(|url: String| {
+/// Relay WebSockets through `net`: each relay URL gets its own isolation
+/// token of `kind` within `session`, so two relays never share a Tor
+/// circuit, nor this session with another (design §2.7). With Tor not
+/// ready an attempt fails with `TorNotReady` and is tried again later;
+/// nothing here ever goes direct on its own.
+pub fn relay_connector(net: Arc<Net>, session: Session, kind: IsoKind) -> Connector {
+    Arc::new(move |url: String| {
+        let net = Arc::clone(&net);
+        let iso = session.iso(kind, url.as_bytes());
         Box::pin(async move {
-            connect_async(url.as_str())
+            trino_net::ws_connect(&net, &url, &iso)
                 .await
-                .map(|(ws, _)| ws)
                 .map_err(|e| e.to_string())
         })
     })
+}
+
+/// The network inspector's WebSockets: a token of their own, apart from
+/// the messaging connections to the same relays (design §2.7, R2).
+pub fn inspector_connector(net: Arc<Net>, session: Session) -> Connector {
+    relay_connector(net, session, IsoKind::INSPECTOR)
 }
 
 /// Events waiting for this relay's OK (NIP-01), by event id.
@@ -407,8 +419,12 @@ enum ClientCommand {
 impl NostrClient {
     /// A client whose first connection must succeed, so the caller learns
     /// the relay is up: the network inspector's. A drop later is retried.
-    pub async fn connect(url: &str, on_event: EventHandler) -> Result<Arc<Self>, NostrError> {
-        Self::connect_with(url, on_event, ClientOptions::new(None)).await
+    pub async fn connect(
+        url: &str,
+        on_event: EventHandler,
+        connector: Connector,
+    ) -> Result<Arc<Self>, NostrError> {
+        Self::connect_with(url, on_event, ClientOptions::new(connector, None)).await
     }
 
     /// `connect`, with `options`: given up at its connect deadline.
@@ -801,16 +817,39 @@ fn handle_relay_message(text: &str, on_event: &EventHandler, pending: &PendingOk
     }
 }
 
-/// A relay for tests: NIP-01 over a real WebSocket on 127.0.0.1, enough for
-/// the clients here and the sends in commands.rs.
+/// A relay for tests: NIP-01 over a real WebSocket, enough for the clients
+/// here and the sends in commands.rs. It is reached the way a relay is in
+/// the app, through trino-net's `Net` in Tor mode, where Tor is an
+/// in-memory pipe and the direct transport fails the test if anything
+/// uses it.
 #[cfg(test)]
 pub(crate) mod test_relay {
     use super::*;
     use std::sync::atomic::AtomicUsize;
-    use std::sync::Mutex as StdMutex;
+    use std::sync::{LazyLock, Mutex as StdMutex};
     use std::time::Duration;
-    use tokio::net::{TcpListener, TcpStream};
+    use tokio::io::{AsyncRead, AsyncWrite};
     use tokio::sync::Notify;
+    use trino_net::mock::{Forbidden, Mock};
+
+    /// The Tor of every test relay, and the `Net` on it.
+    static TOR: LazyLock<(Arc<Mock>, Arc<Net>)> = LazyLock::new(|| {
+        let tor = Mock::new();
+        let net = Net::with_transports(
+            Some(Arc::clone(&tor) as Arc<dyn trino_net::Transport>),
+            Arc::new(Forbidden),
+        );
+        (tor, net)
+    });
+
+    /// Names the test relays apart.
+    static RELAYS: AtomicUsize = AtomicUsize::new(0);
+
+    /// Relay WebSockets the way the app opens them, through the tests'
+    /// `Net`.
+    pub(crate) fn connector() -> Connector {
+        relay_connector(Arc::clone(&TOR.1), TOR.1.session(), IsoKind::RELAY)
+    }
 
     /// How the relay answers an EVENT.
     #[derive(Clone, Debug)]
@@ -839,15 +878,19 @@ pub(crate) mod test_relay {
 
     impl TestRelay {
         pub(crate) async fn start(answer: Answer) -> Self {
-            let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-            let url = format!("ws://{}", listener.local_addr().unwrap());
+            let host = format!(
+                "relay-{}.trino.invalid",
+                RELAYS.fetch_add(1, Ordering::SeqCst)
+            );
+            let mut listener = TOR.0.listen(&host, 80);
+            let url = format!("ws://{host}");
             let events = Arc::new(StdMutex::new(Vec::new()));
             let kicks = Arc::new(Notify::new());
             let (log, kicked) = (Arc::clone(&events), Arc::clone(&kicks));
             tokio::spawn(async move {
-                while let Ok((tcp, _)) = listener.accept().await {
+                while let Some(io) = listener.accept().await {
                     let (log, kicked) = (Arc::clone(&log), Arc::clone(&kicked));
-                    tokio::spawn(serve(tcp, answer.clone(), log, kicked));
+                    tokio::spawn(serve(io, answer.clone(), log, kicked));
                 }
             });
             TestRelay { url, events, kicks }
@@ -872,12 +915,12 @@ pub(crate) mod test_relay {
     }
 
     async fn serve(
-        tcp: TcpStream,
+        io: impl AsyncRead + AsyncWrite + Unpin,
         answer: Answer,
         events: Arc<StdMutex<Vec<NostrEvent>>>,
         kicks: Arc<Notify>,
     ) {
-        let Ok(ws) = tokio_tungstenite::accept_async(tcp).await else {
+        let Ok(ws) = tokio_tungstenite::accept_async(io).await else {
             return;
         };
         let (mut write, mut read) = ws.split();
@@ -944,11 +987,11 @@ pub(crate) mod test_relay {
 
     pub(crate) fn quick_options(on_state: Option<StateHandler>) -> ClientOptions {
         ClientOptions {
-            connector: websocket_connector(),
+            connector: connector(),
             first_connection: QUICK,
             reconnection: QUICK,
             // Short, yet long enough for a loaded machine to finish a
-            // handshake on 127.0.0.1.
+            // handshake over the in-memory pipe.
             connect_deadline: Duration::from_secs(1),
             on_state,
         }
@@ -1223,10 +1266,13 @@ mod tests {
 
     // ---- K3: the first connection is retried, and the state is known ----
 
-    use super::test_relay::{quick_options, unreachable_client, wait_until, Answer, TestRelay};
+    use super::test_relay::{
+        self, quick_options, unreachable_client, wait_until, Answer, TestRelay,
+    };
     use std::sync::atomic::AtomicUsize;
     use std::sync::Mutex as StdMutex;
     use std::time::Duration;
+    use trino_net::mock::Mock;
 
     fn ignore_events() -> EventHandler {
         Arc::new(|_| {})
@@ -1245,7 +1291,7 @@ mod tests {
         let relay = TestRelay::start(Answer::Accept).await;
         let attempts = Arc::new(AtomicUsize::new(0));
         let counted = Arc::clone(&attempts);
-        let real = websocket_connector();
+        let real = test_relay::connector();
         // Refused once, like a relay that is down at unlock and back later.
         let connector: Connector = Arc::new(move |url| {
             if counted.fetch_add(1, Ordering::SeqCst) == 0 {
@@ -1337,7 +1383,7 @@ mod tests {
         let relay = TestRelay::start(Answer::Accept).await;
         let attempts = Arc::new(AtomicUsize::new(0));
         let counted = Arc::clone(&attempts);
-        let real = websocket_connector();
+        let real = test_relay::connector();
         let connector: Connector = Arc::new(move |url| {
             if counted.fetch_add(1, Ordering::SeqCst) < 2 {
                 Box::pin(async { Err("refused".to_string()) })
@@ -1369,6 +1415,84 @@ mod tests {
         wait_until("the queued event to arrive", || relay.events().len() == 1).await;
         assert_eq!(relay.events()[0].id, event.id);
         client.close();
+    }
+
+    // ---- Tor design §3 R1/R2: relays go through trino-net ----
+
+    /// A `Net` whose Tor is `tor` and whose direct transport is `direct`.
+    fn net_on(tor: Option<&Arc<Mock>>, direct: &Arc<Mock>) -> Arc<Net> {
+        Net::with_transports(
+            tor.map(|t| Arc::clone(t) as Arc<dyn trino_net::Transport>),
+            Arc::clone(direct) as Arc<dyn trino_net::Transport>,
+        )
+    }
+
+    #[tokio::test]
+    async fn a_relay_is_reached_through_tor_by_name_with_its_own_token() {
+        let (tor, direct) = (Mock::new(), Mock::new());
+        let mut server = tor.listen("relay.trino.invalid", 80);
+        tokio::spawn(async move {
+            while let Some(io) = server.accept().await {
+                tokio::spawn(tokio_tungstenite::accept_async(io));
+            }
+        });
+        let net = net_on(Some(&tor), &direct);
+        let session = net.session();
+        let url = "ws://relay.trino.invalid";
+        let options = ClientOptions {
+            connector: relay_connector(Arc::clone(&net), session.clone(), IsoKind::RELAY),
+            ..quick_options(None)
+        };
+
+        let client = NostrClient::start(url, ignore_events(), options);
+
+        wait_until("the relay over Tor", || client.is_connected()).await;
+        let seen = tor.connections();
+        assert_eq!(seen[0].0, trino_net::Target::new("relay.trino.invalid", 80));
+        assert_eq!(seen[0].1, session.iso(IsoKind::RELAY, url));
+        assert!(direct.connections().is_empty(), "a relay went direct");
+        client.close();
+    }
+
+    #[tokio::test]
+    async fn with_tor_not_ready_a_relay_keeps_waiting_and_never_goes_direct() {
+        let direct = Mock::new();
+        let _never = direct.listen("relay.trino.invalid", 80);
+        let net = net_on(None, &direct);
+        let attempts = Arc::new(AtomicUsize::new(0));
+        let counted = Arc::clone(&attempts);
+        let through_net = relay_connector(net, Net::new().session(), IsoKind::RELAY);
+        let connector: Connector = Arc::new(move |url| {
+            counted.fetch_add(1, Ordering::SeqCst);
+            through_net(url)
+        });
+        let options = ClientOptions {
+            connector,
+            ..quick_options(None)
+        };
+
+        let client = NostrClient::start("ws://relay.trino.invalid", ignore_events(), options);
+
+        wait_until("a few attempts", || attempts.load(Ordering::SeqCst) >= 3).await;
+        assert!(!client.is_connected());
+        assert!(direct.connections().is_empty(), "a relay went direct");
+        client.close();
+    }
+
+    #[tokio::test]
+    async fn the_inspector_never_shares_a_token_with_the_relays() {
+        // Design §2.7: the inspector's connection to a relay is its own.
+        let (tor, direct) = (Mock::new(), Mock::new());
+        let net = net_on(Some(&tor), &direct);
+        let session = net.session();
+        let url = "wss://relay.trino.invalid".to_string();
+
+        let _ = inspector_connector(Arc::clone(&net), session.clone())(url.clone()).await;
+        let _ = relay_connector(net, session, IsoKind::RELAY)(url).await;
+
+        let seen = tor.connections();
+        assert_eq!(seen[0].1.kind(), IsoKind::INSPECTOR);
+        assert_ne!(seen[0].1, seen[1].1);
     }
 
     // ---- B2: a handshake that never ends, and a relay that stays down ----
@@ -1416,7 +1540,7 @@ mod tests {
     #[test]
     fn a_real_connection_is_given_fifteen_seconds() {
         assert_eq!(
-            ClientOptions::new(None).connect_deadline,
+            ClientOptions::new(test_relay::connector(), None).connect_deadline,
             Duration::from_secs(15)
         );
     }
@@ -1438,7 +1562,7 @@ mod tests {
     async fn the_events_kept_for_a_relay_free_their_places_once_they_go_out() {
         let relay = TestRelay::start(Answer::Accept).await;
         let allowed = Arc::new(AtomicBool::new(false));
-        let (gate, real) = (Arc::clone(&allowed), websocket_connector());
+        let (gate, real) = (Arc::clone(&allowed), test_relay::connector());
         let connector: Connector = Arc::new(move |url| {
             if gate.load(Ordering::SeqCst) {
                 real(url)

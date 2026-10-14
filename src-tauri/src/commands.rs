@@ -9,8 +9,8 @@ use crate::identity::{
     create_identity, decode_array_32, public_bundle_for, verify_bundle_binding, Identity,
 };
 use crate::nostr::{
-    build_and_sign_event, CatchUp, ClientOptions, NostrClient, NostrEvent, NostrFilter,
-    StateHandler, TRINO_KIND,
+    build_and_sign_event, inspector_connector, relay_connector, CatchUp, ClientOptions, Connector,
+    NostrClient, NostrEvent, NostrFilter, StateHandler, TRINO_KIND,
 };
 use crate::passphrase::validate_passphrase;
 use crate::ratchet::{
@@ -42,6 +42,7 @@ use storage_cmds::{
     LoadedSession,
 };
 use tauri::{AppHandle, Emitter, State};
+use trino_net::IsoKind;
 use zeroize::{Zeroize, Zeroizing};
 
 const MAX_INLINE_RASTER_BYTES: usize = 128 * 1024;
@@ -778,12 +779,23 @@ async fn open_session(
 /// Starts the relay connections of a session `open_session` just opened.
 fn relay_starter(app: AppHandle, state: &AppState) -> impl FnOnce(RelayStart) {
     let inner = state.inner.clone();
+    let net = Arc::clone(&state.net);
     move |start: RelayStart| {
         crate::diag::note_with(
             "session open, starting the relay connections",
             &[("relays", &start.relays.len())],
         );
-        start_relay_connections(app, inner, start.relays, start.nostr_pub, start.handle);
+        // One network session per unlock: nothing this one opens shares a
+        // Tor circuit with the last one's (Tor design §2.6, §2.7).
+        let connector = relay_connector(Arc::clone(&net), net.session(), IsoKind::RELAY);
+        start_relay_connections(
+            app,
+            inner,
+            connector,
+            start.relays,
+            start.nostr_pub,
+            start.handle,
+        );
     }
 }
 
@@ -927,10 +939,12 @@ async fn forge_identity(
 /// tried while the session is open, instead of being given up until the next
 /// unlock, and counts as down in `connection_status` meanwhile. Whenever a
 /// socket comes up or goes down, the UI gets a debounced
-/// `connection-changed`.
+/// `connection-changed`. Each relay is opened by `connector`, through the
+/// app's `Net`.
 fn start_relay_connections(
     app: AppHandle,
     state_inner: Arc<tokio::sync::Mutex<InnerState>>,
+    connector: Connector,
     relays: Vec<String>,
     expected_nostr_pub: String,
     expected_handle: String,
@@ -948,8 +962,8 @@ fn start_relay_connections(
                 let changes = Arc::clone(&changes);
                 Arc::new(move |_up| changes.poke())
             };
-            let client =
-                NostrClient::start(&relay_url, on_event, ClientOptions::new(Some(on_state)));
+            let options = ClientOptions::new(Arc::clone(&connector), Some(on_state));
+            let client = NostrClient::start(&relay_url, on_event, options);
             // Catch up on messages sent while this device was offline: the
             // whole window on the first connection, and on every reconnect
             // only what this relay may not have delivered yet (so the window
@@ -1168,6 +1182,9 @@ pub async fn relay_inspect_start(
         return Err("no relay connections to inspect".to_string());
     }
 
+    // The inspector's own session and tokens: its connections never share a
+    // Tor circuit with the messaging ones (Tor design §2.7, R2).
+    let connector = inspector_connector(Arc::clone(&state.net), state.net.session());
     let mut connected = Vec::new();
     for url in urls {
         let app_for_events = app.clone();
@@ -1187,7 +1204,7 @@ pub async fn relay_inspect_start(
             );
         });
 
-        match NostrClient::connect(&url, on_event).await {
+        match NostrClient::connect(&url, on_event, Arc::clone(&connector)).await {
             Ok(client) => {
                 let _ = client
                     .subscribe(&NostrFilter {

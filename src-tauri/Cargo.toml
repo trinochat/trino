@@ -20,6 +20,10 @@ tauri-build = { version = "2", features = [] }
 # at a local checkout — do not commit it.
 trino-core = { git = "https://github.com/trinochat/trino-core", rev = "3421e168c94da92d21234e1a8c1587d552b0002b" }
 
+# Every connection the app opens: through Tor, or with one of the two
+# permits to go without it (Tor design §2). No Tauri in it.
+trino-net = { path = "../crates/trino-net" }
+
 tauri = { version = "2", features = ["tray-icon", "image-png"] }
 tauri-plugin-opener = "2"
 tauri-plugin-notification = "2"
@@ -88,3 +92,5 @@ webview2-com = "=0.38.2"
 
 [dev-dependencies]
 proptest = "1"
+# Tor as an in-memory pipe, and a direct transport that fails the test.
+trino-net = { path = "../crates/trino-net", features = ["test-util"] }

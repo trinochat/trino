@@ -37,6 +37,10 @@ pub struct AppState {
     /// Windows was locked during a call: Trino locks when the call ends
     /// (cifrado local CL-6a, design §7.2). Cleared by every lock.
     pub lock_after_call: Arc<AtomicBool>,
+    /// Every connection to a relay goes through it (Tor design §2). It
+    /// starts in Tor mode; until Tor itself arrives (TOR-5) it has no Tor,
+    /// so the relays wait with `TorNotReady` and nothing goes direct.
+    pub net: Arc<trino_net::Net>,
 }
 
 #[derive(Default)]

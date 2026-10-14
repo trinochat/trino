@@ -310,6 +310,42 @@ mod tests {
         );
     }
 
+    /// Tor design §2.8 and test 2 (R-07): clippy.toml disallows building
+    /// trino-net's permit to go without Tor anywhere, and only these two
+    /// files may do it under an `#[allow]`: the `net_connect_without_tor`
+    /// command and the updater. The type's name is spelled in pieces so
+    /// this file does not name it.
+    #[test]
+    fn only_two_files_name_direct_permit() {
+        const PERMIT: &str = concat!("Direct", "Permit");
+        const ALLOWED: [&str; 2] = ["commands.rs", "updater.rs"];
+        fn sources(dir: &std::path::Path, found: &mut Vec<std::path::PathBuf>) {
+            for entry in std::fs::read_dir(dir).unwrap() {
+                let path = entry.unwrap().path();
+                if path.is_dir() {
+                    sources(&path, found);
+                } else if path.extension().is_some_and(|e| e == "rs") {
+                    found.push(path);
+                }
+            }
+        }
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let mut files = Vec::new();
+        sources(&root.join("src"), &mut files);
+        files.push(root.join("build.rs"));
+        assert!(files.len() > 20, "the sources were not found");
+
+        for file in files {
+            let name = file.file_name().unwrap().to_string_lossy().to_string();
+            let source = std::fs::read_to_string(&file).unwrap();
+            assert!(
+                !source.contains(PERMIT) || ALLOWED.contains(&name.as_str()),
+                "{} names {PERMIT}: only {ALLOWED:?} may",
+                file.display()
+            );
+        }
+    }
+
     #[test]
     fn quit_does_not_wait_when_no_call_is_active() {
         let flag = AtomicBool::new(false);

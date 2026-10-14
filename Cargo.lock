@@ -4747,6 +4747,7 @@ dependencies = [
  "tokio",
  "tokio-tungstenite",
  "trino-core",
+ "trino-net",
  "webkit2gtk",
  "webview2-com",
  "windows",
