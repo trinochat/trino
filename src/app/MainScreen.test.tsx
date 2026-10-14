@@ -248,6 +248,8 @@ function setup({
     loadFeed: async () => ({ announcements: [], source: 'bundled' }),
     download: vi.fn(),
     makeAvatar: async () => 'data:image/jpeg;base64,AAAA',
+    // Tor's screens have tests of their own (src/screens/net).
+    net: null,
   };
   const main = {
     intent,

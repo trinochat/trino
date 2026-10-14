@@ -57,6 +57,7 @@ import { ContactDetailsPanel, type ContactDetailsApi } from '../screens/contact-
 import { ContactsDialog, NewChatDialog, ShareCodePanel, type ContactsApi } from '../screens/contacts';
 import { GroupPanel, NewGroupDialog, groupPrefs, type GroupApi } from '../screens/group';
 import { SettingsScreen, type SettingsPlatform } from '../screens/settings';
+import { netScreensApi, type NetScreensApi } from '../screens/net';
 import { ShellScreen, type ShellApi, type ShellEvents, type ShellScreenProps } from '../screens/shell';
 import type { OnboardingIntent, ShellSlots } from '../screens/types';
 import { VerifyContactDialog } from '../screens/verify';
@@ -125,6 +126,8 @@ export interface MainDeps {
   download(name: string, blob: Blob): void;
   /** Turns a picked file into the profile photo. */
   makeAvatar(file: File): Promise<string>;
+  /** Tor's state and commands (TOR-6); null shows nothing of Tor. */
+  net?: NetScreensApi | null;
 }
 
 /** This window through Tauri, asked for on each use, so that loading this module needs no Tauri. */
@@ -164,6 +167,7 @@ const DEVICE_DEPS: MainDeps = {
   loadFeed: loadAnnouncementFeed,
   download: downloadBlob,
   makeAvatar,
+  net: netScreensApi,
 };
 
 export interface MainScreenProps extends MainProps {
@@ -330,6 +334,7 @@ export function MainScreen({ intent, onLock, onAutolockChanged, onWiped, onCallG
         onContactsChange={setContacts}
         prefs={d.prefs}
         loadFeed={d.loadFeed}
+        {...(d.net && { net: d.net })}
         {...(width !== undefined && { width })}
         {...(rootPx !== undefined && { rootPx })}
       />

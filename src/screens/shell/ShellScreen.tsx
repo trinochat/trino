@@ -18,6 +18,11 @@
  * conversation came from. Under "No leídos" the chat just opened stays
  * listed, read, until the chip or the chat changes.
  *
+ * Tor (TOR-6): with the network (`net`), the inbox shows its one line
+ * (net-model.ts), "Ver qué hacer" opens "No se pudo conectar", and its
+ * "Conectar sin protección…" asks first (card 5); nothing goes without Tor
+ * on its own.
+ *
  * Ctrl+K goes back to Chats and to the search. Ctrl+L, which locks, is the
  * app's (App.tsx), as is the lock itself.
  */
@@ -63,6 +68,11 @@ import { useCallLog } from './useCallLog';
 import { useConnection } from './useConnection';
 import { shellErrorText } from './shell-error';
 import { useConversations, type ShellError } from './useConversations';
+import { ConnectFailedDialog } from '../net/ConnectFailedDialog';
+import type { NetScreensApi } from '../net/net-api';
+import { torLineOf } from '../net/net-model';
+import { useNetStatus } from '../net/useNetStatus';
+import { WithoutTorDialog } from '../net/WithoutTorDialog';
 import { useInvites } from './useInvites';
 import { useStrangerAttempts } from './useStrangerAttempts';
 
@@ -98,6 +108,8 @@ export interface ShellScreenProps {
   prefs?: ShellPrefs;
   /** The announcements feed; lib/announcements by default. */
   loadFeed?(): Promise<AnnouncementFeed>;
+  /** Tor's state and commands (TOR-6); without it nothing of Tor shows. */
+  net?: NetScreensApi;
   /** For tests: the shell's width in px, measured otherwise. */
   width?: number;
   /** For tests: the root size in px, 16 times the text size otherwise. */
@@ -109,7 +121,10 @@ type Overlay =
   | { kind: 'newGroup' }
   | { kind: 'newChat'; purpose: NewChatPurpose }
   | { kind: 'verify'; handle: string }
-  | { kind: 'forward'; from: ConvoRef; key: string };
+  | { kind: 'forward'; from: ConvoRef; key: string }
+  /** "No se pudo conectar" (card 3), then its question (card 5). */
+  | { kind: 'torFailed' }
+  | { kind: 'withoutTor' };
 
 /** Where the focus goes once a change took the control that had it off the page. */
 type FocusTarget = 'main' | 'settings' | { row: string | null };
@@ -202,6 +217,9 @@ export function ShellScreen(props: ShellScreenProps) {
   });
   const { drafts, setDraft, moveDraft } = useDrafts();
   const connection = useConnection(api, events, capabilities.connection);
+  const net = props.net ?? null;
+  const netStatus = useNetStatus(net);
+  const torLine = torLineOf(netStatus);
   const channel = useAnnouncements(props.loadFeed ?? loadAnnouncementFeed, prefs);
   const strangers = useStrangerAttempts(events);
   const invites = useInvites(api, events);
@@ -619,6 +637,24 @@ export function ShellScreen(props: ShellScreenProps) {
         }),
       });
     }
+  } else if ((shown?.kind === 'torFailed' || shown?.kind === 'withoutTor') && net) {
+    // "Ver qué hacer" goes with the line once it changes: the focus that
+    // fell with it goes back to the list.
+    const closeTor = () => {
+      closeOverlay();
+      moveFocus({ row: openKey });
+    };
+    overlayContent =
+      shown.kind === 'torFailed' ? (
+        <ConnectFailedDialog
+          status={netStatus}
+          api={net}
+          onClose={closeTor}
+          onEscape={() => setOverlay({ kind: 'withoutTor' })}
+        />
+      ) : (
+        <WithoutTorDialog api={net} onClose={closeTor} onDone={closeTor} />
+      );
   } else if (shown?.kind === 'forward') {
     const { from, key } = shown;
     overlayContent = (
@@ -695,6 +731,15 @@ export function ShellScreen(props: ShellScreenProps) {
               onSearchChange={setSearch}
               searchRef={searchRef}
               connection={connection}
+              tor={
+                torLine && {
+                  text: t(torLine.key, torLine.vars),
+                  tone: torLine.tone,
+                  ...(torLine.action && {
+                    action: { label: t('net.line.seeWhat'), onAction: () => setOverlay({ kind: 'torFailed' }) },
+                  }),
+                }
+              }
               me={{ handle: props.me.handle, ...(props.me.avatar && { avatarSrc: props.me.avatar }) }}
               onNewChat={() => setOverlay({ kind: 'newChat', purpose: 'chat' })}
               onNewCall={() => setOverlay({ kind: 'newChat', purpose: 'call' })}

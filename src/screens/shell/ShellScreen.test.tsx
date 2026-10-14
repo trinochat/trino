@@ -17,6 +17,7 @@ import type {
   VerifyContactSlotProps,
 } from '../types';
 import { ShellScreen, type ShellScreenProps } from './ShellScreen';
+import { fakeNet } from '../net/test-support';
 import { appearanceHost, fakeApi, fakeEvents, fakePrefs } from './test-fakes';
 
 afterEach(cleanup);
@@ -854,5 +855,51 @@ describe('ShellScreen: the right-click menu of the chats', () => {
     rightClick(await row('Novedades'));
     fireEvent.click(screen.getByRole('menuitem', { name: 'Silenciar' }));
     expect((await row('Novedades')).textContent).toContain('Silenciado');
+  });
+});
+
+// TOR-6 (PropTorSimple, cards 2, 3 and 5; design tests 45-47): the inbox's
+// line follows the network, "Ver qué hacer" opens "No se pudo conectar",
+// and its way out asks before anything goes without Tor.
+describe('ShellScreen: Tor', () => {
+  it('shows how far Tor is, nothing once connected, and "Sin protección" while it lasts', async () => {
+    const { api: net, emit } = fakeNet({ state: 'starting', pct: 40 });
+    setup({ net });
+    const status = await screen.findByText('Conectando de forma privada… 40 %');
+    expect(status.closest('[role="status"]')).not.toBeNull();
+    act(() => emit.net({ state: 'ready', transport: 'none' }));
+    expect(screen.queryByText(/Conectando de forma privada/)).toBeNull();
+    act(() => emit.net({ state: 'blocked', kind: 'offline', pct: 0 }));
+    expect(screen.getByText('Esperando internet…')).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Ver qué hacer' })).toBeNull();
+    act(() => emit.net({ state: 'direct' }));
+    expect(screen.getByText('Sin protección')).toBeTruthy();
+  });
+
+  it('opens "No se pudo conectar" from "Ver qué hacer", and asks before going without protection', async () => {
+    const { api: net } = fakeNet({ state: 'blocked', kind: 'filtering', pct: 10 });
+    setup({ net });
+    fireEvent.click(await screen.findByRole('button', { name: 'Ver qué hacer' }));
+    const panel = await screen.findByRole('dialog', { name: 'No se pudo conectar' });
+    await waitFor(() => within(panel).getByRole('button', { name: 'Probar otra forma de conectarse' }));
+    fireEvent.click(within(panel).getByRole('button', { name: 'Conectar sin protección…' }));
+
+    const question = screen.getByRole('alertdialog', { name: '¿Conectar sin protección?' });
+    expect(screen.queryByRole('dialog', { name: 'No se pudo conectar' })).toBeNull();
+    fireEvent.click(within(question).getByRole('button', { name: 'Cancelar' }));
+    expect(net.connectWithoutTor).not.toHaveBeenCalled();
+    expect(screen.queryByRole('alertdialog')).toBeNull();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Ver qué hacer' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Conectar sin protección…' }));
+    await act(async () => fireEvent.click(screen.getByRole('button', { name: 'Conectar sin protección' })));
+    expect(net.connectWithoutTor).toHaveBeenCalledTimes(1);
+    expect(screen.queryByRole('alertdialog')).toBeNull();
+  });
+
+  it('says nothing of Tor without the network', async () => {
+    setup();
+    await row('Ana');
+    expect(screen.queryByText(/de forma privada|Sin protección/)).toBeNull();
   });
 });

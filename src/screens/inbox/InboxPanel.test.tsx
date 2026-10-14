@@ -300,6 +300,45 @@ describe('InboxPanel: the head and the foot', () => {
     expect(screen.queryByText(OFFLINE)).toBeNull();
   });
 
+  // TOR-6, PropTorSimple card 2: Tor's state is one line of text in the same live region, no pill, no
+  // dot, no panel; gone once connected. While it shows, it explains the servers being down too.
+  it('shows the line of Tor in the same live region, as text with no panel', () => {
+    renderEs(
+      <InboxPanel
+        {...props({
+          tor: { text: 'Conectando de forma privada… 40 %', tone: 'muted' },
+          connection: { status: 'offline', up: 0, total: 3 },
+        })}
+      />,
+    );
+    const status = screen.getByRole('status');
+    expect(status.textContent).toBe('Conectando de forma privada… 40 %');
+    expect(classesOf(status)).not.toContain('bg-ui-warn-bg');
+    expect(status.querySelector('svg')).toBeNull();
+    expect(screen.queryByText(OFFLINE)).toBeNull();
+    expect(classesOf(status.firstElementChild)).toContain('text-ui-muted');
+  });
+
+  it('gives a line that needs you its action, and "Sin protección" as a warning', () => {
+    const onAction = vi.fn();
+    const { rerender } = renderEs(
+      <InboxPanel {...props({ tor: { text: 'No se pudo conectar.', tone: 'alert', action: { label: 'Ver qué hacer', onAction } } })} />,
+    );
+    const status = screen.getByRole('status');
+    fireEvent.click(within(status).getByRole('button', { name: 'Ver qué hacer' }));
+    expect(onAction).toHaveBeenCalledTimes(1);
+    expect(classesOf(status.firstElementChild)).toEqual(expect.arrayContaining(['text-ui-ink', 'font-semibold']));
+    rerender(
+      <LangCtx.Provider value={{ lang: 'es', setLang: () => {} }}>
+        <I18nContext.Provider value={makeT('es')}>
+          <InboxPanel {...props({ tor: { text: 'Sin protección', tone: 'warn' } })} />
+        </I18nContext.Provider>
+      </LangCtx.Provider>,
+    );
+    expect(screen.getByRole('status').textContent).toBe('Sin protección');
+    expect(classesOf(screen.getByRole('status').firstElementChild)).toEqual(expect.arrayContaining(['text-ui-warn', 'font-bold']));
+  });
+
   it('shows a notice with its action', () => {
     const onAction = vi.fn();
     renderEs(<InboxPanel {...props({ notice: { text: 'Tienes invitaciones a grupos sin responder.', onAction } })} />);

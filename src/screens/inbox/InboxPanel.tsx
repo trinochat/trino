@@ -8,6 +8,13 @@
  * chats; Calls has its chips, the log and its note. Without the call log
  * (K13) there are no tabs, only the chats.
  *
+ * Tor's state (TOR-6, PropTorSimple card 2) is one line of text in the
+ * same live region, under the wordmark: "Conectando de forma privada…
+ * 40 %", "Esperando internet…", "No se pudo conectar." with "Ver qué
+ * hacer", or "Sin protección" for as long as it lasts. No pill, no dot, no
+ * panel, and gone once connected. While it shows, it says why the servers
+ * are down too, so the notice of the servers waits until Tor is ready.
+ *
  * Each list scrolls on its own and keeps at least 8 rem. Everything between
  * the head and the foot is one region that scrolls when it does not fit, as
  * at 200 % in a small window: #root cuts off whatever overflows
@@ -15,8 +22,9 @@
  */
 import { PhoneOutgoing, Plus, Search, WifiOff } from 'lucide-react';
 import { useId, type Ref } from 'react';
+import type { TorLineTone } from '../net/net-model';
 import { useT } from '../../lib/i18n';
-import { Banner, Button, IconButton, Input, cx, iconSize } from '../../ui';
+import { Banner, Button, FOCUS_RING, IconButton, Input, cx, iconSize } from '../../ui';
 import type { Connection, ConvoRef, InboxFilter, InboxItem } from '../types';
 import type { CallFilter } from './call-history-model';
 import { CallHistoryList } from './CallHistoryList';
@@ -41,6 +49,8 @@ export interface InboxPanelProps {
   searchRef?: Ref<HTMLInputElement>;
   /** Offline shows the notice; null (no capability, or no answer) shows nothing. */
   connection: Connection | null;
+  /** Tor's line (card 2), in the same live region; null or left out while connected. */
+  tor?: TorLineView | null;
   me: { handle: string; avatarSrc?: string };
   onNewChat(): void;
   onNewCall(): void;
@@ -79,6 +89,20 @@ export interface InboxPanelProps {
   rowActions?: InboxRowActions;
 }
 
+/** Tor's line as the shell words it: its text, its tone and maybe "Ver qué hacer". */
+export interface TorLineView {
+  text: string;
+  tone: TorLineTone;
+  action?: { label: string; onAction(): void };
+}
+
+/** Quiet while it works, stronger when it needs you, a warning without protection. */
+const TOR_TONES: Readonly<Record<TorLineTone, string>> = {
+  muted: 'text-ui-muted',
+  alert: 'font-semibold text-ui-ink',
+  warn: 'font-bold text-ui-warn',
+};
+
 /** The chips of the inbox, in order; "Solicitudes" joins them with message requests (R6b). */
 const FILTERS: readonly InboxFilter[] = ['all', 'unread', 'groups'];
 const FILTER_LABELS: Readonly<Record<InboxFilter, string>> = {
@@ -92,7 +116,8 @@ export function InboxPanel(props: InboxPanelProps) {
   const searchId = useId();
   const { connection, calls, tab, notice } = props;
   const onCalls = calls !== null && tab === 'calls';
-  const offline = connection?.status === 'offline';
+  const tor = props.tor ?? null;
+  const offline = !tor && connection?.status === 'offline';
 
   const visible = filterItems(props.items, props.filter, props.search, props.keepKey ?? null);
   const chats = (
@@ -164,11 +189,30 @@ export function InboxPanel(props: InboxPanelProps) {
         <div
           role="status"
           className={cx(
-            offline
-              ? 'flex items-center gap-2 rounded-ui bg-ui-warn-bg px-3 py-2 text-ui-md leading-[1.45] text-ui-ink'
-              : 'sr-only',
+            tor
+              ? 'flex flex-col px-1'
+              : offline
+                ? 'flex items-center gap-2 rounded-ui bg-ui-warn-bg px-3 py-2 text-ui-md leading-[1.45] text-ui-ink'
+                : 'sr-only',
           )}
         >
+          {tor && (
+            <span className={cx('flex min-h-6 flex-wrap items-center gap-x-2 text-ui-md leading-[1.45]', TOR_TONES[tor.tone])}>
+              <span>{tor.text}</span>
+              {tor.action && (
+                <button
+                  type="button"
+                  onClick={tor.action.onAction}
+                  className={cx(
+                    'min-h-8 rounded-ui px-1 font-ui text-ui-md font-semibold text-ui-accent-text hover:underline',
+                    FOCUS_RING,
+                  )}
+                >
+                  {tor.action.label}
+                </button>
+              )}
+            </span>
+          )}
           {offline && (
             <>
               <WifiOff {...iconSize('md', 'shrink-0 text-ui-warn')} aria-hidden="true" />
