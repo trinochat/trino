@@ -350,14 +350,16 @@ meek), del Proyecto Tor.
 
 El formato y la publicación están en `docs/announcement-channel.md`.
 
-## Actualizador (TOR-9)
+## Actualizador (TOR-9 y TOR-13)
 
 Trino revisa una vez al día, a una hora al azar y por Tor, las novedades y
 todos los espejos de `latest.json`; comprueba la firma minisign de la versión
 antes de bajar y la del instalador después, y siempre pregunta antes de
-instalar. Con Arti obsoleto, la pantalla de "versión vieja" tiene un permiso
-propio sin Tor que solo llega a trinochat.org y a GitHub. Todo, y cómo firmas
-una versión, está en `docs/updater.md`.
+instalar. En Linux, si Trino corre como AppImage, el AppImage nuevo reemplaza
+al viejo en su sitio después de tu sí, sin `sudo`; con el `.deb`, la versión
+nueva solo queda en Descargas. Con Arti obsoleto, la pantalla de "versión
+vieja" tiene un permiso propio sin Tor que solo llega a trinochat.org y a
+GitHub. Todo, y cómo firmas una versión, está en `docs/updater.md`.
 
 ## Lo que Tor no oculta
 

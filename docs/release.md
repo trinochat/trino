@@ -4,7 +4,9 @@
 
 Windows and Linux. The Linux job produces a `.deb`, an `.rpm` and an
 `.AppImage`; the AppImage is the one to hand to anyone not on Debian or Fedora,
-Arch included.
+Arch included. It is also the only Linux bundle that updates itself, in place
+and after asking (TOR-13); the `.deb` and the `.rpm` only get the new AppImage
+in Downloads ([`updater.md`](./updater.md), "En Linux").
 
 **macOS is not built.** The code compiles there — CI proved it before the step
 that failed — but bundling requires a Developer ID certificate and the workflow
