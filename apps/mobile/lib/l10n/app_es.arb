@@ -354,5 +354,25 @@
   "securityReinforced": "Protección reforzada",
   "securityReinforcedDesc": "Trino siempre pide la contraseña y no ofrece la huella ni Face ID.",
   "@securityReinforcedDesc": {"description": "Only what the engine does today: reinforced protection forces biometric unlock off."},
-  "securityReinforcedNote": "Con Protección reforzada, Trino siempre te pide la contraseña. La huella y Face ID no se ofrecen."
+  "securityReinforcedNote": "Con Protección reforzada, Trino siempre te pide la contraseña. La huella y Face ID no se ofrecen.",
+
+  "sectionDevices": "Dispositivos",
+  "devicesThisPhone": "Este celular",
+  "devicesLinkedToday": "vinculado hoy",
+  "devicesLinkedYesterday": "vinculado ayer",
+  "devicesLinkedOn": "vinculado el {date}",
+  "@devicesLinkedOn": {"placeholders": {"date": {"type": "String", "example": "2 sept"}}},
+  "devicesActive": "activo {ago}",
+  "@devicesActive": {"description": "When a device was last active today; ago is agoNow, agoMinutes or agoHours.", "placeholders": {"ago": {"type": "String", "example": "hace 5 min"}}},
+  "devicesActiveYesterday": "activo ayer",
+  "devicesActiveOn": "activo el {date}",
+  "@devicesActiveOn": {"placeholders": {"date": {"type": "String", "example": "30 ago"}}},
+  "devicesHoldsKey": "guarda la llave de la cuenta",
+  "devicesHoldsKeyNote": "Este celular creó tu cuenta y guarda su llave, por eso no se puede desvincular.",
+  "devicesUnlink": "Desvincular",
+  "devicesUnlinkTitle": "¿Desvincular este celular?",
+  "devicesUnlinkBody": "Este celular vuelve al inicio y deja de recibir tus mensajes. Se borran de aquí tus chats y tus contactos; en tu computador siguen. Para volver a usarlo, vincúlalo otra vez con el código QR de tu computador.",
+  "devicesUnlinkFailed": "No se pudo desvincular este celular. Inténtalo de nuevo.",
+  "devicesNoteSelf": "Cada aparato puede desvincularse solo. Tu computador, que guarda la llave de la cuenta, puede quitar a cualquiera.",
+  "devicesNoteLost": "Si pierdes este celular, desvincúlalo desde tu computador. Quien lo tenga deja de recibir tus mensajes nuevos, pero los que ya estaban en el celular siguen ahí."
 }

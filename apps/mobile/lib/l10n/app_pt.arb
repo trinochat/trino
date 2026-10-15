@@ -304,5 +304,22 @@
   "reaskNotePassword": "Sempre é pedida ao reiniciar o celular. Não há opção de «nunca»: se passar muito tempo você pode esquecer a senha, e sem ela não há como recuperar sua conta.",
   "securityReinforced": "Proteção reforçada",
   "securityReinforcedDesc": "O Trino sempre pede a senha e não oferece digital nem Face ID.",
-  "securityReinforcedNote": "Com a proteção reforçada, o Trino sempre pede sua senha. Digital e Face ID não são oferecidos."
+  "securityReinforcedNote": "Com a proteção reforçada, o Trino sempre pede sua senha. Digital e Face ID não são oferecidos.",
+
+  "sectionDevices": "Dispositivos",
+  "devicesThisPhone": "Este celular",
+  "devicesLinkedToday": "vinculado hoje",
+  "devicesLinkedYesterday": "vinculado ontem",
+  "devicesLinkedOn": "vinculado em {date}",
+  "devicesActive": "ativo {ago}",
+  "devicesActiveYesterday": "ativo ontem",
+  "devicesActiveOn": "ativo em {date}",
+  "devicesHoldsKey": "guarda a chave da conta",
+  "devicesHoldsKeyNote": "Este celular criou sua conta e guarda a chave dela, por isso não pode ser desvinculado.",
+  "devicesUnlink": "Desvincular",
+  "devicesUnlinkTitle": "Desvincular este celular?",
+  "devicesUnlinkBody": "Este celular volta ao início e deixa de receber suas mensagens. Suas conversas e seus contatos são apagados daqui; no seu computador eles continuam. Para usá-lo de novo, vincule-o outra vez com o código QR do seu computador.",
+  "devicesUnlinkFailed": "Não foi possível desvincular este celular. Tente novamente.",
+  "devicesNoteSelf": "Cada aparelho pode se desvincular sozinho. Seu computador, que guarda a chave da conta, pode remover qualquer um.",
+  "devicesNoteLost": "Se você perder este celular, desvincule-o pelo seu computador. Quem estiver com ele deixa de receber suas mensagens novas, mas as que já estavam no celular continuam lá."
 }

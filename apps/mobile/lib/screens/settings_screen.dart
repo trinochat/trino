@@ -14,6 +14,7 @@ import 'common.dart';
 import 'settings/account_security_screen.dart';
 import 'settings/advanced_screen.dart';
 import 'settings/appearance_screen.dart';
+import 'settings/devices_screen.dart';
 import 'settings/language_screen.dart';
 import 'settings/notifications_screen.dart';
 import 'settings/privacy_screen.dart';
@@ -28,6 +29,7 @@ class SettingsScreen extends StatefulWidget {
 
 class _SettingsScreenState extends State<SettingsScreen> {
   late final Stream<Profile> _profile = context.engine.profile;
+  late final Stream<List<LinkedDevice>> _devices = context.engine.devices;
 
   void _open(Widget page) => Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => page));
 
@@ -66,6 +68,15 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   icon: TrinoIcons.key,
                   title: l10n.sectionAccountSecurity,
                   onTap: () => _open(const AccountSecurityScreen()),
+                ),
+                StreamBuilder<List<LinkedDevice>>(
+                  stream: _devices,
+                  builder: (context, snapshot) => ListRow(
+                    icon: TrinoIcons.smartphone,
+                    title: l10n.sectionDevices,
+                    value: snapshot.data == null ? null : '${snapshot.data!.length}',
+                    onTap: () => _open(const DevicesScreen()),
+                  ),
                 ),
                 ListRow(
                   icon: TrinoIcons.palette,

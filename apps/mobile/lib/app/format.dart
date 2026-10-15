@@ -12,7 +12,7 @@ String formatTime(BuildContext context, DateTime time) => MaterialLocalizations.
 /// The time of a chat's last activity: the hour today, "Ayer", the weekday
 /// within the week, or the date.
 String formatChatTime(BuildContext context, DateTime time, DateTime now) {
-  final days = _daysBetween(time, now);
+  final days = daysBetween(time, now);
   if (days <= 0) return formatTime(context, time);
   if (days == 1) return context.l10n.yesterday;
   final locale = Localizations.localeOf(context).toLanguageTag();
@@ -23,7 +23,7 @@ String formatChatTime(BuildContext context, DateTime time, DateTime now) {
 /// The separator above a day's messages: "Hoy", "Ayer", the weekday within
 /// the week, or the date (with the year when it is not this one).
 String formatDayLabel(BuildContext context, DateTime day, DateTime now) {
-  final days = _daysBetween(day, now);
+  final days = daysBetween(day, now);
   if (days <= 0) return context.l10n.today;
   if (days == 1) return context.l10n.yesterday;
   final locale = Localizations.localeOf(context).toLanguageTag();
@@ -41,7 +41,12 @@ String formatDuration(Duration duration) {
   return '${two(minutes)}:${two(seconds)}';
 }
 
-int _daysBetween(DateTime earlier, DateTime later) =>
+/// A short date without the year, such as "2 sept".
+String formatShortDate(BuildContext context, DateTime day) =>
+    _trimDot(DateFormat.MMMd(Localizations.localeOf(context).toLanguageTag()).format(day));
+
+/// Whole days from [earlier] to [later], by the calendar: yesterday is 1.
+int daysBetween(DateTime earlier, DateTime later) =>
     DateUtils.dateOnly(later).difference(DateUtils.dateOnly(earlier)).inDays;
 
 String _capitalized(String text) =>
@@ -62,7 +67,7 @@ String formatCallLength(BuildContext context, Duration duration) {
 /// How long ago something came, for message requests: "ahora", "hace 5 min"
 /// or "hace 2 h" today, then as a chat's time ("Ayer", "Lun", the date).
 String formatAgo(BuildContext context, DateTime time, DateTime now) {
-  if (_daysBetween(time, now) > 0) return formatChatTime(context, time, now);
+  if (daysBetween(time, now) > 0) return formatChatTime(context, time, now);
   final elapsed = now.difference(time);
   if (elapsed.inMinutes < 1) return context.l10n.agoNow;
   if (elapsed.inHours < 1) return context.l10n.agoMinutes(elapsed.inMinutes);

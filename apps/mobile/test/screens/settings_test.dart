@@ -26,7 +26,20 @@ void main() {
     expect(find.text('Sofía'), findsOneWidget);
     expect(find.text('Tu nombre y tu código'), findsOneWidget);
     final rows = tester.widgetList<ListRow>(find.byType(ListRow)).map((row) => row.title).toList();
-    expect(rows, ['Sofía', 'Notificaciones', 'Privacidad', 'Cuenta y seguridad', 'Apariencia', 'Idioma', 'Avanzado']);
+    expect(rows, [
+      'Sofía',
+      'Notificaciones',
+      'Privacidad',
+      'Cuenta y seguridad',
+      'Dispositivos',
+      'Apariencia',
+      'Idioma',
+      'Avanzado',
+    ]);
+    expect(
+      tester.widget<ListRow>(find.ancestor(of: find.text('Dispositivos'), matching: find.byType(ListRow))).value,
+      '2',
+    );
     final idioma = tester.widget<ListRow>(find.ancestor(of: find.text('Idioma'), matching: find.byType(ListRow)));
     expect(idioma.value, 'Español');
   });
