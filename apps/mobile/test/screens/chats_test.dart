@@ -24,7 +24,7 @@ void main() {
 
   testWidgets('says "Conectando…" in place of the title while not connected, with no status pill', (tester) async {
     final app = await pumpApp(tester);
-    app.engine.setConnection(ConnectionStatus.connecting);
+    app.engine.setNetwork(const NetworkState.connecting());
     await tester.pumpAndSettle();
     final title = find.descendant(of: find.byType(LargeTitleBar), matching: find.text('Conectando…'));
     expect(title, findsOneWidget);
@@ -32,7 +32,7 @@ void main() {
     expect(find.descendant(of: find.byType(LargeTitleBar), matching: find.text('Chats')), findsNothing);
     expect(find.textContaining('Conectado'), findsNothing);
 
-    app.engine.setConnection(ConnectionStatus.connected);
+    app.engine.setNetwork(const NetworkState.connected());
     await tester.pumpAndSettle();
     expect(find.descendant(of: find.byType(LargeTitleBar), matching: find.text('Chats')), findsOneWidget);
   });

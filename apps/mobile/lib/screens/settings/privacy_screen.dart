@@ -1,4 +1,5 @@
-// Privacidad: Tor, and the warning before a call that shows your IP.
+// Privacidad: how Trino stays connected. Tor is always on and calls go
+// through the call server, so there is nothing to switch for them.
 import 'package:flutter/material.dart';
 
 import '../../app/scope.dart';
@@ -20,16 +21,16 @@ class PrivacyScreen extends StatelessWidget {
             children: [
               const SizedBox(height: 8),
               SwitchRow(
-                title: l10n.privacyTor,
-                description: l10n.privacyTorDesc,
-                value: settings.hideIpWithTor,
-                onChanged: (on) => update((current) => current.copyWith(hideIpWithTor: on)),
+                title: l10n.privacyKeepConnected,
+                description: l10n.privacyKeepConnectedDesc,
+                value: settings.keepConnectedInBackground,
+                onChanged: (on) => update((current) => current.copyWith(keepConnectedInBackground: on)),
               ),
               SwitchRow(
-                title: l10n.privacyCallWarning,
-                description: l10n.privacyCallWarningDesc,
-                value: settings.warnBeforeDirectCall,
-                onChanged: (on) => update((current) => current.copyWith(warnBeforeDirectCall: on)),
+                title: l10n.privacyConnectAfterUnlock,
+                description: l10n.privacyConnectAfterUnlockDesc,
+                value: settings.connectAfterUnlockOnly,
+                onChanged: (on) => update((current) => current.copyWith(connectAfterUnlockOnly: on)),
               ),
             ],
           ),

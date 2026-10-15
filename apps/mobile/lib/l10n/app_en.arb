@@ -106,10 +106,10 @@
   "notifMuteGroups": "Mute groups by default",
   "notifMuteGroupsDesc": "New groups won't make notifications ring.",
 
-  "privacyTor": "Hide my IP with Tor",
-  "privacyTorDesc": "Relays and file servers don't see your IP address.",
-  "privacyCallWarning": "Warn me before a call that shows my IP",
-  "privacyCallWarningDesc": "Once per contact.",
+  "privacyKeepConnected": "Stay connected with Trino closed",
+  "privacyKeepConnectedDesc": "That way messages reach you with the app closed. Android shows a fixed notification, and it uses more battery and data.",
+  "privacyConnectAfterUnlock": "Connect only after unlocking",
+  "privacyConnectAfterUnlockDesc": "Trino takes a bit longer to open, but it doesn't connect while it's locked.",
 
   "securityTwoStep": "Two-step verification",
   "twoStepOn": "On",

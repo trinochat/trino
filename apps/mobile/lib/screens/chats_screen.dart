@@ -29,7 +29,7 @@ class ChatsScreen extends StatefulWidget {
 
 class _ChatsScreenState extends State<ChatsScreen> {
   late final TrinoEngine _engine = context.engine;
-  late final Stream<ConnectionStatus> _connection = _engine.connection;
+  late final Stream<NetworkState> _network = _engine.network;
   late final Stream<List<ChatSummary>> _chats = _engine.chats;
   final _search = TextEditingController();
   var _filter = ChatFilter.all;
@@ -63,10 +63,10 @@ class _ChatsScreenState extends State<ChatsScreen> {
       bottom: false,
       child: Column(
         children: [
-          StreamBuilder<ConnectionStatus>(
-            stream: _connection,
+          StreamBuilder<NetworkState>(
+            stream: _network,
             builder: (context, snapshot) => LargeTitleBar(
-              title: snapshot.data == ConnectionStatus.connecting ? l10n.connecting : l10n.chatsTitle,
+              title: snapshot.data?.status == NetworkStatus.connecting ? l10n.connecting : l10n.chatsTitle,
               live: true,
               actions: [
                 TrinoIconButton(

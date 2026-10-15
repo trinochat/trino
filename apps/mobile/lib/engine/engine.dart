@@ -17,7 +17,53 @@ enum IdentityState {
 /// Why the app is locked, for the unlock screen.
 enum LockReason { coldStart, manual, idle }
 
-enum ConnectionStatus { connecting, connected }
+/// Where the connection to the network stands, said in words on screen.
+/// Trino always connects through Tor unless the user asks otherwise.
+enum NetworkStatus {
+  /// Opening the private connection, with [NetworkState.progress].
+  connecting,
+
+  /// Connected privately, through Tor.
+  connected,
+
+  /// The private connection did not open; [NetworkState.problem] says why
+  /// when the engine knows.
+  failed,
+
+  /// There is no internet: waiting for it to come back.
+  offline,
+
+  /// Connected without Tor because the user asked, only until the app closes.
+  /// Never remembered: the next start is private again.
+  unprotected,
+}
+
+/// Why the private connection failed.
+enum NetworkProblem {
+  /// The network does not allow Tor.
+  blocked,
+
+  /// The phone's time is wrong, and Tor cannot connect with it.
+  clock,
+}
+
+/// How Trino reaches Tor when the network blocks it.
+enum BridgeMode {
+  /// Asks the Tor Project what works in this country. The default.
+  automatic,
+
+  /// The bridges Trino brings: they work if Tor is blocked, but do not hide
+  /// that you use it.
+  snowflake,
+  obfs4,
+
+  /// A bridge code someone gave you.
+  custom,
+}
+
+/// How often the passphrase (and the 2FA code) is asked even with biometric
+/// unlock. There is no "never": a forgotten passphrase cannot be recovered.
+enum ReaskInterval { day, threeDays, week }
 
 /// Whether the user compared keys with a contact.
 enum Trust { verified, unverified, keyChanged }
@@ -234,6 +280,61 @@ class TotpSetup {
 }
 
 @immutable
+class NetworkState {
+  const NetworkState({required this.status, this.progress = 0, this.problem, this.tryingAnotherWay = false});
+
+  const NetworkState.connecting([int progress = 0]) : this(status: NetworkStatus.connecting, progress: progress);
+  const NetworkState.connected() : this(status: NetworkStatus.connected);
+  const NetworkState.failed([NetworkProblem? problem]) : this(status: NetworkStatus.failed, problem: problem);
+  const NetworkState.offline() : this(status: NetworkStatus.offline);
+  const NetworkState.unprotected() : this(status: NetworkStatus.unprotected);
+
+  final NetworkStatus status;
+
+  /// From 0 to 100 while [NetworkStatus.connecting].
+  final int progress;
+
+  /// With [NetworkStatus.failed]: why, if known.
+  final NetworkProblem? problem;
+
+  /// The automatic search for a bridge is running ("Probando otra forma de
+  /// conectarse").
+  final bool tryingAnotherWay;
+
+  NetworkState copyWith({bool? tryingAnotherWay}) => NetworkState(
+    status: status,
+    progress: progress,
+    problem: problem,
+    tryingAnotherWay: tryingAnotherWay ?? this.tryingAnotherWay,
+  );
+
+  @override
+  bool operator ==(Object other) =>
+      other is NetworkState &&
+      other.status == status &&
+      other.progress == progress &&
+      other.problem == problem &&
+      other.tryingAnotherWay == tryingAnotherWay;
+
+  @override
+  int get hashCode => Object.hash(status, progress, problem, tryingAnotherWay);
+
+  @override
+  String toString() => 'NetworkState($status, $progress%, $problem, tryingAnotherWay: $tryingAnotherWay)';
+}
+
+@immutable
+class BridgeSettings {
+  const BridgeSettings({this.mode = BridgeMode.automatic, this.hasCustomBridge = false});
+
+  final BridgeMode mode;
+
+  /// A bridge code is stored, protected with the passphrase. The app never
+  /// reads it back.
+  final bool hasCustomBridge;
+}
+
+@immutable
 class RelayStatus {
   const RelayStatus({required this.url, required this.connected});
 
@@ -247,41 +348,70 @@ class EngineSettings {
     this.notificationPreview = NotificationPreview.nameOnly,
     this.messageSound = true,
     this.muteGroups = false,
-    this.hideIpWithTor = true,
-    this.warnBeforeDirectCall = true,
     this.autoLockMinutes = 5,
     this.diagnosticLog = false,
+    this.keepConnectedInBackground = true,
+    this.connectAfterUnlockOnly = false,
+    this.biometricUnlock = false,
+    this.reaskInterval = ReaskInterval.threeDays,
+    this.reinforcedProtection = false,
   });
 
   final NotificationPreview notificationPreview;
   final bool messageSound;
   final bool muteGroups;
-  final bool hideIpWithTor;
 
-  /// Ask before a call that shows your IP to the other person.
-  final bool warnBeforeDirectCall;
-
-  /// Null: never.
+  /// Locks after this long without use. Null: never. Separate from
+  /// [reaskInterval].
   final int? autoLockMinutes;
   final bool diagnosticLog;
+
+  /// Stays connected with the app closed, so messages arrive (Android shows
+  /// a fixed notification, and it costs battery and data). On by default.
+  final bool keepConnectedInBackground;
+
+  /// Does not connect while locked. Always on with a custom bridge.
+  final bool connectAfterUnlockOnly;
+
+  /// Unlocks with the fingerprint or the face between passphrase asks.
+  /// Always off with [reinforcedProtection].
+  final bool biometricUnlock;
+  final ReaskInterval reaskInterval;
+
+  /// Always asks for the passphrase: biometric unlock is not offered.
+  final bool reinforcedProtection;
 
   EngineSettings copyWith({
     NotificationPreview? notificationPreview,
     bool? messageSound,
     bool? muteGroups,
-    bool? hideIpWithTor,
-    bool? warnBeforeDirectCall,
     int? Function()? autoLockMinutes,
     bool? diagnosticLog,
+    bool? keepConnectedInBackground,
+    bool? connectAfterUnlockOnly,
+    bool? biometricUnlock,
+    ReaskInterval? reaskInterval,
+    bool? reinforcedProtection,
   }) => EngineSettings(
     notificationPreview: notificationPreview ?? this.notificationPreview,
     messageSound: messageSound ?? this.messageSound,
     muteGroups: muteGroups ?? this.muteGroups,
-    hideIpWithTor: hideIpWithTor ?? this.hideIpWithTor,
-    warnBeforeDirectCall: warnBeforeDirectCall ?? this.warnBeforeDirectCall,
     autoLockMinutes: autoLockMinutes == null ? this.autoLockMinutes : autoLockMinutes(),
     diagnosticLog: diagnosticLog ?? this.diagnosticLog,
+    keepConnectedInBackground: keepConnectedInBackground ?? this.keepConnectedInBackground,
+    connectAfterUnlockOnly: connectAfterUnlockOnly ?? this.connectAfterUnlockOnly,
+    biometricUnlock: biometricUnlock ?? this.biometricUnlock,
+    reaskInterval: reaskInterval ?? this.reaskInterval,
+    reinforcedProtection: reinforcedProtection ?? this.reinforcedProtection,
   );
+}
+
+/// A bridge code that is not one.
+class InvalidBridgeCode implements Exception {
+  const InvalidBridgeCode();
+
+  @override
+  String toString() => 'InvalidBridgeCode';
 }
 
 /// A contact code that is not one.
@@ -312,12 +442,44 @@ abstract interface class TrinoEngine {
   /// Deletes the identity, the chats and the contacts from this phone.
   Future<void> wipe();
 
-  // Network, profile and settings.
-  Stream<ConnectionStatus> get connection;
+  // Network.
+
+  /// The current state first, then each change.
+  Stream<NetworkState> get network;
+
+  /// Tries the private connection again.
+  Future<void> retryConnection();
+
+  /// Starts the automatic bridge search ([BridgeMode.automatic]) and connects
+  /// through what it finds.
+  Future<void> tryAnotherWay();
+
+  /// Connects without Tor until the app closes. Never remembered.
+  Future<void> connectUnprotected();
+
+  /// Leaves [NetworkStatus.unprotected] and connects through Tor again.
+  Future<void> reconnectPrivately();
+  Stream<BridgeSettings> get bridges;
+
+  /// [BridgeMode.custom] needs a code from [setCustomBridge] first.
+  Future<void> setBridgeMode(BridgeMode mode);
+
+  /// Stores the code, switches to [BridgeMode.custom] and turns on
+  /// [EngineSettings.connectAfterUnlockOnly]. Throws [InvalidBridgeCode].
+  Future<void> setCustomBridge(String code);
+
+  /// Forgets the code; with [BridgeMode.custom], back to automatic.
+  Future<void> removeCustomBridge();
+
+  // Profile and settings.
   Stream<List<RelayStatus>> get relays;
   Stream<Profile> get profile;
   Future<void> setName(String name);
   Stream<EngineSettings> get settings;
+
+  /// The engine keeps the rules: a custom bridge forces
+  /// [EngineSettings.connectAfterUnlockOnly] on, and reinforced protection
+  /// forces [EngineSettings.biometricUnlock] off.
   Future<void> updateSettings(EngineSettings settings);
 
   // Contacts and chats.

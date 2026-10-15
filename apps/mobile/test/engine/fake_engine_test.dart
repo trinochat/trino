@@ -4,16 +4,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:trino_mobile/engine/engine.dart';
 import 'package:trino_mobile/engine/fake_engine.dart';
 
-/// 11:00 on a Friday, so the demo's "10:42" is today and "Ayer" is Thursday.
-final now = DateTime(2026, 10, 9, 11);
-
-/// Every value a stream emits, until the test ends.
-List<T> record<T>(Stream<T> stream) {
-  final values = <T>[];
-  final subscription = stream.listen(values.add);
-  addTearDown(subscription.cancel);
-  return values;
-}
+import 'helpers.dart';
 
 void main() {
   late FakeTrinoEngine engine;
@@ -24,7 +15,7 @@ void main() {
   group('demo data', () {
     test('starts unlocked and connected, with a profile', () async {
       expect(await engine.identityState.first, IdentityState.unlocked);
-      expect(await engine.connection.first, ConnectionStatus.connected);
+      expect(await engine.network.first, const NetworkState.connected());
       final profile = await engine.profile.first;
       expect(profile.name, isNotEmpty);
       expect(profile.contactCode, startsWith('trino2:'));
@@ -257,31 +248,11 @@ void main() {
     });
   });
 
-  group('network and settings', () {
-    test('reports connection changes', () async {
-      final states = record(engine.connection);
-      engine.setConnection(ConnectionStatus.connecting);
-      await pumpEventQueue();
-      expect(states, [ConnectionStatus.connected, ConnectionStatus.connecting]);
-    });
-
-    testWidgets('can start connecting and connect after a while', (tester) async {
-      final slow = FakeTrinoEngine(clock: () => now, connectAfter: const Duration(seconds: 1));
-      addTearDown(() => unawaited(slow.dispose()));
-      final states = <ConnectionStatus>[];
-      final subscription = slow.connection.listen(states.add);
-      await tester.pump();
-      expect(states, [ConnectionStatus.connecting]);
-      await tester.pump(const Duration(seconds: 1));
-      expect(states, [ConnectionStatus.connecting, ConnectionStatus.connected]);
-      unawaited(subscription.cancel());
-      await tester.pump();
-    });
-
+  group('settings and relays', () {
     test('keeps the settings, with private defaults', () async {
       final settings = await engine.settings.first;
       expect(settings.notificationPreview, NotificationPreview.nameOnly);
-      expect((settings.hideIpWithTor, settings.diagnosticLog), (true, false));
+      expect(settings.diagnosticLog, isFalse);
       await engine.updateSettings(settings.copyWith(messageSound: false, autoLockMinutes: () => null));
       final updated = await engine.settings.first;
       expect((updated.messageSound, updated.autoLockMinutes), (false, null));

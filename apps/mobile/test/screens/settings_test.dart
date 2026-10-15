@@ -92,13 +92,25 @@ void main() {
     expect((settings!.notificationPreview, settings.messageSound), (NotificationPreview.nothing, false));
   });
 
-  testWidgets('Privacidad: Tor on by default, and the warning before a direct call', (tester) async {
-    await pumpApp(tester);
+  testWidgets('Privacidad: staying connected with Trino closed on, connecting only after unlocking off', (
+    tester,
+  ) async {
+    final app = await pumpApp(tester);
     await openTab(tester, 'Ajustes');
     await openSection(tester, 'Privacidad');
-    final tor = find.ancestor(of: find.text('Ocultar mi IP con Tor'), matching: find.byType(SwitchRow));
-    expect(tester.getSemantics(tor), isSemantics(isToggled: true));
-    expect(find.text('Avisarme antes de una llamada que muestra mi IP'), findsOneWidget);
+    final keep = find.ancestor(of: find.text('Seguir conectado con Trino cerrado'), matching: find.byType(SwitchRow));
+    expect(tester.getSemantics(keep), isSemantics(isToggled: true));
+    final afterUnlock = find.ancestor(
+      of: find.text('Conectarse solo después de desbloquear'),
+      matching: find.byType(SwitchRow),
+    );
+    expect(tester.getSemantics(afterUnlock), isSemantics(isToggled: false));
+    expect(find.text('Ocultar mi IP con Tor'), findsNothing);
+
+    await tester.tap(afterUnlock);
+    await tester.pumpAndSettle();
+    final settings = await tester.runAsync(() => app.engine.settings.first);
+    expect(settings!.connectAfterUnlockOnly, isTrue);
   });
 
   testWidgets('Seguridad: 2FA state, auto-lock choice, and "Bloquear ahora" locks', (tester) async {

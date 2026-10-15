@@ -9,28 +9,27 @@ class FakeTrinoEngine implements TrinoEngine {
   /// [onboarded] false starts at the first run; the demo contacts and chats
   /// appear once the identity is created. [locked] starts at the unlock
   /// screen, as after a restart. [connectAfter] starts connecting and connects
-  /// after that long; [sendDelay] is how long a message shows as sending;
+  /// after that long, as do retrying and the other network calls (without it
+  /// they connect at once); [sendDelay] is how long a message shows as sending;
   /// [callStartsAt] is the time a new call shows.
   FakeTrinoEngine({
     DateTime Function()? clock,
     bool onboarded = true,
     bool locked = false,
-    Duration? connectAfter,
+    this.connectAfter,
     this.sendDelay = Duration.zero,
     this.callStartsAt = Duration.zero,
   }) : _clock = clock ?? DateTime.now,
        _identityState = _Live(
          onboarded ? (locked ? IdentityState.locked : IdentityState.unlocked) : IdentityState.needsOnboarding,
        ),
-       _connection = _Live(connectAfter == null ? ConnectionStatus.connected : ConnectionStatus.connecting) {
+       _network = _Live(connectAfter == null ? const NetworkState.connected() : const NetworkState.connecting()) {
     if (onboarded) {
       _passphrase = demoPassphrase;
       _profile.value = _demoProfile(demoName);
       _seedDemo();
     }
-    if (connectAfter != null) {
-      _timers.add(Timer(connectAfter, () => _connection.value = ConnectionStatus.connected));
-    }
+    if (connectAfter != null) _connect();
     _call.onActive = _updateCallTimer;
   }
 
@@ -41,17 +40,19 @@ class FakeTrinoEngine implements TrinoEngine {
   static const demoTotpCode = '123456';
   static const demoName = 'Sofía';
 
+  final Duration? connectAfter;
   final Duration sendDelay;
   final Duration callStartsAt;
   final DateTime Function() _clock;
 
   final _Live<IdentityState> _identityState;
-  final _Live<ConnectionStatus> _connection;
+  final _Live<NetworkState> _network;
   final _profile = _Live<Profile?>(null);
   final _contacts = _Live<List<Contact>>(const []);
   final _chats = _Live<List<ChatSummary>>(const []);
   final _call = _Live<CallSession?>(null);
   final _settings = _Live(const EngineSettings());
+  final _bridges = _Live(const BridgeSettings());
   final _relays = _Live(const [
     RelayStatus(url: 'wss://relay.damus.io', connected: true),
     RelayStatus(url: 'wss://nos.lol', connected: true),
@@ -60,6 +61,7 @@ class FakeTrinoEngine implements TrinoEngine {
   final _messages = <String, _Live<List<ChatMessage>>>{};
   final _rooms = <String, _Room>{};
   final _timers = <Timer>{};
+  final _networkTimers = <Timer>{};
   Timer? _callTimer;
 
   String? _passphrase;
@@ -179,13 +181,67 @@ class FakeTrinoEngine implements TrinoEngine {
     _identityState.value = IdentityState.needsOnboarding;
   }
 
-  // Network, profile and settings.
+  // Network.
 
   @override
-  Stream<ConnectionStatus> get connection => _connection.stream;
+  Stream<NetworkState> get network => _network.stream;
 
   /// For tests and demos: the network comes and goes.
-  void setConnection(ConnectionStatus status) => _connection.value = status;
+  void setNetwork(NetworkState state) {
+    _cancelNetworkTimers();
+    _network.value = state;
+  }
+
+  @override
+  Future<void> retryConnection() async => _connect();
+
+  @override
+  Future<void> tryAnotherWay() async {
+    _bridges.value = BridgeSettings(hasCustomBridge: _bridges.value.hasCustomBridge);
+    _connect(tryingAnotherWay: true);
+  }
+
+  @override
+  Future<void> connectUnprotected() async => setNetwork(const NetworkState.unprotected());
+
+  @override
+  Future<void> reconnectPrivately() async => _connect();
+
+  @override
+  Stream<BridgeSettings> get bridges => _bridges.stream;
+
+  @override
+  Future<void> setBridgeMode(BridgeMode mode) async {
+    final hasCustom = _bridges.value.hasCustomBridge;
+    if (mode == BridgeMode.custom && !hasCustom) throw StateError('Set a bridge code first');
+    _bridges.value = BridgeSettings(mode: mode, hasCustomBridge: hasCustom);
+  }
+
+  /// One bridge per line: a transport and an address, or just an address.
+  static final _bridgeLine = RegExp(
+    r'^((obfs4|webtunnel|snowflake|meek_lite|conjure)\s+)?(\[[0-9a-fA-F:]+\]|\d{1,3}(\.\d{1,3}){3}):\d{1,5}(\s+\S+)*$',
+  );
+
+  @override
+  Future<void> setCustomBridge(String code) async {
+    final lines = [
+      for (final line in code.split('\n'))
+        if (line.trim().isNotEmpty) line.trim(),
+    ];
+    if (lines.isEmpty || !lines.every(_bridgeLine.hasMatch)) throw const InvalidBridgeCode();
+    // The real engine stores the code protected with the passphrase; the demo
+    // only remembers that there is one.
+    _bridges.value = const BridgeSettings(mode: BridgeMode.custom, hasCustomBridge: true);
+    _settings.value = _withRules(_settings.value);
+  }
+
+  @override
+  Future<void> removeCustomBridge() async {
+    final mode = _bridges.value.mode == BridgeMode.custom ? BridgeMode.automatic : _bridges.value.mode;
+    _bridges.value = BridgeSettings(mode: mode);
+  }
+
+  // Profile and settings.
 
   @override
   Stream<List<RelayStatus>> get relays => _relays.stream;
@@ -203,7 +259,12 @@ class FakeTrinoEngine implements TrinoEngine {
   Stream<EngineSettings> get settings => _settings.stream;
 
   @override
-  Future<void> updateSettings(EngineSettings settings) async => _settings.value = settings;
+  Future<void> updateSettings(EngineSettings settings) async => _settings.value = _withRules(settings);
+
+  EngineSettings _withRules(EngineSettings settings) => settings.copyWith(
+    connectAfterUnlockOnly: settings.connectAfterUnlockOnly || _bridges.value.hasCustomBridge,
+    biometricUnlock: settings.biometricUnlock && !settings.reinforcedProtection,
+  );
 
   // Contacts and chats.
 
@@ -357,8 +418,9 @@ class FakeTrinoEngine implements TrinoEngine {
       timer.cancel();
     }
     _timers.clear();
+    _cancelNetworkTimers();
     _callTimer?.cancel();
-    for (final live in [_identityState, _connection, _profile, _contacts, _chats, _call, _settings, _relays]) {
+    for (final live in [_identityState, _network, _profile, _contacts, _chats, _call, _settings, _bridges, _relays]) {
       live.close();
     }
     for (final live in _messages.values) {
@@ -367,6 +429,41 @@ class FakeTrinoEngine implements TrinoEngine {
   }
 
   // Internals.
+
+  /// Connects through Tor: from 0 %, halfway at 50 %, then connected. When
+  /// [tryingAnotherWay], the failure stays on screen while the search runs.
+  void _connect({bool tryingAnotherWay = false}) {
+    _cancelNetworkTimers();
+    final current = _network.value;
+    _network.value = tryingAnotherWay
+        ? (current.status == NetworkStatus.failed
+              ? current.copyWith(tryingAnotherWay: true)
+              : const NetworkState(status: NetworkStatus.connecting, tryingAnotherWay: true))
+        : const NetworkState.connecting();
+    final after = connectAfter;
+    if (after == null) {
+      _networkLater(Duration.zero, () => _network.value = const NetworkState.connected());
+      return;
+    }
+    if (!tryingAnotherWay) _networkLater(after ~/ 2, () => _network.value = const NetworkState.connecting(50));
+    _networkLater(after, () => _network.value = const NetworkState.connected());
+  }
+
+  void _networkLater(Duration delay, void Function() action) {
+    late final Timer timer;
+    timer = Timer(delay, () {
+      _networkTimers.remove(timer);
+      action();
+    });
+    _networkTimers.add(timer);
+  }
+
+  void _cancelNetworkTimers() {
+    for (final timer in _networkTimers) {
+      timer.cancel();
+    }
+    _networkTimers.clear();
+  }
 
   void _updateCall(CallSession Function(CallSession) change) {
     final call = _call.value;
