@@ -1,5 +1,6 @@
 // The four tabs: Chats, Llamadas, Contactos and Ajustes, with the bottom bar.
 // Llamadas counts the missed calls not seen yet; looking at it clears them.
+// The inbox's "Ver qué hacer" opens "No se pudo conectar".
 import 'dart:async';
 
 import 'package:flutter/material.dart';
@@ -11,6 +12,7 @@ import '../ui/bottom_tabs.dart';
 import 'add_contact_screen.dart';
 import 'calls_screen.dart';
 import 'chats_screen.dart';
+import 'connection/connection_failed_screen.dart';
 import 'contacts_screen.dart';
 import 'settings_screen.dart';
 
@@ -81,7 +83,12 @@ class _HomeShellState extends State<HomeShell> {
     return Scaffold(
       body: IndexedStack(
         index: _tab,
-        children: const [ChatsScreen(), CallsScreen(), ContactsScreen(), SettingsScreen()],
+        children: [
+          ChatsScreen(onNetworkHelp: () => Navigator.of(context).push(ConnectionFailedScreen.route())),
+          const CallsScreen(),
+          const ContactsScreen(),
+          const SettingsScreen(),
+        ],
       ),
       bottomNavigationBar: BottomTabs(
         key: const ValueKey('bottom-tabs'),

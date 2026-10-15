@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:trino_mobile/screens/chats_screen.dart';
 import 'package:trino_mobile/screens/common.dart';
+import 'package:trino_mobile/screens/connection/connection_failed_screen.dart';
 import 'package:trino_mobile/ui/chat_row.dart';
 import 'package:trino_mobile/ui/text_field.dart';
 import 'package:trino_mobile/ui/underline_tabs.dart';
@@ -59,8 +60,7 @@ void main() {
       await expectLater(tester, meetsGuideline(androidTapTargetGuideline));
       await tester.tap(find.text('Ver qué hacer'));
       await tester.pumpAndSettle();
-      // The connection help comes with R1.6; until then the inbox says so.
-      expect(find.text('Aún no está disponible en esta versión.'), findsOneWidget);
+      expect(find.byType(ConnectionFailedScreen), findsOneWidget);
     });
 
     testWidgets('waiting for internet', (tester) async {

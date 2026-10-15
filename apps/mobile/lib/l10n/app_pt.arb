@@ -323,5 +323,21 @@
   "devicesNoteSelf": "Cada aparelho pode se desvincular sozinho. Seu computador, que guarda a chave da conta, pode remover qualquer um.",
   "devicesNoteLost": "Se você perder este celular, desvincule-o pelo seu computador. Quem estiver com ele deixa de receber suas mensagens novas, mas as que já estavam no celular continuam lá.",
 
-  "privacySubtitle": "Quando o Trino se conecta"
+  "privacySubtitle": "Quando o Trino se conecta",
+
+  "connectionTitle": "Conexão",
+  "netFailedTitle": "Não foi possível conectar",
+  "netFailedBlocked": "Parece que a rede onde você está não deixa usar o Tor.",
+  "netFailedClock": "A hora do seu celular está errada. Corrija nos ajustes do celular e tente de novo.",
+  "netFailedUnknown": "O Trino não conseguiu saber por quê. Pode ser a rede onde você está.",
+  "netFailedWhileOpen": "Você pode ler suas conversas. O que você enviar sai quando conectar, se deixar o Trino aberto.",
+  "netFailedEvenClosed": "Você pode ler suas conversas. O que você enviar sai quando conectar, mesmo se fechar o Trino.",
+  "netTryAnotherWay": "Tentar outra forma de se conectar",
+  "netRetry": "Tentar de novo",
+  "netConnectUnprotectedAsk": "Conectar sem proteção…",
+  "netConnectedPrivately": "Conectado de forma privada",
+  "netBackToChats": "Voltar às conversas",
+  "unprotectedTitle": "Conectar sem proteção?",
+  "unprotectedBody": "Só até você fechar o Trino. Seu provedor de internet e os servidores vão ver de onde você se conecta, e seu provedor vai ver que você usa o Trino.",
+  "unprotectedConfirm": "Conectar sem proteção"
 }

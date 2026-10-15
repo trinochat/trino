@@ -377,5 +377,28 @@
   "devicesNoteLost": "Si pierdes este celular, desvincúlalo desde tu computador. Quien lo tenga deja de recibir tus mensajes nuevos, pero los que ya estaban en el celular siguen ahí.",
 
   "privacySubtitle": "Cuándo se conecta Trino",
-  "@privacySubtitle": {"description": "Under Privacidad in Ajustes: what lives there today. Connection settings and blocked people may join it later."}
+  "@privacySubtitle": {"description": "Under Privacidad in Ajustes: what lives there today. Connection settings and blocked people may join it later."},
+
+  "connectionTitle": "Conexión",
+  "@connectionTitle": {"description": "The header of the connection screens: what to do when it fails, and Ajustes › Privacidad › Conexión."},
+  "netFailedTitle": "No se pudo conectar",
+  "netFailedBlocked": "Parece que la red donde estás no deja usar Tor.",
+  "netFailedClock": "La hora de tu celular está mal. Corrígela en los ajustes del celular y vuelve a intentar.",
+  "netFailedUnknown": "Trino no pudo saber por qué. Puede ser la red donde estás.",
+  "@netFailedUnknown": {"description": "The engine did not say why. Honest: no guess presented as fact."},
+  "netFailedWhileOpen": "Puedes leer tus chats. Lo que envíes sale cuando se conecte, si dejas Trino abierto.",
+  "@netFailedWhileOpen": {"description": "With \"Seguir conectado con Trino cerrado\" off, or with connecting only after unlocking on."},
+  "netFailedEvenClosed": "Puedes leer tus chats. Lo que envíes sale cuando se conecte, aunque cierres Trino.",
+  "@netFailedEvenClosed": {"description": "With \"Seguir conectado con Trino cerrado\" on (and not waiting for the unlock): it keeps trying with the app closed."},
+  "netTryAnotherWay": "Probar otra forma de conectarse",
+  "@netTryAnotherWay": {"description": "The automatic bridge search."},
+  "netRetry": "Volver a intentar",
+  "netConnectUnprotectedAsk": "Conectar sin protección…",
+  "@netConnectUnprotectedAsk": {"description": "Small and grey. The ellipsis: it asks before doing anything."},
+  "netConnectedPrivately": "Conectado de forma privada",
+  "netBackToChats": "Volver a los chats",
+  "unprotectedTitle": "¿Conectar sin protección?",
+  "unprotectedBody": "Solo hasta que cierres Trino. Tu proveedor de internet y los servidores verán desde dónde te conectas, y tu proveedor verá que usas Trino.",
+  "@unprotectedBody": {"description": "Asked every time; Cancelar is the primary button. Never remembered."},
+  "unprotectedConfirm": "Conectar sin protección"
 }

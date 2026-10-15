@@ -6,7 +6,8 @@ import '../design/icons.dart';
 import '../design/theme.dart';
 
 /// `secondary` by default, so a screen has to choose its one primary action.
-enum ButtonVariant { primary, secondary, ghost, danger }
+/// `quiet` is the small grey way out, such as "Conectar sin protección…".
+enum ButtonVariant { primary, secondary, ghost, quiet, danger }
 
 class TrinoButton extends StatelessWidget {
   const TrinoButton({
@@ -50,6 +51,7 @@ class TrinoButton extends StatelessWidget {
       ButtonVariant.primary => (t.accent, t.accentInk, null, FontWeight.w700),
       ButtonVariant.secondary => (null, t.ink, t.line, FontWeight.w600),
       ButtonVariant.ghost => (null, t.ink, null, FontWeight.w600),
+      ButtonVariant.quiet => (null, t.muted, null, FontWeight.w600),
       ButtonVariant.danger => (null, t.danger, t.danger, FontWeight.w700),
     };
     final enabled = onPressed != null && !loading;

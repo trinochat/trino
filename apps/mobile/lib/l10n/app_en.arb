@@ -323,5 +323,21 @@
   "devicesNoteSelf": "Each device can unlink itself. Your computer, which holds the account key, can remove any of them.",
   "devicesNoteLost": "If you lose this phone, unlink it from your computer. Whoever has it stops receiving your new messages, but the ones already on the phone stay there.",
 
-  "privacySubtitle": "When Trino connects"
+  "privacySubtitle": "When Trino connects",
+
+  "connectionTitle": "Connection",
+  "netFailedTitle": "Could not connect",
+  "netFailedBlocked": "It looks like the network you're on doesn't allow Tor.",
+  "netFailedClock": "Your phone's time is wrong. Fix it in your phone's settings and try again.",
+  "netFailedUnknown": "Trino couldn't tell why. It may be the network you're on.",
+  "netFailedWhileOpen": "You can read your chats. What you send goes out once it connects, if you leave Trino open.",
+  "netFailedEvenClosed": "You can read your chats. What you send goes out once it connects, even if you close Trino.",
+  "netTryAnotherWay": "Try another way to connect",
+  "netRetry": "Try again",
+  "netConnectUnprotectedAsk": "Connect without protection…",
+  "netConnectedPrivately": "Connected privately",
+  "netBackToChats": "Back to chats",
+  "unprotectedTitle": "Connect without protection?",
+  "unprotectedBody": "Only until you close Trino. Your internet provider and the servers will see where you connect from, and your provider will see that you use Trino.",
+  "unprotectedConfirm": "Connect without protection"
 }

@@ -17,7 +17,7 @@ void main() {
       expect(colorOfText(tester, 'Desbloquear'), t.accentInk);
     });
 
-    testWidgets('secondary and ghost write in ink on no fill; danger writes in danger', (tester) async {
+    testWidgets('secondary and ghost write in ink on no fill; quiet in muted; danger in danger', (tester) async {
       await pumpThemed(
         tester,
         Column(
@@ -26,6 +26,7 @@ void main() {
             TrinoButton(label: 'Cancelar', onPressed: () {}),
             TrinoButton(label: 'Ahora no', variant: ButtonVariant.ghost, onPressed: () {}),
             TrinoButton(label: 'No coinciden', variant: ButtonVariant.danger, onPressed: () {}),
+            TrinoButton(label: 'Conectar sin protección…', variant: ButtonVariant.quiet, onPressed: () {}),
           ],
         ),
       );
@@ -33,7 +34,8 @@ void main() {
       expect(colorOfText(tester, 'Cancelar'), t.ink);
       expect(colorOfText(tester, 'Ahora no'), t.ink);
       expect(colorOfText(tester, 'No coinciden'), t.danger);
-      for (final label in ['Cancelar', 'Ahora no', 'No coinciden']) {
+      expect(colorOfText(tester, 'Conectar sin protección…'), t.muted);
+      for (final label in ['Cancelar', 'Ahora no', 'No coinciden', 'Conectar sin protección…']) {
         expect(fillOf(tester, find.text(label)), anyOf(isNull, Colors.transparent), reason: label);
       }
     });
