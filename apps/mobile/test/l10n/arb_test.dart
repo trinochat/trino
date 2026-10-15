@@ -59,12 +59,19 @@ void main() {
 
   test('keeps the approved wording of the mobile mock', () {
     expect(spanish, containsPair('chatsTitle', 'Chats'));
-    expect(spanish, containsPair('connecting', 'Conectando…'));
+    expect(spanish, containsPair('netConnectingProgress', 'Conectando de forma privada… {progress} %'));
+    expect(spanish, containsPair('netFailed', 'No se pudo conectar.'));
+    expect(spanish, containsPair('netWhatToDo', 'Ver qué hacer'));
+    expect(spanish, containsPair('netOffline', 'Esperando internet…'));
+    expect(spanish, containsPair('netUnprotected', 'Sin protección hasta que cierres Trino'));
+    expect(spanish, containsPair('requestsRow', 'Solicitudes ({count})'));
     expect(spanish, containsPair('newChat', 'Nuevo chat'));
+    expect([spanish['filterAll'], spanish['filterUnread'], spanish['filterGroups']], ['Todos', 'No leídos', 'Grupos']);
     expect(
-      [spanish['filterAll'], spanish['filterUnread'], spanish['filterGroups'], spanish['filterRequests']],
-      ['Todos', 'No leídos', 'Grupos', 'Solicitudes'],
+      [spanish['callIncoming'], spanish['callOutgoing'], spanish['callMissed']],
+      ['Entrante', 'Saliente', 'Perdida'],
     );
+    expect(spanish, containsPair('callBack', 'Devolver la llamada a {name}'));
     expect(spanish, containsPair('draftPrefix', 'Borrador:'));
     expect(spanish, containsPair('keyCompareTitle', 'Compara estos emojis con {name}'));
     expect(spanish, containsPair('keyMatch', 'Coinciden'));

@@ -50,3 +50,11 @@ String _capitalized(String text) =>
 /// Short forms end in a dot in some languages ("mar.", "sept."): rows have
 /// no room for it.
 String _trimDot(String text) => text.endsWith('.') ? text.substring(0, text.length - 1) : text;
+
+/// How long a call lasted, in the history: "45 s", "4 min", "1 h 5 min".
+String formatCallLength(BuildContext context, Duration duration) {
+  final l10n = context.l10n;
+  if (duration.inMinutes < 1) return l10n.durationSeconds(duration.inSeconds);
+  if (duration.inHours < 1) return l10n.durationMinutes(duration.inMinutes);
+  return l10n.durationHours(duration.inHours, duration.inMinutes.remainder(60));
+}

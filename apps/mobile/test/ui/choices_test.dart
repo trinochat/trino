@@ -126,6 +126,26 @@ void main() {
       await expectLater(tester, meetsGuideline(labeledTapTargetGuideline));
     });
 
+    testWidgets('a tab can show a count, in numbers only, read with its phrase', (tester) async {
+      await pumpThemed(
+        tester,
+        BottomTabs(items: items, selected: 0, badges: const {1: (count: 3, label: '3 perdidas')}, onSelected: (_) {}),
+        center: false,
+      );
+      expect(find.text('3'), findsOneWidget);
+      expect(tester.getSemantics(find.text('Contactos')).label, contains('3 perdidas'));
+      expect(fillOf(tester, find.text('3')), tokensIn(tester).badge);
+    });
+
+    testWidgets('no count shows at zero', (tester) async {
+      await pumpThemed(
+        tester,
+        BottomTabs(items: items, selected: 0, badges: const {1: (count: 0, label: '0')}, onSelected: (_) {}),
+        center: false,
+      );
+      expect(find.text('0'), findsNothing);
+    });
+
     testWidgets('fits its labels at twice the text size', (tester) async {
       await pumpThemed(tester, BottomTabs(items: items, selected: 0, onSelected: (_) {}), textScale: 2, center: false);
       expect(tester.takeException(), isNull);

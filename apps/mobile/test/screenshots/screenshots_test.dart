@@ -96,6 +96,8 @@ void main() {
       await tester.tap(find.bySemanticsLabel('Volver'));
       await tester.pumpAndSettle();
 
+      await openTab(tester, 'Llamadas');
+      await shot(tester, '$name-12-calls');
       await openTab(tester, 'Contactos');
       await shot(tester, '$name-06-contacts');
       await openTab(tester, 'Ajustes');

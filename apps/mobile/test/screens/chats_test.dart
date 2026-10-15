@@ -11,30 +11,123 @@ import '../support/app_harness.dart';
 Finder rowOf(String name) => find.ancestor(of: find.text(name), matching: find.byType(ChatRow));
 
 void main() {
-  testWidgets('a large title, the new chat button, the search field and the text filters', (tester) async {
+  testWidgets('a large title with the search and new chat buttons, and the text filters', (tester) async {
     await pumpApp(tester);
     final title = find.descendant(of: find.byType(LargeTitleBar), matching: find.text('Chats'));
     expect(title, findsOneWidget);
     expect(tester.getSemantics(title), isSemantics(isHeader: true));
+    expect(find.bySemanticsLabel('Buscar'), findsOneWidget);
     expect(find.bySemanticsLabel('Nuevo chat'), findsOneWidget);
-    expect(tester.getSemantics(find.byType(TrinoTextField)).label, contains('Buscar chats'));
+    // The search field shows when asked for.
+    expect(find.byType(TrinoTextField), findsNothing);
     final tabs = tester.widget<UnderlineTabs>(find.byType(UnderlineTabs));
-    expect(tabs.labels, ['Todos', 'No leídos', 'Grupos', 'Solicitudes']);
+    expect(tabs.labels, ['Todos', 'No leídos', 'Grupos']);
   });
 
-  testWidgets('says "Conectando…" in place of the title while not connected, with no status pill', (tester) async {
-    final app = await pumpApp(tester);
-    app.engine.setNetwork(const NetworkState.connecting());
-    await tester.pumpAndSettle();
-    final title = find.descendant(of: find.byType(LargeTitleBar), matching: find.text('Conectando…'));
-    expect(title, findsOneWidget);
-    expect(tester.getSemantics(title), isSemantics(isLiveRegion: true));
-    expect(find.descendant(of: find.byType(LargeTitleBar), matching: find.text('Chats')), findsNothing);
-    expect(find.textContaining('Conectado'), findsNothing);
+  group('the network state, in one line of words under the title', () {
+    Future<TestApp> pumpWith(WidgetTester tester, NetworkState state) async {
+      final app = await pumpApp(tester);
+      app.engine.setNetwork(state);
+      await tester.pumpAndSettle();
+      return app;
+    }
 
-    app.engine.setNetwork(const NetworkState.connected());
-    await tester.pumpAndSettle();
-    expect(find.descendant(of: find.byType(LargeTitleBar), matching: find.text('Chats')), findsOneWidget);
+    testWidgets('connecting, with the progress, as a polite live region; the title stays', (tester) async {
+      await pumpWith(tester, const NetworkState.connecting(40));
+      const text = 'Conectando de forma privada… 40 %';
+      expect(find.text(text), findsOneWidget);
+      expect(tester.getSemantics(find.text(text)), isSemantics(isLiveRegion: true));
+      expect(colorOfText(tester, text), tokensIn(tester).muted);
+      expect(find.descendant(of: find.byType(LargeTitleBar), matching: find.text('Chats')), findsOneWidget);
+    });
+
+    testWidgets('connecting from zero says no number', (tester) async {
+      await pumpWith(tester, const NetworkState.connecting());
+      expect(find.text('Conectando de forma privada…'), findsOneWidget);
+    });
+
+    testWidgets('trying another way says so', (tester) async {
+      await pumpWith(tester, const NetworkState(status: NetworkStatus.failed, tryingAnotherWay: true));
+      expect(find.text('Probando otra forma de conectarse…'), findsOneWidget);
+      expect(find.text('Ver qué hacer'), findsNothing);
+    });
+
+    testWidgets('failed, with "Ver qué hacer" as a 48 dp button', (tester) async {
+      await pumpWith(tester, const NetworkState.failed(NetworkProblem.blocked));
+      expect(find.text('No se pudo conectar.'), findsOneWidget);
+      expect(tester.getSemantics(find.text('Ver qué hacer')), isSemantics(isButton: true, hasTapAction: true));
+      await expectLater(tester, meetsGuideline(androidTapTargetGuideline));
+      await tester.tap(find.text('Ver qué hacer'));
+      await tester.pumpAndSettle();
+      // The connection help comes with R1.6; until then the inbox says so.
+      expect(find.text('Aún no está disponible en esta versión.'), findsOneWidget);
+    });
+
+    testWidgets('waiting for internet', (tester) async {
+      await pumpWith(tester, const NetworkState.offline());
+      expect(find.text('Esperando internet…'), findsOneWidget);
+    });
+
+    testWidgets('unprotected, in the warning colour and bold', (tester) async {
+      await pumpWith(tester, const NetworkState.unprotected());
+      const text = 'Sin protección hasta que cierres Trino';
+      expect(find.text(text), findsOneWidget);
+      expect(colorOfText(tester, text), tokensIn(tester).warn);
+      expect(tester.widget<Text>(find.text(text)).style?.fontWeight, FontWeight.w700);
+    });
+
+    testWidgets('nothing once connected, and no pill or dot', (tester) async {
+      await pumpWith(tester, const NetworkState.connected());
+      expect(find.textContaining('Conect'), findsNothing);
+      expect(find.textContaining('protección'), findsNothing);
+    });
+  });
+
+  testWidgets('"Ver qué hacer" calls the inbox\'s callback when it has one', (tester) async {
+    final engine = testEngine()..setNetwork(const NetworkState.failed());
+    var asked = 0;
+    await pumpScreen(tester, ChatsScreen(onNetworkHelp: () => asked++), engine: engine);
+    await tester.tap(find.text('Ver qué hacer'));
+    expect(asked, 1);
+  });
+
+  group('the grey row of requests', () {
+    Finder row() => find.byKey(ChatsScreen.requestsRowKey);
+
+    testWidgets('above the chats: an inbox icon, "Solicitudes (n)" and a chevron, in muted, no dot', (tester) async {
+      await pumpApp(tester);
+      expect(find.descendant(of: row(), matching: find.text('Solicitudes (3)')), findsOneWidget);
+      expect(colorOfText(tester, 'Solicitudes (3)'), tokensIn(tester).muted);
+      final icons = tester.widgetList<TrinoIcon>(find.descendant(of: row(), matching: find.byType(TrinoIcon)));
+      expect(icons.map((icon) => icon.icon), [TrinoIcons.inbox, TrinoIcons.chevronRight]);
+      expect(tester.getTopLeft(row()).dy, lessThan(tester.getTopLeft(find.byType(ChatRow).first).dy));
+      expect(tester.getSemantics(row()), isSemantics(isButton: true, hasTapAction: true));
+      expect(tester.getSize(row()).height, greaterThanOrEqualTo(48));
+    });
+
+    testWidgets('changes with the requests and hides without any', (tester) async {
+      final app = await pumpApp(tester);
+      await app.engine.deleteRequest('req-ana');
+      await tester.pumpAndSettle();
+      expect(find.text('Solicitudes (2)'), findsOneWidget);
+      await app.engine.deleteRequest('req-mara');
+      await app.engine.deleteRequest('req-julian');
+      await tester.pumpAndSettle();
+      expect(row(), findsNothing);
+    });
+
+    testWidgets('shows only in Todos, and not while searching', (tester) async {
+      await pumpApp(tester);
+      await tester.tap(find.text('No leídos'));
+      await tester.pumpAndSettle();
+      expect(row(), findsNothing);
+      await tester.tap(find.text('Todos'));
+      await tester.tap(find.bySemanticsLabel('Buscar'));
+      await tester.pumpAndSettle();
+      await tester.enterText(find.byType(TextField), 'a');
+      await tester.pumpAndSettle();
+      expect(row(), findsNothing);
+    });
   });
 
   testWidgets('lists the demo chats: shield, preview, draft prefix, time and unread count', (tester) async {
@@ -59,7 +152,7 @@ void main() {
     expect((lucia.time, lucia.trust), ('Mar', null));
   });
 
-  testWidgets('filters: unread, groups, and requests (none yet)', (tester) async {
+  testWidgets('filters: unread and groups', (tester) async {
     await pumpApp(tester);
     List<String> names() => tester.widgetList<ChatRow>(find.byType(ChatRow)).map((row) => row.name).toList();
 
@@ -71,16 +164,6 @@ void main() {
     await tester.pumpAndSettle();
     expect(names(), ['Familia']);
 
-    // The tabs scroll sideways when they do not fit.
-    await tester.ensureVisible(find.text('Solicitudes'));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('Solicitudes'));
-    await tester.pumpAndSettle();
-    expect(names(), isEmpty);
-    expect(find.text('No hay chats en este filtro.'), findsOneWidget);
-
-    await tester.ensureVisible(find.text('Todos'));
-    await tester.pumpAndSettle();
     await tester.tap(find.text('Todos'));
     await tester.pumpAndSettle();
     expect(names(), hasLength(4));
@@ -88,12 +171,21 @@ void main() {
 
   testWidgets('search finds chats by name, ignoring case and accents', (tester) async {
     await pumpApp(tester);
+    await tester.tap(find.bySemanticsLabel('Buscar'));
+    await tester.pumpAndSettle();
+    expect(tester.getSemantics(find.byType(TrinoTextField)).label, contains('Buscar chats'));
     await tester.enterText(find.byType(TextField), 'lucia');
     await tester.pumpAndSettle();
     expect(tester.widgetList<ChatRow>(find.byType(ChatRow)).map((row) => row.name), ['Lucía']);
     await tester.enterText(find.byType(TextField), 'zz');
     await tester.pumpAndSettle();
     expect(find.text('Ningún chat coincide con tu búsqueda.'), findsOneWidget);
+
+    // Closing the search clears it.
+    await tester.tap(find.bySemanticsLabel('Cerrar la búsqueda'));
+    await tester.pumpAndSettle();
+    expect(find.byType(TrinoTextField), findsNothing);
+    expect(find.byType(ChatRow), findsNWidgets(4));
   });
 
   testWidgets('a new message moves its chat up and counts as unread', (tester) async {

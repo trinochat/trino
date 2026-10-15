@@ -62,6 +62,7 @@ class FakeTrinoEngine implements TrinoEngine {
   final _chats = _Live<List<ChatSummary>>(const []);
   final _call = _Live<CallSession?>(null);
   final _callHistory = _Live<List<CallRecord>>(const []);
+  final _unseenMissed = _Live<int>(0);
   final _requests = _Live<List<MessageRequest>>(const []);
   final _devices = _Live<List<LinkedDevice>>(const []);
   final _linking = _Live<LinkSession?>(null);
@@ -231,6 +232,7 @@ class FakeTrinoEngine implements TrinoEngine {
     _profile.value = null;
     _rooms.clear();
     _callHistory.value = const [];
+    _unseenMissed.value = 0;
     _requests.value = const [];
     _devices.value = const [];
     _cancelAll(_linkTimers);
@@ -467,6 +469,8 @@ class FakeTrinoEngine implements TrinoEngine {
           direction: CallDirection.missed,
           startedAt: callAt,
         ),
+        // The request already said they tried to call.
+        seen: true,
       );
     }
     return room.id;
@@ -640,6 +644,26 @@ class FakeTrinoEngine implements TrinoEngine {
   Stream<List<CallRecord>> get callHistory => _callHistory.stream;
 
   @override
+  Stream<int> get unseenMissedCalls => _unseenMissed.stream;
+
+  @override
+  Future<void> markCallsSeen() async => _unseenMissed.value = 0;
+
+  /// For tests and demos: [contactId] called now and nobody answered.
+  void missCall(String contactId) {
+    final contact = _contacts.value.firstWhere((c) => c.id == contactId);
+    _addCall(
+      CallRecord(
+        id: 'call-${_nextId++}',
+        contactId: contactId,
+        peerName: contact.name,
+        direction: CallDirection.missed,
+        startedAt: _clock(),
+      ),
+    );
+  }
+
+  @override
   Future<void> startCall(String contactId) async {
     if (_call.value != null) return;
     final contact = _contacts.value.firstWhere((c) => c.id == contactId);
@@ -686,8 +710,10 @@ class FakeTrinoEngine implements TrinoEngine {
   }
 
   /// Into the history, the latest first, and into the chat with the contact
-  /// if there is one, at the time the call started.
-  void _addCall(CallRecord record) {
+  /// if there is one, at the time the call started. A missed call counts as
+  /// unseen unless [seen].
+  void _addCall(CallRecord record, {bool seen = false}) {
+    if (record.direction == CallDirection.missed && !seen) _unseenMissed.value++;
     _callHistory.value = List.unmodifiable(
       <CallRecord>[record, ..._callHistory.value]..sort((a, b) => b.startedAt.compareTo(a.startedAt)),
     );
@@ -723,6 +749,7 @@ class FakeTrinoEngine implements TrinoEngine {
       _chats,
       _call,
       _callHistory,
+      _unseenMissed,
       _requests,
       _devices,
       _linking,
@@ -948,7 +975,8 @@ class FakeTrinoEngine implements TrinoEngine {
       call('ana', 'Ana Torres', CallDirection.outgoing, ago(24), 4),
       call('ana', 'Ana Torres', CallDirection.missed, ago(16)),
     ]) {
-      if (withChats) _addCall(record);
+      // Lucía's missed call is days old: already seen. Ana's is new.
+      if (withChats) _addCall(record, seen: record.contactId == 'lucia');
     }
 
     DateTime today(int hour, int minute) => daysAgo(0, hour, minute);

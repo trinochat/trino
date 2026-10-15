@@ -1,20 +1,32 @@
 // The app's bottom tabs: an icon and its label, the selected one in the accent
-// with a short bar above it, so the choice is not told by colour alone.
+// with a short bar above it, so the choice is not told by colour alone. A tab
+// can carry a count on its icon, such as the missed calls: numbers only.
 import 'dart:ui' show SemanticsRole;
 
 import 'package:flutter/material.dart';
 
 import '../design/icons.dart';
 import '../design/theme.dart';
+import 'unread_badge.dart';
 
 class BottomTabs extends StatelessWidget {
-  const BottomTabs({super.key, required this.items, required this.selected, required this.onSelected});
+  const BottomTabs({
+    super.key,
+    required this.items,
+    required this.selected,
+    required this.onSelected,
+    this.badges = const {},
+  });
 
   static const indicatorKey = ValueKey('bottom-tabs-indicator');
 
   final List<({TrinoIcons icon, String label})> items;
   final int selected;
   final ValueChanged<int> onSelected;
+
+  /// A count by tab index, and its phrase for screen readers; nothing shows
+  /// at 0.
+  final Map<int, ({int count, String label})> badges;
 
   @override
   Widget build(BuildContext context) {
@@ -53,7 +65,10 @@ class BottomTabs extends StatelessWidget {
                                   child: Column(
                                     mainAxisSize: MainAxisSize.min,
                                     children: [
-                                      TrinoIcon(items[index].icon, color: index == selected ? t.accentText : t.muted),
+                                      _iconWithBadge(
+                                        TrinoIcon(items[index].icon, color: index == selected ? t.accentText : t.muted),
+                                        badges[index],
+                                      ),
                                       const SizedBox(height: 4),
                                       Text(
                                         items[index].label,
@@ -100,6 +115,21 @@ class BottomTabs extends StatelessWidget {
           ),
         ),
       ),
+    );
+  }
+
+  Widget _iconWithBadge(Widget icon, ({int count, String label})? badge) {
+    if (badge == null || badge.count <= 0) return icon;
+    return Stack(
+      clipBehavior: Clip.none,
+      children: [
+        icon,
+        Positioned(
+          left: 14,
+          top: -8,
+          child: UnreadBadge(count: badge.count, semanticLabel: badge.label),
+        ),
+      ],
     );
   }
 }

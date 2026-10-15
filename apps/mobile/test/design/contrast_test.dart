@@ -47,6 +47,8 @@ const mobileTextPairs = <Pair>[
   ('danger', 'bg'), // "Colgar" under the hang-up button
   ('surface', 'danger'), // a solid danger button
   ('accentText', 'side'), // the selected tab of the bottom bar
+  ('warn', 'surface'), // "Sin protección…" under the Chats title, "Se parece a…" in a request
+  ('danger', 'side'), // a missed call's name on the bars' background
 ];
 
 /// Status indicators and control states (WCAG 1.4.11). `line` is decorative.

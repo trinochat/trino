@@ -51,6 +51,44 @@ void main() {
     });
   });
 
+  group('missed calls not yet seen', () {
+    test("the demo has one: the latest call from Ana; Lucía's was already seen", () async {
+      expect(await engine.unseenMissedCalls.first, 1);
+    });
+
+    test('a missed call adds one and goes first in the history; seeing the calls clears the count', () async {
+      final counts = record(engine.unseenMissedCalls);
+      engine.missCall('carlos');
+      await pumpEventQueue();
+      expect(counts.last, 2);
+      final latest = (await engine.callHistory.first).first;
+      expect((latest.contactId, latest.direction, latest.startedAt), ('carlos', CallDirection.missed, now));
+
+      await engine.markCallsSeen();
+      await pumpEventQueue();
+      expect(counts.last, 0);
+    });
+
+    test('calls you make or answer do not count', () async {
+      await engine.markCallsSeen();
+      await engine.startCall('papa');
+      await engine.hangUp();
+      expect(await engine.unseenMissedCalls.first, 0);
+    });
+
+    test('the attempt to call of an accepted request does not count: the request already said it', () async {
+      await engine.markCallsSeen();
+      await engine.acceptRequest('req-ana');
+      expect((await engine.callHistory.first).first.direction, CallDirection.missed);
+      expect(await engine.unseenMissedCalls.first, 0);
+    });
+
+    test('wiping the identity clears the count', () async {
+      await engine.wipe();
+      expect(await engine.unseenMissedCalls.first, 0);
+    });
+  });
+
   group('calls in the chat', () {
     test('show among the messages, in time order, without changing the chat preview', () async {
       final messages = await engine.messages('chat-ana').first;

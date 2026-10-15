@@ -57,4 +57,11 @@ void main() {
     expect(formatDuration(Duration.zero), '00:00');
     expect(formatDuration(const Duration(hours: 1, minutes: 2, seconds: 3)), '1:02:03');
   });
+
+  testWidgets('how long a call lasted, in the history: seconds, minutes, hours and minutes', (tester) async {
+    final context = await contextIn(tester, const Locale('es'));
+    expect(formatCallLength(context, const Duration(seconds: 45)), '45 s');
+    expect(formatCallLength(context, const Duration(minutes: 4, seconds: 59)), '4 min');
+    expect(formatCallLength(context, const Duration(hours: 1, minutes: 5)), '1 h 5 min');
+  });
 }

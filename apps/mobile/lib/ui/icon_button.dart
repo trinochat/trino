@@ -7,9 +7,10 @@ import '../design/theme.dart';
 
 /// `ghost` for header actions, `muted` for secondary tools such as the
 /// composer's, `secondary` outlined, `primary` for the one main action (send),
+/// `accent` for an action drawn in the accent without a fill (call back),
 /// `danger` for removals, and `dangerSolid` for hanging up: dangerBg on danger,
 /// which keeps 3:1 in every theme where white on danger does not.
-enum IconButtonVariant { ghost, muted, secondary, primary, danger, dangerSolid }
+enum IconButtonVariant { ghost, muted, secondary, primary, accent, danger, dangerSolid }
 
 class TrinoIconButton extends StatelessWidget {
   const TrinoIconButton({
@@ -54,6 +55,7 @@ class TrinoIconButton extends StatelessWidget {
             IconButtonVariant.muted => (null, t.muted, null),
             IconButtonVariant.secondary => (t.surface, t.ink, t.line),
             IconButtonVariant.primary => (t.accent, t.accentInk, null),
+            IconButtonVariant.accent => (null, t.accentText, null),
             IconButtonVariant.danger => (null, t.danger, null),
             IconButtonVariant.dangerSolid => (t.danger, t.dangerBg, null),
           };

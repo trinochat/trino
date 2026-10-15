@@ -30,6 +30,14 @@ void main() {
       expect(painterOf<TrinoIconPainter>(tester, find.byType(TrinoIcon)).color, t.accentInk);
     });
 
+    testWidgets('accent draws the icon in accentText, without a fill, as the call-back button', (tester) async {
+      await pumpThemed(
+        tester,
+        TrinoIconButton(icon: TrinoIcons.phone, label: 'Llamar', variant: IconButtonVariant.accent, onPressed: () {}),
+      );
+      expect(painterOf<TrinoIconPainter>(tester, find.byType(TrinoIcon)).color, tokensIn(tester).accentText);
+    });
+
     testWidgets('as a toggle it reports its state and turns accent when pressed', (tester) async {
       await pumpThemed(
         tester,

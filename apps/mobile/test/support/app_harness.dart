@@ -6,8 +6,10 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:trino_mobile/app/app.dart';
 import 'package:trino_mobile/app/language.dart';
+import 'package:trino_mobile/app/scope.dart';
 import 'package:trino_mobile/design/appearance.dart';
 import 'package:trino_mobile/engine/fake_engine.dart';
+import 'package:trino_mobile/l10n/app_localizations.dart';
 
 import 'harness.dart';
 
@@ -74,4 +76,33 @@ Future<void> openTab(WidgetTester tester, String label) async {
 Future<void> openChat(WidgetTester tester, String name) async {
   await tester.tap(find.text(name).first);
   await tester.pumpAndSettle();
+}
+
+/// Pumps one [screen] alone, with the app's scope, theme and language, for
+/// what the whole app cannot reach yet, such as a callback no screen passes.
+Future<FakeTrinoEngine> pumpScreen(WidgetTester tester, Widget screen, {FakeTrinoEngine? engine}) async {
+  usePhone(tester);
+  final fake = engine ?? testEngine();
+  final appearance = AppearanceController(const Appearance());
+  final language = LanguageController(const Locale('es'));
+  addTearDown(() => unawaited(fake.dispose()));
+  addTearDown(appearance.dispose);
+  addTearDown(language.dispose);
+  await tester.pumpWidget(
+    AppScope(
+      engine: fake,
+      appearance: appearance,
+      language: language,
+      clock: () => testNow,
+      child: MaterialApp(
+        theme: appearance.lightTheme,
+        locale: language.locale,
+        supportedLocales: AppLocalizations.supportedLocales,
+        localizationsDelegates: AppLocalizations.localizationsDelegates,
+        home: Scaffold(body: screen),
+      ),
+    ),
+  );
+  await tester.pumpAndSettle();
+  return fake;
 }

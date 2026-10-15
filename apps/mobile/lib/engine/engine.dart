@@ -782,6 +782,13 @@ abstract interface class TrinoEngine {
 
   /// Every call, the latest first. Hanging up adds one.
   Stream<List<CallRecord>> get callHistory;
+
+  /// How many missed calls came since the calls were last seen, for the
+  /// count on the Llamadas tab. The current count first, then each change.
+  Stream<int> get unseenMissedCalls;
+
+  /// The user saw the calls (the Llamadas tab): the count goes back to 0.
+  Future<void> markCallsSeen();
   Future<void> startCall(String contactId);
   Future<void> setMuted(bool muted);
   Future<void> setSpeaker(bool on);
