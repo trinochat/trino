@@ -31,3 +31,7 @@ Trino's own.
   `[patch.crates-io]` entry, and the smoke test must still pass on Windows.
   The patch only applies to version 0.5.0; a newer one in `Cargo.lock` makes
   cargo warn that the patch is unused, which is the cue to look again.
+- **Checked every month:** `.github/workflows/arti-monthly.yml` takes the
+  patch out of its own checkout on Windows, updates saturating-time as far
+  as Arti allows and runs the smoke test. Its summary says whether the patch
+  is still needed. It only reports; dropping the patch is a commit of ours.

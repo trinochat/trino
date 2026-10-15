@@ -1,0 +1,98 @@
+name: Arti, monthly
+
+# Tor design §6.6. Arti publishes at the start of each month and only its
+# latest version is kept up; a version left too far behind is shut out of
+# the network (docs/tor.md, "Arti obsoleto"). Once a month this checks:
+#
+#   1. whether crates.io has an arti-client newer than Cargo.lock's;
+#   2. whether Trino still needs its vendored saturating-time fix
+#      (vendor/README.md): on Windows, with the patch taken out of this
+#      runner's checkout only, does Arti start (the smoke test)?
+#
+# It only reports, in the run's summary. The token can only read: nothing
+# here commits, pushes, opens a pull request or an issue, or lands anything
+# on a branch. The last job fails when something needs a look, so GitHub
+# sends the usual notice of a failed scheduled run; that is not a bug.
+#
+# Scheduled workflows run from the default branch only, and GitHub pauses
+# them after 60 days without activity in the repository.
+
+on:
+  schedule:
+    # The 8th, after Arti's release at the start of the month.
+    - cron: "17 12 8 * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  versions:
+    name: Versions on crates.io
+    runs-on: ubuntu-latest
+    outputs:
+      json: ${{ steps.versions.outputs.json }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - id: versions
+        run: node scripts/arti-monthly.mjs versions >> "$GITHUB_OUTPUT"
+
+  patch:
+    name: Does Arti start on Windows without the patch?
+    runs-on: windows-latest
+    outputs:
+      smoke: ${{ steps.smoke.outcome }}
+      unpatched: ${{ steps.unpatched.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      # In this runner's checkout only: nothing is committed. The update
+      # takes the newest saturating-time this Arti accepts.
+      - name: Take the patch out
+        shell: bash
+        run: |
+          node scripts/arti-monthly.mjs drop-patch
+          cargo update -p saturating-time
+
+      - id: unpatched
+        shell: bash
+        run: echo "version=$(node scripts/arti-monthly.mjs locked saturating-time)" >> "$GITHUB_OUTPUT"
+
+      # Fails (in 5 s) when saturating-time's Windows loop is still there.
+      - id: smoke
+        name: Arti's smoke test, unpatched
+        continue-on-error: true
+        timeout-minutes: 45
+        run: cargo test -p trino-net --test arti_windows_smoke
+
+  report:
+    name: Report
+    needs: [versions, patch]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - run: node scripts/arti-monthly.mjs report
+        env:
+          VERSIONS: ${{ needs.versions.outputs.json }}
+          SMOKE: ${{ needs.patch.outputs.smoke }}
+          UNPATCHED: ${{ needs.patch.outputs.unpatched }}

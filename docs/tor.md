@@ -177,6 +177,30 @@ Tor, anota cuando Tor quedó listo y se borra al detenerlo bien o después de
 ya no arranca solo y el estado es `obsolete` sin confirmar ("Puede que…");
 `net_retry` lo intenta de nuevo.
 
+## La rutina de cada mes
+
+Arti publica a comienzos de cada mes y solo mantiene su última versión; una
+que se queda muy atrás termina como "Arti obsoleto". El día 8 de cada mes
+(o a mano, desde Actions), `.github/workflows/arti-monthly.yml`:
+
+1. compara el `arti-client` de `Cargo.lock` con el más nuevo de crates.io;
+2. en Windows, saca el parche de `saturating-time` de su propia copia del
+   repositorio, sube `saturating-time` hasta donde Arti lo permite y corre la
+   prueba de humo de Arti (`arti_windows_smoke`). Si pasa, el parche ya no
+   hace falta.
+
+Solo informa, en el resumen de la corrida: no hace commits, ni push, ni abre
+pull requests o issues, ni fusiona nada, y su token solo puede leer. Cuando hay
+algo que hacer, el último paso falla a propósito para que GitHub te avise.
+Los flujos programados solo corren desde la rama por defecto, así que
+empieza a funcionar cuando esto llegue a `main`.
+
+La subida misma la haces tú: `cargo upgrade` en `Cargo.toml` (no solo el
+lock), las pruebas, y la prueba de humo con la red real
+(`cargo test -p trino-net -- --ignored network_`). El reporte del error de
+`saturating-time` a Arti (por anonticket, pendiente de moderación) se revisa
+a mano.
+
 ## Relays por defecto
 
 nos.lol, relay.snort.social y nostr.mom: ninguno detrás de Cloudflare, que
