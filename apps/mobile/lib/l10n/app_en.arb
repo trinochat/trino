@@ -339,5 +339,25 @@
   "netBackToChats": "Back to chats",
   "unprotectedTitle": "Connect without protection?",
   "unprotectedBody": "Only until you close Trino. Your internet provider and the servers will see where you connect from, and your provider will see that you use Trino.",
-  "unprotectedConfirm": "Connect without protection"
+  "unprotectedConfirm": "Connect without protection",
+
+  "advancedOptions": "Advanced options",
+  "bridgesTitle": "Another way to connect",
+  "bridgesIntro": "If your network blocks Tor, Trino can get in through another door.",
+  "bridgesSearch": "Find a way that works here",
+  "bridgesSearchNote": "Trino asks the Tor Project what works in your country. They see where you connect from, but they aren't told that you use Trino.",
+  "bridgeAutomatic": "Automatic (recommended)",
+  "bridgeSnowflake": "Snowflake (built in)",
+  "bridgeObfs4": "obfs4 (built in)",
+  "bridgeCustom": "I have a code someone gave me",
+  "bridgeAutomaticShort": "Automatic",
+  "bridgeCustomShort": "A code you were given",
+  "bridgesBuiltInNote": "The ways Trino brings are known to anyone: they work if Tor is blocked, but they don't hide that you use it.",
+  "bridgeCodeField": "Paste the code here",
+  "bridgeCodeHelp": "Someone you trust can give it to you, or you can ask for one at bridges.torproject.org. It is stored protected with your password.",
+  "bridgeCodeSave": "Save the code",
+  "bridgeCodeInvalid": "That code doesn't work. Check that you copied all of it, just as you got it.",
+  "bridgeCodeStored": "You have a code saved, protected with your password.",
+  "bridgeCodeRemove": "Remove the code",
+  "bridgeCodeRemoved": "The code was removed."
 }
