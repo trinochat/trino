@@ -1,4 +1,4 @@
-# Tor en Trino (TOR-5, TOR-6, TOR-7, TOR-9 y TOR-10)
+# Tor en Trino (TOR-5 a TOR-10)
 
 Todo lo que Trino abre en la red, salvo el audio y el video de las llamadas,
 sale por Tor. Lo hace `crates/trino-net`, que no depende de Tauri: dentro va
@@ -107,12 +107,15 @@ defecto y lo técnico en "Opciones avanzadas".
   conectar." con "Ver qué hacer", o "Sin protección" mientras dure.
   Conectado, desaparece.
 - **No se pudo conectar**: el motivo en palabras sencillas, "Probar otra
-  forma de conectarse" (el primer integrado, Snowflake), "Volver a intentar",
+  forma de conectarse" (la búsqueda de la tarjeta 4), "Volver a intentar",
   y al final, pequeño, "Conectar sin protección…". Con la hora mal, solo
   "Volver a intentar".
-- **Ajustes › Privacidad › Conexión**: el estado, "Qué ven los demás",
-  "Buscar actualizaciones cada día" y, en "Opciones avanzadas",
-  "Conectarse solo después de desbloquear".
+- **Ajustes › Privacidad › Conexión**: el estado, "Qué ven los demás", "Si
+  en tu red bloquean Tor" (con la forma en uso: Automático, Snowflake, obfs4
+  o "Con un código"; nunca las líneas), "Buscar actualizaciones cada día" y,
+  en "Opciones avanzadas", "Conectarse solo después de desbloquear".
+- **Otra forma de conectarse** (tarjeta 4, TOR-8): ver "Las pantallas de los
+  puentes".
 - **Versión nueva** (tarjeta 8): un aviso compacto en la bandeja, bajo la
   línea de Tor, con una acción principal. "Instalar y reiniciar" y "Más
   tarde" cuando está lista; "Intentar de nuevo" si no se pudo descargar;
@@ -245,7 +248,7 @@ meek), del Proyecto Tor.
   toque queda en `settings.json` cuando Tor conecta por él. Nada cambia sin un
   toque: un arranque bloqueado sigue con su transporte.
 
-### Comandos (las pantallas son TOR-8)
+### Comandos
 
 | Comando | Qué hace |
 |---|---|
@@ -253,6 +256,43 @@ meek), del Proyecto Tor.
 | `net_bridges_check` (`text`) | Valida lo pegado sin guardar: cuántas líneas o los errores con su número de línea |
 | `net_bridges_set` (`choice`: `none`, `builtin` con `transport`, o `private` con `text`) | Guarda la elección y, si Tor estaba corriendo, lo arranca otra vez con ella. Con líneas malas no guarda nada |
 | `net_bridges_try` (`transport`) | "Probar con un puente": arranca otra vez por ese integrado y lo guarda si conecta. `net_retry` vuelve a lo guardado |
+
+### Las pantallas de los puentes (TOR-8)
+
+- **Una acción principal: "Buscar una forma que funcione aquí"**
+  (`src/screens/net/bridge-search.ts`). Prueba los integrados en el orden que
+  da el backend, Snowflake y después obfs4, con `net_bridges_try`, y se
+  detiene en el primero por el que Tor queda listo (el backend lo guarda).
+  Un intento cuenta como fallido solo después de que Tor arrancó por él y dijo
+  que está bloqueado. Sin internet, con la hora mal, con el antivirus o con
+  Arti obsoleto se detiene, porque otra forma no ayudaría. Nunca sale sin Tor,
+  nunca va sobre un código pegado y solo arranca con un toque. Hay una sola
+  búsqueda por red, fuera de React: sigue si se cierra la pantalla que la
+  empezó, y la ven Ajustes y "No se pudo conectar".
+- **meek no entra** (spike S3: Arti rechaza su línea). **moat no está hecho**:
+  consultar `bridges.torproject.org/moat` necesita su propia autorización.
+  Por eso el texto dice lo que Trino hace ("prueba una por una las formas que
+  trae") y no "le pregunta al Proyecto Tor", como la maqueta.
+- **"Opciones avanzadas"**, cerradas: Automático (sin puente; la búsqueda se
+  ofrece si Tor no conecta), los integrados con la línea de que son conocidos
+  y no esconden que usas Tor, el aviso de Windows antes de Snowflake, y
+  "Tengo un código de conexión que me dieron": un campo que se valida línea
+  por línea mientras se escribe (`net_bridges_check`, que no guarda nada), con
+  cada error en palabras, y "Usar este código" (`net_bridges_set`), que lo
+  guarda cifrado. El texto sale de la pantalla al guardarlo, y la pantalla
+  dice que mientras usas Trino queda una copia que se borra al bloquear y que
+  en algunos discos puede quedar un rastro.
+- **En Ajustes** cada elección se guarda en el momento (Tor arranca otra vez
+  con ella) y detiene una búsqueda en curso.
+- **En la primera vez**, "En mi red bloquean Tor" abre la misma tarjeta dentro
+  del paso "Conexión". Ahí nada se conecta antes de "Continuar": la forma
+  elegida es la que arranca "Continuar", y la casilla "No quiero que mi
+  proveedor note que uso Trino" la sigue (marcada con cualquier puente, con la
+  forma nombrada debajo si no es Snowflake; desmarcarla es sin puente). Un
+  código pegado va al backend, que lo valida y lo tiene en memoria hasta crear
+  la cuenta. "Buscar una forma que funcione aquí" es un "Continuar" propio: la
+  búsqueda arranca y el registro sigue mientras tanto
+  (`src/app/first-connection.ts`).
 
 ## Novedades (TOR-10)
 
@@ -289,9 +329,8 @@ una versión, está en `docs/updater.md`.
 
 ## Lo que falta
 
-- Las pantallas de los puentes (TOR-8): "En mi red bloquean Tor", la búsqueda
-  automática y pegar un código; hasta entonces, "Probar otra forma de
-  conectarse" usa el primer integrado.
+- La búsqueda por moat (§5.4 del diseño), si se autoriza su consulta; hasta
+  entonces la búsqueda solo prueba los integrados.
 - `lyrebird` para Linux (un pin con su SHA-256).
 - El WebView sigue pidiendo las novedades al desbloquear, como antes, además
   de la revisión diaria.
