@@ -13,8 +13,10 @@ Trino debe competir con una propuesta concreta:
 La referencia de producto combina la facilidad de uso de Signal, la identidad
 local de Threema y objetivos de transporte inspirados en Session y SimpleX. No
 conviene prometer anonimato o "cero metadatos" mientras la implementación siga
-usando identificadores Nostr persistentes y relays capaces de observar IP,
-clave pública, destinatario, hora y volumen aproximado.
+usando identificadores Nostr persistentes y relays capaces de observar clave
+pública, destinatario, hora y volumen aproximado. En el escritorio, Tor (por
+defecto) ya les esconde la IP; las llamadas siguen mostrándosela a Cloudflare
+(`docs/tor.md`, "Lo que Tor no oculta").
 
 ## Estado actual
 
@@ -164,7 +166,8 @@ requiere cambios de protocolo:
 2. Separar la clave de identidad de las claves visibles para los relays.
 3. Encapsular el destinatario para que un relay no lea un `p_tag` estable.
 4. Introducir rutas de varios saltos o un proxy onion para ocultar la IP al
-   relay de almacenamiento.
+   relay de almacenamiento. **Hecho en el escritorio:** Tor por defecto, con
+   Arti dentro de la app (`docs/tor.md`); el celular lo hereda con el motor.
 5. Añadir padding por rangos, expiración estricta y límites anti-spam.
 6. Diseñar grupos sin una lista global visible y con rotación al expulsar
    miembros.
@@ -198,7 +201,7 @@ local y transporte autoalojable". En el futuro puede ofrecerse una opción de
 - hardening de llamadas y TURN privado;
 - revisión independiente del protocolo y la bóveda;
 - recuperación y copia cifrada;
-- actualizaciones firmadas;
+- actualizaciones firmadas (hecho: `docs/updater.md`);
 - pruebas cruzadas en los tres sistemas;
 - política de privacidad sin afirmaciones absolutas.
 
@@ -213,8 +216,9 @@ local y transporte autoalojable". En el futuro puede ofrecerse una opción de
 ### P2: diferenciación
 
 - transporte con identificadores por contacto;
-- proxy onion o rutas de varios saltos;
-- modo relay-only para llamadas;
+- proxy onion o rutas de varios saltos (hecho en el escritorio: Tor por
+  defecto, `docs/tor.md`);
+- modo relay-only para llamadas (hecho: `docs/llamadas-turn.md`);
 - infraestructura suiza verificable o despliegue totalmente autoalojado.
 
 ## Referencias técnicas

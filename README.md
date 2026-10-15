@@ -2,7 +2,8 @@
 
 An end-to-end encrypted messenger with **no account, no phone number and no
 server of its own**. Identity is a key you hold; messages travel over public
-[Nostr](https://nostr.com) relays; calls are peer-to-peer WebRTC.
+[Nostr](https://nostr.com) relays, reached through **Tor by default**; calls
+are WebRTC through a TURN relay, outside Tor.
 
 > **Not affiliated with [Trino](https://trino.io), the distributed SQL query
 > engine.** Different project, different field — this one is a messenger.
@@ -33,11 +34,36 @@ cryptography a second time — see [`docs/mobile-client.md`](./docs/mobile-clien
   content hash, never from a URL a sender chose.
 - Groups, stickers, replies, disappearing messages, and a signed announcement
   channel whose authority is a pinned OpenPGP key — not the server hosting it.
+- **Tor by default** (desktop): relays, file uploads and downloads, TURN
+  credentials, the announcements and the update checks all go through
+  [Arti](https://gitlab.torproject.org/tpo/core/arti), Tor in Rust, built
+  into the app. If Tor cannot connect, Trino says so and offers bridges
+  (Snowflake, obfs4, or lines you paste); it never falls back to a direct
+  connection unless you ask, and then only until you close it. See
+  [`docs/tor.md`](./docs/tor.md).
+- **Signed updates through Tor**: a daily check, a minisign signature checked
+  before and after the download, and nothing installs without your yes. See
+  [`docs/updater.md`](./docs/updater.md).
 
 ## What it does *not* claim
 
-Trino is **not anonymous** and **not metadata-free**. Relays can observe IP
-addresses, public keys, who you are talking to, when, and roughly how much.
+Trino is **not anonymous** and **not metadata-free**. Tor hides your IP
+address from the relays, not what the protocol shows them:
+
+- **Relays still see who writes to whom.** They see public keys, recipients,
+  when, and roughly how much. A protocol change (envelopes with one-time keys
+  and rotating mailboxes) is the next piece of work; until it ships, this
+  stays true.
+- **Calls show your IP to Cloudflare.** Audio and video go through
+  Cloudflare's TURN relay, outside Tor, so Cloudflare sees your IP and your
+  contact's, and that you are talking. Your contact does not see your IP,
+  unless the relay fails and you accept a direct call, which says so first.
+- **Your internet provider sees that you use Tor.** Without a bridge it can
+  also tell that it is not Tor Browser, from the TLS fingerprint of Arti's
+  connections. A bridge hides this better.
+- **WebView2 and Windows talk to Microsoft on their own**, outside Trino,
+  including WebView2's crash reports for now.
+
 The cryptographic core is **implemented in-house and has not been externally
 audited**.
 
@@ -63,6 +89,12 @@ Backend tests:
 ```bash
 cargo test --workspace
 ```
+
+Release builds that offer bridges carry lyrebird, the Tor Project's bridge
+program: `scripts/fetch-lyrebird.sh <target>` downloads it and checks its
+signature, and `npm run tauri build -- --config src-tauri/tauri.bridges.conf.json`
+ships it. A per-process audit of what a running build opens on the network
+is in [`docs/audit-tor.md`](./docs/audit-tor.md).
 
 The protocol and cryptography are not in this repository. They live in
 [trinochat/trino-core](https://github.com/trinochat/trino-core), a pure crate

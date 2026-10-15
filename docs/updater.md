@@ -38,8 +38,8 @@ actualizador propio:
      encima, en modo pasivo, y vuelve a abrir Trino;
   4. Trino se cierra.
 - **En Linux** no instala nada: deja el AppImage verificado en Descargas.
-- **Sin Tor** ("Conectar sin Tor") no revisa nada. Con Tor sin conectar, nunca
-  sale directo: vuelve a intentar entre 30 y 90 minutos después.
+- **Sin Tor** ("Conectar sin protección") no revisa nada. Con Tor sin conectar,
+  nunca sale directo: vuelve a intentar entre 30 y 90 minutos después.
 - **Si Arti queda obsoleto**, la pantalla de "versión vieja" puede usar
   `update_check_without_tor`, siempre después de su confirmación. Ese comando
   usa el permiso propio del actualizador, que:
@@ -168,5 +168,8 @@ quien instala a mano (`docs/release.md`).
     igual;
   - el viejo se cierra solo cuando se cierra Trino;
   - la siguiente instalación y la desinstalación lo borran.
-- **Todavía no se ha armado un instalador con este gancho.** Hay que probarlo a
-  mano en TOR-12, con `npx tauri build --config src-tauri/tauri.bridges.conf.json`.
+- **Todavía no se ha armado un instalador con este gancho.** Falta probarlo a
+  mano: arma el instalador con
+  `npx tauri build --config src-tauri/tauri.bridges.conf.json`, instálalo
+  encima de uno anterior con Trino abierto y con un puente en uso, y mira que
+  `lyrebird.old.exe` aparezca y que la siguiente instalación lo borre.

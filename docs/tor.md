@@ -1,4 +1,4 @@
-# Tor en Trino (TOR-5 a TOR-10)
+# Tor en Trino (TOR-3 a TOR-12)
 
 Todo lo que Trino abre en la red, salvo el audio y el video de las llamadas,
 sale por Tor. Lo hace `crates/trino-net`, que no depende de Tauri: dentro va
@@ -339,8 +339,9 @@ meek), del Proyecto Tor.
   repetición y queda como `untrusted`. Funciona con la app bloqueada.
 - Congelamiento: un feed vencido (`validUntil`), más de 14 días sin un feed
   vigente o un `latest` que ningún espejo ofrece; esto último lo dice la
-  revisión diaria del actualizador, que pregunta a los espejos. La app recibe el motivo en `freeze`; el aviso en pantalla
-  llega con las maquetas.
+  revisión diaria del actualizador, que pregunta a los espejos. La app recibe
+  el motivo en `freeze`, y la bandeja lo dice en el aviso de "Versión nueva",
+  con "Revisar ahora" (ver "Pantallas").
 - Sin Tor ("Conectar sin Tor") no se pregunta nada. Con Tor sin conectar,
   tampoco; nunca se va directo.
 - El WebView pide `news_fetch` y recibe `{ status, items, signerFingerprint,
@@ -358,8 +359,50 @@ instalar. Con Arti obsoleto, la pantalla de "versión vieja" tiene un permiso
 propio sin Tor que solo llega a trinochat.org y a GitHub. Todo, y cómo firmas
 una versión, está en `docs/updater.md`.
 
+## Lo que Tor no oculta
+
+Tor esconde tu IP de los relays y de los demás servidores. No esconde lo que
+el protocolo les muestra ni lo que sale fuera de Trino:
+
+- **Los relays siguen viendo quién le escribe a quién**: tu llave pública, la
+  del destinatario, la hora y el tamaño aproximado. Eso cambia con P1 (sobres
+  con llave de un solo uso y buzones que rotan), el frente siguiente; hasta
+  entonces sigue así.
+- **Una llamada le muestra tu IP a Cloudflare.** El audio y el video van por
+  el TURN de Cloudflare, fuera de Tor: Cloudflare ve tu IP, la de tu contacto
+  y que hablan entre sí. Tu contacto no ve tu IP. La credencial va firmada con
+  una llave de un solo uso, así que Cloudflare no la une con tu cuenta por
+  ella, aunque podría unirla por la hora si la señal pasa por un relay detrás
+  de Cloudflare (por eso los relays por defecto no lo están).
+- **Tu proveedor de internet ve que usas Tor.** Sin puente puede notar
+  además que no es Tor Browser, por la huella TLS de Arti (spike S12). Un
+  puente lo oculta mejor; los integrados son públicos y un censor fuerte los
+  conoce.
+- **Con Snowflake**, tu IP la ven el broker, sus servidores STUN y el
+  voluntario.
+- **Lo que WebView2 y Windows mandan a Microsoft** por su cuenta, incluidos
+  por ahora los informes de fallos de WebView2 (ver "El WebView").
+- En el equipo, `tor/` muestra que usas Tor.
+
+## Cómo se comprueba que nada sale directo
+
+- En las pruebas: el transporte directo de las pruebas entra en pánico si
+  algo lo usa, y `clippy.toml` prohíbe abrir sockets o resolver nombres fuera
+  de `trino-net/src/direct.rs`.
+- A mano, con la red real: `scripts/audit-tor.ps1` lee lo que Windows
+  registra por proceso (eventos 5156 y 5157, y el registro DNS) y dice, por
+  cada destino, si es un relay de Tor, el puente, el TURN de una llamada o
+  algo que no debía salir. Tiene una variante con reglas del Firewall que
+  solo dejan salir a Trino hacia el puente. Cambia la auditoría de Windows y
+  el Firewall, así que pide administrador, muestra cada cambio y su forma de
+  deshacerlo, y no aplica nada sin un `yes`. Todo en `docs/audit-tor.md`.
+
 ## Lo que falta
 
+- Correr la auditoría de `docs/audit-tor.md` con un exe de prueba, en sus
+  recorridos y en la variante de lista blanca.
+- Los informes de fallos de WebView2: el PR a wry está listo sin publicar
+  (`docs/upstream/`), y después hace falta otro en Tauri.
 - La búsqueda por moat (§5.4 del diseño), si se autoriza su consulta; hasta
   entonces la búsqueda solo prueba los integrados.
 - `lyrebird` para Linux (un pin con su SHA-256).
@@ -367,9 +410,10 @@ una versión, está en `docs/updater.md`.
   de la revisión diaria.
 - "Trino necesita actualizarse" sale sobre los chats, después de desbloquear;
   la maqueta técnica la ponía en lugar del desbloqueo.
-- Las invitaciones y el @nombre (TOR-11): hoy la app no tiene el canje de
-  enlaces ni la búsqueda por @nombre, así que sus textos de espera (tarjeta 11)
-  llegan con ellas.
+- Las invitaciones y el @nombre (TOR-11), que pasaron para después de P1
+  porque P1 cambia los códigos de contacto: hoy la app no tiene el canje de
+  enlaces ni la búsqueda por @nombre, así que sus textos de espera (tarjeta
+  11) llegan con ellas.
 - Pruebas a mano:
   - con la red real de Tor: `cargo test -p trino-net -- --ignored network_`;
   - con un `lyrebird` real, sin red:
