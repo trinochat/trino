@@ -13,6 +13,42 @@ On both platforms the app is called "Trino" under its icon and has the id
 rounds the corners itself, and for Android a 48 dp tile plus an adaptive icon
 whose middle 72 dp is the Calma tile.
 
+## What the demo shows
+
+The screens follow the approved phone mockups of the redesign (Calma and
+Terminal, light and dark): four tabs (Chats, Llamadas, Contactos, Ajustes), the
+Tor state said in words under the Chats title, message requests in a grey row
+above the chats, the call key as the SAS v2 outline symbols, Cuenta y seguridad
+(optional fingerprint, how often the passphrase is asked again, Protección
+reforzada), Dispositivos, the connection screens (bridges, connecting without
+protection, what others see), the first run and linking this phone to the
+computer by QR.
+
+What the demo cannot do yet is behind small interfaces with a demo
+implementation, so no package was added:
+
+- **Camera:** `lib/platform/qr_scanner.dart`. The scanner says it does not use
+  the camera and offers "Simular escaneo (demostración)"; the demo computer
+  confirms the link by itself after 4 seconds.
+- **Fingerprint and Face ID:** `lib/platform/biometrics.dart`.
+- **Tor, bridges, requests, devices and the call history:** the fake engine.
+
+The SAS table (`assets/sas/sas-v2.json`) is a byte-for-byte copy of the
+desktop's (`feat/rediseno @ 7b3d454`); `assets/sas/.gitattributes` keeps Git from
+changing its line endings. The real engine must give the seven indices the
+desktop computes for the same call.
+
+## Screenshots
+
+```sh
+flutter test test/screenshots --dart-define=TRINO_SHOTS_DIR=<folder>
+```
+
+renders the screens in Calma light and Terminal dark to PNG files. Without the
+folder those tests are skipped.
+
+## Requirements
+
 It needs Flutter 3.47.5 stable, the version pinned in `pubspec.yaml`. Android
 builds also need the Android SDK. iOS builds need a Mac, so they run on GitHub
 Actions.
