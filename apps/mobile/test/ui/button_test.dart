@@ -91,5 +91,14 @@ void main() {
       await pumpThemed(tester, TrinoButton(label: '¿Olvidaste la contraseña?', expanded: false, onPressed: () {}));
       expect(tester.getSemantics(find.byType(TrinoButton)), isSemantics(hasExpandedState: true, isExpanded: false));
     });
+
+    testWidgets('compact takes less room around the label, for buttons side by side, and keeps 48 dp', (tester) async {
+      await pumpThemed(tester, TrinoButton(label: 'Eliminar', icon: TrinoIcons.trash, onPressed: () {}));
+      final regular = tester.getSize(find.byType(TrinoButton)).width;
+      await pumpThemed(tester, TrinoButton(label: 'Eliminar', icon: TrinoIcons.trash, compact: true, onPressed: () {}));
+      final compact = tester.getSize(find.byType(TrinoButton));
+      expect(compact.width, lessThan(regular - 10));
+      expect(compact.height, greaterThanOrEqualTo(48));
+    });
   });
 }

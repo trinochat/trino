@@ -98,6 +98,15 @@ void main() {
 
       await openTab(tester, 'Llamadas');
       await shot(tester, '$name-12-calls');
+      await openTab(tester, 'Chats');
+      await tester.tap(find.text('Solicitudes (3)'));
+      await shot(tester, '$name-13-requests');
+      await tester.tap(find.textContaining('Hola, soy Ana'));
+      await shot(tester, '$name-14-request');
+      await tester.tap(find.bySemanticsLabel('Volver'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.bySemanticsLabel('Volver'));
+      await tester.pumpAndSettle();
       await openTab(tester, 'Contactos');
       await shot(tester, '$name-06-contacts');
       await openTab(tester, 'Ajustes');

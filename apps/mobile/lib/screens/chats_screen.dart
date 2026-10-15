@@ -18,6 +18,7 @@ import '../ui/underline_tabs.dart';
 import 'chat_screen.dart';
 import 'common.dart';
 import 'new_chat_screen.dart';
+import 'requests_screen.dart';
 
 enum ChatFilter { all, unread, groups }
 
@@ -76,7 +77,7 @@ class _ChatsScreenState extends State<ChatsScreen> {
     showNotice(context, context.l10n.notAvailableYet);
   }
 
-  void _openRequests() => showNotice(context, context.l10n.notAvailableYet);
+  void _openRequests() => Navigator.of(context).push(RequestsScreen.route());
 
   @override
   Widget build(BuildContext context) {

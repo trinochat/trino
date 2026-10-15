@@ -116,6 +116,13 @@ void main() {
       expect(row(), findsNothing);
     });
 
+    testWidgets('opens the requests', (tester) async {
+      await pumpApp(tester);
+      await tester.tap(row());
+      await tester.pumpAndSettle();
+      expect(find.text('No son tus contactos. Nada de aquí suena ni se descarga hasta que aceptes.'), findsOneWidget);
+    });
+
     testWidgets('shows only in Todos, and not while searching', (tester) async {
       await pumpApp(tester);
       await tester.tap(find.text('No leídos'));

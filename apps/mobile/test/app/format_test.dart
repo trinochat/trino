@@ -64,4 +64,23 @@ void main() {
     expect(formatCallLength(context, const Duration(minutes: 4, seconds: 59)), '4 min');
     expect(formatCallLength(context, const Duration(hours: 1, minutes: 5)), '1 h 5 min');
   });
+
+  testWidgets('how long ago, for requests: now, minutes and hours today, then as chat times', (tester) async {
+    final context = await contextIn(tester, const Locale('es'));
+    expect(formatAgo(context, now.subtract(const Duration(seconds: 30)), now), 'ahora');
+    expect(formatAgo(context, now.subtract(const Duration(minutes: 5)), now), 'hace 5 min');
+    expect(formatAgo(context, DateTime(2026, 10, 9, 8, 15), now), 'hace 2 h');
+    expect(formatAgo(context, DateTime(2026, 10, 8, 20, 15), now), 'Ayer');
+    expect(formatAgo(context, DateTime(2026, 10, 5, 9, 30), now), 'Lun');
+  });
+
+  testWidgets('file sizes, with the decimal comma of the language', (tester) async {
+    final context = await contextIn(tester, const Locale('es'));
+    expect(formatFileSize(context, 1200000), '1,2 MB');
+    expect(formatFileSize(context, 850), '850 B');
+    expect(formatFileSize(context, 45000), '45 KB');
+    expect(formatFileSize(context, 3000000000), '3 GB');
+    final english = await contextIn(tester, const Locale('en'));
+    expect(formatFileSize(english, 1200000), '1.2 MB');
+  });
 }

@@ -58,3 +58,26 @@ String formatCallLength(BuildContext context, Duration duration) {
   if (duration.inHours < 1) return l10n.durationMinutes(duration.inMinutes);
   return l10n.durationHours(duration.inHours, duration.inMinutes.remainder(60));
 }
+
+/// How long ago something came, for message requests: "ahora", "hace 5 min"
+/// or "hace 2 h" today, then as a chat's time ("Ayer", "Lun", the date).
+String formatAgo(BuildContext context, DateTime time, DateTime now) {
+  if (_daysBetween(time, now) > 0) return formatChatTime(context, time, now);
+  final elapsed = now.difference(time);
+  if (elapsed.inMinutes < 1) return context.l10n.agoNow;
+  if (elapsed.inHours < 1) return context.l10n.agoMinutes(elapsed.inMinutes);
+  return context.l10n.agoHours(elapsed.inHours);
+}
+
+/// A file's size in the language's numbers: "850 B", "45 KB", "1,2 MB".
+String formatFileSize(BuildContext context, int bytes) {
+  const units = ['B', 'KB', 'MB', 'GB'];
+  var value = bytes.toDouble();
+  var unit = 0;
+  while (value >= 1000 && unit < units.length - 1) {
+    value /= 1000;
+    unit++;
+  }
+  final number = NumberFormat('#,##0.#', Localizations.localeOf(context).toLanguageTag()).format(value);
+  return '$number ${units[unit]}';
+}

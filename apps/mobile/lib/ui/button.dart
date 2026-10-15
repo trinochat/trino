@@ -18,6 +18,7 @@ class TrinoButton extends StatelessWidget {
     this.loading = false,
     this.expand = false,
     this.expanded,
+    this.compact = false,
   });
 
   final String label;
@@ -39,6 +40,9 @@ class TrinoButton extends StatelessWidget {
   /// For a button that shows or hides something below it: whether it shows.
   final bool? expanded;
 
+  /// Less room around the label and the icon, for buttons side by side.
+  final bool compact;
+
   @override
   Widget build(BuildContext context) {
     final t = context.tokens;
@@ -57,7 +61,7 @@ class TrinoButton extends StatelessWidget {
         ? SizedBox.square(dimension: 18, child: CircularProgressIndicator(strokeWidth: 2, color: ink))
         : icon == null
         ? null
-        : TrinoIcon(icon!, size: 20, color: ink);
+        : TrinoIcon(icon!, size: compact ? 18 : 20, color: ink);
 
     return MergeSemantics(
       child: Semantics(
@@ -76,12 +80,12 @@ class TrinoButton extends StatelessWidget {
                 child: ConstrainedBox(
                   constraints: const BoxConstraints(minHeight: 48, minWidth: 48),
                   child: Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 10),
+                    padding: EdgeInsets.symmetric(horizontal: compact ? 8 : 18, vertical: 10),
                     child: Row(
                       mainAxisSize: expand ? MainAxisSize.max : MainAxisSize.min,
                       mainAxisAlignment: MainAxisAlignment.center,
                       children: [
-                        if (leading != null) ...[leading, const SizedBox(width: 8)],
+                        if (leading != null) ...[leading, SizedBox(width: compact ? 6 : 8)],
                         Flexible(
                           child: Text(
                             label,
