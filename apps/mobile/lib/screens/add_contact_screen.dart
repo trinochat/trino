@@ -1,7 +1,9 @@
-// "Agregar contacto": paste the code the other person shared.
+// "Agregar contacto": paste the code the other person shared. Scanning a QR
+// needs the camera, which this version does not have yet.
 import 'package:flutter/material.dart';
 
 import '../app/scope.dart';
+import '../design/icons.dart';
 import '../design/theme.dart';
 import '../engine/engine.dart';
 import '../ui/button.dart';
@@ -76,6 +78,15 @@ class _AddContactScreenState extends State<AddContactScreen> {
           expand: true,
           loading: _busy,
           onPressed: _add,
+        ),
+        const SizedBox(height: 8),
+        // The camera comes with its own interface later; until then, say so.
+        TrinoButton(
+          label: l10n.addContactScanQr,
+          icon: TrinoIcons.qr,
+          variant: ButtonVariant.ghost,
+          expand: true,
+          onPressed: () => showNotice(context, l10n.notAvailableYet),
         ),
       ],
     );

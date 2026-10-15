@@ -275,5 +275,14 @@
   "unlockWipeBody": "Sua identidade, suas conversas e seus contatos serão apagados deste celular. Não dá para desfazer.",
   "unlockWipeConfirm": "Apagar identidade e começar do zero",
   "unlockWiping": "Apagando…",
-  "unlockErrWipe": "Não foi possível apagar a identidade. Tente novamente."
+  "unlockErrWipe": "Não foi possível apagar a identidade. Tente novamente.",
+
+  "contactsSearchHint": "Buscar ou digitar um @nome",
+  "contactsSearch": "Buscar contatos",
+  "contactsSearchEmpty": "Nenhum contato corresponde à sua busca.",
+  "contactsUsernameNotYet": "Buscar um @nome ainda não está disponível nesta versão.",
+  "contactsAddByCode": "Adicionar com código ou QR",
+  "contactsNewGroup": "Novo grupo",
+  "contactsFindByUsername": "Buscar por @nome",
+  "addContactScanQr": "Escanear um código QR"
 }

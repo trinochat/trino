@@ -275,5 +275,14 @@
   "unlockWipeBody": "Your identity, chats and contacts will be deleted from this phone. This cannot be undone.",
   "unlockWipeConfirm": "Delete identity and start over",
   "unlockWiping": "Deleting…",
-  "unlockErrWipe": "The identity could not be deleted. Try again."
+  "unlockErrWipe": "The identity could not be deleted. Try again.",
+
+  "contactsSearchHint": "Search or type a @name",
+  "contactsSearch": "Search contacts",
+  "contactsSearchEmpty": "No contact matches your search.",
+  "contactsUsernameNotYet": "Finding a @name is not available in this version yet.",
+  "contactsAddByCode": "Add with a code or QR",
+  "contactsNewGroup": "New group",
+  "contactsFindByUsername": "Find by @name",
+  "addContactScanQr": "Scan a QR code"
 }

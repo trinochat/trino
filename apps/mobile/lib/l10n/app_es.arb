@@ -319,5 +319,16 @@
   "unlockWipeBody": "Se borrarán de este celular tu identidad, tus chats y tus contactos. No se puede deshacer.",
   "unlockWipeConfirm": "Borrar identidad y empezar de cero",
   "unlockWiping": "Borrando…",
-  "unlockErrWipe": "No se pudo borrar la identidad. Inténtalo de nuevo."
+  "unlockErrWipe": "No se pudo borrar la identidad. Inténtalo de nuevo.",
+
+  "contactsSearchHint": "Buscar o escribir un @nombre",
+  "contactsSearch": "Buscar contactos",
+  "@contactsSearch": {"description": "The screen-reader name of the Contactos search field."},
+  "contactsSearchEmpty": "Ningún contacto coincide con tu búsqueda.",
+  "contactsUsernameNotYet": "Buscar a @nombre aún no está disponible en esta versión.",
+  "@contactsUsernameNotYet": {"description": "When the Contactos search starts with @: the engine cannot look up usernames yet. It promises nothing."},
+  "contactsAddByCode": "Agregar con código o QR",
+  "contactsNewGroup": "Nuevo grupo",
+  "contactsFindByUsername": "Buscar por @nombre",
+  "addContactScanQr": "Escanear un código QR"
 }

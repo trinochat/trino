@@ -13,6 +13,7 @@ class ListRow extends StatelessWidget {
     this.subtitle,
     this.icon,
     this.leading,
+    this.titleBadge,
     this.value,
     this.trailing,
     this.onTap,
@@ -27,6 +28,9 @@ class ListRow extends StatelessWidget {
 
   /// In place of [icon], such as an avatar.
   final Widget? leading;
+
+  /// Right after the title, such as a contact's verified shield.
+  final Widget? titleBadge;
 
   /// The current choice, such as "Tras 5 minutos".
   final String? value;
@@ -75,7 +79,18 @@ class ListRow extends StatelessWidget {
                         mainAxisSize: MainAxisSize.min,
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          Text(title, style: text.bodyStrong.copyWith(color: color)),
+                          if (titleBadge == null)
+                            Text(title, style: text.bodyStrong.copyWith(color: color))
+                          else
+                            Row(
+                              children: [
+                                Flexible(
+                                  child: Text(title, style: text.bodyStrong.copyWith(color: color)),
+                                ),
+                                const SizedBox(width: 4),
+                                titleBadge!,
+                              ],
+                            ),
                           if (subtitle != null)
                             Padding(
                               padding: const EdgeInsets.only(top: 2),

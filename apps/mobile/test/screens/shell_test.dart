@@ -23,7 +23,7 @@ void main() {
     expect(find.descendant(of: find.byType(LargeTitleBar), matching: find.text('Chats')), findsOneWidget);
 
     await openTab(tester, 'Contactos');
-    expect(find.text('Agregar contacto'), findsOneWidget);
+    expect(find.text('Agregar con código o QR'), findsOneWidget);
     expect(
       tester.getSemantics(find.descendant(of: tabs, matching: find.text('Contactos'))),
       isSemantics(isSelected: true),
