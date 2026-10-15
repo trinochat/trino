@@ -7,6 +7,7 @@ import type { Prefs } from '../../../lib/prefs';
 import { prefsSession } from '../../../lib/prefs-session';
 import { fakeApi, memoryPrefs, node, renderEs, withLang } from '../test-utils';
 import type { SettingsApi, SettingsPlatform } from '../types';
+import { fakeNet } from '../../net/test-support';
 import { PrivacySection } from './PrivacySection';
 
 afterEach(cleanup);
@@ -519,5 +520,28 @@ describe('PrivacySection, your data on this device', () => {
     render(withLang(<PrivacySection api={fakeApi()} prefs={memoryPrefs().prefs} platform="windows" />, lang));
     fireEvent.click(screen.getByRole('button', { name: new RegExp(row) }));
     expect(screen.getByRole('list', { name: encrypted })).toBeTruthy();
+  });
+});
+
+// TOR-6 (PropTorSimple, card 6): with the network, "Conexión" leads the
+// list, with its state, and opens its view; back comes to Privacidad.
+describe('PrivacySection: Conexión', () => {
+  it('leads the list with the state of the connection, and opens it', async () => {
+    const { api: net } = fakeNet({ state: 'starting', pct: 30 });
+    const { prefs } = memoryPrefs();
+    renderEs(<PrivacySection api={fakeApi()} prefs={prefs} platform="windows" net={net} />);
+    const rows = screen.getByRole('list', { name: 'Privacidad' });
+    const first = within(rows).getAllByRole('button')[0]!;
+    await waitFor(() => expect(first.textContent).toBe('ConexiónConectando de forma privada…'));
+    fireEvent.click(first);
+    expect(await screen.findByRole('heading', { name: 'Conexión' })).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Volver a Privacidad' }));
+    expect(await screen.findByRole('heading', { name: 'Privacidad' })).toBeTruthy();
+  });
+
+  it('says "Sin protección" on its row while it lasts', async () => {
+    const { api: net } = fakeNet({ state: 'direct' });
+    renderEs(<PrivacySection api={fakeApi()} prefs={memoryPrefs().prefs} platform="windows" net={net} />);
+    expect(await screen.findByRole('button', { name: /Conexión\s*Sin protección hasta que cierres Trino/ })).toBeTruthy();
   });
 });

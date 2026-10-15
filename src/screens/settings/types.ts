@@ -13,6 +13,7 @@ import type {
   TotpBeginResponse,
 } from '../../lib/api';
 import type { Prefs } from '../../lib/prefs';
+import type { NetScreensApi } from '../net/net-api';
 import type { SettingsSectionId, SettingsSlotProps } from '../types';
 
 export interface SettingsApi {
@@ -79,6 +80,8 @@ export type SettingsScreenProps = SettingsSlotProps & {
   makeAvatar?(file: File): Promise<string>;
   /** The screen's width in px, to choose one pane or two; measured when left out. */
   width?: number;
+  /** Tor's state and commands (TOR-6): Privacidad › Conexión. Left out, Privacidad has no "Conexión". */
+  net?: NetScreensApi;
 };
 
 export type { SettingsSectionId };

@@ -89,6 +89,7 @@ export function SettingsScreen({
   makeAvatar = defaultMakeAvatar,
   width,
   onContactsChanged,
+  net,
 }: SettingsScreenProps) {
   const t = useT();
   const { effective } = useAccessibility();
@@ -229,6 +230,7 @@ export function SettingsScreen({
             platform={platform}
             onContactsChanged={onContactsChanged}
             onAutolockChanged={onAutolockChanged}
+            {...(net && { net })}
           />
         );
       case 'notifications':

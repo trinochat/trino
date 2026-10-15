@@ -30,9 +30,13 @@
  * the computer down. Windows only, as the copies it clears and the lock it
  * turns on are Windows'.
  *
+ * "Conexión" (TOR-6, PropTorSimple card 6) leads the list when the app
+ * gives the network (`net`), with its state as its second line: it opens
+ * the connection's view (src/screens/net/ConnectionView.tsx).
+ *
  * Not here, on purpose: the IP warning before a call (TURN made it
- * unnecessary), Tor and "Quién puede escribirte" (no Tor, no message
- * requests in this batch), the @name (§8) and the default timer of
+ * unnecessary), "Quién puede escribirte" (no message requests in this
+ * batch), the @name (§8) and the default timer of
  * disappearing messages (later). The rows come from an array, so the
  * invitations unit adds "Que me encuentren por @nombre" and its links there
  * (§8).
@@ -44,6 +48,10 @@ import type { Prefs } from '../../../lib/prefs';
 import { prefsSession } from '../../../lib/prefs-session';
 import { Switch } from '../../../ui';
 import { BlockedContactsView } from '../BlockedContactsView';
+import { ConnectionView } from '../../net/ConnectionView';
+import type { NetScreensApi } from '../../net/net-api';
+import { settingsStatusOf } from '../../net/net-model';
+import { useNetStatus } from '../../net/useNetStatus';
 import { ErrorLine } from '../ErrorLine';
 import { LocalDataView } from '../LocalDataView';
 import { turnOffReinforced, turnOnReinforced } from '../reinforced';
@@ -67,10 +75,12 @@ export interface PrivacySectionProps {
    * of earlier versions (the session's preferences then live in the WebView).
    */
   dataMoved?: boolean;
+  /** Tor's state and commands (TOR-6): "Conexión" leads the list with it. */
+  net?: NetScreensApi;
   autoFocus?: boolean;
 }
 
-type View = 'main' | 'blocked' | 'data';
+type View = 'main' | 'blocked' | 'data' | 'connection';
 
 /** Why the switch of captures failed: the window refused, or the choice could not be kept. */
 type CapturesError = 'window' | 'save';
@@ -87,9 +97,11 @@ export function PrivacySection({
   onContactsChanged,
   onAutolockChanged,
   dataMoved = prefsSession.mode !== 'legacy',
+  net,
   autoFocus,
 }: PrivacySectionProps) {
   const t = useT();
+  const netStatus = useNetStatus(net ?? null);
   const [nodes, setNodes] = useState<readonly NodeInfo[] | null>(null);
   const [loadFailed, setLoadFailed] = useState(false);
   const [view, setView] = useState<View>('main');
@@ -158,6 +170,19 @@ export function PrivacySection({
 
   const rows = useMemo<SettingsRowItem[]>(
     () => [
+      ...(net
+        ? [
+            {
+              id: 'connection',
+              label: t('net.settings.title'),
+              body: t(settingsStatusOf(netStatus)),
+              onSelect: () => {
+                setMoved(true);
+                setView('connection');
+              },
+            },
+          ]
+        : []),
       {
         id: 'blocked',
         label: t('settings2.privacy.blocked'),
@@ -168,7 +193,7 @@ export function PrivacySection({
         },
       },
     ],
-    [t, nodes, blocked],
+    [t, nodes, blocked, net, netStatus],
   );
 
   const onDevice = useMemo<SettingsRowItem[]>(
@@ -205,6 +230,10 @@ export function PrivacySection({
         }}
       />
     );
+  }
+
+  if (view === 'connection' && net) {
+    return <ConnectionView autoFocus api={net} onBack={() => setView('main')} />;
   }
 
   if (view === 'data') {

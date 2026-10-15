@@ -297,6 +297,7 @@ export function MainScreen({ intent, onLock, onAutolockChanged, onWiped, onCallG
         }}
         prefs={d.prefs}
         makeAvatar={d.makeAvatar}
+        {...(d.net && { net: d.net })}
       />
     ),
     // No key: it reads its contact's state again when the handle changes, and

@@ -4,3 +4,4 @@ export { netScreensApi, type NetScreensApi } from './net-api';
 export { failureOf, settingsStatusOf, torLineOf, type Failure, type TorLine, type TorLineTone } from './net-model';
 export { useNetStatus } from './useNetStatus';
 export { WithoutTorDialog, type WithoutTorDialogProps } from './WithoutTorDialog';
+export { ConnectionView, type ConnectionViewProps } from './ConnectionView';
