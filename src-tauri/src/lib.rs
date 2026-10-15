@@ -10,6 +10,7 @@ mod a11y;
 mod command_error;
 mod commands;
 mod fsutil;
+mod media_permission;
 mod navigation;
 mod net_cmds;
 mod news_cmds;

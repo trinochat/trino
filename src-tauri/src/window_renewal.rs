@@ -164,11 +164,7 @@ fn open(app: &AppHandle, placement: Option<Placement>) -> tauri::Result<WebviewW
         .cloned()
         .ok_or(tauri::Error::WindowNotFound)?;
     // It never goes anywhere but the app (Tor design §4, R-10).
-    let dev_url = if tauri::is_dev() {
-        app.config().build.dev_url.clone()
-    } else {
-        None
-    };
+    let dev_url = dev_url(app);
     let mut builder = WebviewWindowBuilder::from_config(app, &config)?
         .on_navigation(move |url| crate::navigation::allowed(url, dev_url.as_ref()));
     if let Some(placement) = placement {
@@ -200,11 +196,24 @@ fn open(app: &AppHandle, placement: Option<Placement>) -> tauri::Result<WebviewW
     Ok(window)
 }
 
+/// The development server's address, only in `tauri dev`.
+fn dev_url(app: &AppHandle) -> Option<tauri::Url> {
+    if tauri::is_dev() {
+        app.config().build.dev_url.clone()
+    } else {
+        None
+    }
+}
+
 /// What every new window needs before its page runs.
 pub(crate) fn prepare(_window: &WebviewWindow) {
     // Its downloads leave no history, and the history and minidumps of
     // before go (cifrado local CL-6b, src/traces.rs).
     crate::traces::on_new_window(_window);
+    // WebView2 asks nothing: the app's camera and microphone are allowed,
+    // everything else is denied, and nothing stays in its profile
+    // (src/media_permission.rs). Trino's own consent stays in the page.
+    crate::media_permission::on_new_window(_window, dev_url(_window.app_handle()));
     // Linux: WebKitGTK denies getUserMedia (mic/camera) unless we handle
     // the permission-request signal. Without this, calls silently fail on
     // Ubuntu (the call button does nothing; accepting sends a reject that
