@@ -250,6 +250,52 @@ void main() {
       await shot(tester, '$name-42-unlock-wipe');
     }, skip: skip != false);
 
+    testWidgets('the contact and group info in $name', (tester) async {
+      Future<void> tapText(String text) async {
+        await tester.ensureVisible(find.text(text).last);
+        await tester.pumpAndSettle();
+        await tester.tap(find.text(text).last);
+        await tester.pumpAndSettle();
+      }
+
+      Future<void> back() async {
+        await tester.tap(find.bySemanticsLabel('Volver').last);
+        await tester.pumpAndSettle();
+      }
+
+      // A group you administer, which Ana is also in.
+      final engine = testEngine()..addGroup(title: 'Taller de cerámica', memberIds: const ['ana', 'lucia']);
+      await pumpApp(tester, engine: engine, appearance: appearance);
+      await openChat(tester, 'Ana Torres');
+      await tester.tap(find.bySemanticsLabel('Ver la info de Ana Torres'));
+      await tester.pumpAndSettle();
+      await shot(tester, '$name-43-contact-info');
+      await tapText('Bloquear a Ana Torres');
+      await shot(tester, '$name-44-contact-block');
+      await tapText('Cancelar');
+      await tapText('Borrar el chat');
+      await shot(tester, '$name-45-contact-delete');
+      await tapText('Cancelar');
+      await back();
+      await back();
+
+      await openChat(tester, 'Familia');
+      await tester.tap(find.bySemanticsLabel('Ver la info de Familia'));
+      await tester.pumpAndSettle();
+      await shot(tester, '$name-46-group-member');
+      await tapText('Salir del grupo');
+      await shot(tester, '$name-47-group-leave');
+      await tapText('Cancelar');
+      await back();
+      await back();
+
+      await openChat(tester, 'Taller de cerámica');
+      await tester.tap(find.bySemanticsLabel('Ver la info de Taller de cerámica'));
+      await tester.pumpAndSettle();
+      await tapText('Silenciar');
+      await shot(tester, '$name-48-group-admin-muted');
+    }, skip: skip != false);
+
     testWidgets('the unlock screen with the fingerprint in $name', (tester) async {
       final engine = testEngine();
       await tester.runAsync(() => engine.updateSettings(const EngineSettings(biometricUnlock: true)));
