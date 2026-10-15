@@ -8,6 +8,9 @@
  * to its heading; an error moves it to the field it is about, or to the
  * message when it is about the whole step.
  *
+ * With `api.startConnection` (the network, TOR-6) the "Conexión" step
+ * comes after the welcome, and Tor starts only from it.
+ *
  * Beyond the contract of types.ts it takes optional stand-ins, for the tests
  * and for the integration: `makeAvatar`, the storage of the consent record,
  * the link opener and the clock. The password never reaches the console.
@@ -36,6 +39,7 @@ import {
   type OnboardingState,
 } from './onboarding-machine';
 import { StepProgress } from './StepProgress';
+import { ConnectionStep } from './steps/ConnectionStep';
 import { DoneStep } from './steps/DoneStep';
 import { NameStep } from './steps/NameStep';
 import { PasswordStep } from './steps/PasswordStep';
@@ -75,7 +79,10 @@ export function OnboardingFlow({
   const { lang } = useLang();
   const { appearance } = useAppearance();
   const headingId = useId();
-  const [state, setState] = useState<OnboardingState>(INITIAL_ONBOARDING);
+  const [state, setState] = useState<OnboardingState>(() => ({
+    ...INITIAL_ONBOARDING,
+    withConnection: api.startConnection !== undefined,
+  }));
   const current = useRef(state);
   const mounted = useRef(true);
   const headingRef = useRef<HTMLHeadingElement>(null);
@@ -105,6 +112,18 @@ export function OnboardingFlow({
 
   const run = (effect: OnboardingEffect) => {
     switch (effect.type) {
+      case 'startConnection': {
+        const start = api.startConnection;
+        if (!start) return;
+        attempt(() => start(effect.hidden)).then(
+          () => send({ type: 'connectionStarted' }),
+          (error: unknown) => {
+            console.warn('starting Tor failed:', codeOf(error));
+            send({ type: 'connectionFailed' });
+          },
+        );
+        return;
+      }
       case 'checkPassphrase':
         attempt(() => api.checkPassphrase(effect.passphrase)).then(
           () => send({ type: 'checked' }),
@@ -208,7 +227,7 @@ export function OnboardingFlow({
   const progress = stepNumber(state);
   const created = state.step === 'done' ? state.created : null;
   const busy = state.busy !== null;
-  const withNav = state.step === 'name' || state.step === 'password' || state.step === 'style';
+  const withNav = state.step === 'connection' || state.step === 'name' || state.step === 'password' || state.step === 'style';
   const withBack = withNav || (state.step === 'twofa' && state.twofa === 'ask');
   const heading = { headingId, headingRef };
 
@@ -231,6 +250,9 @@ export function OnboardingFlow({
         {state.step === 'welcome' ? (
           <WelcomeStep state={state} send={send} {...heading} ageRef={ageRef} privacyRef={privacyRef} openLink={openLink} />
         ) : null}
+        {state.step === 'connection' ? (
+          <ConnectionStep state={state} send={send} {...heading} stepErrorRef={stepErrorRef} />
+        ) : null}
         {state.step === 'name' ? (
           <NameStep state={state} send={send} {...heading} nameRef={nameRef} profileSync={profileSync} makeAvatar={makeAvatar} />
         ) : null}
@@ -249,7 +271,7 @@ export function OnboardingFlow({
               {t('onb.back')}
             </Button>
             {withNav ? (
-              <Button type="submit" variant="primary" size="lg" loading={state.busy === 'checking'}>
+              <Button type="submit" variant="primary" size="lg" loading={state.busy === 'checking' || state.busy === 'connecting'}>
                 {state.busy === 'checking' ? t('onb.checking') : t('onb.next')}
               </Button>
             ) : null}

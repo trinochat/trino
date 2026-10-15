@@ -568,3 +568,64 @@ it('never writes the password to the console', async () => {
   expect(written.filter(text => text.includes(PASS))).toEqual([]);
   expect(heading().textContent).toBe('Todo listo');
 });
+
+// TOR-6 (PropTorSimple, card 1; design test 50): Tor starts only from the
+// "Conexión" step, after the welcome, with the provider option if ticked.
+describe('OnboardingFlow: the connection step', () => {
+  const OPTION = 'No quiero que mi proveedor note que uso Trino';
+
+  it('comes after the welcome, explains Tor once, and starts it only on "Continuar"', async () => {
+    const startConnection = vi.fn((_hidden: boolean) => Promise.resolve());
+    setup({ api: fakeApi({ startConnection }) });
+    expect(screen.getByText('Paso 1 de 6')).toBeTruthy();
+    passWelcome();
+    expect(heading().textContent).toBe('Trino se conecta de forma privada');
+    expect(document.activeElement).toBe(heading());
+    expect(screen.getByText('Paso 2 de 6')).toBeTruthy();
+    expect(
+      screen.getByText(
+        'Usa Tor: tus mensajes dan varias vueltas por internet antes de llegar, para que los servidores no vean desde dónde te conectas. La primera vez puede tardar un poco.',
+      ),
+    ).toBeTruthy();
+    const option = screen.getByRole('checkbox', {
+      name: OPTION,
+      description: 'Trino entra por otra puerta, más difícil de notar. Conectarse tarda más: de 1 a 2 minutos la primera vez.',
+    }) as HTMLInputElement;
+    expect(option.checked).toBe(false);
+    expect(startConnection).not.toHaveBeenCalled();
+
+    click('Continuar');
+    await settle();
+    expect(startConnection.mock.calls).toEqual([[false]]);
+    expect(heading().textContent).not.toBe('Trino se conecta de forma privada');
+    expect(screen.getByText('Paso 3 de 6')).toBeTruthy();
+  });
+
+  it('starts it through the hidden way when the person asks for it', async () => {
+    const startConnection = vi.fn((_hidden: boolean) => Promise.resolve());
+    setup({ api: fakeApi({ startConnection }) });
+    passWelcome();
+    tick(OPTION);
+    click('Continuar');
+    await settle();
+    expect(startConnection.mock.calls).toEqual([[true]]);
+  });
+
+  it('says so when it could not start, and stays on the step', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const startConnection = vi.fn((_hidden: boolean) => Promise.reject(failure('internal')));
+    setup({ api: fakeApi({ startConnection }) });
+    passWelcome();
+    click('Continuar');
+    await settle();
+    expect(alertText()).toBe('No se pudo empezar a conectar. Vuelve a intentar.');
+    expect(heading().textContent).toBe('Trino se conecta de forma privada');
+  });
+
+  it('goes back to the welcome', () => {
+    setup({ api: fakeApi({ startConnection: vi.fn(() => Promise.resolve()) }) });
+    passWelcome();
+    click('Atrás');
+    expect(screen.getByRole('checkbox', { name: 'Tengo 18 años o más' })).toBeTruthy();
+  });
+});

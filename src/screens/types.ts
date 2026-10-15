@@ -96,6 +96,12 @@ export interface OnboardingApi {
   totpVerify(code: string): Promise<boolean>;
   createIdentity(handle: string, passphrase: string, useTotp: boolean): Promise<ForgeResponse>;
   updateProfile(handle: string, avatar: string | null): Promise<void>;
+  /**
+   * Start Tor from the first run's "Conexión" step (TOR-6), through a
+   * built-in bridge when `hidden` ("No quiero que mi proveedor note que uso
+   * Trino"). Left out, the step is not there and Tor starts with the account.
+   */
+  startConnection?(hidden: boolean): Promise<void>;
 }
 export type OnboardingIntent = 'chats' | 'add-contact';
 export interface OnboardingFlowProps {

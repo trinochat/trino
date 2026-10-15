@@ -343,3 +343,60 @@ describe('answers that arrive late', () => {
     }
   });
 });
+
+// TOR-6 (PropTorSimple, card 1; Tor design §9.2, design test 50): with the
+// network, a "Conexión" step after the welcome. Tor starts only from it,
+// with the provider option's bridge if chosen, and before any account.
+describe('the connection step', () => {
+  const withTor = { ...INITIAL_ONBOARDING, withConnection: true };
+  const agreed = drive(withTor, { type: 'setAge', checked: true }, { type: 'setPrivacy', checked: true }).state;
+  const atConnection = drive(agreed, { type: 'next' }).state;
+
+  it('comes after the welcome, as step 2 of 6, and starts nothing by itself', () => {
+    const { state, effects } = drive(agreed, { type: 'next' });
+    expect(state).toMatchObject({ step: 'connection', busy: null, error: null, hidden: false });
+    expect(stepNumber(state)).toEqual({ current: 2, total: 6 });
+    expect(stepNumber(withTor)).toEqual({ current: 1, total: 6 });
+    expect(effects).toEqual([]);
+  });
+
+  it('starts Tor on "Continuar", plainly or through the hidden way, then goes to the name', () => {
+    const plain = drive(atConnection, { type: 'next' });
+    expect(plain.state).toMatchObject({ step: 'connection', busy: 'connecting' });
+    expect(plain.effects).toEqual([{ type: 'startConnection', hidden: false }]);
+    expect(drive(plain.state, { type: 'connectionStarted' }).state).toMatchObject({ step: 'name', busy: null, started: false });
+
+    const hidden = drive(atConnection, { type: 'setHidden', checked: true }, { type: 'next' });
+    expect(hidden.effects).toEqual([{ type: 'startConnection', hidden: true }]);
+    expect(drive(hidden.state, { type: 'connectionStarted' }).state).toMatchObject({ step: 'name', started: true });
+  });
+
+  it('says so when it could not start, and stays', () => {
+    const busy = drive(atConnection, { type: 'next' }).state;
+    expect(drive(busy, { type: 'connectionFailed' }).state).toMatchObject({
+      step: 'connection',
+      busy: null,
+      error: { field: 'step', key: 'net.welcome.error' },
+    });
+  });
+
+  it('goes back to it from the name, and starts again only for another choice', () => {
+    const atNameAgain = drive(atConnection, { type: 'next' }, { type: 'connectionStarted' }).state;
+    const back = drive(atNameAgain, { type: 'back' }).state;
+    expect(back.step).toBe('connection');
+    expect(drive(back, { type: 'back' }).state.step).toBe('welcome');
+
+    const same = drive(back, { type: 'next' });
+    expect(same.effects).toEqual([]);
+    expect(same.state.step).toBe('name');
+
+    const other = drive(back, { type: 'setHidden', checked: true }, { type: 'next' });
+    expect(other.effects).toEqual([{ type: 'startConnection', hidden: true }]);
+  });
+
+  it('is not there without the network: the welcome leads to the name, as before', () => {
+    expect(stepNumber(consented)).toEqual({ current: 1, total: 5 });
+    expect(drive(consented, { type: 'next' }).state.step).toBe('name');
+    expect(drive(atName, { type: 'back' }).state.step).toBe('welcome');
+  });
+});

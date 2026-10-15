@@ -9,6 +9,13 @@
  * Steps: welcome (language and the two boxes) → name and photo → password →
  * style → the 2FA question, and its setup → "Todo listo". Back goes one step
  * back, also from the 2FA question to the style (plan §1.8, 8).
+ *
+ * With the network (`withConnection`, TOR-6), a "Conexión" step comes after
+ * the welcome (PropTorSimple, card 1; Tor design §9.2): Tor starts only
+ * from its "Continuar", so whoever needs to hide that they use Trino
+ * chooses before the first connection ("No quiero que mi proveedor note
+ * que uso Trino", a built-in bridge). Going back to it and on again starts
+ * nothing new unless the choice changed.
  */
 import type { ForgeResponse, TotpBeginResponse } from '../../../lib/api';
 import type { TVars } from '../../../lib/i18n';
@@ -20,11 +27,13 @@ const CODE_DIGITS = 6;
 
 /** The steps of the progress bar, in order: "Paso n de 5". "Todo listo" has none. */
 export const PROGRESS_STEPS = ['welcome', 'name', 'password', 'style', 'twofa'] as const;
-export type OnboardingStep = (typeof PROGRESS_STEPS)[number] | 'done';
+/** The same with the "Conexión" step, after the welcome. */
+const STEPS_WITH_CONNECTION = ['welcome', 'connection', 'name', 'password', 'style', 'twofa'] as const;
+export type OnboardingStep = (typeof STEPS_WITH_CONNECTION)[number] | 'done';
 /** The 2FA step asks first; "Activar" sets it up. */
 export type TwofaView = 'ask' | 'setup';
 /** What the flow waits for. */
-export type Busy = 'checking' | 'enrolling' | 'verifying' | 'creating';
+export type Busy = 'checking' | 'enrolling' | 'verifying' | 'creating' | 'connecting';
 
 /** Where an error shows: next to a field, by the two boxes, or for the whole step. */
 export type ErrorField = 'consent' | 'name' | 'photo' | 'pass' | 'pass2' | 'code' | 'step';
@@ -36,6 +45,12 @@ export interface UiError {
 
 export interface OnboardingState {
   step: OnboardingStep;
+  /** The network is there: the "Conexión" step is one of the steps. */
+  withConnection: boolean;
+  /** "No quiero que mi proveedor note que uso Trino". */
+  hidden: boolean;
+  /** How Tor was started from the step (with the hidden way or not), or null before. */
+  started: boolean | null;
   twofa: TwofaView;
   /** "Tengo 18 años o más". */
   ageConfirmed: boolean;
@@ -72,6 +87,9 @@ export type OnboardingEvent =
   | { type: 'setPass'; value: string }
   | { type: 'setPass2'; value: string }
   | { type: 'setCode'; value: string }
+  | { type: 'setHidden'; checked: boolean }
+  | { type: 'connectionStarted' }
+  | { type: 'connectionFailed' }
   /** "Empezar" or "Continuar". */
   | { type: 'next' }
   | { type: 'back' }
@@ -94,6 +112,8 @@ export type OnboardingEvent =
 
 /** The commands a transition asks the flow to run, with what they need. */
 export type OnboardingEffect =
+  /** Start Tor, through a built-in bridge when `hidden` (TOR-6). */
+  | { type: 'startConnection'; hidden: boolean }
   | { type: 'checkPassphrase'; passphrase: string }
   | { type: 'totpBegin'; label: string }
   | { type: 'totpVerify'; code: string }
@@ -112,6 +132,9 @@ export interface Transition {
 
 export const INITIAL_ONBOARDING: OnboardingState = Object.freeze({
   step: 'welcome',
+  withConnection: false,
+  hidden: false,
+  started: null,
   twofa: 'ask',
   ageConfirmed: false,
   privacyAccepted: false,
@@ -129,10 +152,11 @@ export const INITIAL_ONBOARDING: OnboardingState = Object.freeze({
   photoSave: 'idle',
 }) as OnboardingState;
 
-/** "Paso n de 5", or null on "Todo listo". */
+/** "Paso n de 5" (6 with the "Conexión" step), or null on "Todo listo". */
 export function stepNumber(state: OnboardingState): { current: number; total: number } | null {
   if (state.step === 'done') return null;
-  return { current: PROGRESS_STEPS.indexOf(state.step) + 1, total: PROGRESS_STEPS.length };
+  const steps: readonly OnboardingStep[] = state.withConnection ? STEPS_WITH_CONNECTION : PROGRESS_STEPS;
+  return { current: steps.indexOf(state.step) + 1, total: steps.length };
 }
 
 /**
@@ -173,6 +197,7 @@ function create(state: OnboardingState, useTotp: boolean): Transition {
 }
 
 const PREVIOUS: Partial<Record<OnboardingStep, OnboardingStep>> = {
+  connection: 'welcome',
   name: 'welcome',
   password: 'name',
   style: 'password',
@@ -182,7 +207,12 @@ const PREVIOUS: Partial<Record<OnboardingStep, OnboardingStep>> = {
 function next(state: OnboardingState): Transition {
   switch (state.step) {
     case 'welcome':
-      return consentGiven(state) ? stay({ ...state, step: 'name', error: null }) : stay({ ...state, error: consentError() });
+      if (!consentGiven(state)) return stay({ ...state, error: consentError() });
+      return stay({ ...state, step: state.withConnection ? 'connection' : 'name', error: null });
+    case 'connection':
+      // Started already this way: nothing new to start.
+      if (state.started === state.hidden) return stay({ ...state, step: 'name', error: null });
+      return go({ ...state, busy: 'connecting', error: null }, { type: 'startConnection', hidden: state.hidden });
     case 'name': {
       const error = nameError(state.name);
       return stay(error ? { ...state, error } : { ...state, step: 'password', error: null });
@@ -198,7 +228,7 @@ function next(state: OnboardingState): Transition {
 
 function back(state: OnboardingState): Transition {
   if (state.step === 'twofa' && state.twofa === 'setup') return stay({ ...state, twofa: 'ask', error: null });
-  const previous = PREVIOUS[state.step];
+  const previous = state.step === 'name' && state.withConnection ? 'connection' : PREVIOUS[state.step];
   return previous ? stay({ ...state, step: previous, twofa: 'ask', error: null }) : stay(state);
 }
 
@@ -289,6 +319,8 @@ function personEvent(state: OnboardingState, event: OnboardingEvent): Transition
       return stay({ ...state, pass2: event.value, error: state.error?.field === 'pass2' ? null : state.error });
     case 'setCode':
       return stay({ ...state, code: event.value, error: state.error?.field === 'code' ? null : state.error });
+    case 'setHidden':
+      return stay({ ...state, hidden: event.checked, error: null });
     case 'next':
       return next(state);
     case 'back':
@@ -317,6 +349,14 @@ export function onboardingTransition(state: OnboardingState, event: OnboardingEv
       return state.step === 'done' ? stay(state) : stay({ ...state, photo: null, error: state.error?.field === 'photo' ? null : state.error });
 
     // The backend's answers count only while the flow waits for them.
+    case 'connectionStarted':
+      return state.busy === 'connecting'
+        ? stay({ ...state, step: 'name', busy: null, started: state.hidden, error: null })
+        : stay(state);
+    case 'connectionFailed':
+      return state.busy === 'connecting'
+        ? stay({ ...state, busy: null, error: { field: 'step', key: 'net.welcome.error' } })
+        : stay(state);
     case 'checked':
       return state.busy === 'checking' ? passwordChecked(state) : stay(state);
     case 'checkFailed':

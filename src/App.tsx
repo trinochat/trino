@@ -42,6 +42,8 @@ import type { CallGate } from './app/calls';
 import { MainScreen, type MainProps } from './app/MainScreen';
 import { useAutoLock } from './app/useAutoLock';
 import { withAccountPrefs, type AccountPrefsApi } from './app/account-prefs';
+import { startFirstConnection } from './app/first-connection';
+import { netApi } from './lib/net';
 
 export type { MainProps };
 
@@ -79,6 +81,8 @@ const BACKEND: AppApi = {
   createIdentity: api.createIdentity,
   // The first run saves the photo only: no `about`, the payload of before K12.
   updateProfile: (handle, avatar) => api.updateProfile(handle, avatar),
+  // The first run's "Conexión" step (TOR-6): Tor starts only from it.
+  startConnection: hidden => startFirstConnection(netApi, hidden),
   unseal: api.unseal,
   wipe: api.wipe,
   prefsSave: api.prefsSave,
