@@ -6,7 +6,8 @@
  *   could not, or, in the warning colour, "Sin protección hasta que cierres
  *   Trino" with "Volver a conectarse de forma privada" as the one big
  *   button;
- * - three things in view: "Qué ven los demás" (card 7, its own view), and
+ * - in view: "Qué ven los demás" (card 7, its own view), "Si en tu red
+ *   bloquean Tor" with the way in use (card 4, BridgesView, TOR-8), and
  *   "Buscar actualizaciones cada día" (on by default; it always asks before
  *   installing, and without protection nothing is looked for);
  * - "Opciones avanzadas", closed: "Conectarse solo después de desbloquear",
@@ -15,9 +16,8 @@
  * - small and last, "Conectar sin protección (solo esta vez)…", which only
  *   opens its question (card 5).
  *
- * "Si en tu red bloquean Tor" (card 4, the other ways to connect) joins the
- * list with TOR-8. Tor itself has no switch: it is always on, and the only
- * way without it is "solo esta vez".
+ * Tor itself has no switch: it is always on, and the only way without it is
+ * "solo esta vez".
  */
 import { ArrowLeft } from 'lucide-react';
 import { useEffect, useId, useState } from 'react';
@@ -29,6 +29,7 @@ import { SettingsRows } from '../settings/SettingsRows';
 import { SettingsSection } from '../settings/SettingsSection';
 import { listenAll } from '../shell/listen';
 import { Advanced } from './Advanced';
+import { BridgesView, wayName, wayOf } from './BridgesView';
 import type { NetScreensApi } from './net-api';
 import { settingsStatusOf } from './net-model';
 import { useNetStatus } from './useNetStatus';
@@ -44,7 +45,7 @@ export interface ConnectionViewProps {
 export function ConnectionView({ api, onBack, autoFocus }: ConnectionViewProps) {
   const t = useT();
   const status = useNetStatus(api);
-  const [view, setView] = useState<'main' | 'seen'>('main');
+  const [view, setView] = useState<'main' | 'seen' | 'bridges'>('main');
   const [moved, setMoved] = useState(false);
   const [updates, setUpdates] = useState<UpdateInfo | null>(null);
   const [bridges, setBridges] = useState<BridgesInfo | null>(null);
@@ -118,6 +119,20 @@ export function ConnectionView({ api, onBack, autoFocus }: ConnectionViewProps) 
     }
   };
 
+  if (view === 'bridges') {
+    return (
+      <BridgesView
+        api={api}
+        onBack={() => {
+          // The way may have changed there.
+          api.bridges().then(setBridges, error => console.error('net_bridges_get failed', error));
+          setMoved(true);
+          setView('main');
+        }}
+      />
+    );
+  }
+
   if (view === 'seen') {
     return (
       <WhatOthersSee
@@ -149,7 +164,15 @@ export function ConnectionView({ api, onBack, autoFocus }: ConnectionViewProps) 
       {failed ? <ErrorLine>{t('net.settings.errSave')}</ErrorLine> : null}
       <SettingsRows
         label={t('net.settings.title')}
-        items={[{ id: 'seen', label: t('net.settings.seen'), onSelect: () => setView('seen') }]}
+        items={[
+          { id: 'seen', label: t('net.settings.seen'), onSelect: () => setView('seen') },
+          {
+            id: 'bridges',
+            label: t('net.settings.bridges'),
+            ...(bridges && { value: wayName(t, wayOf(bridges)) }),
+            onSelect: () => setView('bridges'),
+          },
+        ]}
       />
       {updates ? (
         <Switch

@@ -5,6 +5,9 @@ import {
   onUpdateChanged,
   type BlockKind,
   type BridgeChoice,
+  type BridgeError,
+  type BridgesChecked,
+  type BridgesSet,
   type BridgesInfo,
   type NetStatus,
   type StartWhen,
@@ -38,6 +41,8 @@ describe('the network commands', () => {
     ['setStartOnUnlock', () => netApi.setStartOnUnlock(true), 'net_set_start_on_unlock', { on: true }],
     ['bridges', () => netApi.bridges(), 'net_bridges_get', undefined],
     ['tryBridge', () => netApi.tryBridge('snowflake'), 'net_bridges_try', { transport: 'snowflake' }],
+    // The paste box of card 4 (TOR-8): checked, never kept.
+    ['checkBridges', () => netApi.checkBridges('obfs4 192.0.2.10:443 …'), 'net_bridges_check', { text: 'obfs4 192.0.2.10:443 …' }],
     ['updateStatus', () => netApi.updateStatus(), 'update_status', undefined],
     ['setDailyUpdates', () => netApi.setDailyUpdates(false), 'update_set_daily', { on: false }],
     // The updater's screens (cards 8 and 9; updater.rs).
@@ -106,6 +111,22 @@ describe('the shapes serde gives them', () => {
       program: boolean;
       builtin: TransportKind[];
     }>();
+    // A pasted line that is not a bridge, by its number (bridges_cmds.rs `LineError`, trino-net's `BridgeError`).
+    expectTypeOf<BridgeError>().toEqualTypeOf<
+      | 'empty'
+      | 'tooLong'
+      | 'unknownTransport'
+      | 'badAddress'
+      | 'noFingerprint'
+      | 'badFingerprint'
+      | 'badArgument'
+      | 'missingArgument'
+      | 'argumentsTooLong'
+      | 'rejected'
+      | 'tooMany'
+    >();
+    expectTypeOf<BridgesChecked>().toEqualTypeOf<{ lines: number; errors: { line: number; error: BridgeError }[] }>();
+    expectTypeOf<BridgesSet['errors']>().toEqualTypeOf<{ line: number; error: BridgeError }[]>();
     expectTypeOf<UpdateInfo['daily']>().toEqualTypeOf<boolean>();
     expectTypeOf<UpdateInfo['installed']>().toEqualTypeOf<string>();
   });

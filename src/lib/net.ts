@@ -59,10 +59,36 @@ export type BridgeChoice =
   | { kind: 'builtin'; transport: TransportKind }
   | { kind: 'private'; text: string };
 
+/** Why a pasted line is not a bridge Trino takes (trino-net's `BridgeError`); the screens word each one. */
+export type BridgeError =
+  | 'empty'
+  | 'tooLong'
+  | 'unknownTransport'
+  | 'badAddress'
+  | 'noFingerprint'
+  | 'badFingerprint'
+  | 'badArgument'
+  | 'missingArgument'
+  | 'argumentsTooLong'
+  | 'rejected'
+  | 'tooMany';
+
+/** A pasted line that is not a bridge, by its number: from 1, or 0 for the text as a whole. */
+export interface BridgeLineError {
+  line: number;
+  error: BridgeError;
+}
+
+/** What checking pasted lines found (bridges_cmds.rs `Checked`): how many bridges, when every line is one. */
+export interface BridgesChecked {
+  lines: number;
+  errors: BridgeLineError[];
+}
+
 /** What keeping a choice did. */
 export interface BridgesSet {
   saved: boolean;
-  errors: { line: number; error: unknown }[];
+  errors: BridgeLineError[];
   status: NetStatus;
 }
 
@@ -115,6 +141,8 @@ export const netApi = {
   /** "Conectarse solo después de desbloquear"; refused with private bridges, which always start then. */
   setStartOnUnlock: (on: boolean): Promise<BridgesInfo> => invoke('net_set_start_on_unlock', { on }),
   bridges: (): Promise<BridgesInfo> => invoke('net_bridges_get'),
+  /** Check pasted lines, keeping nothing: the paste box of card 4 (TOR-8). */
+  checkBridges: (text: string): Promise<BridgesChecked> => invoke('net_bridges_check', { text }),
   /** Keep a choice of bridges; Tor starts again with it if it was running. */
   setBridges: (choice: BridgeChoice): Promise<BridgesSet> => invoke('net_bridges_set', { choice }),
   /** "Probar otra forma de conectarse": start again through a built-in bridge, kept once it works. */

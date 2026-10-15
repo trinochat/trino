@@ -20,7 +20,7 @@ async function show(status: NetStatus = READY) {
   return { ...fake, onBack };
 }
 
-const button = (name: string) => screen.getByRole('button', { name });
+const button = (name: string | RegExp) => screen.getByRole('button', { name });
 const toggle = (name: string) => screen.getByRole('switch', { name });
 const ESCAPE = 'Conectar sin protección (solo esta vez)…';
 
@@ -152,5 +152,33 @@ describe('ConnectionView: "Qué ven los demás"', () => {
 
     fireEvent.click(button('Volver a Conexión'));
     expect(screen.getByRole('heading', { name: 'Conexión' })).toBeTruthy();
+  });
+});
+
+// PropTorSimple, cards 6 and 4 (TOR-8): "Si en tu red bloquean Tor", with
+// the way in use, opens "Otra forma de conectarse".
+describe('ConnectionView: "Si en tu red bloquean Tor"', () => {
+  it('shows the way in use in the list and opens the other ways, then comes back', async () => {
+    const { api } = await show();
+    const row = within(screen.getByRole('list', { name: 'Conexión' })).getByRole('button', { name: /Si en tu red bloquean Tor/ });
+    expect(row.textContent).toBe('Si en tu red bloquean TorAutomático');
+    await act(async () => fireEvent.click(row));
+    expect(screen.getByRole('heading', { name: 'Otra forma de conectarse' })).toBeTruthy();
+    expect(document.activeElement).toBe(screen.getByRole('heading', { name: 'Otra forma de conectarse' }));
+
+    api.bridges.mockResolvedValue({ ...BRIDGES, transport: 'obfs4' });
+    fireEvent.click(button('Opciones avanzadas'));
+    await act(async () => fireEvent.click(screen.getByRole('radio', { name: 'obfs4 (integrado)' })));
+    await act(async () => fireEvent.click(button('Volver a Conexión')));
+    expect(screen.getByRole('heading', { name: 'Conexión' })).toBeTruthy();
+    expect(button(/Si en tu red bloquean Tor/).textContent).toBe('Si en tu red bloquean Torobfs4');
+  });
+
+  it('names a code someone gave you, without its lines', async () => {
+    const fake = fakeNet();
+    fake.api.bridges.mockResolvedValue({ ...BRIDGES, private: true, lines: 2, start: 'on_unlock', transport: 'obfs4' });
+    renderEs(<ConnectionView api={fake.api} onBack={vi.fn()} />);
+    await flush();
+    expect(button(/Si en tu red bloquean Tor/).textContent).toBe('Si en tu red bloquean TorCon un código');
   });
 });

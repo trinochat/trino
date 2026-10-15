@@ -17,13 +17,17 @@ const BLOCKED: NetStatus = { state: 'blocked', kind: 'filtering', pct: 15 };
 const MEANWHILE = 'Puedes leer tus chats. Lo que envíes sale cuando se conecte, si dejas Trino abierto.';
 
 async function show(status: NetStatus) {
-  const { api } = fakeNet(status);
+  const { api, emit } = fakeNet(status);
   const onClose = vi.fn();
   const onEscape = vi.fn();
   const view = render(wrap(<ConnectFailedDialog status={status} api={api} onClose={onClose} onEscape={onEscape} />));
   await flush();
+  // What the backend says reaches the search (net-changed) and the dialog (its parent's state).
   const rerender = (next: NetStatus) =>
-    view.rerender(wrap(<ConnectFailedDialog status={next} api={api} onClose={onClose} onEscape={onEscape} />));
+    act(() => {
+      emit.net(next);
+      view.rerender(wrap(<ConnectFailedDialog status={next} api={api} onClose={onClose} onEscape={onEscape} />));
+    });
   return { api, onClose, onEscape, rerender };
 }
 
@@ -44,31 +48,47 @@ describe('ConnectFailedDialog', () => {
     expect(order.indexOf('Conectar sin protección…')).toBeGreaterThan(order.indexOf(MEANWHILE));
   });
 
-  it('tries the first built-in way, then says it is trying and that Windows may ask', async () => {
+  it('starts the search with the first built-in way, then says it is trying and that Windows may ask', async () => {
     const { api, rerender } = await show(BLOCKED);
     await act(async () => fireEvent.click(button('Probar otra forma de conectarse')));
     expect(api.tryBridge.mock.calls).toEqual([['snowflake']]);
-    rerender({ state: 'starting', pct: 5 });
+    await rerender({ state: 'starting', pct: 5 });
     expect(screen.getByRole('status').textContent).toBe('Probando otra forma de conectarse…');
     expect(screen.getByText('Si Windows te pregunta si dejas que un programa de Trino use la red, es normal.')).toBeTruthy();
     expect(screen.queryByRole('button', { name: 'Probar otra forma de conectarse' })).toBeNull();
     expect(screen.queryByRole('button', { name: 'Conectar sin protección…' })).toBeNull();
   });
 
-  it('closes once the other way connects, and says it again if that one is blocked too', async () => {
+  it('closes once another way connects, and says it again once no way did', async () => {
     const first = await show(BLOCKED);
     await act(async () => fireEvent.click(button('Probar otra forma de conectarse')));
-    first.rerender({ state: 'starting', pct: 5 });
-    first.rerender(READY);
+    await first.rerender({ state: 'starting', pct: 5 });
+    await first.rerender(READY);
     expect(first.onClose).toHaveBeenCalled();
     cleanup();
 
     const second = await show(BLOCKED);
     await act(async () => fireEvent.click(button('Probar otra forma de conectarse')));
-    second.rerender({ state: 'starting', pct: 5 });
-    second.rerender({ state: 'blocked', kind: 'noProgress', pct: 5 });
+    await second.rerender({ state: 'starting', pct: 5 });
+    // Snowflake does not connect: obfs4 is next, still trying.
+    await second.rerender({ state: 'blocked', kind: 'noProgress', pct: 5 });
+    await flush();
+    expect(second.api.tryBridge.mock.calls).toEqual([['snowflake'], ['obfs4']]);
+    expect(screen.getByRole('status').textContent).toBe('Probando otra forma de conectarse…');
+    expect(second.onClose).not.toHaveBeenCalled();
+    await second.rerender({ state: 'starting', pct: 5 });
+    await second.rerender({ state: 'blocked', kind: 'noProgress', pct: 5 });
+    await flush();
     expect(screen.getByText('Trino no termina de conectarse de forma privada.')).toBeTruthy();
     expect(button('Conectar sin protección…')).toBeTruthy();
+  });
+
+  it('offers no other way over a connection code someone gave you', async () => {
+    const { api } = fakeNet(BLOCKED);
+    api.bridges.mockResolvedValue({ ...BRIDGES, transport: 'obfs4', private: true, lines: 1, start: 'on_unlock' });
+    render(wrap(<ConnectFailedDialog status={BLOCKED} api={api} onClose={vi.fn()} onEscape={vi.fn()} />));
+    await flush();
+    expect(screen.queryByRole('button', { name: 'Probar otra forma de conectarse' })).toBeNull();
   });
 
   it('offers no other way when this build has no bridge program', async () => {
@@ -101,14 +121,14 @@ describe('ConnectFailedDialog', () => {
 
   it('closes by itself when there is nothing left to explain', async () => {
     const { onClose, rerender } = await show(BLOCKED);
-    rerender({ state: 'starting', pct: 30 });
+    await rerender({ state: 'starting', pct: 30 });
     expect(onClose).toHaveBeenCalled();
   });
 
   it('never goes without protection by itself, whatever happens', async () => {
     const { api, rerender } = await show(BLOCKED);
     await act(async () => fireEvent.click(button('Volver a intentar')));
-    rerender({ state: 'blocked', kind: 'cantReachTor', pct: 0 });
+    await rerender({ state: 'blocked', kind: 'cantReachTor', pct: 0 });
     expect(api.connectWithoutTor).not.toHaveBeenCalled();
   });
 

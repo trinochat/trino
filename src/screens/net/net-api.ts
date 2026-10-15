@@ -12,6 +12,8 @@ export type NetScreensApi = Pick<
   | 'retry'
   | 'bridges'
   | 'tryBridge'
+  | 'setBridges'
+  | 'checkBridges'
   | 'connectWithoutTor'
   | 'backToTor'
   | 'setStartOnUnlock'
@@ -34,6 +36,8 @@ export const netScreensApi: NetScreensApi = {
   retry: netApi.retry,
   bridges: netApi.bridges,
   tryBridge: netApi.tryBridge,
+  setBridges: netApi.setBridges,
+  checkBridges: netApi.checkBridges,
   connectWithoutTor: netApi.connectWithoutTor,
   backToTor: netApi.backToTor,
   setStartOnUnlock: netApi.setStartOnUnlock,

@@ -12,6 +12,8 @@ const KEYS: string[] = [
   'net.welcome.hidden',
   'net.welcome.hiddenBody',
   'net.welcome.error',
+  'net.welcome.blocked',
+  'net.welcome.way',
   // The line under the wordmark of the inbox (card 2): gone while connected.
   'net.line.starting',
   'net.line.waitingInternet',
@@ -55,6 +57,43 @@ const KEYS: string[] = [
   'net.settings.onUnlockFixed',
   'net.settings.escape',
   'net.settings.errSave',
+  'net.settings.bridges',
+  // "Otra forma de conectarse" (card 4, TOR-8): the search, and the ways under "Opciones avanzadas".
+  'net.bridges.title',
+  'net.bridges.back',
+  'net.bridges.intro',
+  'net.bridges.search',
+  'net.bridges.searchBody',
+  'net.bridges.trying',
+  'net.bridges.found',
+  'net.bridges.none',
+  'net.bridges.withCode',
+  'net.bridges.noProgram',
+  'net.bridges.group',
+  'net.bridges.auto',
+  'net.bridges.autoBody',
+  'net.bridges.builtin',
+  'net.bridges.builtinBody',
+  'net.bridges.code',
+  'net.bridges.codeLabel',
+  'net.bridges.codeHint',
+  'net.bridges.codeSave',
+  'net.bridges.codeSaved',
+  'net.bridges.codeInUse',
+  'net.bridges.short.auto',
+  'net.bridges.short.code',
+  'net.bridges.short.search',
+  'net.bridges.err.empty',
+  'net.bridges.err.tooMany',
+  'net.bridges.err.tooLong',
+  'net.bridges.err.unknownTransport',
+  'net.bridges.err.badAddress',
+  'net.bridges.err.noFingerprint',
+  'net.bridges.err.badFingerprint',
+  'net.bridges.err.badArgument',
+  'net.bridges.err.missingArgument',
+  'net.bridges.err.argumentsTooLong',
+  'net.bridges.err.rejected',
   // "Qué ven los demás" (card 7).
   'net.seen.title',
   'net.seen.back',
@@ -107,7 +146,23 @@ const KEYS: string[] = [
   'net.link.error',
 ];
 
+const LINE_ERRORS = [
+  'tooLong',
+  'unknownTransport',
+  'badAddress',
+  'noFingerprint',
+  'badFingerprint',
+  'badArgument',
+  'missingArgument',
+  'argumentsTooLong',
+  'rejected',
+];
+
 const PLACEHOLDERS: Record<string, string[]> = {
+  'net.welcome.way': ['way'],
+  'net.bridges.trying': ['step', 'total'],
+  'net.bridges.builtin': ['name'],
+  ...Object.fromEntries(LINE_ERRORS.map(error => [`net.bridges.err.${error}`, ['n']])),
   'net.line.starting': ['pct'],
   'net.update.unchecked': ['n'],
 };
@@ -149,6 +204,17 @@ describe.each(LANG_CODES)('the Tor copy in %s', lang => {
   it('says that calls show where you connect from to Cloudflare, and the servers whom you write to', () => {
     expect(net[lang]['net.seen.calls']).toMatch(/Cloudflare/);
     expect(net[lang]['net.seen.servers']).not.toBe('');
+  });
+
+  it('says the search tries the ways Trino carries, and asks nobody: moat is not built', () => {
+    expect(net[lang]['net.bridges.searchBody']).not.toMatch(/Proyecto Tor|Tor Project|Projeto Tor|pa[ií]s|country/i);
+    expect(net[lang]['net.bridges.searchBody']).toMatch(/Trino/);
+  });
+
+  it('says the built-in ways are known and do not hide Tor, and that a pasted code can leave a trace', () => {
+    expect(net[lang]['net.bridges.builtinBody']).toMatch(/no esconden|don’t hide|não escondem/);
+    expect(net[lang]['net.bridges.codeHint']).toMatch(/rastro|trace/);
+    expect(net[lang]['net.bridges.codeHint']).toMatch(/bridges\.torproject\.org/);
   });
 
   it('gives the hidden way in its cost, in one line', () => {

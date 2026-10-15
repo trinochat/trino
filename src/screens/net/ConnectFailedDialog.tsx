@@ -3,9 +3,9 @@
  * opened from the inbox's "Ver qué hacer". One big action and small ones:
  *
  * - the network seems to block Tor, or Tor does not finish connecting:
- *   "Probar otra forma de conectarse" (a built-in bridge, Snowflake first:
- *   the backend's order, §5.3; its own screen with the automatic search
- *   and the codes comes with TOR-8), then "Volver a intentar", small;
+ *   "Probar otra forma de conectarse", the search of card 4 (TOR-8,
+ *   bridge-search.ts: the built-in ways in the backend's order, Snowflake
+ *   then obfs4, until one connects), then "Volver a intentar", small;
  * - the clock is off, the antivirus took the bridge program, or Arti is too
  *   old: "Volver a intentar" only;
  * - under the note that the chats can be read meanwhile, small and last,
@@ -13,21 +13,24 @@
  *   Never for the clock, where it would not help.
  *
  * While another way is tried it says so, and that Windows may ask about a
- * program of Trino (lyrebird). It closes once there is nothing to explain:
+ * program of Trino (lyrebird); the search goes on if the dialog closes, and
+ * when no way connected it says why again. It closes once there is nothing
+ * to explain:
  * connected, connecting again after "Volver a intentar", or without
  * internet, which the inbox's line says. Nothing here goes without Tor.
  */
 import { useEffect, useId, useRef, useState } from 'react';
 import { useT } from '../../lib/i18n';
-import type { NetStatus, TransportKind } from '../../lib/net';
+import type { NetStatus } from '../../lib/net';
 import { Button, cx, Dialog, FOCUS_RING } from '../../ui';
 import { ErrorLine } from '../settings/ErrorLine';
 import type { NetScreensApi } from './net-api';
 import { failureOf, type Failure } from './net-model';
+import { useBridgeSearch } from './useBridgeSearch';
 
 export interface ConnectFailedDialogProps {
   status: NetStatus | null;
-  api: Pick<NetScreensApi, 'retry' | 'bridges' | 'tryBridge'>;
+  api: Pick<NetScreensApi, 'retry' | 'bridges' | 'tryBridge' | 'onNetChanged'>;
   onClose(): void;
   /** "Conectar sin protección…": its question (card 5) takes over. */
   onEscape(): void;
@@ -45,11 +48,11 @@ export function ConnectFailedDialog({ status, api, onClose, onEscape }: ConnectF
   const failure = failureOf(status);
   // What it said last, kept while another way is tried.
   const [shown, setShown] = useState<Failure | null>(failure);
-  const [builtin, setBuiltin] = useState<readonly TransportKind[] | null>(null);
-  const [trying, setTrying] = useState(false);
+  const [program, setProgram] = useState(false);
+  const [search, searcher] = useBridgeSearch(api);
+  const trying = search.phase === 'trying';
   const [busy, setBusy] = useState(false);
   const [failed, setFailed] = useState(false);
-  const started = useRef(false);
   const latest = useRef(onClose);
   latest.current = onClose;
 
@@ -57,10 +60,10 @@ export function ConnectFailedDialog({ status, api, onClose, onEscape }: ConnectF
     let active = true;
     api.bridges().then(
       info => {
-        if (active) setBuiltin(info.program ? info.builtin : []);
+        if (active) setProgram(info.program && info.builtin.length > 0 && info.private !== true);
       },
       () => {
-        if (active) setBuiltin([]);
+        if (active) setProgram(false);
       },
     );
     return () => {
@@ -71,14 +74,9 @@ export function ConnectFailedDialog({ status, api, onClose, onEscape }: ConnectF
   useEffect(() => {
     if (trying) {
       if (status?.state === 'ready' || status?.state === 'direct') latest.current();
-      else if (status?.state === 'starting') started.current = true;
-      else if (failure && started.current) {
-        // That way did not connect either: say why again.
-        setTrying(false);
-        setShown(failure);
-      }
       return;
     }
+    // Once the search ended: connected, or no way did, and it says why again.
     if (failure) setShown(failure);
     else latest.current();
     // `failure` is derived from `status`.
@@ -100,16 +98,12 @@ export function ConnectFailedDialog({ status, api, onClose, onEscape }: ConnectF
     }
   };
 
-  const first = builtin?.[0];
   const tryOther =
-    shown.tryOther && first
+    shown.tryOther && program
       ? () =>
           void run(
-            () => api.tryBridge(first),
-            () => {
-              started.current = false;
-              setTrying(true);
-            },
+            () => searcher.start(),
+            () => setFailed(searcher.get().phase === 'failed'),
           )
       : null;
   const retry = () => void run(() => api.retry(), () => latest.current());

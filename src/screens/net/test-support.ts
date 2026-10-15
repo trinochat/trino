@@ -4,7 +4,7 @@
  * as the backend would. Test-only.
  */
 import { vi } from 'vitest';
-import type { BridgesInfo, NetStatus, UpdateInfo } from '../../lib/net';
+import type { BridgeChoice, BridgesChecked, BridgesInfo, BridgesSet, NetStatus, UpdateInfo } from '../../lib/net';
 import type { NetScreensApi } from './net-api';
 
 export const READY: NetStatus = { state: 'ready', transport: 'none' };
@@ -28,6 +28,8 @@ export function fakeNet(status: NetStatus = READY) {
     retry: vi.fn(async (): Promise<NetStatus> => ({ state: 'starting', pct: 0 })),
     bridges: vi.fn(async () => BRIDGES),
     tryBridge: vi.fn(async (): Promise<NetStatus> => ({ state: 'starting', pct: 0 })),
+    setBridges: vi.fn(async (_choice: BridgeChoice): Promise<BridgesSet> => ({ saved: true, errors: [], status })),
+    checkBridges: vi.fn(async (_text: string): Promise<BridgesChecked> => ({ lines: 1, errors: [] })),
     connectWithoutTor: vi.fn(async (): Promise<NetStatus> => ({ state: 'direct' })),
     backToTor: vi.fn(async () => READY),
     setStartOnUnlock: vi.fn(async (on: boolean): Promise<BridgesInfo> => ({ ...BRIDGES, start: on ? 'on_unlock' : 'open' })),
