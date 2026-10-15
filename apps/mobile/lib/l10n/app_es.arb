@@ -376,8 +376,8 @@
   "devicesNoteSelf": "Cada aparato puede desvincularse solo. Tu computador, que guarda la llave de la cuenta, puede quitar a cualquiera.",
   "devicesNoteLost": "Si pierdes este celular, desvincúlalo desde tu computador. Quien lo tenga deja de recibir tus mensajes nuevos, pero los que ya estaban en el celular siguen ahí.",
 
-  "privacySubtitle": "Cuándo se conecta Trino",
-  "@privacySubtitle": {"description": "Under Privacidad in Ajustes: what lives there today. Connection settings and blocked people may join it later."},
+  "privacySubtitle": "Cómo se conecta Trino",
+  "@privacySubtitle": {"description": "Under Privacidad in Ajustes: it leads to Conexión (Tor, the bridges, what others see). Blocked people may join it later."},
 
   "connectionTitle": "Conexión",
   "@connectionTitle": {"description": "The header of the connection screens: what to do when it fails, and Ajustes › Privacidad › Conexión."},
@@ -424,5 +424,24 @@
   "bridgeCodeStored": "Tienes un código guardado, protegido con tu contraseña.",
   "@bridgeCodeStored": {"description": "The app never shows the code back."},
   "bridgeCodeRemove": "Quitar el código",
-  "bridgeCodeRemoved": "Se quitó el código."
+  "bridgeCodeRemoved": "Se quitó el código.",
+
+  "connectionWhatOthersSee": "Qué ven los demás",
+  "connectionIfBlocked": "Si en tu red bloquean Tor",
+  "@connectionIfBlocked": {"description": "Its value is the way in use, such as \"Automático\"."},
+  "connectionReconnectPrivately": "Volver a conectarse de forma privada",
+  "connectionUnprotectedOnce": "Conectar sin protección (solo esta vez)…",
+  "@connectionUnprotectedOnce": {"description": "Small and grey; it always asks first and is never remembered."},
+  "privacyConnectAfterUnlockForced": "Va encendido mientras tengas un código guardado: el código está protegido con tu contraseña, y Trino solo lo puede usar desbloqueado.",
+  "seeServers": "Los servidores no ven desde dónde te conectas, pero sí a quién le escribes y cuándo.",
+  "@seeServers": {"description": "Honest: never promise anonymity or invisibility."},
+  "seeProvider": "Tu proveedor de internet ve que usas Tor.",
+  "seeCalls": "En las llamadas, Cloudflare —la empresa que pasa el audio— ve desde dónde te conectas. Al abrir un enlace, la página también.",
+  "seeNotInvisible": "Trino protege desde dónde te conectas, pero no te hace invisible.",
+  "seeStores": "Google, Apple o el fabricante de tu celular saben qué apps tienes instaladas.",
+  "seeNotificationsNoContent": "Las notificaciones de Trino no llevan el contenido de tus mensajes.",
+  "@seeNotificationsNoContent": {"description": "With \"Solo el nombre\" or \"Nada\" in Notificaciones."},
+  "seeNotificationsWithContent": "Elegiste que las notificaciones muestren tus mensajes: quien vea la pantalla de tu celular puede leerlos. Lo cambias en Notificaciones.",
+  "@seeNotificationsWithContent": {"description": "With \"Nombre y mensaje\" in Notificaciones."},
+  "seeBridgeCode": "Un código de conexión que te dieron hace más difícil ver que usas Tor; las formas que trae Trino son conocidas."
 }

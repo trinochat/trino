@@ -323,7 +323,7 @@
   "devicesNoteSelf": "Each device can unlink itself. Your computer, which holds the account key, can remove any of them.",
   "devicesNoteLost": "If you lose this phone, unlink it from your computer. Whoever has it stops receiving your new messages, but the ones already on the phone stay there.",
 
-  "privacySubtitle": "When Trino connects",
+  "privacySubtitle": "How Trino connects",
 
   "connectionTitle": "Connection",
   "netFailedTitle": "Could not connect",
@@ -359,5 +359,19 @@
   "bridgeCodeInvalid": "That code doesn't work. Check that you copied all of it, just as you got it.",
   "bridgeCodeStored": "You have a code saved, protected with your password.",
   "bridgeCodeRemove": "Remove the code",
-  "bridgeCodeRemoved": "The code was removed."
+  "bridgeCodeRemoved": "The code was removed.",
+
+  "connectionWhatOthersSee": "What others see",
+  "connectionIfBlocked": "If your network blocks Tor",
+  "connectionReconnectPrivately": "Connect privately again",
+  "connectionUnprotectedOnce": "Connect without protection (just this once)…",
+  "privacyConnectAfterUnlockForced": "It stays on while you have a code saved: the code is protected with your password, and Trino can only use it while unlocked.",
+  "seeServers": "The servers don't see where you connect from, but they do see who you write to and when.",
+  "seeProvider": "Your internet provider sees that you use Tor.",
+  "seeCalls": "In calls, Cloudflare (the company that carries the audio) sees where you connect from. When you open a link, so does the page.",
+  "seeNotInvisible": "Trino protects where you connect from, but it doesn't make you invisible.",
+  "seeStores": "Google, Apple or your phone's maker know which apps you have installed.",
+  "seeNotificationsNoContent": "Trino's notifications don't carry the content of your messages.",
+  "seeNotificationsWithContent": "You chose to show your messages in notifications: anyone who sees your phone's screen can read them. You can change it in Notifications.",
+  "seeBridgeCode": "A connection code someone gave you makes it harder to see that you use Tor; the ways Trino brings are known."
 }

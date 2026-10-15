@@ -1,14 +1,26 @@
-// Privacidad: how Trino stays connected. Tor is always on and calls go
-// through the call server, so there is nothing to switch for them.
+// Privacidad: today one row, Conexión, with the state in words. Tor is always
+// on and calls go through the call server, so there is nothing to switch for
+// them; how Trino connects lives in Conexión.
 import 'package:flutter/material.dart';
 
 import '../../app/scope.dart';
-import '../../ui/switch_row.dart';
+import '../../design/icons.dart';
+import '../../engine/engine.dart';
+import '../../l10n/app_localizations.dart';
+import '../../ui/list_row.dart';
+import '../../ui/settings_group.dart';
 import '../common.dart';
-import '../settings_screen.dart';
+import '../connection/connection_screen.dart';
 
-class PrivacyScreen extends StatelessWidget {
+class PrivacyScreen extends StatefulWidget {
   const PrivacyScreen({super.key});
+
+  @override
+  State<PrivacyScreen> createState() => _PrivacyScreenState();
+}
+
+class _PrivacyScreenState extends State<PrivacyScreen> {
+  late final Stream<NetworkState> _network = context.engine.network;
 
   @override
   Widget build(BuildContext context) {
@@ -16,21 +28,16 @@ class PrivacyScreen extends StatelessWidget {
     return SubPage(
       title: l10n.sectionPrivacy,
       children: [
-        SettingsBuilder(
-          builder: (context, settings, update) => Column(
+        const SizedBox(height: 8),
+        StreamBuilder<NetworkState>(
+          stream: _network,
+          builder: (context, snapshot) => SettingsGroup(
             children: [
-              const SizedBox(height: 8),
-              SwitchRow(
-                title: l10n.privacyKeepConnected,
-                description: l10n.privacyKeepConnectedDesc,
-                value: settings.keepConnectedInBackground,
-                onChanged: (on) => update((current) => current.copyWith(keepConnectedInBackground: on)),
-              ),
-              SwitchRow(
-                title: l10n.privacyConnectAfterUnlock,
-                description: l10n.privacyConnectAfterUnlockDesc,
-                value: settings.connectAfterUnlockOnly,
-                onChanged: (on) => update((current) => current.copyWith(connectAfterUnlockOnly: on)),
+              ListRow(
+                icon: TrinoIcons.globe,
+                title: l10n.connectionTitle,
+                subtitle: snapshot.data == null ? null : networkWords(snapshot.data!, l10n),
+                onTap: () => Navigator.of(context).push(ConnectionScreen.route()),
               ),
             ],
           ),
@@ -39,3 +46,14 @@ class PrivacyScreen extends StatelessWidget {
     );
   }
 }
+
+/// The network state as one short phrase, for a row's subtitle.
+String networkWords(NetworkState state, AppLocalizations l10n) => switch (state) {
+  NetworkState(tryingAnotherWay: true) => l10n.netTryingAnotherWay,
+  NetworkState(status: NetworkStatus.connected) => l10n.netConnectedPrivately,
+  NetworkState(status: NetworkStatus.connecting, :final progress) =>
+    progress > 0 ? l10n.netConnectingProgress(progress) : l10n.netConnecting,
+  NetworkState(status: NetworkStatus.failed) => l10n.netFailed,
+  NetworkState(status: NetworkStatus.offline) => l10n.netOffline,
+  NetworkState(status: NetworkStatus.unprotected) => l10n.netUnprotected,
+};

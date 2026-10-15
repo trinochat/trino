@@ -323,7 +323,7 @@
   "devicesNoteSelf": "Cada aparelho pode se desvincular sozinho. Seu computador, que guarda a chave da conta, pode remover qualquer um.",
   "devicesNoteLost": "Se você perder este celular, desvincule-o pelo seu computador. Quem estiver com ele deixa de receber suas mensagens novas, mas as que já estavam no celular continuam lá.",
 
-  "privacySubtitle": "Quando o Trino se conecta",
+  "privacySubtitle": "Como o Trino se conecta",
 
   "connectionTitle": "Conexão",
   "netFailedTitle": "Não foi possível conectar",
@@ -359,5 +359,19 @@
   "bridgeCodeInvalid": "Esse código não serve. Confira se você copiou inteiro, do jeito que recebeu.",
   "bridgeCodeStored": "Você tem um código guardado, protegido com a sua senha.",
   "bridgeCodeRemove": "Remover o código",
-  "bridgeCodeRemoved": "O código foi removido."
+  "bridgeCodeRemoved": "O código foi removido.",
+
+  "connectionWhatOthersSee": "O que os outros veem",
+  "connectionIfBlocked": "Se a sua rede bloqueia o Tor",
+  "connectionReconnectPrivately": "Voltar a se conectar de forma privada",
+  "connectionUnprotectedOnce": "Conectar sem proteção (só desta vez)…",
+  "privacyConnectAfterUnlockForced": "Fica ligado enquanto você tiver um código guardado: o código está protegido com a sua senha, e o Trino só pode usá-lo desbloqueado.",
+  "seeServers": "Os servidores não veem de onde você se conecta, mas veem para quem você escreve e quando.",
+  "seeProvider": "Seu provedor de internet vê que você usa o Tor.",
+  "seeCalls": "Nas chamadas, a Cloudflare (a empresa que passa o áudio) vê de onde você se conecta. Ao abrir um link, a página também.",
+  "seeNotInvisible": "O Trino protege de onde você se conecta, mas não te deixa invisível.",
+  "seeStores": "O Google, a Apple ou o fabricante do seu celular sabem quais apps você tem instalados.",
+  "seeNotificationsNoContent": "As notificações do Trino não levam o conteúdo das suas mensagens.",
+  "seeNotificationsWithContent": "Você escolheu mostrar suas mensagens nas notificações: quem vir a tela do seu celular pode lê-las. Dá para mudar em Notificações.",
+  "seeBridgeCode": "Um código de conexão que você recebeu torna mais difícil ver que você usa o Tor; as formas que vêm com o Trino são conhecidas."
 }

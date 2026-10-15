@@ -42,7 +42,7 @@ void main() {
     ]);
     expect(rowOf(tester, 'Sofía').subtitle, 'Tu nombre y tu código', reason: 'no @nombre the engine does not have');
     expect(rowOf(tester, 'Dispositivos').value, '2');
-    expect(rowOf(tester, 'Privacidad').subtitle, 'Cuándo se conecta Trino');
+    expect(rowOf(tester, 'Privacidad').subtitle, 'Cómo se conecta Trino');
     expect(rowOf(tester, 'Apariencia').value, 'Calma');
     expect(rowOf(tester, 'Idioma').value, 'Español');
     for (final missing in ['Seguridad', 'Accesibilidad', 'Apoyar a Trino']) {
@@ -136,27 +136,6 @@ void main() {
     );
     final settings = await tester.runAsync(() => app.engine.settings.first);
     expect((settings!.notificationPreview, settings.messageSound), (NotificationPreview.nothing, false));
-  });
-
-  testWidgets('Privacidad: staying connected with Trino closed on, connecting only after unlocking off', (
-    tester,
-  ) async {
-    final app = await pumpApp(tester);
-    await openTab(tester, 'Ajustes');
-    await openSection(tester, 'Privacidad');
-    final keep = find.ancestor(of: find.text('Seguir conectado con Trino cerrado'), matching: find.byType(SwitchRow));
-    expect(tester.getSemantics(keep), isSemantics(isToggled: true));
-    final afterUnlock = find.ancestor(
-      of: find.text('Conectarse solo después de desbloquear'),
-      matching: find.byType(SwitchRow),
-    );
-    expect(tester.getSemantics(afterUnlock), isSemantics(isToggled: false));
-    expect(find.text('Ocultar mi IP con Tor'), findsNothing);
-
-    await tester.tap(afterUnlock);
-    await tester.pumpAndSettle();
-    final settings = await tester.runAsync(() => app.engine.settings.first);
-    expect(settings!.connectAfterUnlockOnly, isTrue);
   });
 
   testWidgets('Avanzado: your key, the relays as plain text, and the diagnostic log off', (tester) async {

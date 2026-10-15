@@ -104,6 +104,41 @@ void main() {
     expect(spanish, containsPair('profileSubtitle', 'Tu nombre y tu código'));
     expect(spanish, containsPair('onbTwofaLater', 'Ahora no'));
     expect(spanish, containsPair('onbDoneTitle', 'Todo listo'));
+    // The connection, as David approved it: honest, and asking before going unprotected.
+    expect(spanish, containsPair('unprotectedTitle', '¿Conectar sin protección?'));
+    expect(
+      spanish,
+      containsPair(
+        'unprotectedBody',
+        'Solo hasta que cierres Trino. Tu proveedor de internet y los servidores verán desde dónde te conectas, '
+            'y tu proveedor verá que usas Trino.',
+      ),
+    );
+    expect(
+      spanish,
+      containsPair(
+        'privacyKeepConnectedDesc',
+        'Así te llegan los mensajes con la app cerrada. Android muestra una notificación fija, '
+            'y gasta más batería y datos.',
+      ),
+    );
+    expect(
+      spanish,
+      containsPair('seeNotInvisible', 'Trino protege desde dónde te conectas, pero no te hace invisible.'),
+    );
+  });
+
+  test('never promises anonymity or invisibility', () {
+    final promise = RegExp(
+      r'\b(anónim[oa]s?|nadie (te )?(puede|podrá) ver|eres invisible|anonymous|anonymity|anônim[oa]s?)\b',
+      caseSensitive: false,
+      unicode: true,
+    );
+    for (final locale in ['es', 'en', 'pt']) {
+      for (final MapEntry(:key, :value) in messagesOf(arb(locale)).entries) {
+        expect(promise.firstMatch(value)?.group(0), isNull, reason: '$locale $key: "$value"');
+      }
+    }
   });
 
   test('writes Colombian Spanish with "tú"', () {

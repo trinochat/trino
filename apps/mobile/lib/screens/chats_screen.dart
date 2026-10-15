@@ -195,10 +195,14 @@ class _ChatsScreenState extends State<ChatsScreen> {
 /// hacer", waiting for internet, or unprotected in the warning colour.
 /// Nothing once connected: no pill and no coloured dot.
 class NetworkStatusLine extends StatelessWidget {
-  const NetworkStatusLine({super.key, required this.state, required this.onHelp});
+  const NetworkStatusLine({super.key, required this.state, required this.onHelp, this.showConnected = false});
 
   final NetworkState state;
   final VoidCallback onHelp;
+
+  /// Says "Conectado de forma privada" too, as Ajustes › Conexión does; the
+  /// inbox says nothing once connected.
+  final bool showConnected;
 
   @override
   Widget build(BuildContext context) {
@@ -206,7 +210,11 @@ class NetworkStatusLine extends StatelessWidget {
     final t = context.tokens;
     final style = context.text.secondary;
     final (String? message, bool help, TextStyle textStyle) = switch (state) {
-      NetworkState(status: NetworkStatus.connected) => (null, false, style),
+      NetworkState(status: NetworkStatus.connected) => (
+        showConnected ? l10n.netConnectedPrivately : null,
+        false,
+        style,
+      ),
       NetworkState(tryingAnotherWay: true) => (l10n.netTryingAnotherWay, false, style),
       NetworkState(status: NetworkStatus.connecting, :final progress) => (
         progress > 0 ? l10n.netConnectingProgress(progress) : l10n.netConnecting,
