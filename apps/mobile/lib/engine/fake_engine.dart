@@ -11,7 +11,9 @@ class FakeTrinoEngine implements TrinoEngine {
   /// screen, as after a restart. [connectAfter] starts connecting and connects
   /// after that long, as do retrying and the other network calls (without it
   /// they connect at once); [sendDelay] is how long a message shows as sending;
-  /// [callStartsAt] is the time a new call shows.
+  /// [callStartsAt] is the time a new call shows once connected; [answerAfter]
+  /// is how long the other phone rings before answering a call you make: at
+  /// once by default, never by itself when null ([answerOutgoing] answers).
   FakeTrinoEngine({
     DateTime Function()? clock,
     bool onboarded = true,
@@ -20,6 +22,7 @@ class FakeTrinoEngine implements TrinoEngine {
     this.sendDelay = Duration.zero,
     this.callStartsAt = Duration.zero,
     this.callPath = CallPath.relay,
+    this.answerAfter = Duration.zero,
     this.linkConfirmAfter,
   }) : _clock = clock ?? DateTime.now,
        _identityState = _Live(
@@ -56,6 +59,7 @@ class FakeTrinoEngine implements TrinoEngine {
 
   /// How new calls travel: through the server, unless a test asks otherwise.
   final CallPath callPath;
+  final Duration? answerAfter;
   final Duration? linkConfirmAfter;
   final DateTime Function() _clock;
 
@@ -85,6 +89,7 @@ class FakeTrinoEngine implements TrinoEngine {
   final _timers = <Timer>{};
   final _networkTimers = <Timer>{};
   final _linkTimers = <Timer>{};
+  final _answerTimers = <Timer>{};
   Timer? _callTimer;
   DateTime? _callStartedAt;
 
@@ -761,16 +766,73 @@ class FakeTrinoEngine implements TrinoEngine {
   Future<void> startCall(String contactId, {bool video = false}) async {
     if (_call.value != null) return;
     final contact = _contacts.value.firstWhere((c) => c.id == contactId);
+    final after = answerAfter;
     _call.value = CallSession(
       id: 'call-${_nextId++}',
       contactId: contactId,
       peerName: contact.name,
       sas: _sas,
       path: callPath,
-      elapsed: callStartsAt,
       camera: video,
+      phase: after == Duration.zero ? CallPhase.connected : CallPhase.calling,
+      elapsed: after == Duration.zero ? callStartsAt : Duration.zero,
     );
     _callStartedAt = _clock();
+    if (after != null && after > Duration.zero) _schedule(_answerTimers, after, answerOutgoing);
+    _updateCallTimer();
+  }
+
+  /// For tests and demos: the other phone answers the call you make.
+  void answerOutgoing() {
+    if (_call.value?.phase == CallPhase.calling) _connectCall();
+  }
+
+  /// For tests and demos: [contactId] calls you. It rings unless they are
+  /// blocked (then nothing at all happens) or another call is in progress
+  /// (then it is a missed call). Says whether it rings.
+  bool receiveCall(String contactId, {bool video = false}) {
+    final contact = _contacts.value.where((c) => c.id == contactId).firstOrNull;
+    if (contact == null || contact.blocked) return false;
+    if (_call.value != null || _identityState.value != IdentityState.unlocked) {
+      missCall(contactId);
+      return false;
+    }
+    _call.value = CallSession(
+      id: 'call-${_nextId++}',
+      contactId: contactId,
+      peerName: contact.name,
+      sas: _sas,
+      path: callPath,
+      camera: video,
+      phase: CallPhase.incoming,
+      isIncoming: true,
+    );
+    _callStartedAt = _clock();
+    return true;
+  }
+
+  /// For tests and demos: the other person hangs up. A call that was still
+  /// ringing in is missed, and counts as unseen.
+  void remoteHangUp() {
+    final call = _call.value;
+    if (call == null) return;
+    _endCall(call, missedUnseen: call.phase == CallPhase.incoming);
+  }
+
+  @override
+  Future<void> answerCall() async {
+    if (_call.value?.phase == CallPhase.incoming) _connectCall();
+  }
+
+  @override
+  Future<void> rejectCall() async {
+    final call = _call.value;
+    if (call?.phase == CallPhase.incoming) _endCall(call!);
+  }
+
+  void _connectCall() {
+    _cancelAll(_answerTimers);
+    _updateCall((call) => call.copyWith(phase: CallPhase.connected, elapsed: callStartsAt));
     _updateCallTimer();
   }
 
@@ -790,18 +852,30 @@ class FakeTrinoEngine implements TrinoEngine {
   @override
   Future<void> hangUp() async {
     final call = _call.value;
-    if (call == null) return;
+    if (call != null) _endCall(call);
+  }
+
+  /// Ends [call] and records it: a call that never connected in is missed,
+  /// already seen (rejected) unless [missedUnseen] (it rang out).
+  void _endCall(CallSession call, {bool missedUnseen = false}) {
+    _cancelAll(_answerTimers);
     _call.value = null;
     _updateCallTimer();
+    final missed = call.isIncoming && call.phase == CallPhase.incoming;
     _addCall(
       CallRecord(
         id: call.id,
         contactId: call.contactId,
         peerName: call.peerName,
-        direction: CallDirection.outgoing,
+        direction: missed
+            ? CallDirection.missed
+            : call.isIncoming
+            ? CallDirection.incoming
+            : CallDirection.outgoing,
         startedAt: _callStartedAt ?? _clock(),
-        duration: call.elapsed,
+        duration: call.phase == CallPhase.connected ? call.elapsed : Duration.zero,
       ),
+      seen: missed && !missedUnseen,
     );
   }
 
@@ -836,6 +910,7 @@ class FakeTrinoEngine implements TrinoEngine {
     _timers.clear();
     _cancelAll(_networkTimers);
     _cancelAll(_linkTimers);
+    _cancelAll(_answerTimers);
     _callTimer?.cancel();
     for (final live in [
       _identityState,
@@ -907,7 +982,7 @@ class FakeTrinoEngine implements TrinoEngine {
 
   /// The clock of a call runs while the call exists and someone watches it.
   void _updateCallTimer() {
-    final running = _call.value != null && _call.hasListeners;
+    final running = _call.value?.phase == CallPhase.connected && _call.hasListeners;
     if (running && _callTimer == null) {
       _callTimer = Timer.periodic(
         const Duration(seconds: 1),

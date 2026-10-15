@@ -277,6 +277,18 @@ class CallRecord {
   final Duration duration;
 }
 
+/// Where a call stands.
+enum CallPhase {
+  /// You called and the other phone rings: "Llamando…", with the ringback.
+  calling,
+
+  /// Someone calls you and this phone rings, until you answer or reject.
+  incoming,
+
+  /// You are talking; the time runs.
+  connected,
+}
+
 @immutable
 class CallSession {
   const CallSession({
@@ -291,11 +303,19 @@ class CallSession {
     this.muted = false,
     this.speaker = false,
     this.camera = false,
+    this.phase = CallPhase.connected,
+    this.isIncoming = false,
   });
 
   final String id;
   final String contactId;
   final String peerName;
+
+  /// Ringing or talking.
+  final CallPhase phase;
+
+  /// The other person called you; it stays true once answered.
+  final bool isIncoming;
 
   /// The call's short authentication string: seven indices, 0 to 63, into
   /// the SAS v2 table (assets/sas/sas-v2.json, the desktop's own), the same
@@ -316,20 +336,29 @@ class CallSession {
   final bool speaker;
   final bool camera;
 
-  CallSession copyWith({Duration? elapsed, bool? verified, bool? mismatch, bool? muted, bool? speaker, bool? camera}) =>
-      CallSession(
-        id: id,
-        contactId: contactId,
-        peerName: peerName,
-        sas: sas,
-        path: path,
-        elapsed: elapsed ?? this.elapsed,
-        verified: verified ?? this.verified,
-        mismatch: mismatch ?? this.mismatch,
-        muted: muted ?? this.muted,
-        speaker: speaker ?? this.speaker,
-        camera: camera ?? this.camera,
-      );
+  CallSession copyWith({
+    Duration? elapsed,
+    bool? verified,
+    bool? mismatch,
+    bool? muted,
+    bool? speaker,
+    bool? camera,
+    CallPhase? phase,
+  }) => CallSession(
+    id: id,
+    contactId: contactId,
+    peerName: peerName,
+    sas: sas,
+    path: path,
+    isIncoming: isIncoming,
+    phase: phase ?? this.phase,
+    elapsed: elapsed ?? this.elapsed,
+    verified: verified ?? this.verified,
+    mismatch: mismatch ?? this.mismatch,
+    muted: muted ?? this.muted,
+    speaker: speaker ?? this.speaker,
+    camera: camera ?? this.camera,
+  );
 }
 
 /// How someone who is not your contact reached you.
@@ -856,14 +885,24 @@ abstract interface class TrinoEngine {
   /// The user saw the calls (the Llamadas tab): the count goes back to 0.
   Future<void> markCallsSeen();
 
-  /// With [video], the call starts with the camera on.
+  /// With [video], the call starts with the camera on. It rings
+  /// ([CallPhase.calling]) until the other person answers.
   Future<void> startCall(String contactId, {bool video = false});
+
+  /// Answers the call that rings ([CallPhase.incoming]).
+  Future<void> answerCall();
+
+  /// Rejects the call that rings. It stays in the history as missed, already
+  /// seen. Nothing happens for a call that is not ringing in.
+  Future<void> rejectCall();
   Future<void> setMuted(bool muted);
   Future<void> setSpeaker(bool on);
   Future<void> setCamera(bool on);
 
   /// The user compared the symbols with the other person.
   Future<void> confirmSas({required bool matches});
+
+  /// Ends the call in any phase; a call ringing in is rejected.
   Future<void> hangUp();
 
   Future<void> dispose();
