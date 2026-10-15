@@ -4,6 +4,12 @@
 // with a way out to the bridges when Tor is blocked), then asks for a name,
 // a password (with the honest "nobody can recover it"), the style, optional
 // two-step verification, and ends at "Todo listo" with your code.
+//
+// "Ya uso Trino en mi computador" links this phone instead (link_steps.dart):
+// the instructions, the scanner, the code to compare while the computer
+// confirms, "Listo", and then this phone's own password, the style and the
+// optional 2FA, which open the chats. A phone links only here, at the first
+// run: one that already has its own account does not mix with another.
 import 'dart:async';
 
 import 'package:flutter/material.dart';
@@ -15,14 +21,16 @@ import '../design/icons.dart';
 import '../design/theme.dart';
 import '../engine/engine.dart';
 import '../l10n/app_localizations.dart';
+import '../platform/qr_scanner.dart';
 import '../ui/banner.dart';
 import '../ui/button.dart';
 import '../ui/list_row.dart';
 import '../ui/text_field.dart';
 import 'common.dart';
 import 'connection/bridges_screen.dart';
+import 'link_steps.dart';
 
-enum _Step { welcome, tor, name, password, style, twofa, twofaSetup, done }
+enum _Step { welcome, tor, name, linkIntro, linkScan, linkConfirm, linkDone, password, style, twofa, twofaSetup, done }
 
 class OnboardingScreen extends StatefulWidget {
   const OnboardingScreen({super.key, required this.onFinished});
@@ -51,15 +59,82 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
   Profile? _profile;
   var _busy = false;
 
+  /// "Ya uso Trino en mi computador": the password and 2FA steps finish the
+  /// link instead of creating an account.
+  var _linking = false;
+  LinkSession? _session;
+  StreamSubscription<LinkSession?>? _sessionSubscription;
+  StreamSubscription<String>? _scans;
+  String? _scanError;
+
   @override
   void dispose() {
     for (final controller in [_name, _pass, _pass2, _code]) {
       controller.dispose();
     }
+    unawaited(_sessionSubscription?.cancel());
+    unawaited(_scans?.cancel());
     super.dispose();
   }
 
   void _go(_Step step) => setState(() => _step = step);
+
+  // Linking.
+
+  void _startLink() => setState(() {
+    _linking = true;
+    _step = _Step.linkIntro;
+  });
+
+  void _leaveLink() => setState(() {
+    _linking = false;
+    _step = _Step.welcome;
+  });
+
+  void _openScanner() {
+    unawaited(_scans?.cancel());
+    _scans = context.scanner.scan().listen(_onScan);
+    setState(() {
+      _scanError = null;
+      _step = _Step.linkScan;
+    });
+  }
+
+  void _closeScanner() {
+    unawaited(_scans?.cancel());
+    _scans = null;
+    _go(_Step.linkIntro);
+  }
+
+  Future<void> _onScan(String payload) async {
+    if (_busy) return;
+    final l10n = context.l10n;
+    setState(() => _busy = true);
+    try {
+      final session = await _engine.beginLink(payload);
+      if (!mounted) return;
+      unawaited(_scans?.cancel());
+      _scans = null;
+      _sessionSubscription ??= _engine.linking.listen(_onSession);
+      setState(() {
+        _session = session;
+        _step = _Step.linkConfirm;
+      });
+    } on InvalidLinkCode {
+      if (mounted) setState(() => _scanError = l10n.linkScanInvalid);
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  /// The computer confirmed, said no, or the QR expired.
+  void _onSession(LinkSession? session) {
+    if (!mounted) return;
+    setState(() {
+      _session = session;
+      if (session?.status == LinkStatus.linked && _step == _Step.linkConfirm) _step = _Step.linkDone;
+    });
+  }
 
   void _submitName() {
     if (_name.text.trim().isEmpty) {
@@ -108,7 +183,24 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
       setState(() => _codeError = context.l10n.onbErrCode);
       return;
     }
-    await _create(withTotp: true);
+    await (_linking ? _finishLink(withTotp: true) : _create(withTotp: true));
+  }
+
+  /// This phone's own password (and 2FA) opens the account of the computer.
+  Future<void> _finishLink({required bool withTotp}) async {
+    final l10n = context.l10n;
+    setState(() {
+      _busy = true;
+      _createError = null;
+    });
+    try {
+      await _engine.finishLink(passphrase: _pass.text, withTotp: withTotp);
+      if (mounted) widget.onFinished(addContact: false);
+    } on Object {
+      if (mounted) setState(() => _createError = l10n.linkErrFinish);
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
   }
 
   Future<void> _create({required bool withTotp}) async {
@@ -136,16 +228,29 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
   Widget build(BuildContext context) {
     final l10n = context.l10n;
     if (_step == _Step.welcome) return _welcome(l10n);
+    if (_step == _Step.linkScan) {
+      final scanner = context.scanner;
+      return LinkScanPage(
+        onClose: _closeScanner,
+        error: _scanError,
+        onSimulate: scanner is DemoQrScanner ? scanner.simulate : null,
+      );
+    }
+    final header = switch (_step) {
+      _Step.linkIntro => LinkStepBar(title: l10n.linkTitle, onBack: _leaveLink),
+      _Step.linkConfirm || _Step.linkDone => LinkStepBar(title: l10n.linkTitle),
+      _ => Padding(
+        padding: const EdgeInsets.fromLTRB(24, 16, 24, 0),
+        child: Row(
+          children: [ExcludeSemantics(child: Text(context.tokens.wordmark, style: context.text.title))],
+        ),
+      ),
+    };
     return Scaffold(
       body: SafeArea(
         child: Column(
           children: [
-            Padding(
-              padding: const EdgeInsets.fromLTRB(24, 16, 24, 0),
-              child: Row(
-                children: [ExcludeSemantics(child: Text(context.tokens.wordmark, style: context.text.title))],
-              ),
-            ),
+            header,
             Expanded(
               child: SingleChildScrollView(
                 padding: const EdgeInsets.fromLTRB(24, 24, 24, 16),
@@ -202,7 +307,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
                     onPressed: () => _go(_Step.tor),
                   ),
                   const SizedBox(height: 8),
-                  TrinoButton(label: l10n.linkStart, expand: true, onPressed: null),
+                  TrinoButton(label: l10n.linkStart, expand: true, onPressed: _startLink),
                   const SizedBox(height: 4),
                   Center(
                     child: TrinoButton(
@@ -263,6 +368,18 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
         return const [];
       case _Step.tor:
         return [_title(l10n.onbTorTitle), _body(l10n.onbTorBody)];
+      case _Step.linkIntro:
+        return const [LinkInstructions()];
+      case _Step.linkScan:
+        return const [];
+      case _Step.linkConfirm:
+        final session = _session;
+        return [
+          if (session != null)
+            LinkConfirmation(session: session, onBringChats: (on) => unawaited(_engine.setBringChats(on))),
+        ];
+      case _Step.linkDone:
+        return [LinkDone(session: _session)];
       case _Step.name:
         return [
           _title(l10n.onbNameTitle),
@@ -279,8 +396,8 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
       case _Step.password:
         final strength = _strength;
         return [
-          _title(l10n.onbPassTitle),
-          _body(l10n.onbPassBody),
+          _title(_linking ? l10n.linkPassTitle : l10n.onbPassTitle),
+          _body(_linking ? l10n.linkPassBody : l10n.onbPassBody),
           TrinoPasswordField(
             controller: _pass,
             label: l10n.onbPassLabel,
@@ -372,7 +489,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
 
   List<Widget> _actions(AppLocalizations l10n) {
     Widget primary(String label, VoidCallback? onPressed) => TrinoButton(
-      label: _busy ? l10n.onbCreating : label,
+      label: _busy ? (_linking ? l10n.linkFinishing : l10n.onbCreating) : label,
       variant: ButtonVariant.primary,
       expand: true,
       loading: _busy,
@@ -406,14 +523,47 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
         ];
       case _Step.name:
         return [backAndNext(_Step.tor, _submitName)];
+      case _Step.linkIntro:
+        return [
+          TrinoButton(
+            label: l10n.linkScan,
+            icon: TrinoIcons.scan,
+            variant: ButtonVariant.primary,
+            expand: true,
+            onPressed: _openScanner,
+          ),
+        ];
+      case _Step.linkScan:
+        return const [];
+      case _Step.linkConfirm:
+        if (_session?.status == LinkStatus.failed) {
+          return [
+            TrinoButton(
+              label: l10n.linkRestart,
+              variant: ButtonVariant.primary,
+              expand: true,
+              onPressed: () => _go(_Step.linkIntro),
+            ),
+          ];
+        }
+        return [TrinoButton(label: l10n.cancel, expand: true, onPressed: () => unawaited(_engine.cancelLink()))];
+      case _Step.linkDone:
+        return [
+          TrinoButton(
+            label: l10n.onbNext,
+            variant: ButtonVariant.primary,
+            expand: true,
+            onPressed: () => _go(_Step.password),
+          ),
+        ];
       case _Step.password:
-        return [backAndNext(_Step.name, _submitPassword)];
+        return [backAndNext(_linking ? _Step.linkDone : _Step.name, _submitPassword)];
       case _Step.style:
         return [backAndNext(_Step.password, () => _go(_Step.twofa))];
       case _Step.twofa:
         return [
           primary(l10n.onbTwofaOn, _busy ? null : _beginTotp),
-          secondary(l10n.onbTwofaLater, () => _create(withTotp: false)),
+          secondary(l10n.onbTwofaLater, () => _linking ? _finishLink(withTotp: false) : _create(withTotp: false)),
           secondary(l10n.onbBack, () => _go(_Step.style), variant: ButtonVariant.ghost),
         ];
       case _Step.twofaSetup:

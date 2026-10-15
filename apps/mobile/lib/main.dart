@@ -5,7 +5,9 @@ import 'engine/fake_engine.dart';
 
 /// Trino on the in-memory demo engine until the Rust engine is wired in
 /// (task M6): it starts at the first run, connects after a moment, and shows
-/// messages as sending for a short while, as the real network would.
+/// messages as sending for a short while, as the real network would. Linking
+/// is confirmed on the demo computer a few seconds after the code shows, and
+/// the chats then arrive a quarter at a time.
 void main() {
   runApp(
     TrinoApp(
@@ -13,6 +15,7 @@ void main() {
         onboarded: false,
         connectAfter: const Duration(seconds: 2),
         sendDelay: const Duration(milliseconds: 600),
+        linkConfirmAfter: const Duration(seconds: 4),
       ),
     ),
   );

@@ -95,6 +95,13 @@ enum TrinoIcons {
     _P('M12 8v4.5'),
     _P('M12 16v.01'),
   ], stroke: 2),
+  // The corners of a viewfinder: "Escanear el código".
+  scan([
+    _P('M4 8V6a2 2 0 012-2h2'),
+    _P('M16 4h2a2 2 0 012 2v2'),
+    _P('M20 16v2a2 2 0 01-2 2h-2'),
+    _P('M8 20H6a2 2 0 01-2-2v-2'),
+  ]),
   qr([
     _R(4, 4, 6, 6, 1),
     _R(14, 4, 6, 6, 1),

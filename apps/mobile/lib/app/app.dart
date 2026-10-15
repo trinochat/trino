@@ -9,6 +9,7 @@ import '../design/appearance.dart';
 import '../engine/engine.dart';
 import '../l10n/app_localizations.dart';
 import '../platform/biometrics.dart';
+import '../platform/qr_scanner.dart';
 import '../screens/home_shell.dart';
 import '../screens/onboarding_screen.dart';
 import '../screens/unlock_screen.dart';
@@ -23,6 +24,7 @@ class TrinoApp extends StatefulWidget {
     this.language,
     this.clock = DateTime.now,
     this.biometrics = const DemoBiometricAuth(),
+    this.scanner,
   });
 
   final TrinoEngine engine;
@@ -35,6 +37,9 @@ class TrinoApp extends StatefulWidget {
   /// The phone's fingerprint or face check; the demo until the platform code.
   final BiometricAuth biometrics;
 
+  /// The camera's QR reader; the demo until the platform code.
+  final QrScanner? scanner;
+
   @override
   State<TrinoApp> createState() => _TrinoAppState();
 }
@@ -42,6 +47,7 @@ class TrinoApp extends StatefulWidget {
 class _TrinoAppState extends State<TrinoApp> {
   late final AppearanceController _appearance = widget.appearance ?? AppearanceController();
   late final LanguageController _language = widget.language ?? LanguageController();
+  late final QrScanner _scanner = widget.scanner ?? DemoQrScanner();
 
   @override
   void dispose() {
@@ -57,6 +63,7 @@ class _TrinoAppState extends State<TrinoApp> {
     language: _language,
     clock: widget.clock,
     biometrics: widget.biometrics,
+    scanner: _scanner,
     child: ListenableBuilder(
       listenable: Listenable.merge([_appearance, _language]),
       builder: (context, _) => MaterialApp(

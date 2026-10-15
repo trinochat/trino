@@ -12,11 +12,13 @@ import 'package:trino_mobile/engine/engine.dart';
 import 'package:trino_mobile/engine/fake_engine.dart';
 import 'package:trino_mobile/l10n/app_localizations.dart';
 import 'package:trino_mobile/platform/biometrics.dart';
+import 'package:trino_mobile/platform/qr_scanner.dart';
 
 import 'harness.dart';
 
 export 'package:trino_mobile/engine/engine.dart';
 export 'package:trino_mobile/engine/fake_engine.dart';
+export 'package:trino_mobile/platform/qr_scanner.dart';
 
 export 'harness.dart';
 
@@ -40,11 +42,14 @@ FakeTrinoEngine testEngine({
 const appBoundaryKey = ValueKey('app-boundary');
 
 class TestApp {
-  TestApp(this.engine, this.appearance, this.language);
+  TestApp(this.engine, this.appearance, this.language, this.scanner);
 
   final FakeTrinoEngine engine;
   final AppearanceController appearance;
   final LanguageController language;
+
+  /// The demo scanner: a test scans with [DemoQrScanner.simulate].
+  final DemoQrScanner scanner;
 }
 
 Future<TestApp> pumpApp(
@@ -54,13 +59,19 @@ Future<TestApp> pumpApp(
   Locale locale = const Locale('es'),
   double textScale = 1,
   BiometricAuth? biometrics,
+  DemoQrScanner? scanner,
 }) async {
   usePhone(tester);
   if (textScale != 1) {
     tester.platformDispatcher.textScaleFactorTestValue = textScale;
     addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
   }
-  final app = TestApp(engine ?? testEngine(), AppearanceController(appearance), LanguageController(locale));
+  final app = TestApp(
+    engine ?? testEngine(),
+    AppearanceController(appearance),
+    LanguageController(locale),
+    scanner ?? DemoQrScanner(),
+  );
   // Not awaited: inside testWidgets nothing would run the future's completion.
   addTearDown(() => unawaited(app.engine.dispose()));
   addTearDown(app.appearance.dispose);
@@ -74,6 +85,7 @@ Future<TestApp> pumpApp(
         language: app.language,
         clock: () => testNow,
         biometrics: biometrics ?? const DemoBiometricAuth(),
+        scanner: app.scanner,
       ),
     ),
   );
