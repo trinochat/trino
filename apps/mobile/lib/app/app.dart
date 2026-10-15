@@ -28,6 +28,7 @@ class TrinoApp extends StatefulWidget {
     this.biometrics = const DemoBiometricAuth(),
     this.scanner,
     this.callSounds,
+    this.demoIncomingCall,
   });
 
   final TrinoEngine engine;
@@ -45,6 +46,10 @@ class TrinoApp extends StatefulWidget {
 
   /// The speaker and vibrator for calls; silent when not given.
   final CallSounds? callSounds;
+
+  /// Only the demo app (main.dart) gives it: a call rings in when asked, from
+  /// a clearly labelled entry in Ajustes › Notificaciones.
+  final VoidCallback? demoIncomingCall;
 
   @override
   State<TrinoApp> createState() => _TrinoAppState();
@@ -80,6 +85,7 @@ class _TrinoAppState extends State<TrinoApp> {
     biometrics: widget.biometrics,
     scanner: _scanner,
     callSounds: _callSounds,
+    demoIncomingCall: widget.demoIncomingCall,
     child: ListenableBuilder(
       listenable: Listenable.merge([_appearance, _language]),
       builder: (context, _) => MaterialApp(

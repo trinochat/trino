@@ -10,17 +10,23 @@ import 'platform/call_sounds.dart';
 /// is confirmed on the demo computer a few seconds after the code shows, and
 /// the chats then arrive a quarter at a time. A call you make rings for a few
 /// seconds before the demo contact answers. The call sounds are the phone's.
+/// To hear a call ring in, Ajustes › Notificaciones has "Simular una llamada
+/// entrante (demostración)": Ana calls at once. Nothing rings by itself.
 void main() {
+  final engine = FakeTrinoEngine(
+    onboarded: false,
+    connectAfter: const Duration(seconds: 2),
+    sendDelay: const Duration(milliseconds: 600),
+    linkConfirmAfter: const Duration(seconds: 4),
+    answerAfter: const Duration(seconds: 4),
+  );
   runApp(
     TrinoApp(
-      engine: FakeTrinoEngine(
-        onboarded: false,
-        connectAfter: const Duration(seconds: 2),
-        sendDelay: const Duration(milliseconds: 600),
-        linkConfirmAfter: const Duration(seconds: 4),
-        answerAfter: const Duration(seconds: 4),
-      ),
+      engine: engine,
       callSounds: PlatformCallSounds(),
+      demoIncomingCall: () {
+        engine.receiveCall('ana');
+      },
     ),
   );
 }

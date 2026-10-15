@@ -126,6 +126,9 @@ void main() {
     await openSection(tester, 'Notificaciones');
     expect(find.text('Qué se ve en la notificación'), findsOneWidget);
     expect(tester.getSemantics(find.text('Solo el nombre (recomendado)')), isSemantics(isChecked: true));
+    // Below the calls, which come first.
+    await tester.ensureVisible(find.text('Silenciar grupos por defecto'));
+    await tester.pumpAndSettle();
     await tester.tap(find.text('Nada'));
     await tester.tap(find.text('Sonido de mensajes'));
     await tester.pumpAndSettle();

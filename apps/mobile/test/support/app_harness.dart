@@ -68,6 +68,7 @@ Future<TestApp> pumpApp(
   BiometricAuth? biometrics,
   DemoQrScanner? scanner,
   DemoCallSounds? sounds,
+  VoidCallback? demoIncomingCall,
 }) async {
   usePhone(tester);
   if (textScale != 1) {
@@ -96,6 +97,7 @@ Future<TestApp> pumpApp(
         biometrics: biometrics ?? const DemoBiometricAuth(),
         scanner: app.scanner,
         callSounds: app.sounds,
+        demoIncomingCall: demoIncomingCall,
       ),
     ),
   );

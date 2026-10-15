@@ -21,6 +21,7 @@ class AppScope extends InheritedWidget {
     this.biometrics = const DemoBiometricAuth(),
     this.scanner,
     this.callSounds,
+    this.demoIncomingCall,
     required super.child,
   });
 
@@ -40,6 +41,9 @@ class AppScope extends InheritedWidget {
   /// The speaker and vibrator for calls; null stands for silence.
   final CallSounds? callSounds;
 
+  /// Rings a demo call; only the demo app gives it.
+  final VoidCallback? demoIncomingCall;
+
   static AppScope of(BuildContext context) => context.dependOnInheritedWidgetOfExactType<AppScope>()!;
 
   /// Without a dependency, for State lifecycle methods and callbacks. The
@@ -54,7 +58,8 @@ class AppScope extends InheritedWidget {
       clock != oldWidget.clock ||
       biometrics != oldWidget.biometrics ||
       scanner != oldWidget.scanner ||
-      callSounds != oldWidget.callSounds;
+      callSounds != oldWidget.callSounds ||
+      demoIncomingCall != oldWidget.demoIncomingCall;
 }
 
 extension AppContext on BuildContext {
