@@ -93,6 +93,9 @@ class FakeTrinoEngine implements TrinoEngine {
   bool _totpVerified = false;
   LockReason _lockReason = LockReason.coldStart;
 
+  /// With [LockReason.idle]: after how long.
+  int? _idleMinutes;
+
   /// When the passphrase was last typed, for the reask interval.
   DateTime? _lastPassphraseAt;
   var _nextId = 0;
@@ -116,6 +119,7 @@ class FakeTrinoEngine implements TrinoEngine {
     return UnlockInfo(
       totpEnabled: _totpEnabled,
       reason: offered && due ? LockReason.reask : _lockReason,
+      idleMinutes: _lockReason == LockReason.idle ? _idleMinutes : null,
       biometricAllowed: offered && !due,
     );
   }
@@ -223,6 +227,15 @@ class FakeTrinoEngine implements TrinoEngine {
     if (_identityState.value != IdentityState.unlocked) return;
     await hangUp();
     _lockReason = LockReason.manual;
+    _identityState.value = IdentityState.locked;
+  }
+
+  /// For tests and demos: Trino locked itself after [minutes] without use.
+  void lockForIdle(int minutes) {
+    if (_identityState.value != IdentityState.unlocked) return;
+    unawaited(hangUp());
+    _lockReason = LockReason.idle;
+    _idleMinutes = minutes;
     _identityState.value = IdentityState.locked;
   }
 

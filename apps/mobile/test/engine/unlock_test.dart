@@ -18,6 +18,13 @@ void main() {
   Future<void> turnOnBiometrics(FakeTrinoEngine engine, {ReaskInterval interval = ReaskInterval.threeDays}) async =>
       engine.updateSettings((await engine.settings.first).copyWith(biometricUnlock: true, reaskInterval: interval));
 
+  test('an idle lock says after how long, and is not a restart', () async {
+    engine.lockForIdle(5);
+    final info = await engine.unlockInfo();
+    expect((info.reason, info.idleMinutes), (LockReason.idle, 5));
+    expect(await engine.identityState.first, IdentityState.locked);
+  });
+
   group('biometric unlock', () {
     test('is not offered while the setting is off, and does not open', () async {
       await engine.lock();
