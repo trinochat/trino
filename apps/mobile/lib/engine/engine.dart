@@ -168,6 +168,7 @@ class ChatMessage {
     required this.sentAt,
     this.sender,
     this.status = MessageStatus.sent,
+    this.call,
   });
 
   final String id;
@@ -180,6 +181,12 @@ class ChatMessage {
   final String? sender;
   final MessageStatus status;
 
+  /// A call shown inside the chat, at the time it started: the text is empty
+  /// and the record says what happened.
+  final CallRecord? call;
+
+  bool get isCall => call != null;
+
   ChatMessage copyWith({MessageStatus? status}) => ChatMessage(
     id: id,
     chatId: chatId,
@@ -188,6 +195,7 @@ class ChatMessage {
     sentAt: sentAt,
     sender: sender,
     status: status ?? this.status,
+    call: call,
   );
 }
 
@@ -201,8 +209,34 @@ class SasSymbol {
   final String emoji;
 }
 
-/// How the call's media travels. Direct means the other person sees your IP.
-enum CallPath { direct }
+/// How the call's media travels. Through the call server (a relay that
+/// passes the audio, "Por el servidor de llamadas") the other person does not
+/// see your IP; direct, they do. Trino calls through the server.
+enum CallPath { direct, relay }
+
+enum CallDirection { incoming, outgoing, missed }
+
+/// A call in the history, and inside the chat with that contact.
+@immutable
+class CallRecord {
+  const CallRecord({
+    required this.id,
+    required this.contactId,
+    required this.peerName,
+    required this.direction,
+    required this.startedAt,
+    this.duration = Duration.zero,
+  });
+
+  final String id;
+  final String contactId;
+  final String peerName;
+  final CallDirection direction;
+  final DateTime startedAt;
+
+  /// Zero for a missed call.
+  final Duration duration;
+}
 
 @immutable
 class CallSession {
@@ -212,7 +246,7 @@ class CallSession {
     required this.peerName,
     required this.sas,
     this.elapsed = Duration.zero,
-    this.path = CallPath.direct,
+    this.path = CallPath.relay,
     this.verified = false,
     this.mismatch = false,
     this.muted = false,
@@ -523,6 +557,9 @@ abstract interface class TrinoEngine {
 
   /// The call in progress, or null.
   Stream<CallSession?> get call;
+
+  /// Every call, the latest first. Hanging up adds one.
+  Stream<List<CallRecord>> get callHistory;
   Future<void> startCall(String contactId);
   Future<void> setMuted(bool muted);
   Future<void> setSpeaker(bool on);

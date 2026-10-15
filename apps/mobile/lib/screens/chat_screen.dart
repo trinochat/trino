@@ -82,7 +82,9 @@ class _ChatScreenState extends State<ChatScreen> {
             child: StreamBuilder<List<ChatMessage>>(
               stream: _messages,
               builder: (context, snapshot) => _MessageList(
-                messages: snapshot.data ?? const [],
+                // Call events get their own line in the chat redesign (R1.4);
+                // until then they stay out of the bubbles.
+                messages: [...?snapshot.data?.where((message) => !message.isCall)],
                 group: widget.chat.isGroup,
                 onRetry: (message) => _engine.retry(widget.chat.id, message.id),
               ),

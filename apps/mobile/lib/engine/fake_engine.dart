@@ -53,6 +53,7 @@ class FakeTrinoEngine implements TrinoEngine {
   final _contacts = _Live<List<Contact>>(const []);
   final _chats = _Live<List<ChatSummary>>(const []);
   final _call = _Live<CallSession?>(null);
+  final _callHistory = _Live<List<CallRecord>>(const []);
   final _settings = _Live(const EngineSettings());
   final _bridges = _Live(const BridgeSettings());
   final _relays = _Live(const [
@@ -65,6 +66,7 @@ class FakeTrinoEngine implements TrinoEngine {
   final _timers = <Timer>{};
   final _networkTimers = <Timer>{};
   Timer? _callTimer;
+  DateTime? _callStartedAt;
 
   String? _passphrase;
   bool _totpEnabled = false;
@@ -202,6 +204,7 @@ class FakeTrinoEngine implements TrinoEngine {
     _lastPassphraseAt = null;
     _profile.value = null;
     _rooms.clear();
+    _callHistory.value = const [];
     for (final live in _messages.values) {
       live.value = const [];
     }
@@ -408,6 +411,9 @@ class FakeTrinoEngine implements TrinoEngine {
   Stream<CallSession?> get call => _call.stream;
 
   @override
+  Stream<List<CallRecord>> get callHistory => _callHistory.stream;
+
+  @override
   Future<void> startCall(String contactId) async {
     if (_call.value != null) return;
     final contact = _contacts.value.firstWhere((c) => c.id == contactId);
@@ -418,6 +424,7 @@ class FakeTrinoEngine implements TrinoEngine {
       sas: _sas,
       elapsed: callStartsAt,
     );
+    _callStartedAt = _clock();
     _updateCallTimer();
   }
 
@@ -436,9 +443,41 @@ class FakeTrinoEngine implements TrinoEngine {
 
   @override
   Future<void> hangUp() async {
-    if (_call.value == null) return;
+    final call = _call.value;
+    if (call == null) return;
     _call.value = null;
     _updateCallTimer();
+    _addCall(
+      CallRecord(
+        id: call.id,
+        contactId: call.contactId,
+        peerName: call.peerName,
+        direction: CallDirection.outgoing,
+        startedAt: _callStartedAt ?? _clock(),
+        duration: call.elapsed,
+      ),
+    );
+  }
+
+  /// Into the history, the latest first, and into the chat with the contact
+  /// if there is one, at the time the call started.
+  void _addCall(CallRecord record) {
+    _callHistory.value = List.unmodifiable(
+      <CallRecord>[record, ..._callHistory.value]..sort((a, b) => b.startedAt.compareTo(a.startedAt)),
+    );
+    final room = _rooms.values.where((room) => room.contactId == record.contactId).firstOrNull;
+    if (room == null) return;
+    final event = ChatMessage(
+      id: 'm${_nextId++}',
+      chatId: room.id,
+      outgoing: record.direction == CallDirection.outgoing,
+      text: '',
+      sentAt: record.startedAt,
+      call: record,
+    );
+    final index = room.messages.indexWhere((m) => m.sentAt.isAfter(record.startedAt));
+    room.messages.insert(index < 0 ? room.messages.length : index, event);
+    _publish(room);
   }
 
   @override
@@ -449,7 +488,18 @@ class FakeTrinoEngine implements TrinoEngine {
     _timers.clear();
     _cancelNetworkTimers();
     _callTimer?.cancel();
-    for (final live in [_identityState, _network, _profile, _contacts, _chats, _call, _settings, _bridges, _relays]) {
+    for (final live in [
+      _identityState,
+      _network,
+      _profile,
+      _contacts,
+      _chats,
+      _call,
+      _callHistory,
+      _settings,
+      _bridges,
+      _relays,
+    ]) {
       live.close();
     }
     for (final live in _messages.values) {
@@ -544,20 +594,21 @@ class FakeTrinoEngine implements TrinoEngine {
     final contacts = {for (final contact in _contacts.value) contact.id: contact};
     final summaries = [
       for (final room in _rooms.values)
-        ChatSummary(
-          id: room.id,
-          kind: room.kind,
-          title: room.title,
-          contactId: room.contactId,
-          trust: contacts[room.contactId]?.trust ?? Trust.unverified,
-          memberNames: room.memberNames,
-          lastMessage: room.messages.lastOrNull?.text,
-          lastSender: room.messages.lastOrNull?.sender,
-          lastIsMine: room.messages.lastOrNull?.outgoing ?? false,
-          lastActivity: room.messages.lastOrNull?.sentAt ?? room.createdAt,
-          unread: room.unread,
-          draft: room.draft,
-        ),
+        if (room.messages.where((m) => !m.isCall).lastOrNull case final last)
+          ChatSummary(
+            id: room.id,
+            kind: room.kind,
+            title: room.title,
+            contactId: room.contactId,
+            trust: contacts[room.contactId]?.trust ?? Trust.unverified,
+            memberNames: room.memberNames,
+            lastMessage: last?.text,
+            lastSender: last?.sender,
+            lastIsMine: last?.outgoing ?? false,
+            lastActivity: last?.sentAt ?? room.createdAt,
+            unread: room.unread,
+            draft: room.draft,
+          ),
     ]..sort((a, b) => b.lastActivity!.compareTo(a.lastActivity!));
     _chats.value = List.unmodifiable(summaries);
   }
@@ -644,6 +695,26 @@ class FakeTrinoEngine implements TrinoEngine {
       _messagesOf(room.id).value = List.unmodifiable(room.messages);
     }
     _publishChats();
+
+    // Calls do not move a chat up: the preview stays on the last message.
+    CallRecord call(String contactId, String name, CallDirection direction, DateTime at, [int minutes = 0]) =>
+        CallRecord(
+          id: 'call-${_nextId++}',
+          contactId: contactId,
+          peerName: name,
+          direction: direction,
+          startedAt: at,
+          duration: Duration(minutes: minutes),
+        );
+    for (final record in [
+      call('mama', 'Mamá', CallDirection.outgoing, daysAgo(5, 19, 30), 25),
+      call('lucia', 'Lucía', CallDirection.missed, daysAgo(3, 18, 40)),
+      call('carlos', 'Carlos Méndez', CallDirection.incoming, daysAgo(1, 17, 5), 12),
+      call('ana', 'Ana Torres', CallDirection.outgoing, ago(24), 4),
+      call('ana', 'Ana Torres', CallDirection.missed, ago(16)),
+    ]) {
+      _addCall(record);
+    }
   }
 }
 

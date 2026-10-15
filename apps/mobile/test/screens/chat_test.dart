@@ -52,6 +52,12 @@ void main() {
     expect(tester.getSemantics(bubbleWith('Perfecto, nos vemos el jueves')).label, contains('10:42'));
   });
 
+  testWidgets('calls inside the chat never show as empty bubbles', (tester) async {
+    await pumpApp(tester);
+    await openChat(tester, 'Ana Torres');
+    expect(find.byKey(MessageBubble.bubbleKey), findsNWidgets(4));
+  });
+
   testWidgets('a group shows who wrote each message', (tester) async {
     await pumpApp(tester);
     await openChat(tester, 'Familia');

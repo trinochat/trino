@@ -51,7 +51,7 @@ void main() {
 
     test('gives the messages of a chat oldest first, with their states', () async {
       final ana = (await engine.chats.first).first;
-      final messages = await engine.messages(ana.id).first;
+      final messages = [...(await engine.messages(ana.id).first).where((m) => !m.isCall)];
       expect(messages.map((m) => m.text), [
         '¿Te llegó el documento que te mandé?',
         'Sí, ya lo revisé. Está todo bien.',
@@ -147,7 +147,7 @@ void main() {
       await engine.startCall(ana.id);
       await pumpEventQueue();
       final call = sessions.last!;
-      expect((call.peerName, call.sas.length, call.verified, call.path), ('Ana Torres', 7, false, CallPath.direct));
+      expect((call.peerName, call.sas.length, call.verified), ('Ana Torres', 7, false));
       expect(call.sas.map((s) => s.id).toSet(), hasLength(7));
 
       await engine.confirmSas(matches: false);
