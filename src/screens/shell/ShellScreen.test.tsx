@@ -953,19 +953,27 @@ describe('ShellScreen: Tor', () => {
   // soon as it knows, and again from "Ver qué hacer"; closed, it does not come back by itself.
   it('shows "Trino necesita actualizarse" once when Tor is too old, and again from "Ver qué hacer"', async () => {
     const { api: net } = fakeNet({ state: 'obsolete', confirmed: true });
+    const name = 'Trino necesita actualizarse para seguir conectándose de forma privada';
+    // The dialog comes after three hops (Tor's status, the shell's overlay, the
+    // dialog's own status): from the render, about 0.5 s on an idle machine and
+    // up to 2 s on a loaded one, past findBy's 1 s. The wait is longer; what is
+    // checked is the same.
+    const loaded = { timeout: 10_000 };
     setup({ net });
-    const dialog = await screen.findByRole('dialog', {
-      name: 'Trino necesita actualizarse para seguir conectándose de forma privada',
-    });
+    const dialog = await screen.findByRole('dialog', { name }, loaded);
     expect(screen.queryByRole('dialog', { name: 'No se pudo conectar' })).toBeNull();
+    // The dialog shows once its status arrives, outside act(); it takes the
+    // focus and starts listening for Escape in an effect that React may run a
+    // task later, after findByRole has already returned. Taking the focus is
+    // what that effect does just before it listens: wait for it, or under load
+    // Escape comes first and nothing hears it.
+    await waitFor(() => expect(dialog.contains(document.activeElement)).toBe(true), loaded);
     fireEvent.keyDown(dialog, { key: 'Escape' });
     expect(screen.queryByRole('dialog')).toBeNull();
     await row('Ana');
     expect(screen.queryByRole('dialog')).toBeNull();
     fireEvent.click(screen.getByRole('button', { name: 'Ver qué hacer' }));
-    expect(
-      await screen.findByRole('dialog', { name: 'Trino necesita actualizarse para seguir conectándose de forma privada' }),
-    ).toBeTruthy();
+    expect(await screen.findByRole('dialog', { name }, loaded)).toBeTruthy();
   });
 
   it('says nothing of Tor without the network', async () => {
