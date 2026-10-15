@@ -51,11 +51,6 @@ impl Platform {
         }
     }
 
-    /// Whether Trino installs a release on it by itself.
-    pub fn installs(self) -> bool {
-        self == Platform::WindowsX64
-    }
-
     fn suffix(self) -> &'static str {
         match self {
             Platform::WindowsX64 => "_x64-setup.exe",

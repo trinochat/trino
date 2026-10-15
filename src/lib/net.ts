@@ -107,6 +107,13 @@ export interface BridgesSet {
 /** Why an update gave nothing (updater.rs `UpdateFailure`). */
 export type UpdateFailure = 'withoutTor' | 'torNotReady' | 'noAnswer' | 'download' | 'signature' | 'io' | 'install';
 
+/**
+ * Why a Linux release was saved in Downloads instead of replacing the running
+ * AppImage (updater.rs `SavedReason`): not an AppImage (a .deb or an .rpm), the
+ * AppImage is gone, or its folder is not Trino's to write.
+ */
+export type UpdateSavedReason = 'notAppImage' | 'missing' | 'notWritable';
+
 /** Where the updater is (updater.rs `UpdateState`). */
 export type UpdateState =
   | { state: 'unsupported' }
@@ -115,7 +122,7 @@ export type UpdateState =
   | { state: 'upToDate' }
   | { state: 'downloading'; version: string }
   | { state: 'ready'; version: string }
-  | { state: 'saved'; version: string; file: string }
+  | { state: 'saved'; version: string; file: string; reason: UpdateSavedReason }
   | { state: 'waitingForCall'; version: string }
   | { state: 'installing'; version: string }
   | { state: 'failed'; reason: UpdateFailure };

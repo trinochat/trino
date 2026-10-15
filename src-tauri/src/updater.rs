@@ -22,8 +22,17 @@
 //!   user, passive, over the installed Trino, and starts Trino again
 //!   (`/P /UPDATE /R`). Trino leaves. The installer's hook renames a
 //!   lyrebird.exe still running, as a backup (src-tauri/windows/hooks.nsh).
-//! - **Linux** installs nothing by itself (§6.1): the verified AppImage is
-//!   left in Downloads and the UI is told `saved`.
+//! - **Linux, running as an AppImage** (TOR-13): the release is staged
+//!   beside the running AppImage, verified, and the UI is told `ready`, as
+//!   on Windows. On the yes, as on Windows, the session locks and Tor
+//!   stops (lyrebird with it); then the staged file is checked once more,
+//!   given the old mode and execute, synced and renamed over the AppImage
+//!   (trino-net's `StagedAppImage::replace`), and Trino starts again from
+//!   it and leaves (`relaunch`). Never sudo.
+//! - **Linux otherwise** (a .deb or an .rpm, an AppImage in a folder Trino
+//!   cannot write, or one that is gone) installs nothing (§6.1): the
+//!   verified AppImage is left in Downloads and the UI is told `saved`,
+//!   with why.
 //! - **Arti obsolete** (§6.5, R-15): on the "old version" screen, after its
 //!   confirmation, `update_check_without_tor` checks and downloads without
 //!   Tor with the updater's own permit, which reaches trinochat.org and
@@ -42,7 +51,10 @@ use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tauri::State;
 use trino_net::news::{Freeze, Version};
-use trino_net::update::{self, HeldInstaller, Mirrors, Platform, UpdateError, UpdateSettings};
+use trino_net::update::{
+    self, AppImageError, HeldInstaller, Mirrors, NotInPlace, Platform, StagedAppImage, UpdateError,
+    UpdateSettings,
+};
 use trino_net::{DirectPermit, HttpClient, Net};
 
 /// What the frontend listens to: every change of `UpdateInfo`.
@@ -87,6 +99,7 @@ pub enum UpdateState {
     Saved {
         version: String,
         file: String,
+        reason: SavedReason,
     },
     /// "Instalar y reiniciar" during a call: it waits for the hang-up.
     WaitingForCall {
@@ -99,6 +112,28 @@ pub enum UpdateState {
     Failed {
         reason: UpdateFailure,
     },
+}
+
+/// Why a Linux release was saved in Downloads instead of replacing the
+/// running AppImage.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum SavedReason {
+    /// Not running as an AppImage: a .deb or an .rpm.
+    NotAppImage,
+    /// The AppImage Trino runs from is gone.
+    Missing,
+    /// Its folder is not Trino's to write.
+    NotWritable,
+}
+
+impl From<NotInPlace> for SavedReason {
+    fn from(why: NotInPlace) -> Self {
+        match why {
+            NotInPlace::Missing => SavedReason::Missing,
+            NotInPlace::NotWritable => SavedReason::NotWritable,
+        }
+    }
 }
 
 /// Why a check, a download or an install gave nothing.
@@ -160,6 +195,25 @@ pub(crate) trait InstallHost {
     fn launch(&self, path: &Path, args: &[&str]) -> std::io::Result<()>;
     /// Leave, so the installer can replace Trino.
     fn exit(&self);
+    /// Leave, and start the AppImage just replaced (Linux).
+    fn relaunch(&self);
+}
+
+/// What waits for the yes, verified.
+enum Prepared {
+    /// Windows: the NSIS installer, held open until it runs.
+    Installer(HeldInstaller),
+    /// Linux: the AppImage staged beside the running one.
+    AppImage(StagedAppImage),
+}
+
+impl Prepared {
+    fn version(&self) -> Version {
+        match self {
+            Prepared::Installer(installer) => installer.version(),
+            Prepared::AppImage(staged) => staged.version(),
+        }
+    }
 }
 
 fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
@@ -188,10 +242,12 @@ pub struct Updater {
     mirrors: Mirrors<'static>,
     /// Where a downloaded release goes.
     dir: Mutex<PathBuf>,
+    /// Linux: the AppImage Trino runs from, which a release replaces.
+    appimage: Mutex<Option<PathBuf>>,
     state: Mutex<UpdateState>,
     freeze: Mutex<Option<Freeze>>,
-    /// The verified installer, held open until it runs.
-    held: Mutex<Option<HeldInstaller>>,
+    /// The verified release, waiting for the yes.
+    held: Mutex<Option<Prepared>>,
     /// One check or download at a time.
     busy: tokio::sync::Mutex<()>,
     installing: AtomicBool,
@@ -229,6 +285,7 @@ impl Updater {
             installed,
             mirrors,
             dir: Mutex::new(dir),
+            appimage: Mutex::new(None),
             state: Mutex::new(state),
             freeze: Mutex::new(None),
             held: Mutex::new(None),
@@ -242,6 +299,11 @@ impl Updater {
     /// Download releases into `dir` instead (Linux: Downloads).
     pub(crate) fn set_dir(&self, dir: PathBuf) {
         *lock(&self.dir) = dir;
+    }
+
+    /// Linux, running as an AppImage: releases replace `appimage`.
+    pub(crate) fn set_appimage(&self, appimage: PathBuf) {
+        *lock(&self.appimage) = Some(appimage);
     }
 
     /// When Trino opens on Windows: the installers an earlier update left
@@ -333,37 +395,90 @@ impl Updater {
             self.set(self.kept_or(UpdateState::UpToDate));
             return true;
         };
-        let held = lock(&self.held).as_ref().map(HeldInstaller::version);
+        let held = lock(&self.held).as_ref().map(Prepared::version);
         if held.is_some_and(|held| held >= offer.version) {
             self.set(self.kept_or(UpdateState::UpToDate));
             return true;
         }
 
-        let version = offer.version.to_string();
         self.set(UpdateState::Downloading {
-            version: version.clone(),
+            version: offer.version.to_string(),
         });
-        let dir = lock(&self.dir).clone();
-        let session = client.net().session();
-        let source = self.mirrors.source;
-        match update::download(client, &session, source, self.mirrors.key, &offer, &dir).await {
-            Ok(installer) if platform.installs() => {
-                *lock(&self.held) = Some(installer);
-                self.set(UpdateState::Ready { version });
-            }
-            Ok(installer) => {
-                let file = installer.path().display().to_string();
-                drop(installer);
-                self.set(UpdateState::Saved { version, file });
-            }
-            Err(error) => self.set(self.kept_or(UpdateState::Failed {
-                reason: error.into(),
-            })),
-        }
+        let state = self.prepare(client, platform, &offer).await;
+        self.set(state);
         true
     }
 
-    /// `state`, unless a verified installer is held: then it stays ready.
+    /// Download `offer` and get it ready for the yes: on Windows the
+    /// installer, held; on Linux the AppImage, staged beside the running
+    /// one, or else saved in Downloads.
+    async fn prepare(
+        &self,
+        client: &HttpClient,
+        platform: Platform,
+        offer: &update::Offer,
+    ) -> UpdateState {
+        let version = offer.version.to_string();
+        let session = client.net().session();
+        let (source, key) = (self.mirrors.source, self.mirrors.key);
+        let reason = match platform {
+            Platform::WindowsX64 => {
+                let dir = lock(&self.dir).clone();
+                return match update::download(client, &session, source, key, offer, &dir).await {
+                    Ok(installer) => self.ready(Prepared::Installer(installer)),
+                    Err(error) => self.kept_or(UpdateState::Failed {
+                        reason: error.into(),
+                    }),
+                };
+            }
+            Platform::LinuxX64 => {
+                let appimage = lock(&self.appimage).clone();
+                match appimage {
+                    None => SavedReason::NotAppImage,
+                    Some(appimage) => {
+                        match update::download_appimage(
+                            client, &session, source, key, offer, &appimage,
+                        )
+                        .await
+                        {
+                            Ok(staged) => return self.ready(Prepared::AppImage(staged)),
+                            Err(AppImageError::NotInPlace(why)) => why.into(),
+                            Err(AppImageError::Update(error)) => {
+                                return self.kept_or(UpdateState::Failed {
+                                    reason: error.into(),
+                                })
+                            }
+                        }
+                    }
+                }
+            }
+        };
+        // Saved in Downloads: Trino installs nothing itself.
+        let dir = lock(&self.dir).clone();
+        match update::download(client, &session, source, key, offer, &dir).await {
+            Ok(installer) => {
+                let file = installer.path().display().to_string();
+                drop(installer);
+                UpdateState::Saved {
+                    version,
+                    file,
+                    reason,
+                }
+            }
+            Err(error) => self.kept_or(UpdateState::Failed {
+                reason: error.into(),
+            }),
+        }
+    }
+
+    /// `prepared` waits for the yes: the UI asks.
+    fn ready(&self, prepared: Prepared) -> UpdateState {
+        let version = prepared.version().to_string();
+        *lock(&self.held) = Some(prepared);
+        UpdateState::Ready { version }
+    }
+
+    /// `state`, unless a verified release waits: then it stays ready.
     fn kept_or(&self, state: UpdateState) -> UpdateState {
         match lock(&self.held).as_ref() {
             Some(held) => UpdateState::Ready {
@@ -374,10 +489,14 @@ impl Updater {
     }
 
     /// "Instalar y reiniciar", the yes the UI asked for (§6.3). Only with
-    /// a verified installer held. During a call (`call_active`) it waits
-    /// for the hang-up; then the session locks, Tor stops and the installer
-    /// starts, and Trino leaves. If the installer does not start, Tor starts
-    /// again and the installer stays held for another try.
+    /// a verified release waiting. During a call (`call_active`) it waits
+    /// for the hang-up; then the session locks and Tor stops. On Windows
+    /// the installer starts and Trino leaves; if it does not start, Tor
+    /// starts again and the installer stays held for another try. On Linux
+    /// the staged AppImage replaces the running one, and Trino starts again
+    /// from it; if it cannot (it fails its last check, or the AppImage is
+    /// gone), Tor starts again, the staged file goes, and the next check
+    /// downloads the release again.
     pub(crate) async fn install(
         &self,
         host: &impl InstallHost,
@@ -410,7 +529,12 @@ impl Updater {
         });
         host.lock().await;
         host.stop_tor().await;
-        let installer = lock(&self.held).take();
+        let prepared = lock(&self.held).take();
+        let installer = match prepared {
+            Some(Prepared::AppImage(staged)) => return self.replace_appimage(host, staged).await,
+            Some(Prepared::Installer(installer)) => Some(installer),
+            None => None,
+        };
         let launched = match &installer {
             Some(installer) => host.launch(installer.path(), &INSTALLER_ARGS),
             None => Err(std::io::Error::other("no installer")),
@@ -423,10 +547,41 @@ impl Updater {
                 Ok(())
             }
             Err(_) => {
-                *lock(&self.held) = installer;
+                *lock(&self.held) = installer.map(Prepared::Installer);
                 self.installing.store(false, Ordering::SeqCst);
                 self.set(UpdateState::Failed {
                     reason: UpdateFailure::Install,
+                });
+                host.start_tor().await;
+                Ok(())
+            }
+        }
+    }
+
+    /// Linux, after the lock and with Tor stopped: `staged` replaces the
+    /// running AppImage (checked once more, off the async threads: it reads
+    /// the whole file), and Trino starts again from it.
+    async fn replace_appimage(
+        &self,
+        host: &impl InstallHost,
+        staged: StagedAppImage,
+    ) -> Result<(), CommandError> {
+        let key = self.mirrors.key;
+        let replaced = tokio::task::spawn_blocking(move || staged.replace(key))
+            .await
+            .unwrap_or(Err(UpdateError::Io));
+        match replaced {
+            Ok(_) => {
+                host.relaunch();
+                Ok(())
+            }
+            Err(error) => {
+                self.installing.store(false, Ordering::SeqCst);
+                self.set(UpdateState::Failed {
+                    reason: match error {
+                        UpdateError::Signature => UpdateFailure::Signature,
+                        _ => UpdateFailure::Install,
+                    },
                 });
                 host.start_tor().await;
                 Ok(())
@@ -494,6 +649,13 @@ impl InstallHost for TauriInstall {
     fn exit(&self) {
         self.0.exit(0);
     }
+
+    /// Tauri starts `$APPIMAGE` again once Trino has left (and the
+    /// single-instance plugin has let go of its name): the file just
+    /// replaced, at the same path.
+    fn relaunch(&self) {
+        self.0.request_restart();
+    }
 }
 
 /// When Trino opens: where releases go, the leftovers of an earlier
@@ -506,6 +668,15 @@ pub(crate) fn on_open(app: &tauri::AppHandle) {
     if cfg!(target_os = "linux") {
         if let Ok(downloads) = app.path().download_dir() {
             updater.set_dir(downloads);
+        }
+        // Running as an AppImage: releases replace it, and what an earlier
+        // run left staged beside it goes.
+        if let Some(appimage) = update::running_appimage(
+            std::env::var_os("APPIMAGE").as_deref(),
+            std::env::current_exe().ok().as_deref(),
+        ) {
+            update::remove_appimage_leftovers(&appimage);
+            updater.set_appimage(appimage);
         }
     } else {
         updater.remove_leftovers();
@@ -601,7 +772,8 @@ pub async fn update_check_without_tor(
 }
 
 /// "Instalar y reiniciar": the yes. During a call it waits for the
-/// hang-up; then Trino locks, stops Tor, starts the installer and leaves.
+/// hang-up; then Trino locks, stops Tor, starts the installer and leaves
+/// (Windows), or replaces its AppImage and starts again from it (Linux).
 #[tauri::command]
 pub async fn update_install(
     app: tauri::AppHandle,
@@ -645,6 +817,17 @@ mod tests {
     const TAURI_SIG: &str =
         include_str!("../../crates/trino-net/src/update/testdata/tauri-installer.sig");
     const SIGNED_NAME: &str = "Trino Chat_0.2.0_x64-setup.exe";
+    /// The same for Linux: an "AppImage" of Trino 0.2.0, with another
+    /// throwaway key (TOR-13).
+    const APPIMAGE_PUBLIC: &str =
+        include_str!("../../crates/trino-net/src/update/testdata/tauri-appimage-test.key.pub");
+    const APPIMAGE_FILE: &[u8] =
+        include_bytes!("../../crates/trino-net/src/update/testdata/tauri-appimage.bin");
+    const APPIMAGE_SIG: &str =
+        include_str!("../../crates/trino-net/src/update/testdata/tauri-appimage.sig");
+    const APPIMAGE_NAME: &str = "Trino Chat_0.2.0_amd64.AppImage";
+    /// What the running AppImage holds in these tests.
+    const RUNNING: &[u8] = b"the AppImage running now, 0.1.0";
 
     const MANIFESTS: [&str; 1] = ["https://trinochat.org/updates/latest.json"];
     const SOURCE: Source = Source {
@@ -671,6 +854,65 @@ mod tests {
             },
             dir,
         )
+    }
+
+    fn linux_updater(dir: PathBuf) -> Updater {
+        let key: &'static UpdateKey = Box::leak(Box::new(
+            UpdateKey::from_tauri(APPIMAGE_PUBLIC).expect("the test key"),
+        ));
+        Updater::new(
+            Some(Platform::LinuxX64),
+            "0.1.0".parse().unwrap(),
+            Mirrors {
+                source: &SOURCE,
+                key,
+                signer: Signer::trino_updates(),
+                feeds: &FEEDS,
+            },
+            dir,
+        )
+    }
+
+    fn linux_manifest() -> Vec<u8> {
+        serde_json::json!({
+            "version": "0.2.0",
+            "platforms": { "linux-x86_64": {
+                "url": "https://trinochat.org/updates/Trino.Chat_0.2.0_amd64.AppImage",
+                "signature": APPIMAGE_SIG.trim(),
+            } }
+        })
+        .to_string()
+        .into_bytes()
+    }
+
+    /// The AppImage Trino runs from, in `scratch`, as the person named it.
+    fn running_appimage(scratch: &ScratchDir) -> PathBuf {
+        let apps = scratch.path().join("Apps");
+        std::fs::create_dir_all(&apps).unwrap();
+        let appimage = apps.join("trino.AppImage");
+        std::fs::write(&appimage, RUNNING).unwrap();
+        appimage
+    }
+
+    /// A Linux updater that found Trino 0.2.0 through `net`'s Tor (`mock`
+    /// serves trinochat.org), running from `appimage` if there is one.
+    async fn linux_release(
+        scratch: &ScratchDir,
+        net: &Arc<Net>,
+        mock: &Mock,
+        appimage: Option<PathBuf>,
+    ) -> Updater {
+        mock_http::serve(
+            mock,
+            "https://trinochat.org",
+            vec![ok(&linux_manifest()), ok(APPIMAGE_FILE)],
+        );
+        let updater = linux_updater(scratch.path().join("Downloads"));
+        if let Some(appimage) = appimage {
+            updater.set_appimage(appimage);
+        }
+        assert!(updater.check(&client(net), NOW).await);
+        updater
     }
 
     fn manifest() -> Vec<u8> {
@@ -728,6 +970,8 @@ mod tests {
     struct Recorder {
         log: StdMutex<Vec<String>>,
         launch_fails: bool,
+        /// The AppImage a relaunch starts, to say which one it finds.
+        appimage: Option<PathBuf>,
     }
 
     impl Recorder {
@@ -767,6 +1011,19 @@ mod tests {
 
         fn exit(&self) {
             self.note("exit".into());
+        }
+
+        fn relaunch(&self) {
+            let found = self
+                .appimage
+                .as_ref()
+                .and_then(|path| std::fs::read(path).ok());
+            let which = match found.as_deref() {
+                Some(APPIMAGE_FILE) => "the new AppImage",
+                Some(RUNNING) => "the old AppImage",
+                _ => "nothing",
+            };
+            self.note(format!("relaunch {which}"));
         }
     }
 
@@ -894,6 +1151,178 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(again.log().last().map(String::as_str), Some("exit"));
+        net.stop();
+    }
+
+    /// TOR-13: running as an AppImage, the verified release is staged
+    /// beside it and replaces it only on the yes; then Trino starts again
+    /// from it, Tor and lyrebird stopped first, as on Windows.
+    #[tokio::test]
+    async fn on_linux_the_running_appimage_is_replaced_on_the_yes_and_starts_again() {
+        let scratch = ScratchDir::new("update-appimage");
+        let (net, mock) = ready(&scratch).await;
+        let appimage = running_appimage(&scratch);
+        let host = Recorder {
+            appimage: Some(appimage.clone()),
+            ..Recorder::default()
+        };
+
+        let updater = linux_release(&scratch, &net, &mock, Some(appimage.clone())).await;
+
+        // Ready, and asked: nothing replaced, nothing in Downloads.
+        assert_eq!(
+            updater.state(),
+            UpdateState::Ready {
+                version: "0.2.0".into()
+            }
+        );
+        assert_eq!(std::fs::read(&appimage).unwrap(), RUNNING);
+        assert!(!scratch.path().join("Downloads").exists());
+        assert!(host.log().is_empty());
+
+        updater
+            .install(&host, &AtomicBool::new(false))
+            .await
+            .unwrap();
+
+        assert_eq!(
+            host.log(),
+            [
+                "lock".to_string(),
+                "stop tor".to_string(),
+                "relaunch the new AppImage".to_string(),
+            ]
+        );
+        assert_eq!(std::fs::read(&appimage).unwrap(), APPIMAGE_FILE);
+        let left: Vec<_> = std::fs::read_dir(appimage.parent().unwrap())
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name())
+            .collect();
+        assert_eq!(left, ["trino.AppImage"]);
+        net.stop();
+    }
+
+    /// A .deb (or an .rpm): no AppImage to replace, so the release is
+    /// saved in Downloads, as before, and nothing installs.
+    #[tokio::test]
+    async fn on_linux_without_an_appimage_the_release_is_saved_in_downloads() {
+        let scratch = ScratchDir::new("update-deb");
+        let (net, mock) = ready(&scratch).await;
+
+        let updater = linux_release(&scratch, &net, &mock, None).await;
+
+        let saved = scratch.path().join("Downloads").join(APPIMAGE_NAME);
+        assert_eq!(
+            updater.state(),
+            UpdateState::Saved {
+                version: "0.2.0".into(),
+                file: saved.display().to_string(),
+                reason: SavedReason::NotAppImage,
+            }
+        );
+        assert_eq!(std::fs::read(&saved).unwrap(), APPIMAGE_FILE);
+        let info = serde_json::to_value(updater.info(&net)).unwrap();
+        assert_eq!(info["state"]["state"], "saved");
+        assert_eq!(info["state"]["reason"], "notAppImage");
+        let host = Recorder::default();
+        let error = updater
+            .install(&host, &AtomicBool::new(false))
+            .await
+            .unwrap_err();
+        assert_eq!(error.code, ErrorCode::NotFound);
+        assert!(host.log().is_empty());
+        net.stop();
+    }
+
+    /// An AppImage that cannot be replaced (its folder is not Trino's to
+    /// write, or it is gone): the release goes to Downloads, the state
+    /// says why, and the AppImage is left as it is. Never sudo.
+    #[tokio::test]
+    async fn on_linux_an_appimage_that_cannot_be_replaced_falls_back_to_downloads() {
+        // The staged file cannot be made beside it (a folder sits there).
+        let scratch = ScratchDir::new("update-appimage-blocked");
+        let (net, mock) = ready(&scratch).await;
+        let appimage = running_appimage(&scratch);
+        let blocked = appimage
+            .parent()
+            .unwrap()
+            .join(format!(".{APPIMAGE_NAME}.part"));
+        std::fs::create_dir(&blocked).unwrap();
+
+        let updater = linux_release(&scratch, &net, &mock, Some(appimage.clone())).await;
+
+        let saved = scratch.path().join("Downloads").join(APPIMAGE_NAME);
+        assert_eq!(
+            updater.state(),
+            UpdateState::Saved {
+                version: "0.2.0".into(),
+                file: saved.display().to_string(),
+                reason: SavedReason::NotWritable,
+            }
+        );
+        assert_eq!(std::fs::read(&saved).unwrap(), APPIMAGE_FILE);
+        assert_eq!(std::fs::read(&appimage).unwrap(), RUNNING);
+        net.stop();
+
+        // Gone since Trino opened.
+        let scratch = ScratchDir::new("update-appimage-gone");
+        let (net, mock) = ready(&scratch).await;
+        let gone = scratch.path().join("Apps").join("trino.AppImage");
+
+        let updater = linux_release(&scratch, &net, &mock, Some(gone)).await;
+
+        assert_eq!(
+            updater.state(),
+            UpdateState::Saved {
+                version: "0.2.0".into(),
+                file: scratch
+                    .path()
+                    .join("Downloads")
+                    .join(APPIMAGE_NAME)
+                    .display()
+                    .to_string(),
+                reason: SavedReason::Missing,
+            }
+        );
+        net.stop();
+    }
+
+    /// The AppImage gone between the download and the yes: nothing is
+    /// replaced, nothing starts, Tor comes back, and the staged file goes.
+    #[tokio::test]
+    async fn on_linux_an_appimage_that_cannot_be_replaced_on_the_yes_gives_tor_back() {
+        let scratch = ScratchDir::new("update-appimage-late");
+        let (net, mock) = ready(&scratch).await;
+        let appimage = running_appimage(&scratch);
+        let updater = linux_release(&scratch, &net, &mock, Some(appimage.clone())).await;
+        std::fs::remove_file(&appimage).unwrap();
+        let host = Recorder::default();
+
+        updater
+            .install(&host, &AtomicBool::new(false))
+            .await
+            .unwrap();
+
+        assert_eq!(
+            host.log(),
+            [
+                "lock".to_string(),
+                "stop tor".to_string(),
+                "start tor".to_string(),
+            ]
+        );
+        assert_eq!(
+            updater.state(),
+            UpdateState::Failed {
+                reason: UpdateFailure::Install
+            }
+        );
+        assert_eq!(
+            std::fs::read_dir(appimage.parent().unwrap())
+                .unwrap()
+                .count(),
+            0
+        );
         net.stop();
     }
 

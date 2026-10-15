@@ -77,12 +77,15 @@ describe('the notice of a new version (card 8)', () => {
     });
   });
 
-  it('says where a Linux download was left', () => {
-    expect(updateNoticeOf(info({ state: 'saved', version: '0.2.0', file: '/home/ana/Descargas/x.AppImage' }))).toEqual({
-      key: 'net.update.saved',
-      action: null,
-      later: true,
-    });
+  it('says where a Linux download was left, whatever kept it from replacing the AppImage', () => {
+    for (const reason of ['notAppImage', 'missing', 'notWritable'] as const) {
+      const saved = { state: 'saved', version: '0.2.0', file: '/home/ana/Descargas/x.AppImage', reason } as const;
+      expect(updateNoticeOf(info(saved))).toEqual({
+        key: 'net.update.saved',
+        action: null,
+        later: true,
+      });
+    }
   });
 
   it('a version ready wins over a freeze', () => {
