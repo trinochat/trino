@@ -3,6 +3,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:trino_mobile/screens/call_screen.dart';
 import 'package:trino_mobile/screens/chat_screen.dart';
 import 'package:trino_mobile/ui/avatar.dart';
+import 'package:trino_mobile/ui/call_event_line.dart';
 import 'package:trino_mobile/ui/chat_row.dart';
 import 'package:trino_mobile/ui/day_separator.dart';
 import 'package:trino_mobile/ui/icon_button.dart';
@@ -30,8 +31,35 @@ void main() {
       TrustKind.verified,
     );
     expect(find.descendant(of: header, matching: find.bySemanticsLabel('Llamar')), findsOneWidget);
+    // The state in words under the name, not a coloured label.
+    expect(find.descendant(of: header, matching: find.text('Verificada')), findsOneWidget);
+    expect(colorOfText(tester, 'Verificada'), tokensIn(tester, find.byType(ChatScreen)).muted);
+    expect(tester.getSemantics(find.text('Ana Torres')).label, 'Ana Torres\nVerificada');
     await expectLater(tester, meetsGuideline(androidTapTargetGuideline));
     await expectLater(tester, meetsGuideline(labeledTapTargetGuideline));
+  });
+
+  testWidgets('an unverified contact says so in words, and a changed key warns', (tester) async {
+    await pumpApp(tester);
+    await openChat(tester, 'Carlos Méndez');
+    final header = find.byKey(ChatScreen.headerKey);
+    expect(find.descendant(of: header, matching: find.text('Sin verificar')), findsOneWidget);
+    expect(find.descendant(of: header, matching: find.byType(TrustBadge)), findsNothing);
+
+    await pumpScreen(
+      tester,
+      const ChatScreen(
+        chat: ChatSummary(
+          id: 'changed',
+          kind: ChatKind.direct,
+          title: 'Carlos Méndez',
+          contactId: 'carlos',
+          trust: Trust.keyChanged,
+        ),
+      ),
+    );
+    expect(find.text('Su clave cambió'), findsOneWidget);
+    expect(colorOfText(tester, 'Su clave cambió'), tokensIn(tester, find.byType(ChatScreen)).warn);
   });
 
   testWidgets('"Hoy", then the bubbles: mine in the accent bubble, with time and a check', (tester) async {
@@ -52,10 +80,48 @@ void main() {
     expect(tester.getSemantics(bubbleWith('Perfecto, nos vemos el jueves')).label, contains('10:42'));
   });
 
-  testWidgets('calls inside the chat never show as empty bubbles', (tester) async {
+  testWidgets('calls show as a centred line with icon, words and time, never as bubbles', (tester) async {
     await pumpApp(tester);
     await openChat(tester, 'Ana Torres');
     expect(find.byKey(MessageBubble.bubbleKey), findsNWidgets(4));
+    final t = tokensIn(tester, find.byType(ChatScreen));
+
+    final outgoing = find.widgetWithText(CallEventLine, 'Llamada saliente · 4 min · 10:36');
+    expect(outgoing, findsOneWidget);
+    expect(tester.widget<CallEventLine>(outgoing).icon, TrinoIcons.phoneOutgoing);
+    expect(colorOfText(tester, 'Llamada saliente · 4 min · 10:36'), t.muted);
+
+    // Missed: the word and the icon say it; the danger colour only repeats it.
+    final missed = find.widgetWithText(CallEventLine, 'Llamada perdida · 10:44');
+    expect(missed, findsOneWidget);
+    expect(tester.widget<CallEventLine>(missed).icon, TrinoIcons.phoneMissed);
+    expect(colorOfText(tester, 'Llamada perdida · 10:44'), t.danger);
+    expect(painterOf<TrinoIconPainter>(tester, missed).color, t.danger);
+    expect(fillOf(tester, find.text('Llamada perdida · 10:44')), isNull, reason: 'a line, not a pill');
+    expect(tester.getCenter(missed).dx, closeTo(tester.getCenter(find.byType(ChatScreen)).dx, 1), reason: 'centred');
+    // In time order: the outgoing call (10:36) sits between the 10:35 and 10:38 messages.
+    final y = tester.getCenter(outgoing).dy;
+    expect(y, greaterThan(tester.getCenter(find.text('Sí, ya lo revisé. Está todo bien.')).dy));
+    expect(y, lessThan(tester.getCenter(find.text('¿El jueves a las 6, entonces?')).dy));
+  });
+
+  testWidgets('an incoming call reads "Llamada entrante" with its length', (tester) async {
+    await pumpApp(tester);
+    await openChat(tester, 'Carlos Méndez');
+    expect(find.widgetWithText(CallEventLine, 'Llamada entrante · 12 min · 17:05'), findsOneWidget);
+  });
+
+  testWidgets('the composer: attach, "Mensaje", emoji and send', (tester) async {
+    await pumpApp(tester);
+    await openChat(tester, 'Lucía');
+    expect(find.text('Mensaje'), findsOneWidget, reason: 'the hint of the field');
+    final xs = [
+      tester.getCenter(find.bySemanticsLabel('Adjuntar')).dx,
+      tester.getCenter(find.byType(TextField)).dx,
+      tester.getCenter(find.bySemanticsLabel('Emojis y stickers')).dx,
+      tester.getCenter(find.bySemanticsLabel('Enviar')).dx,
+    ];
+    expect(xs, orderedEquals([...xs]..sort()), reason: 'in this order, left to right');
   });
 
   testWidgets('a group shows who wrote each message', (tester) async {

@@ -49,6 +49,7 @@ const mobileTextPairs = <Pair>[
   ('accentText', 'side'), // the selected tab of the bottom bar
   ('warn', 'surface'), // "Sin protección…" under the Chats title, "Se parece a…" in a request
   ('danger', 'side'), // a missed call's name on the bars' background
+  ('warn', 'bg'), // "Su clave cambió" under the name in a chat's header
 ];
 
 /// Status indicators and control states (WCAG 1.4.11). `line` is decorative.

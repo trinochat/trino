@@ -8,10 +8,21 @@ import '../support/harness.dart';
 
 void main() {
   group('DaySeparator', () {
-    testWidgets('a centred pill on raised, in the label style', (tester) async {
+    testWidgets('a thin line on each side of the label, with no pill', (tester) async {
       await pumpThemed(tester, const DaySeparator(label: 'Hoy'), center: false);
       final t = tokensIn(tester);
-      expect(fillOf(tester, find.text('Hoy')), t.raised);
+      expect(fillOf(tester, find.text('Hoy')), isNull, reason: 'no pill behind the day');
+      final lines = tester.widgetList<Container>(find.byKey(DaySeparator.lineKey)).toList();
+      expect(lines, hasLength(2));
+      for (final line in lines) {
+        expect(line.constraints?.maxHeight, 1);
+        expect(line.color, t.line);
+      }
+      expect(
+        tester.getCenter(find.text('Hoy')).dx,
+        closeTo(tester.getCenter(find.byType(DaySeparator)).dx, 1),
+        reason: 'centred',
+      );
       expect(colorOfText(tester, 'Hoy'), t.muted);
       expect(find.bySemanticsLabel('Hoy'), findsOneWidget);
     });

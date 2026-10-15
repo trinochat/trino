@@ -210,7 +210,7 @@ void main() {
     expect(find.text('Papá'), findsOneWidget);
     await tester.tap(find.text('Papá'));
     await tester.pumpAndSettle();
-    expect(find.text('Escribe un mensaje'), findsOneWidget);
+    expect(find.text('Mensaje'), findsOneWidget);
     expect(find.text('Papá'), findsOneWidget);
   });
 

@@ -92,6 +92,12 @@ void main() {
       [spanish['callMute'], spanish['callSpeaker'], spanish['callCamera'], spanish['callHangUp']],
       ['Silenciar', 'Parlante', 'Video', 'Colgar'],
     );
+    expect(spanish, containsPair('chatVerified', 'Verificada'));
+    expect(
+      [spanish['callEventOutgoing'], spanish['callEventIncoming'], spanish['callEventMissed']],
+      ['Llamada saliente', 'Llamada entrante', 'Llamada perdida'],
+    );
+    expect(spanish, containsPair('composerHint', 'Mensaje'));
     expect(spanish.containsKey('sasWord'), isFalse, reason: 'the words come from the SAS v2 table, not from i18n');
     expect(spanish, containsPair('addContact', 'Agregar contacto'));
     expect(spanish, containsPair('shareMyCode', 'Compartir mi código'));

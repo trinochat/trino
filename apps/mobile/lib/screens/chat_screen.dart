@@ -1,5 +1,6 @@
-// A conversation: the header (back, avatar, name with its shield, call), the
-// messages by day, and the composer. Enter writes a new line; the send button
+// A conversation: the header (back, avatar, name with its shield and the
+// state in words under it, call), the messages by day with the calls as
+// centred lines among them, and the composer. Enter writes a new line; the send button
 // sends, and it turns active only when there is something to send.
 import 'dart:async';
 
@@ -12,6 +13,7 @@ import '../design/theme.dart';
 import '../engine/engine.dart';
 import '../ui/avatar.dart';
 import '../ui/button.dart';
+import '../ui/call_event_line.dart';
 import '../ui/day_separator.dart';
 import '../ui/icon_button.dart';
 import '../ui/message_bubble.dart';
@@ -82,9 +84,7 @@ class _ChatScreenState extends State<ChatScreen> {
             child: StreamBuilder<List<ChatMessage>>(
               stream: _messages,
               builder: (context, snapshot) => _MessageList(
-                // Call events get their own line in the chat redesign (R1.4);
-                // until then they stay out of the bubbles.
-                messages: [...?snapshot.data?.where((message) => !message.isCall)],
+                messages: snapshot.data ?? const [],
                 group: widget.chat.isGroup,
                 onRetry: (message) => _engine.retry(widget.chat.id, message.id),
               ),
@@ -138,12 +138,28 @@ class _Header extends StatelessWidget {
                           ),
                           if (trust != null) ...[
                             const SizedBox(width: 4),
-                            TrustBadge(kind: trust.kind, label: trust.label, compact: true),
+                            // The words below say it to screen readers.
+                            ExcludeSemantics(
+                              child: TrustBadge(kind: trust.kind, label: trust.label, compact: true),
+                            ),
                           ],
                         ],
                       ),
                       if (chat.isGroup)
-                        Text(l10n.groupMembers(chat.memberNames.length + 1), style: context.text.caption),
+                        Text(l10n.groupMembers(chat.memberNames.length + 1), style: context.text.caption)
+                      else
+                        Text(
+                          switch (chat.trust) {
+                            Trust.verified => l10n.chatVerified,
+                            Trust.unverified => l10n.contactUnverified,
+                            Trust.keyChanged => l10n.contactKeyChanged,
+                          },
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: context.text.caption.copyWith(
+                            color: chat.trust == Trust.keyChanged ? context.tokens.warn : context.tokens.muted,
+                          ),
+                        ),
                     ],
                   ),
                 ),
@@ -182,6 +198,11 @@ class _MessageList extends StatelessWidget {
         day = messageDay;
         items.add(DaySeparator(key: ValueKey(messageDay), label: formatDayLabel(context, message.sentAt, now)));
       }
+      final call = message.call;
+      if (call != null) {
+        items.add(_callLine(context, message, call));
+        continue;
+      }
       items.add(
         Padding(
           key: ValueKey(message.id),
@@ -218,6 +239,28 @@ class _MessageList extends StatelessWidget {
         itemCount: items.length,
         itemBuilder: (context, index) => items[items.length - 1 - index],
       ),
+    );
+  }
+
+  /// "Llamada saliente · 4 min · 10:36", "Llamada entrante · 12 min · 17:05"
+  /// or "Llamada perdida · 10:44".
+  static Widget _callLine(BuildContext context, ChatMessage message, CallRecord call) {
+    final l10n = context.l10n;
+    final (icon, word) = switch (call.direction) {
+      CallDirection.outgoing => (TrinoIcons.phoneOutgoing, l10n.callEventOutgoing),
+      CallDirection.incoming => (TrinoIcons.phoneIncoming, l10n.callEventIncoming),
+      CallDirection.missed => (TrinoIcons.phoneMissed, l10n.callEventMissed),
+    };
+    final missed = call.direction == CallDirection.missed;
+    return CallEventLine(
+      key: ValueKey(message.id),
+      icon: icon,
+      missed: missed,
+      text: [
+        word,
+        if (!missed) formatCallLength(context, call.duration),
+        formatTime(context, message.sentAt),
+      ].join(' · '),
     );
   }
 
