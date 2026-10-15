@@ -12,12 +12,14 @@ import 'package:trino_mobile/engine/engine.dart';
 import 'package:trino_mobile/engine/fake_engine.dart';
 import 'package:trino_mobile/l10n/app_localizations.dart';
 import 'package:trino_mobile/platform/biometrics.dart';
+import 'package:trino_mobile/platform/call_sounds.dart';
 import 'package:trino_mobile/platform/qr_scanner.dart';
 
 import 'harness.dart';
 
 export 'package:trino_mobile/engine/engine.dart';
 export 'package:trino_mobile/engine/fake_engine.dart';
+export 'package:trino_mobile/platform/call_sounds.dart';
 export 'package:trino_mobile/platform/qr_scanner.dart';
 
 export 'harness.dart';
@@ -30,19 +32,21 @@ FakeTrinoEngine testEngine({
   bool locked = false,
   Duration callStartsAt = Duration.zero,
   CallPath callPath = CallPath.relay,
+  Duration? answerAfter = Duration.zero,
 }) => FakeTrinoEngine(
   clock: () => testNow,
   onboarded: onboarded,
   locked: locked,
   callStartsAt: callStartsAt,
   callPath: callPath,
+  answerAfter: answerAfter,
 );
 
 /// Around the whole app, so a test can capture what it shows.
 const appBoundaryKey = ValueKey('app-boundary');
 
 class TestApp {
-  TestApp(this.engine, this.appearance, this.language, this.scanner);
+  TestApp(this.engine, this.appearance, this.language, this.scanner, this.sounds);
 
   final FakeTrinoEngine engine;
   final AppearanceController appearance;
@@ -50,6 +54,9 @@ class TestApp {
 
   /// The demo scanner: a test scans with [DemoQrScanner.simulate].
   final DemoQrScanner scanner;
+
+  /// The demo call sounds: what the app asked to play, in [DemoCallSounds.log].
+  final DemoCallSounds sounds;
 }
 
 Future<TestApp> pumpApp(
@@ -60,6 +67,7 @@ Future<TestApp> pumpApp(
   double textScale = 1,
   BiometricAuth? biometrics,
   DemoQrScanner? scanner,
+  DemoCallSounds? sounds,
 }) async {
   usePhone(tester);
   if (textScale != 1) {
@@ -71,6 +79,7 @@ Future<TestApp> pumpApp(
     AppearanceController(appearance),
     LanguageController(locale),
     scanner ?? DemoQrScanner(),
+    sounds ?? DemoCallSounds(),
   );
   // Not awaited: inside testWidgets nothing would run the future's completion.
   addTearDown(() => unawaited(app.engine.dispose()));
@@ -86,6 +95,7 @@ Future<TestApp> pumpApp(
         clock: () => testNow,
         biometrics: biometrics ?? const DemoBiometricAuth(),
         scanner: app.scanner,
+        callSounds: app.sounds,
       ),
     ),
   );

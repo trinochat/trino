@@ -1,6 +1,7 @@
 // The four tabs: Chats, Llamadas, Contactos and Ajustes, with the bottom bar.
 // Llamadas counts the missed calls not seen yet; looking at it clears them.
-// The inbox's "Ver qué hacer" opens "No se pudo conectar".
+// The inbox's "Ver qué hacer" opens "No se pudo conectar". A call that rings
+// in opens the call screen over whatever is open.
 import 'dart:async';
 
 import 'package:flutter/material.dart';
@@ -10,6 +11,7 @@ import '../design/icons.dart';
 import '../engine/engine.dart';
 import '../ui/bottom_tabs.dart';
 import 'add_contact_screen.dart';
+import 'call_screen.dart';
 import 'calls_screen.dart';
 import 'chats_screen.dart';
 import 'connection/connection_failed_screen.dart';
@@ -33,6 +35,10 @@ class _HomeShellState extends State<HomeShell> {
 
   late final TrinoEngine _engine = context.engine;
   StreamSubscription<int>? _missed;
+  StreamSubscription<CallSession?>? _calls;
+
+  /// The call ringing in that the call screen was opened for.
+  String? _ringingCallId;
   var _unseenMissed = 0;
   int _tab = _chatsTab;
 
@@ -51,6 +57,15 @@ class _HomeShellState extends State<HomeShell> {
   void didChangeDependencies() {
     super.didChangeDependencies();
     _missed ??= _engine.unseenMissedCalls.listen(_onMissed);
+    _calls ??= _engine.call.listen(_onCall);
+  }
+
+  /// Calls you make open their screen where you made them; one that rings in
+  /// opens it here.
+  void _onCall(CallSession? call) {
+    if (!mounted || call == null || call.phase != CallPhase.incoming || call.id == _ringingCallId) return;
+    _ringingCallId = call.id;
+    unawaited(Navigator.of(context).push(CallScreen.route()));
   }
 
   void _onMissed(int count) {
@@ -74,6 +89,7 @@ class _HomeShellState extends State<HomeShell> {
   @override
   void dispose() {
     unawaited(_missed?.cancel());
+    unawaited(_calls?.cancel());
     super.dispose();
   }
 

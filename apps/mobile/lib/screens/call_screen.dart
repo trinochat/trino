@@ -5,6 +5,11 @@
 // the call travels in words: "Por el servidor de llamadas", which needs no
 // note, or, if a direct path ever shows up, "Conexión directa", which explains
 // on a tap that the other person sees your IP. At the bottom, the controls.
+//
+// Before it connects there is no key yet (it comes from the connection) and no
+// time: a call you make says "Llamando…" with the controls, and one that rings
+// in says "te está llamando por Trino" with Rechazar (the danger edge, as
+// Colgar) and Contestar (filled with the accent).
 import 'dart:async';
 
 import 'package:flutter/material.dart';
@@ -101,6 +106,7 @@ class _CallScreenState extends State<CallScreen> {
       final t = context.tokens;
       if (call == null) return Scaffold(backgroundColor: t.bg, body: const SizedBox.expand());
       final l10n = context.l10n;
+      final connected = call.phase == CallPhase.connected;
       return PopScope(
         // A call ends with "Colgar", not with the back gesture.
         canPop: false,
@@ -113,7 +119,10 @@ class _CallScreenState extends State<CallScreen> {
               child: Column(
                 children: [
                   const SizedBox(height: 8),
-                  _KeyPill(key: CallScreen.keyPillKey, call: call, onTap: _openKey),
+                  if (connected)
+                    _KeyPill(key: CallScreen.keyPillKey, call: call, onTap: _openKey)
+                  else
+                    const SizedBox(height: 48),
                   Expanded(
                     child: LayoutBuilder(
                       builder: (context, viewport) => SingleChildScrollView(
@@ -127,19 +136,26 @@ class _CallScreenState extends State<CallScreen> {
                               const SizedBox(height: 20),
                               Text(call.peerName, textAlign: TextAlign.center, style: context.text.headline),
                               const SizedBox(height: 4),
-                              _PathLine(
-                                call: call,
-                                open: _noteOpen,
-                                onTap: () => setState(() => _noteOpen = !_noteOpen),
-                              ),
-                              if (_noteOpen && call.path == CallPath.direct) _DirectNote(peerName: call.peerName),
+                              if (connected)
+                                _PathLine(
+                                  call: call,
+                                  open: _noteOpen,
+                                  onTap: () => setState(() => _noteOpen = !_noteOpen),
+                                )
+                              else
+                                _RingingLine(call: call),
+                              if (connected && _noteOpen && call.path == CallPath.direct)
+                                _DirectNote(peerName: call.peerName),
                             ],
                           ),
                         ),
                       ),
                     ),
                   ),
-                  _Controls(call: call, engine: _engine),
+                  if (call.phase == CallPhase.incoming)
+                    _AnswerControls(engine: _engine)
+                  else
+                    _Controls(call: call, engine: _engine),
                   const SizedBox(height: 16),
                 ],
               ),
@@ -364,6 +380,32 @@ class _PathLine extends StatelessWidget {
   }
 }
 
+/// "Llamando…", or "te está llamando por Trino" after the name, read out as
+/// it changes.
+class _RingingLine extends StatelessWidget {
+  const _RingingLine({required this.call});
+
+  final CallSession call;
+
+  @override
+  Widget build(BuildContext context) {
+    final l10n = context.l10n;
+    final text = call.phase == CallPhase.calling
+        ? l10n.callCalling
+        : call.camera
+        ? l10n.callRingingInVideo
+        : l10n.callRingingIn;
+    return Semantics(
+      container: true,
+      liveRegion: true,
+      label: call.phase == CallPhase.calling ? text : '${call.peerName} $text',
+      child: ExcludeSemantics(
+        child: Text(text, textAlign: TextAlign.center, style: context.text.secondary.copyWith(fontSize: 15)),
+      ),
+    );
+  }
+}
+
 class _DirectNote extends StatelessWidget {
   const _DirectNote({required this.peerName});
 
@@ -425,7 +467,44 @@ class _Controls extends StatelessWidget {
             pressed: call.camera,
             onPressed: () => engine.setCamera(!call.camera),
           ),
-          _Control(icon: TrinoIcons.hangUp, label: l10n.callHangUp, onPressed: engine.hangUp),
+          _Control(
+            icon: TrinoIcons.hangUp,
+            label: l10n.callHangUp,
+            variant: IconButtonVariant.dangerSoft,
+            onPressed: engine.hangUp,
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Rechazar and Contestar, while a call rings in.
+class _AnswerControls extends StatelessWidget {
+  const _AnswerControls({required this.engine});
+
+  final TrinoEngine engine;
+
+  @override
+  Widget build(BuildContext context) {
+    final l10n = context.l10n;
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 24),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          _Control(
+            icon: TrinoIcons.hangUp,
+            label: l10n.callReject,
+            variant: IconButtonVariant.dangerSoft,
+            onPressed: engine.rejectCall,
+          ),
+          _Control(
+            icon: TrinoIcons.phone,
+            label: l10n.callAnswer,
+            variant: IconButtonVariant.primary,
+            onPressed: engine.answerCall,
+          ),
         ],
       ),
     );
@@ -433,19 +512,33 @@ class _Controls extends StatelessWidget {
 }
 
 class _Control extends StatelessWidget {
-  const _Control({required this.icon, required this.label, required this.onPressed, this.pressed});
+  const _Control({
+    required this.icon,
+    required this.label,
+    required this.onPressed,
+    this.pressed,
+    this.variant = IconButtonVariant.secondary,
+  });
 
   final TrinoIcons icon;
   final String label;
   final VoidCallback onPressed;
 
-  /// Null for the hang-up button, which is no toggle.
+  /// Null for the buttons that are no toggle: Colgar, Rechazar, Contestar.
   final bool? pressed;
+
+  /// Secondary for the toggles; dangerSoft for hanging up or rejecting
+  /// (its word in danger); primary for answering (its word in the accent).
+  final IconButtonVariant variant;
 
   @override
   Widget build(BuildContext context) {
     final t = context.tokens;
-    final hangUp = pressed == null;
+    final wordColor = switch (variant) {
+      IconButtonVariant.dangerSoft => t.danger,
+      IconButtonVariant.primary => t.accentText,
+      _ => t.ink,
+    };
     return Expanded(
       child: Column(
         mainAxisSize: MainAxisSize.min,
@@ -455,7 +548,7 @@ class _Control extends StatelessWidget {
             label: label,
             circle: true,
             size: 64,
-            variant: hangUp ? IconButtonVariant.dangerSoft : IconButtonVariant.secondary,
+            variant: variant,
             pressed: pressed,
             onPressed: onPressed,
           ),
@@ -464,7 +557,7 @@ class _Control extends StatelessWidget {
             child: Text(
               label,
               textAlign: TextAlign.center,
-              style: context.text.caption.copyWith(color: hangUp ? t.danger : t.ink, fontWeight: FontWeight.w600),
+              style: context.text.caption.copyWith(color: wordColor, fontWeight: FontWeight.w600),
             ),
           ),
         ],

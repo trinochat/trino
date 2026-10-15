@@ -9,10 +9,12 @@ import '../design/appearance.dart';
 import '../engine/engine.dart';
 import '../l10n/app_localizations.dart';
 import '../platform/biometrics.dart';
+import '../platform/call_sounds.dart';
 import '../platform/qr_scanner.dart';
 import '../screens/home_shell.dart';
 import '../screens/onboarding_screen.dart';
 import '../screens/unlock_screen.dart';
+import '../sound/call_alerts.dart';
 import 'language.dart';
 import 'scope.dart';
 
@@ -25,6 +27,7 @@ class TrinoApp extends StatefulWidget {
     this.clock = DateTime.now,
     this.biometrics = const DemoBiometricAuth(),
     this.scanner,
+    this.callSounds,
   });
 
   final TrinoEngine engine;
@@ -40,6 +43,9 @@ class TrinoApp extends StatefulWidget {
   /// The camera's QR reader; the demo until the platform code.
   final QrScanner? scanner;
 
+  /// The speaker and vibrator for calls; silent when not given.
+  final CallSounds? callSounds;
+
   @override
   State<TrinoApp> createState() => _TrinoAppState();
 }
@@ -48,9 +54,18 @@ class _TrinoAppState extends State<TrinoApp> {
   late final AppearanceController _appearance = widget.appearance ?? AppearanceController();
   late final LanguageController _language = widget.language ?? LanguageController();
   late final QrScanner _scanner = widget.scanner ?? DemoQrScanner();
+  late final CallSounds _callSounds = widget.callSounds ?? DemoCallSounds();
+  late final CallAlerts _callAlerts = CallAlerts(engine: widget.engine, sounds: _callSounds);
+
+  @override
+  void initState() {
+    super.initState();
+    _callAlerts.start();
+  }
 
   @override
   void dispose() {
+    unawaited(_callAlerts.dispose());
     if (widget.appearance == null) _appearance.dispose();
     if (widget.language == null) _language.dispose();
     super.dispose();
@@ -64,6 +79,7 @@ class _TrinoAppState extends State<TrinoApp> {
     clock: widget.clock,
     biometrics: widget.biometrics,
     scanner: _scanner,
+    callSounds: _callSounds,
     child: ListenableBuilder(
       listenable: Listenable.merge([_appearance, _language]),
       builder: (context, _) => MaterialApp(
