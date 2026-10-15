@@ -1,0 +1,3 @@
+# The SAS table is a byte-for-byte copy of the desktop's file (see
+# lib/sas/sas_table.dart): never convert its line endings on checkout.
+* -text
