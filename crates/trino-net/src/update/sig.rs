@@ -284,6 +284,13 @@ impl HeldInstaller {
     pub fn version(&self) -> Version {
         self.version
     }
+
+    /// The handle it is held through: its mode is set and it is synced
+    /// through it (appimage.rs).
+    #[cfg(target_os = "linux")]
+    pub(crate) fn file(&self) -> &File {
+        &self._file
+    }
 }
 
 impl std::fmt::Debug for HeldInstaller {

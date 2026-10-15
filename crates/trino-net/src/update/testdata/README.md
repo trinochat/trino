@@ -19,9 +19,24 @@ npx --no-install tauri signer sign -f test.key -p throwaway-test 'Trino Chat_0.2
   (`.sig`, and the `signature` of latest.json), with the trusted comment
   `timestamp:1792017567	file:Trino Chat_0.2.0_x64-setup.exe`.
 
-The private key (`test.key`) was deleted right after signing: it was made for
-these files only, and its password is written above because it protects
-nothing. It is not Trino's updater key (`2A6861FC701B75D7`), whose private half
+The AppImage's vectors (TOR-13) were made the same way on 15 Oct 2026, with
+another throwaway key and the same password, for a file named as tauri-bundler
+names Trino's AppImage (`<productName>_<version>_amd64.AppImage`):
+
+```sh
+printf 'Not an AppImage: the bytes a test of Trino signed with tauri signer sign.
+'   > 'Trino Chat_0.2.0_amd64.AppImage'
+npx --no-install tauri signer sign -f test.key -p throwaway-test 'Trino Chat_0.2.0_amd64.AppImage'
+```
+
+- `tauri-appimage-test.key.pub`: its public key, key id `E026FF4801EC1A7C`.
+- `tauri-appimage.bin`: the signed file (`Trino Chat_0.2.0_amd64.AppImage`).
+- `tauri-appimage.sig`: its signature, with the trusted comment
+  `timestamp:1792102211	file:Trino Chat_0.2.0_amd64.AppImage`.
+
+Each private key (`test.key`) was deleted right after signing: each was made
+for its files only, and their password is written above because it protects
+nothing. Neither is Trino's updater key (`2A6861FC701B75D7`), whose private half
 only David has (docs/updater.md).
 
 The files are binary to git (`.gitattributes`): a line ending changed on

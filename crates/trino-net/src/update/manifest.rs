@@ -20,8 +20,10 @@ use std::collections::BTreeMap;
 pub enum Platform {
     /// Windows on x86-64: the NSIS installer, installed per user.
     WindowsX64,
-    /// Linux on x86-64: the AppImage. Trino tells there is a new version,
-    /// and installs nothing itself (§6.1).
+    /// Linux on x86-64: the AppImage, as tauri-bundler names it
+    /// (`<productName>_<version>_amd64.AppImage`). Running as an AppImage,
+    /// Trino replaces it on the yes (appimage.rs, TOR-13); otherwise (a
+    /// .deb, an .rpm) the release is saved in Downloads (§6.1).
     LinuxX64,
 }
 

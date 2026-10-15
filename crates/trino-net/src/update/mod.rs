@@ -31,13 +31,23 @@
 //!   mirrors in one session of its own (`daily`, §2.7, §7), so the news'
 //!   `latest` is weighed against what the mirrors offer (§6.4).
 //!
+//! - **Linux, as an AppImage** (appimage.rs, TOR-13): the release is
+//!   staged beside the running AppImage and replaces it, atomically, on
+//!   the yes; never with sudo. A .deb, or an AppImage in a folder Trino
+//!   cannot write, gets the release in Downloads instead.
+//!
 //! No Tauri here: asking before installing and running the installer are
 //! the app's (src-tauri/src/updater.rs).
 
+mod appimage;
 mod manifest;
 mod schedule;
 mod sig;
 
+pub use appimage::{
+    download_appimage, executable_mode, remove_appimage_leftovers, running_appimage, AppImageError,
+    NotInPlace, StagedAppImage,
+};
 pub use manifest::Platform;
 pub use schedule::{retry_at, UpdateSettings, RETRY_MAX, RETRY_MIN, UPDATE_FILE};
 pub use sig::{
@@ -305,21 +315,25 @@ pub async fn check(
     Ok(check)
 }
 
-/// Download `offer`'s installer through `client`, within `session`, check
-/// it against its signature, keep it in `dir` under the name it was signed
-/// with, and hold it there, checked once more, until it runs.
-pub async fn download(
+/// Whether `offer`'s installer may be downloaded through `client`: as a
+/// check may, and only from the mirrors' hosts.
+fn may_download(client: &HttpClient, source: &Source, offer: &Offer) -> Result<(), UpdateError> {
+    may_check(client)?;
+    if !source.allows_installer(&offer.url) {
+        return Err(UpdateError::Download(HttpError::Redirect));
+    }
+    Ok(())
+}
+
+/// `offer`'s installer, downloaded through `client` within `session` and
+/// checked whole against its signature, before anything keeps it.
+async fn fetch_verified(
     client: &HttpClient,
     session: &Session,
     source: &Source,
     key: &UpdateKey,
     offer: &Offer,
-    dir: &Path,
-) -> Result<HeldInstaller, UpdateError> {
-    may_check(client)?;
-    if !source.allows_installer(&offer.url) {
-        return Err(UpdateError::Download(HttpError::Redirect));
-    }
+) -> Result<Vec<u8>, UpdateError> {
     let bytes = fetch(
         client,
         session,
@@ -335,6 +349,22 @@ pub async fn download(
     })?;
     key.verify(&offer.signed, &bytes)
         .map_err(|_| UpdateError::Signature)?;
+    Ok(bytes)
+}
+
+/// Download `offer`'s installer through `client`, within `session`, check
+/// it against its signature, keep it in `dir` under the name it was signed
+/// with, and hold it there, checked once more, until it runs.
+pub async fn download(
+    client: &HttpClient,
+    session: &Session,
+    source: &Source,
+    key: &UpdateKey,
+    offer: &Offer,
+    dir: &Path,
+) -> Result<HeldInstaller, UpdateError> {
+    may_download(client, source, offer)?;
+    let bytes = fetch_verified(client, session, source, key, offer).await?;
 
     // The signed name: a platform's bundle name, so no folder in it.
     let name = offer.signed.file();

@@ -15,8 +15,9 @@ use crate::mock_http::{self, Reply};
 use crate::news;
 use crate::news::Version;
 use crate::update::{
-    self, Check, HeldInstaller, Mirrors, Platform, SigError, Source, UpdateError, UpdateKey,
-    UpdateSettings, GITHUB_REDIRECTS, MANIFEST_MIRRORS, TRINO_UPDATER_KEY, TRINO_UPDATER_KEY_ID,
+    self, AppImageError, Check, HeldInstaller, Mirrors, NotInPlace, Platform, SigError, Source,
+    StagedAppImage, UpdateError, UpdateKey, UpdateSettings, GITHUB_REDIRECTS, MANIFEST_MIRRORS,
+    TRINO_UPDATER_KEY, TRINO_UPDATER_KEY_ID,
 };
 use crate::*;
 use base64::Engine;
@@ -163,6 +164,10 @@ fn v(text: &str) -> Version {
 const TAURI_PUBLIC: &str = include_str!("update/testdata/tauri-test.key.pub");
 const TAURI_FILE: &[u8] = include_bytes!("update/testdata/tauri-installer.bin");
 const TAURI_SIG: &str = include_str!("update/testdata/tauri-installer.sig");
+/// The same for an AppImage, named as tauri-bundler names Trino's (TOR-13).
+const TAURI_APPIMAGE_PUBLIC: &str = include_str!("update/testdata/tauri-appimage-test.key.pub");
+const TAURI_APPIMAGE: &[u8] = include_bytes!("update/testdata/tauri-appimage.bin");
+const TAURI_APPIMAGE_SIG: &str = include_str!("update/testdata/tauri-appimage.sig");
 
 // ---- The production key ----
 
@@ -231,6 +236,27 @@ fn a_file_signed_by_the_real_tauri_signer_verifies() {
     let mut changed = TAURI_FILE.to_vec();
     changed[0] ^= 1;
     assert_eq!(key.verify(&signed, &changed), Err(SigError::Installer));
+}
+
+/// The AppImage tauri-bundler makes (`Trino Chat_<version>_amd64.AppImage`),
+/// signed by the real `tauri signer`: taken for Linux only.
+#[test]
+fn an_appimage_signed_by_the_real_tauri_signer_verifies_for_linux() {
+    let key = UpdateKey::from_tauri(TAURI_APPIMAGE_PUBLIC).unwrap();
+    assert_eq!(key.key_id(), "E026FF4801EC1A7C");
+
+    let signed = key
+        .check_comment(TAURI_APPIMAGE_SIG, Platform::LinuxX64)
+        .unwrap();
+    assert_eq!(signed.version(), v("0.2.0"));
+    assert_eq!(signed.file(), "Trino Chat_0.2.0_amd64.AppImage");
+    assert_eq!(signed.timestamp(), 1_792_102_211);
+    key.verify(&signed, TAURI_APPIMAGE).unwrap();
+    assert_eq!(
+        key.check_comment(TAURI_APPIMAGE_SIG, Platform::WindowsX64)
+            .err(),
+        Some(SigError::Version)
+    );
 }
 
 #[test]
@@ -1192,4 +1218,363 @@ async fn the_news_never_go_through_the_updaters_permit() {
 
     assert_eq!(news.status, news::NewsStatus::Bundled);
     assert!(direct.connections().is_empty());
+}
+
+// ---- Linux: the running AppImage replaced in place (TOR-13) ----
+
+/// The trusted comment `tauri signer sign` writes for Trino's AppImage of
+/// `version`, named as tauri-bundler names it.
+fn appimage_comment(version: &str) -> String {
+    format!("timestamp:1792102211\tfile:Trino Chat_{version}_amd64.AppImage")
+}
+
+fn appimage_url(version: &str) -> String {
+    format!("https://trinochat.org/updates/Trino.Chat_{version}_amd64.AppImage")
+}
+
+/// latest.json with a Linux entry.
+fn linux_manifest(version: &str, signature: &str) -> Vec<u8> {
+    serde_json::json!({
+        "version": version,
+        "platforms": {
+            "linux-x86_64": { "url": appimage_url(version), "signature": signature }
+        }
+    })
+    .to_string()
+    .into_bytes()
+}
+
+/// The name a staged AppImage of 0.2.0 has beside the running one.
+const STAGED_020: &str = ".Trino Chat_0.2.0_amd64.AppImage.part";
+
+/// What the running AppImage holds in these tests.
+const RUNNING: &[u8] = b"the AppImage running now, 0.1.0";
+
+/// A running AppImage, kept as the person keeps it (any name, any folder),
+/// and a release 0.2.0 signed by a key of its own, offered through a Tor
+/// that serves the manifest, then what the test says as the AppImage.
+struct AppImageCase {
+    scratch: Scratch,
+    appimage: PathBuf,
+    key: UpdateKey,
+    signed: Vec<u8>,
+    tor: Arc<Mock>,
+    net: Arc<Net>,
+}
+
+impl AppImageCase {
+    async fn new(name: &str, served: &[u8]) -> (AppImageCase, update::Offer) {
+        let signer = TestSigner::new();
+        let key = signer.update_key();
+        let scratch = Scratch::new(name);
+        let apps = scratch.path().join("Apps");
+        std::fs::create_dir_all(&apps).unwrap();
+        let appimage = apps.join("trino.AppImage");
+        std::fs::write(&appimage, RUNNING).unwrap();
+        let signed = b"the AppImage of 0.2.0".to_vec();
+        let signature = signer.sign(&signed, &appimage_comment("0.2.0"));
+        let tor = Mock::new();
+        mock_http::serve(
+            &tor,
+            "https://trinochat.org",
+            vec![ok(&linux_manifest("0.2.0", &signature)), ok(served)],
+        );
+        let net = tor_only(Some(Arc::clone(&tor)));
+        let session = net.session();
+        let offer = within(update::check(
+            &client(Arc::clone(&net)),
+            &session,
+            &TEST_SOURCE,
+            &key,
+            Platform::LinuxX64,
+            v("0.1.0"),
+        ))
+        .await
+        .unwrap()
+        .newer
+        .expect("0.2.0 is offered");
+        let case = AppImageCase {
+            scratch,
+            appimage,
+            key,
+            signed,
+            tor,
+            net,
+        };
+        (case, offer)
+    }
+
+    fn apps(&self) -> PathBuf {
+        self.scratch.path().join("Apps")
+    }
+
+    async fn stage(&self, offer: &update::Offer) -> Result<StagedAppImage, AppImageError> {
+        let session = self.net.session();
+        within(update::download_appimage(
+            &client(Arc::clone(&self.net)),
+            &session,
+            &TEST_SOURCE,
+            &self.key,
+            offer,
+            &self.appimage,
+        ))
+        .await
+    }
+
+    fn old(&self) -> Vec<u8> {
+        std::fs::read(&self.appimage).unwrap()
+    }
+
+    /// What is in the AppImage's folder, sorted.
+    fn folder(&self) -> Vec<String> {
+        let mut names: Vec<String> = std::fs::read_dir(self.apps())
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+            .collect();
+        names.sort();
+        names
+    }
+
+    /// How many connections went to trinochat.org.
+    fn to_trino(&self) -> usize {
+        self.tor
+            .connections()
+            .iter()
+            .filter(|(target, _)| target.host == "trinochat.org")
+            .count()
+    }
+}
+
+#[test]
+fn the_running_appimage_is_the_one_its_runtime_names_and_runs_from_its_mount() {
+    let scratch = Scratch::new("running");
+    let appimage = scratch.path().join("Apps").join("Trino Chat.AppImage");
+    let mounted = scratch
+        .path()
+        .join(".mount_TrinoCa1b2c3")
+        .join("usr")
+        .join("bin")
+        .join("trino-gui");
+    let installed = scratch.path().join("usr").join("bin").join("trino-gui");
+    let os = std::ffi::OsStr::new;
+
+    assert_eq!(
+        update::running_appimage(Some(appimage.as_os_str()), Some(&mounted)),
+        Some(appimage.clone())
+    );
+    // A .deb or an .rpm: no APPIMAGE.
+    assert_eq!(update::running_appimage(None, Some(&installed)), None);
+    // APPIMAGE set by hand for a program that does not run from an
+    // AppImage's mount: nothing is replaced.
+    assert_eq!(
+        update::running_appimage(Some(appimage.as_os_str()), Some(&installed)),
+        None
+    );
+    assert_eq!(
+        update::running_appimage(Some(appimage.as_os_str()), None),
+        None
+    );
+    // Not a full path, or empty.
+    assert_eq!(
+        update::running_appimage(Some(os("Trino Chat.AppImage")), Some(&mounted)),
+        None
+    );
+    assert_eq!(update::running_appimage(Some(os("")), Some(&mounted)), None);
+}
+
+#[test]
+fn the_new_appimage_keeps_the_old_mode_and_runs_wherever_it_can_be_read() {
+    for (old, new) in [
+        (0o755, 0o755),
+        (0o700, 0o700),
+        (0o750, 0o750),
+        (0o644, 0o755),
+        (0o600, 0o700),
+        (0o640, 0o750),
+        (0o444, 0o555),
+        // Never set-user, set-group or sticky.
+        (0o4755, 0o755),
+        (0o2755, 0o755),
+        (0o1755, 0o755),
+        // A regular file's type bits (S_IFREG) are not a mode to give.
+        (0o100644, 0o755),
+    ] {
+        assert_eq!(update::executable_mode(old), new, "{old:o}");
+    }
+}
+
+#[tokio::test]
+async fn an_appimage_is_staged_beside_the_running_one_and_replaces_it_only_when_asked() {
+    let (case, offer) = AppImageCase::new("appimage", b"the AppImage of 0.2.0").await;
+
+    let staged = case.stage(&offer).await.unwrap();
+
+    // Beside it, so the rename stays on one filesystem; checked and
+    // written, and nothing replaced yet.
+    assert_eq!(staged.version(), v("0.2.0"));
+    let apps = std::fs::canonicalize(case.apps()).unwrap();
+    assert_eq!(staged.staged(), apps.join(STAGED_020));
+    assert_eq!(std::fs::read(staged.staged()).unwrap(), case.signed);
+    assert_eq!(case.old(), RUNNING);
+    assert_eq!(case.folder(), [STAGED_020, "trino.AppImage"]);
+    assert_eq!(case.to_trino(), 2, "the manifest and the AppImage");
+
+    let replaced = staged.replace(&case.key).unwrap();
+
+    // The name the person gave it, the bytes signed, nothing left over.
+    assert_eq!(replaced, apps.join("trino.AppImage"));
+    assert_eq!(case.old(), case.signed);
+    assert_eq!(case.folder(), ["trino.AppImage"]);
+}
+
+#[tokio::test]
+async fn a_refused_signature_leaves_the_old_appimage_untouched() {
+    // Swapped on the way: refused before a byte is written.
+    let (case, offer) = AppImageCase::new("appimage-swapped", b"a swapped AppImage").await;
+
+    let error = case.stage(&offer).await.unwrap_err();
+
+    assert_eq!(error, AppImageError::Update(UpdateError::Signature));
+    assert_eq!(case.old(), RUNNING);
+    assert_eq!(case.folder(), ["trino.AppImage"]);
+}
+
+#[tokio::test]
+async fn a_staged_appimage_changed_before_the_yes_is_refused_and_the_old_one_stays() {
+    let (case, offer) = AppImageCase::new("appimage-changed", b"the AppImage of 0.2.0").await;
+    let staged = case.stage(&offer).await.unwrap();
+    let path = staged.staged().to_path_buf();
+
+    // Windows: held, nobody can change it while it waits.
+    #[cfg(windows)]
+    assert!(std::fs::OpenOptions::new().write(true).open(&path).is_err());
+    // Elsewhere it can be changed, and the yes checks it again first.
+    #[cfg(not(windows))]
+    {
+        std::fs::write(&path, b"changed while it waited").unwrap();
+        assert_eq!(
+            staged.replace(&case.key).unwrap_err(),
+            UpdateError::Signature
+        );
+        assert_eq!(case.old(), RUNNING);
+        assert_eq!(case.folder(), ["trino.AppImage"]);
+    }
+}
+
+#[tokio::test]
+async fn a_crash_between_the_write_and_the_rename_leaves_the_old_appimage_untouched() {
+    let (case, offer) = AppImageCase::new("appimage-crash", b"the AppImage of 0.2.0").await;
+    std::fs::write(case.apps().join("notes.txt"), b"mine").unwrap();
+    std::fs::write(
+        case.apps().join(".Other App_0.2.0_amd64.AppImage.part"),
+        b"not Trino's",
+    )
+    .unwrap();
+    let staged = case.stage(&offer).await.unwrap();
+
+    // Trino dies once the staged file is written and synced, before the
+    // rename: the system closes its files, and nothing of Trino's runs
+    // after that, not even a drop.
+    staged.crash();
+
+    assert_eq!(case.old(), RUNNING);
+    assert!(case.folder().contains(&STAGED_020.to_string()));
+
+    // The next time Trino opens, its staged file goes, and nothing else.
+    update::remove_appimage_leftovers(&case.appimage);
+    assert_eq!(
+        case.folder(),
+        [
+            ".Other App_0.2.0_amd64.AppImage.part",
+            "notes.txt",
+            "trino.AppImage"
+        ]
+    );
+    assert_eq!(case.old(), RUNNING);
+}
+
+#[tokio::test]
+async fn a_staged_appimage_never_installed_is_removed() {
+    let (case, offer) = AppImageCase::new("appimage-dropped", b"the AppImage of 0.2.0").await;
+    let staged = case.stage(&offer).await.unwrap();
+
+    drop(staged);
+
+    assert_eq!(case.folder(), ["trino.AppImage"]);
+    assert_eq!(case.old(), RUNNING);
+}
+
+#[tokio::test]
+async fn an_appimage_that_cannot_be_replaced_is_not_downloaded_beside_it() {
+    // Gone since Trino opened.
+    let (case, offer) = AppImageCase::new("appimage-gone", b"the AppImage of 0.2.0").await;
+    std::fs::remove_file(&case.appimage).unwrap();
+    assert_eq!(
+        case.stage(&offer).await.unwrap_err(),
+        AppImageError::NotInPlace(NotInPlace::Missing)
+    );
+    assert_eq!(case.to_trino(), 1, "only the manifest: nothing downloaded");
+    assert!(case.folder().is_empty());
+
+    // A folder where the staged file cannot be made: here, a folder sits
+    // where it would go.
+    let (case, offer) = AppImageCase::new("appimage-blocked", b"the AppImage of 0.2.0").await;
+    std::fs::create_dir(case.apps().join(STAGED_020)).unwrap();
+    assert_eq!(
+        case.stage(&offer).await.unwrap_err(),
+        AppImageError::NotInPlace(NotInPlace::NotWritable)
+    );
+    assert_eq!(case.to_trino(), 1, "only the manifest: nothing downloaded");
+    assert_eq!(case.old(), RUNNING);
+}
+
+/// A folder the person cannot write, as a system folder is: never sudo,
+/// only the fallback.
+#[cfg(target_os = "linux")]
+#[tokio::test]
+async fn an_appimage_in_a_folder_trino_cannot_write_is_not_replaced() {
+    use std::os::unix::fs::PermissionsExt;
+    let (case, offer) = AppImageCase::new("appimage-readonly", b"the AppImage of 0.2.0").await;
+    let apps = case.apps();
+    std::fs::set_permissions(&apps, std::fs::Permissions::from_mode(0o555)).unwrap();
+    let root = std::fs::File::create(apps.join("probe")).is_ok();
+
+    let result = case.stage(&offer).await;
+
+    std::fs::set_permissions(&apps, std::fs::Permissions::from_mode(0o755)).unwrap();
+    if root {
+        // root writes anywhere: the case cannot be made here.
+        eprintln!("running as root: a read-only folder is still writable");
+        return;
+    }
+    assert_eq!(
+        result.unwrap_err(),
+        AppImageError::NotInPlace(NotInPlace::NotWritable)
+    );
+    assert_eq!(case.to_trino(), 1, "only the manifest: nothing downloaded");
+    assert_eq!(case.old(), RUNNING);
+}
+
+#[cfg(target_os = "linux")]
+#[tokio::test]
+async fn the_new_appimage_keeps_the_mode_of_the_old_one() {
+    use std::os::unix::fs::PermissionsExt;
+    let (case, offer) = AppImageCase::new("appimage-mode", b"the AppImage of 0.2.0").await;
+    std::fs::set_permissions(&case.appimage, std::fs::Permissions::from_mode(0o750)).unwrap();
+    let staged = case.stage(&offer).await.unwrap();
+    // Staged for its owner only, until it replaces the AppImage.
+    let staged_mode = std::fs::metadata(staged.staged())
+        .unwrap()
+        .permissions()
+        .mode();
+    assert_eq!(staged_mode & 0o777, 0o600);
+
+    staged.replace(&case.key).unwrap();
+
+    let mode = std::fs::metadata(&case.appimage)
+        .unwrap()
+        .permissions()
+        .mode();
+    assert_eq!(mode & 0o7777, 0o750);
+    assert_eq!(case.old(), case.signed);
 }
