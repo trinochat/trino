@@ -1,6 +1,7 @@
 // The tokens as a Flutter theme: Material 3 underneath, restyled so nothing
 // shows the stock look (no tinted surfaces, no ink sparkle, no floating
 // labels). Widgets read the tokens and the type scale through [TrinoTheme].
+import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 
 import 'tokens.dart';
@@ -171,10 +172,17 @@ class TrinoLabel extends StatelessWidget {
   }
 }
 
-/// A short fade and slide between pages, and none when the system asks for
-/// less motion.
+/// Pages slide in and out whole from the edge, as in Telegram and on the
+/// iPhone: no fade, the page below moves a little, and a page can be closed by
+/// dragging it from the edge. Full-screen dialogs, such as a call, rise from
+/// the bottom. None when the system asks for less motion.
 class TrinoPageTransitionsBuilder extends PageTransitionsBuilder {
   const TrinoPageTransitionsBuilder();
+
+  static const _slide = CupertinoPageTransitionsBuilder();
+
+  @override
+  Duration get transitionDuration => _slide.transitionDuration;
 
   @override
   Widget buildTransitions<T>(
@@ -185,15 +193,7 @@ class TrinoPageTransitionsBuilder extends PageTransitionsBuilder {
     Widget child,
   ) {
     if (MediaQuery.disableAnimationsOf(context)) return child;
-    final curved = CurvedAnimation(parent: animation, curve: Curves.easeOutCubic, reverseCurve: Curves.easeInCubic);
-    final direction = Directionality.of(context) == TextDirection.rtl ? -1.0 : 1.0;
-    return FadeTransition(
-      opacity: curved,
-      child: SlideTransition(
-        position: Tween(begin: Offset(0.06 * direction, 0), end: Offset.zero).animate(curved),
-        child: child,
-      ),
-    );
+    return _slide.buildTransitions(route, context, animation, secondaryAnimation, child);
   }
 }
 
