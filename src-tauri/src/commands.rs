@@ -1524,57 +1524,6 @@ pub async fn wipe(_app: AppHandle, state: State<'_, AppState>) -> Result<(), Str
     }
 }
 
-/// Launch trino on OS login so it's already running (and, once unsealed, can
-/// receive in the background) without the user reopening it. Windows-only for
-/// now (HKCU Run key); a no-op elsewhere so mobile/Linux builds still compile.
-#[tauri::command]
-pub fn set_autostart(enable: bool) -> Result<(), String> {
-    #[cfg(target_os = "windows")]
-    {
-        const KEY: &str = r"HKCU\Software\Microsoft\Windows\CurrentVersion\Run";
-        let result = if enable {
-            let exe = std::env::current_exe().map_err(|e| e.to_string())?;
-            std::process::Command::new("reg")
-                .args([
-                    "add",
-                    KEY,
-                    "/v",
-                    "trino",
-                    "/t",
-                    "REG_SZ",
-                    "/d",
-                    &exe.to_string_lossy(),
-                    "/f",
-                ])
-                .output()
-        } else {
-            std::process::Command::new("reg")
-                .args(["delete", KEY, "/v", "trino", "/f"])
-                .output()
-        };
-        result.map_err(|e| e.to_string())?;
-    }
-    #[cfg(not(target_os = "windows"))]
-    let _ = enable;
-    Ok(())
-}
-
-/// Whether trino is registered to launch on login.
-#[tauri::command]
-pub fn get_autostart() -> bool {
-    #[cfg(target_os = "windows")]
-    {
-        const KEY: &str = r"HKCU\Software\Microsoft\Windows\CurrentVersion\Run";
-        std::process::Command::new("reg")
-            .args(["query", KEY, "/v", "trino"])
-            .output()
-            .map(|o| o.status.success())
-            .unwrap_or(false)
-    }
-    #[cfg(not(target_os = "windows"))]
-    false
-}
-
 /// Lock the vault: drop all in-memory secrets (identity, keys, ratchets) and
 /// disconnect the relays, but KEEP the encrypted files on disk. The UI returns
 /// to the unseal screen; unlocking reloads everything. Used by "Bloquear",

@@ -7,6 +7,7 @@ pub mod nostr;
 pub use trino_core::{call_signal, crypto, envelope, group, identity, ratchet, totp, vault, x3dh};
 
 mod a11y;
+mod autostart;
 mod command_error;
 mod commands;
 mod fsutil;
@@ -286,11 +287,11 @@ pub fn run() {
             commands::clipboard_cmds::clipboard_write_image,
             commands::resend_outbox,
             commands::resync_session,
-            commands::set_autostart,
+            autostart::set_autostart,
             a11y::system_text_scale,
             notifications::test_notification,
             // -- W7 --
-            commands::get_autostart,
+            autostart::get_autostart,
             security_cmds::check_passphrase,
             connection::connection_status,
             security_cmds::totp_enable,
@@ -479,6 +480,51 @@ mod tests {
                 "{} names {PERMIT}: only {ALLOWED:?} may",
                 file.display()
             );
+        }
+    }
+
+    /// FIX-2: no code runs reg.exe. Starting with Windows ran it from sync
+    /// commands, so on the window's thread, and the app froze while it ran
+    /// each time Settings › Notificaciones opened; the text size (a11y.rs)
+    /// had stopped for the same reason. The registry is read and written
+    /// in-process with `winreg`. Any string literal that names the program,
+    /// `"reg"` or a path ending in `reg.exe`, outside a comment, fails. The
+    /// patterns are spelled in pieces so this file does not hold them.
+    #[test]
+    fn no_source_spawns_reg() {
+        const BARE: &str = concat!("\"", "re", "g", "\"");
+        const EXE: &str = concat!("re", "g.exe\"");
+        fn sources(dir: &std::path::Path, found: &mut Vec<std::path::PathBuf>) {
+            for entry in std::fs::read_dir(dir).unwrap() {
+                let path = entry.unwrap().path();
+                if path.is_dir() {
+                    sources(&path, found);
+                } else if path.extension().is_some_and(|e| e == "rs") {
+                    found.push(path);
+                }
+            }
+        }
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let mut files = vec![root.join("build.rs")];
+        sources(&root.join("src"), &mut files);
+        sources(&root.join("../crates/trino-net/src"), &mut files);
+        assert!(files.len() > 30, "the sources were not found");
+        for file in files {
+            let source = std::fs::read_to_string(&file).unwrap();
+            for (n, line) in source.lines().enumerate() {
+                let code = line.trim_start();
+                if code.starts_with("//") {
+                    continue;
+                }
+                let lower = code.to_ascii_lowercase();
+                assert!(
+                    !lower.contains(BARE) && !lower.contains(EXE),
+                    "{}:{} runs reg.exe: {}",
+                    file.display(),
+                    n + 1,
+                    code
+                );
+            }
         }
     }
 
