@@ -44,7 +44,6 @@ vi.mock('@tauri-apps/plugin-notification', () => ({
   requestPermission: vi.fn(),
   sendNotification: vi.fn(),
 }));
-vi.mock('@tauri-apps/plugin-opener', () => ({ openUrl: vi.fn() }));
 const { clearAllBrowsingData } = vi.hoisted(() => ({ clearAllBrowsingData: vi.fn(async () => {}) }));
 vi.mock('@tauri-apps/api/webview', () => ({ getCurrentWebview: () => ({ clearAllBrowsingData }) }));
 

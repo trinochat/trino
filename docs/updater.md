@@ -50,7 +50,9 @@ actualizador propio:
 
   Esa pantalla primero recomienda Tor Browser (R-15).
 
-Comandos para la interfaz (las pantallas esperan las maquetas):
+Comandos para la interfaz: el aviso de "Versión nueva" en la bandeja, el
+interruptor de Ajustes › Privacidad › Conexión y "Trino necesita
+actualizarse" (docs/tor.md, Pantallas):
 
 | Comando | Para qué |
 |---|---|

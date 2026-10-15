@@ -1,4 +1,4 @@
-# Tor en Trino (TOR-5, TOR-7, TOR-9 y TOR-10)
+# Tor en Trino (TOR-5, TOR-6, TOR-7, TOR-9 y TOR-10)
 
 Todo lo que Trino abre en la red, salvo el audio y el video de las llamadas,
 sale por Tor. Lo hace `crates/trino-net`, que no depende de Tauri: dentro va
@@ -113,6 +113,40 @@ defecto y lo técnico en "Opciones avanzadas".
 - **Ajustes › Privacidad › Conexión**: el estado, "Qué ven los demás",
   "Buscar actualizaciones cada día" y, en "Opciones avanzadas",
   "Conectarse solo después de desbloquear".
+- **Versión nueva** (tarjeta 8): un aviso compacto en la bandeja, bajo la
+  línea de Tor, con una acción principal. "Instalar y reiniciar" y "Más
+  tarde" cuando está lista; "Intentar de nuevo" si no se pudo descargar;
+  "Revisar ahora" si hace días que no se puede revisar (el congelamiento de
+  las novedades, TOR-10). Nada se instala sin ese botón.
+- **Trino necesita actualizarse** (tarjeta 9): con Arti obsoleto se abre una
+  vez sola, y después desde "Ver qué hacer". Primero Tor Browser ("Ver
+  cómo": tres pasos, la dirección para copiar y, en "Opciones avanzadas",
+  la huella de la llave de versiones); después, pequeño, "Descargarla sin
+  protección…", que pregunta antes (Cancelar es el botón principal) y usa
+  `update_check_without_tor`. Sin confirmar dice "Puede que…" y ofrece
+  "Volver a intentar".
+- **Llamadas** (tarjeta 12): mientras Tor se conecta, la llamada sigue
+  sonando con "Todavía conectando de forma privada…" y **nunca** ofrece
+  llamar sin protección (R-11); eso solo se pregunta con Tor listo y el
+  servidor fallando. Cada petición de TURN nombra su llamada, y sus
+  renovaciones usan la llave y el circuito de esa llamada
+  (`docs/llamadas-turn.md`).
+- **Abrir un enlace** (tarjeta 10): los enlaces no tienen `href`; el chat los
+  pinta como `<span role="link">` y los abre `open_link`, en Rust, que
+  pregunta antes ("Este enlace se abre en tu navegador, sin protección…")
+  hasta que marques "No volver a preguntar". Esa casilla queda en la cuenta,
+  fuera del alcance del frontend.
+
+## El WebView
+
+No pide nada a la red (la CSP) y ahora tampoco puede navegar: la ventana
+principal y cada ventana renovada solo van al origen de la app
+(`tauri://localhost` o `http(s)://tauri.localhost`; en `tauri dev`, el
+servidor de Vite) y a `blob:`, `data:` y `about:blank`, que no salen a la red
+(`src-tauri/src/navigation.rs`). Por eso la ventana la crea la app
+(`create: false` en `tauri.conf.json`). El JS ya no puede abrir direcciones:
+la capability no tiene `opener:allow-open-url`, y `index.html` apaga el DNS
+anticipado.
 
 ## Plazos
 
@@ -259,10 +293,13 @@ una versión, está en `docs/updater.md`.
   automática y pegar un código; hasta entonces, "Probar otra forma de
   conectarse" usa el primer integrado.
 - `lyrebird` para Linux (un pin con su SHA-256).
-- Las pantallas del actualizador (el aviso de "listo para instalar", el
-  interruptor en Ajustes y la de "versión vieja"). Mientras tanto, el WebView
-  sigue pidiendo las novedades al desbloquear, como antes, además de la
-  revisión diaria.
+- El WebView sigue pidiendo las novedades al desbloquear, como antes, además
+  de la revisión diaria.
+- "Trino necesita actualizarse" sale sobre los chats, después de desbloquear;
+  la maqueta técnica la ponía en lugar del desbloqueo.
+- Las invitaciones y el @nombre (TOR-11): hoy la app no tiene el canje de
+  enlaces ni la búsqueda por @nombre, así que sus textos de espera (tarjeta 11)
+  llegan con ellas.
 - Pruebas a mano:
   - con la red real de Tor: `cargo test -p trino-net -- --ignored network_`;
   - con un `lyrebird` real, sin red:
