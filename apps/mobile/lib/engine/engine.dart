@@ -288,6 +288,92 @@ class CallSession {
       );
 }
 
+/// How someone who is not your contact reached you.
+enum RequestOrigin {
+  /// Through your @nombre.
+  username,
+
+  /// Through an invitation link; [MessageRequest.originLabel] is its label.
+  link,
+
+  /// Through a contact code you shared; [MessageRequest.originLabel] is its
+  /// label.
+  code,
+
+  /// Through a group you are both in; [MessageRequest.originLabel] is the
+  /// group's name. The group's admin set their name, so it shows with "~".
+  group,
+}
+
+enum AttachmentKind { photo, video, audio, file }
+
+/// A file in a message request, described but never downloaded before the
+/// request is accepted.
+@immutable
+class RequestAttachment {
+  const RequestAttachment({required this.kind, required this.sizeBytes, required this.sentAt});
+
+  final AttachmentKind kind;
+  final int sizeBytes;
+  final DateTime sentAt;
+}
+
+/// The text of a message in a request. Links in it are not tappable.
+@immutable
+class RequestMessage {
+  const RequestMessage({required this.text, required this.sentAt});
+
+  final String text;
+  final DateTime sentAt;
+}
+
+/// Someone who is not your contact wrote to you. Nothing of it rings or
+/// downloads until you accept.
+@immutable
+class MessageRequest {
+  const MessageRequest({
+    required this.id,
+    required this.claimedName,
+    required this.origin,
+    required this.fingerprint,
+    required this.receivedAt,
+    this.originLabel,
+    this.messages = const [],
+    this.attachments = const [],
+    this.callAttemptAt,
+    this.resemblesContact,
+  });
+
+  final String id;
+
+  /// The name they gave themselves ("dice llamarse"), without the "~" of a
+  /// group.
+  final String claimedName;
+  final RequestOrigin origin;
+
+  /// The link's or the code's label, or the group's name.
+  final String? originLabel;
+
+  /// Their key, in groups of four like a contact's; the screens may show
+  /// only the first two groups.
+  final String fingerprint;
+
+  /// When the latest thing from them arrived.
+  final DateTime receivedAt;
+
+  /// Oldest first.
+  final List<RequestMessage> messages;
+  final List<RequestAttachment> attachments;
+
+  /// When they tried to call you, if they did. The call did not ring.
+  final DateTime? callAttemptAt;
+
+  /// The name of a contact of yours that theirs resembles.
+  final String? resemblesContact;
+
+  bool get triedToCall => callAttemptAt != null;
+}
+
 /// What the unlock screen shows before you type anything. It carries no name:
 /// nothing personal shows before unlocking ("Hola de nuevo" for everyone).
 @immutable
@@ -552,6 +638,26 @@ abstract interface class TrinoEngine {
   Future<void> retry(String chatId, String messageId);
   Future<void> saveDraft(String chatId, String draft);
   Future<void> markRead(String chatId);
+
+  // Message requests.
+
+  /// The latest first.
+  Stream<List<MessageRequest>> get requests;
+
+  /// Adds the contact and opens its chat with the request's messages; returns
+  /// the chat's id.
+  Future<String> acceptRequest(String id);
+
+  /// Removes the request. For 30 days, new requests from the same identity
+  /// are dropped without telling anyone.
+  Future<void> deleteRequest(String id);
+
+  /// Removes the request and drops everything from that identity from now on.
+  Future<void> blockRequest(String id);
+
+  /// Sends a report about the request. The request stays: deleting or
+  /// blocking is a separate choice.
+  Future<void> reportRequest(String id);
 
   // Calls.
 

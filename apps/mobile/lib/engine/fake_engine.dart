@@ -54,6 +54,10 @@ class FakeTrinoEngine implements TrinoEngine {
   final _chats = _Live<List<ChatSummary>>(const []);
   final _call = _Live<CallSession?>(null);
   final _callHistory = _Live<List<CallRecord>>(const []);
+  final _requests = _Live<List<MessageRequest>>(const []);
+  final _dismissedUntil = <String, DateTime>{};
+  final _blocked = <String>{};
+  final _reported = <String>[];
   final _settings = _Live(const EngineSettings());
   final _bridges = _Live(const BridgeSettings());
   final _relays = _Live(const [
@@ -205,6 +209,10 @@ class FakeTrinoEngine implements TrinoEngine {
     _profile.value = null;
     _rooms.clear();
     _callHistory.value = const [];
+    _requests.value = const [];
+    _dismissedUntil.clear();
+    _blocked.clear();
+    _reported.clear();
     for (final live in _messages.values) {
       live.value = const [];
     }
@@ -395,6 +403,88 @@ class FakeTrinoEngine implements TrinoEngine {
     _publish(room);
   }
 
+  // Message requests.
+
+  @override
+  Stream<List<MessageRequest>> get requests => _requests.stream;
+
+  @override
+  Future<String> acceptRequest(String id) async {
+    final request = _takeRequest(id);
+    final contact = Contact(
+      id: 'contact-${_nextId++}',
+      name: request.claimedName,
+      trust: Trust.unverified,
+      fingerprint: request.fingerprint,
+    );
+    _contacts.value = [..._contacts.value, contact];
+    final room = _Room(
+      id: 'chat-${contact.id}',
+      kind: ChatKind.direct,
+      title: contact.name,
+      contactId: contact.id,
+      createdAt: request.receivedAt,
+      unread: request.messages.length,
+    );
+    room.messages.addAll([
+      for (final message in request.messages)
+        ChatMessage(id: 'm${_nextId++}', chatId: room.id, outgoing: false, text: message.text, sentAt: message.sentAt),
+    ]);
+    _rooms[room.id] = room;
+    _publish(room);
+    final callAt = request.callAttemptAt;
+    if (callAt != null) {
+      _addCall(
+        CallRecord(
+          id: 'call-${_nextId++}',
+          contactId: contact.id,
+          peerName: contact.name,
+          direction: CallDirection.missed,
+          startedAt: callAt,
+        ),
+      );
+    }
+    return room.id;
+  }
+
+  @override
+  Future<void> deleteRequest(String id) async {
+    final request = _takeRequest(id);
+    _dismissedUntil[request.fingerprint] = _clock().add(const Duration(days: 30));
+  }
+
+  @override
+  Future<void> blockRequest(String id) async => _blocked.add(_takeRequest(id).fingerprint);
+
+  @override
+  Future<void> reportRequest(String id) async {
+    _requestOf(id);
+    _reported.add(id);
+  }
+
+  /// For tests and demos: a request arrives, unless its identity is blocked
+  /// or was dismissed less than 30 days ago.
+  void receiveRequest(MessageRequest request) {
+    final dismissedUntil = _dismissedUntil[request.fingerprint];
+    if (_blocked.contains(request.fingerprint)) return;
+    if (dismissedUntil != null && _clock().isBefore(dismissedUntil)) return;
+    _requests.value = List.unmodifiable(
+      <MessageRequest>[request, ..._requests.value]..sort((a, b) => b.receivedAt.compareTo(a.receivedAt)),
+    );
+  }
+
+  /// The ids of the requests reported, oldest first.
+  List<String> get reportedRequests => List.unmodifiable(_reported);
+
+  MessageRequest _requestOf(String id) =>
+      _requests.value.where((r) => r.id == id).firstOrNull ?? (throw StateError('No request $id'));
+
+  MessageRequest _takeRequest(String id) {
+    final request = _requestOf(id);
+    _requests.value = List.unmodifiable(_requests.value.where((r) => r.id != id));
+    return request;
+  }
+
   // Calls.
 
   static const _sas = [
@@ -496,6 +586,7 @@ class FakeTrinoEngine implements TrinoEngine {
       _chats,
       _call,
       _callHistory,
+      _requests,
       _settings,
       _bridges,
       _relays,
@@ -715,6 +806,44 @@ class FakeTrinoEngine implements TrinoEngine {
     ]) {
       _addCall(record);
     }
+
+    DateTime today(int hour, int minute) => daysAgo(0, hour, minute);
+    _requests.value = List.unmodifiable([
+      MessageRequest(
+        id: 'req-ana',
+        claimedName: 'ana',
+        origin: RequestOrigin.username,
+        fingerprint: '9D2E 4B70 C1A8 35F6',
+        receivedAt: today(8, 15),
+        messages: [
+          RequestMessage(
+            text: 'Hola, soy Ana, la del taller de cerámica. Te mando las fotos de la clase: www.ejemplo.com/fotos',
+            sentAt: today(8, 12),
+          ),
+        ],
+        attachments: [RequestAttachment(kind: AttachmentKind.photo, sizeBytes: 1200000, sentAt: today(8, 12))],
+        callAttemptAt: today(8, 15),
+        resemblesContact: 'Ana Torres',
+      ),
+      MessageRequest(
+        id: 'req-mara',
+        claimedName: 'mara',
+        origin: RequestOrigin.group,
+        originLabel: 'Familia',
+        fingerprint: '4F81 0C2D 9A57 E36B',
+        receivedAt: daysAgo(1, 20, 15),
+        messages: [RequestMessage(text: 'Hola, ¿me pasas la dirección?', sentAt: daysAgo(1, 20, 15))],
+      ),
+      MessageRequest(
+        id: 'req-julian',
+        claimedName: 'julián',
+        origin: RequestOrigin.code,
+        originLabel: 'Trabajo',
+        fingerprint: 'B03C 7E19 62DA 4F85',
+        receivedAt: daysAgo(4, 9, 30),
+        messages: [RequestMessage(text: 'Buenas, te escribo por lo del contrato', sentAt: daysAgo(4, 9, 30))],
+      ),
+    ]);
   }
 }
 
