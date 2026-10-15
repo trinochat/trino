@@ -374,6 +374,88 @@ class MessageRequest {
   bool get triedToCall => callAttemptAt != null;
 }
 
+enum DevicePlatform { android, ios, windows, macos, linux }
+
+/// A device of your account. Each one has its own keys; the computer holds
+/// the account key, so it is the primary and the only one that can remove
+/// other devices.
+@immutable
+class LinkedDevice {
+  const LinkedDevice({
+    required this.id,
+    required this.name,
+    required this.platform,
+    required this.linkedAt,
+    this.isThisDevice = false,
+    this.isPrimary = false,
+    this.lastSeen,
+  });
+
+  final String id;
+  final String name;
+  final DevicePlatform platform;
+  final DateTime linkedAt;
+  final bool isThisDevice;
+  final bool isPrimary;
+
+  /// When it was last active; null for this device, which is active now.
+  final DateTime? lastSeen;
+}
+
+enum LinkStatus {
+  /// The two screens show the same code; the user confirms on the computer.
+  waitingForConfirmation,
+  linked,
+  failed,
+}
+
+enum LinkFailure {
+  /// The QR lasts 2 minutes and works once.
+  expired,
+  cancelled,
+
+  /// Someone said no on the computer.
+  rejected,
+}
+
+/// Linking this phone to the computer by scanning its QR.
+@immutable
+class LinkSession {
+  const LinkSession({
+    required this.code,
+    required this.computerName,
+    required this.status,
+    this.failure,
+    this.bringChats = true,
+    this.chatsProgress,
+  });
+
+  /// Six digits in two groups ("418 207"), the same on the computer.
+  final String code;
+  final String computerName;
+  final LinkStatus status;
+
+  /// With [LinkStatus.failed]: why.
+  final LinkFailure? failure;
+
+  /// Bring the chats the computer has, encrypted. On by default.
+  final bool bringChats;
+
+  /// From 0 to 100 while the chats arrive, after [LinkStatus.linked]; null
+  /// before, or without [bringChats].
+  final int? chatsProgress;
+
+  LinkSession copyWith({LinkStatus? status, LinkFailure? failure, bool? bringChats, int? Function()? chatsProgress}) =>
+      LinkSession(
+        code: code,
+        computerName: computerName,
+        status: status ?? this.status,
+        failure: failure ?? this.failure,
+        bringChats: bringChats ?? this.bringChats,
+        chatsProgress: chatsProgress == null ? this.chatsProgress : chatsProgress(),
+      );
+}
+
 /// What the unlock screen shows before you type anything. It carries no name:
 /// nothing personal shows before unlocking ("Hola de nuevo" for everyone).
 @immutable
@@ -548,6 +630,14 @@ class InvalidBridgeCode implements Exception {
   String toString() => 'InvalidBridgeCode';
 }
 
+/// A scanned QR that is not a Trino linking code.
+class InvalidLinkCode implements Exception {
+  const InvalidLinkCode();
+
+  @override
+  String toString() => 'InvalidLinkCode';
+}
+
 /// A contact code that is not one.
 class InvalidContactCode implements Exception {
   const InvalidContactCode();
@@ -658,6 +748,32 @@ abstract interface class TrinoEngine {
   /// Sends a report about the request. The request stays: deleting or
   /// blocking is a separate choice.
   Future<void> reportRequest(String id);
+
+  // Devices and linking.
+
+  /// This device first.
+  Stream<List<LinkedDevice>> get devices;
+
+  /// This phone leaves the account: its keys, chats and contacts are deleted
+  /// and it goes back to the first run. The device with the account key
+  /// cannot; other devices are removed from the computer.
+  Future<void> unlinkThisDevice();
+
+  /// The linking in progress, or null.
+  Stream<LinkSession?> get linking;
+
+  /// "Ya uso Trino en mi computador", from the first run: starts linking with
+  /// the payload of the QR the computer shows. Throws [InvalidLinkCode].
+  Future<LinkSession> beginLink(String qrPayload);
+
+  /// While waiting for the confirmation.
+  Future<void> setBringChats(bool on);
+  Future<void> cancelLink();
+
+  /// Once [LinkStatus.linked]: this phone's own passphrase, and 2FA if
+  /// [withTotp] ([beginTotp] and a passing [verifyTotp] first). Opens the
+  /// session with the account of the computer; the chats may still arrive.
+  Future<void> finishLink({required String passphrase, required bool withTotp});
 
   // Calls.
 

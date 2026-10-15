@@ -19,6 +19,7 @@ class FakeTrinoEngine implements TrinoEngine {
     this.connectAfter,
     this.sendDelay = Duration.zero,
     this.callStartsAt = Duration.zero,
+    this.linkConfirmAfter,
   }) : _clock = clock ?? DateTime.now,
        _identityState = _Live(
          onboarded ? (locked ? IdentityState.locked : IdentityState.unlocked) : IdentityState.needsOnboarding,
@@ -30,6 +31,7 @@ class FakeTrinoEngine implements TrinoEngine {
       if (!locked) _lastPassphraseAt = _clock();
       _profile.value = _demoProfile(demoName);
       _seedDemo();
+      _devices.value = _linkedDevices(_clock().subtract(const Duration(hours: 2)));
     }
     if (connectAfter != null) _connect();
     _call.onActive = _updateCallTimer;
@@ -42,9 +44,15 @@ class FakeTrinoEngine implements TrinoEngine {
   static const demoTotpCode = '123456';
   static const demoName = 'Sofía';
 
+  /// The QR payload the fake accepts: any with the prefix of [demoLinkPayload].
+  static const demoLinkPayload = 'trino-link:v1:7Q2M9XKD4R';
+  static const demoLinkCode = '418 207';
+  static const demoComputerName = 'Computador de la casa';
+
   final Duration? connectAfter;
   final Duration sendDelay;
   final Duration callStartsAt;
+  final Duration? linkConfirmAfter;
   final DateTime Function() _clock;
 
   final _Live<IdentityState> _identityState;
@@ -55,6 +63,8 @@ class FakeTrinoEngine implements TrinoEngine {
   final _call = _Live<CallSession?>(null);
   final _callHistory = _Live<List<CallRecord>>(const []);
   final _requests = _Live<List<MessageRequest>>(const []);
+  final _devices = _Live<List<LinkedDevice>>(const []);
+  final _linking = _Live<LinkSession?>(null);
   final _dismissedUntil = <String, DateTime>{};
   final _blocked = <String>{};
   final _reported = <String>[];
@@ -69,6 +79,7 @@ class FakeTrinoEngine implements TrinoEngine {
   final _rooms = <String, _Room>{};
   final _timers = <Timer>{};
   final _networkTimers = <Timer>{};
+  final _linkTimers = <Timer>{};
   Timer? _callTimer;
   DateTime? _callStartedAt;
 
@@ -166,6 +177,17 @@ class FakeTrinoEngine implements TrinoEngine {
     _totpEnabled = withTotp;
     _profile.value = _demoProfile(name.trim());
     _seedDemo();
+    // Created here: this phone holds the account key.
+    _devices.value = [
+      LinkedDevice(
+        id: 'device-this',
+        name: _phoneName,
+        platform: DevicePlatform.android,
+        linkedAt: _clock(),
+        isThisDevice: true,
+        isPrimary: true,
+      ),
+    ];
     _lastPassphraseAt = _clock();
     _identityState.value = IdentityState.unlocked;
   }
@@ -210,6 +232,9 @@ class FakeTrinoEngine implements TrinoEngine {
     _rooms.clear();
     _callHistory.value = const [];
     _requests.value = const [];
+    _devices.value = const [];
+    _cancelAll(_linkTimers);
+    _linking.value = null;
     _dismissedUntil.clear();
     _blocked.clear();
     _reported.clear();
@@ -228,7 +253,7 @@ class FakeTrinoEngine implements TrinoEngine {
 
   /// For tests and demos: the network comes and goes.
   void setNetwork(NetworkState state) {
-    _cancelNetworkTimers();
+    _cancelAll(_networkTimers);
     _network.value = state;
   }
 
@@ -485,6 +510,117 @@ class FakeTrinoEngine implements TrinoEngine {
     return request;
   }
 
+  // Devices and linking.
+
+  static const _phoneName = 'Pixel 8';
+
+  /// This phone, linked at [phoneLinkedAt], and the computer with the account
+  /// key.
+  List<LinkedDevice> _linkedDevices(DateTime phoneLinkedAt) => [
+    LinkedDevice(
+      id: 'device-this',
+      name: _phoneName,
+      platform: DevicePlatform.android,
+      linkedAt: phoneLinkedAt,
+      isThisDevice: true,
+    ),
+    LinkedDevice(
+      id: 'device-computer',
+      name: demoComputerName,
+      platform: DevicePlatform.windows,
+      linkedAt: _clock().subtract(const Duration(days: 60)),
+      isPrimary: true,
+      lastSeen: _clock().subtract(const Duration(minutes: 5)),
+    ),
+  ];
+
+  @override
+  Stream<List<LinkedDevice>> get devices => _devices.stream;
+
+  @override
+  Future<void> unlinkThisDevice() async {
+    final self = _devices.value.where((device) => device.isThisDevice).firstOrNull;
+    if (self == null || self.isPrimary) throw StateError('This device holds the account key');
+    await wipe();
+  }
+
+  @override
+  Stream<LinkSession?> get linking => _linking.stream;
+
+  static const _linkPrefix = 'trino-link:v1:';
+
+  @override
+  Future<LinkSession> beginLink(String qrPayload) async {
+    if (_identityState.value != IdentityState.needsOnboarding) throw StateError('There is an identity already');
+    final payload = qrPayload.trim();
+    if (!payload.startsWith(_linkPrefix) || payload.length < _linkPrefix.length + 8) throw const InvalidLinkCode();
+    _cancelAll(_linkTimers);
+    const session = LinkSession(
+      code: demoLinkCode,
+      computerName: demoComputerName,
+      status: LinkStatus.waitingForConfirmation,
+    );
+    _linking.value = session;
+    final after = linkConfirmAfter;
+    if (after != null) _schedule(_linkTimers, after, confirmLinkOnComputer);
+    return session;
+  }
+
+  @override
+  Future<void> setBringChats(bool on) async {
+    final session = _linking.value;
+    if (session?.status == LinkStatus.waitingForConfirmation) _linking.value = session!.copyWith(bringChats: on);
+  }
+
+  @override
+  Future<void> cancelLink() async => failLink(LinkFailure.cancelled);
+
+  @override
+  Future<void> finishLink({required String passphrase, required bool withTotp}) async {
+    final session = _linking.value;
+    if (session?.status != LinkStatus.linked || _identityState.value != IdentityState.needsOnboarding) {
+      throw StateError('The computer has not confirmed the link');
+    }
+    if (withTotp && !_totpVerified) throw StateError('Verify the authenticator code first');
+    _passphrase = passphrase;
+    _totpEnabled = withTotp;
+    _profile.value = _demoProfile(demoName);
+    _seedDemo(withChats: session!.bringChats);
+    _devices.value = _linkedDevices(_clock());
+    _lastPassphraseAt = _clock();
+    _identityState.value = IdentityState.unlocked;
+  }
+
+  /// For tests and demos: the user confirmed on the computer. With
+  /// [linkConfirmAfter], the chats then arrive a quarter at a time.
+  void confirmLinkOnComputer() {
+    final session = _linking.value;
+    if (session?.status != LinkStatus.waitingForConfirmation) return;
+    final bring = session!.bringChats;
+    _linking.value = session.copyWith(status: LinkStatus.linked, chatsProgress: () => bring ? 0 : null);
+    final after = linkConfirmAfter;
+    if (after == null || !bring) return;
+    for (var step = 1; step <= 4; step++) {
+      _schedule(_linkTimers, after * step, () => setLinkProgress(step * 25));
+    }
+  }
+
+  /// For tests and demos: the QR expired or the computer said no.
+  void failLink(LinkFailure failure) {
+    final session = _linking.value;
+    if (session == null || session.status == LinkStatus.linked) return;
+    _cancelAll(_linkTimers);
+    _linking.value = session.copyWith(status: LinkStatus.failed, failure: failure);
+  }
+
+  /// For tests and demos: how much of the chats arrived.
+  void setLinkProgress(int percent) {
+    final session = _linking.value;
+    if (session?.status == LinkStatus.linked && session!.bringChats) {
+      _linking.value = session.copyWith(chatsProgress: () => percent.clamp(0, 100));
+    }
+  }
+
   // Calls.
 
   static const _sas = [
@@ -576,7 +712,8 @@ class FakeTrinoEngine implements TrinoEngine {
       timer.cancel();
     }
     _timers.clear();
-    _cancelNetworkTimers();
+    _cancelAll(_networkTimers);
+    _cancelAll(_linkTimers);
     _callTimer?.cancel();
     for (final live in [
       _identityState,
@@ -587,6 +724,8 @@ class FakeTrinoEngine implements TrinoEngine {
       _call,
       _callHistory,
       _requests,
+      _devices,
+      _linking,
       _settings,
       _bridges,
       _relays,
@@ -603,7 +742,7 @@ class FakeTrinoEngine implements TrinoEngine {
   /// Connects through Tor: from 0 %, halfway at 50 %, then connected. When
   /// [tryingAnotherWay], the failure stays on screen while the search runs.
   void _connect({bool tryingAnotherWay = false}) {
-    _cancelNetworkTimers();
+    _cancelAll(_networkTimers);
     final current = _network.value;
     _network.value = tryingAnotherWay
         ? (current.status == NetworkStatus.failed
@@ -612,27 +751,30 @@ class FakeTrinoEngine implements TrinoEngine {
         : const NetworkState.connecting();
     final after = connectAfter;
     if (after == null) {
-      _networkLater(Duration.zero, () => _network.value = const NetworkState.connected());
+      _schedule(_networkTimers, Duration.zero, () => _network.value = const NetworkState.connected());
       return;
     }
-    if (!tryingAnotherWay) _networkLater(after ~/ 2, () => _network.value = const NetworkState.connecting(50));
-    _networkLater(after, () => _network.value = const NetworkState.connected());
+    if (!tryingAnotherWay) {
+      _schedule(_networkTimers, after ~/ 2, () => _network.value = const NetworkState.connecting(50));
+    }
+    _schedule(_networkTimers, after, () => _network.value = const NetworkState.connected());
   }
 
-  void _networkLater(Duration delay, void Function() action) {
+  /// Runs [action] after [delay], unless [_cancelAll] of [timers] comes first.
+  void _schedule(Set<Timer> timers, Duration delay, void Function() action) {
     late final Timer timer;
     timer = Timer(delay, () {
-      _networkTimers.remove(timer);
+      timers.remove(timer);
       action();
     });
-    _networkTimers.add(timer);
+    timers.add(timer);
   }
 
-  void _cancelNetworkTimers() {
-    for (final timer in _networkTimers) {
+  void _cancelAll(Set<Timer> timers) {
+    for (final timer in timers) {
       timer.cancel();
     }
-    _networkTimers.clear();
+    timers.clear();
   }
 
   void _updateCall(CallSession Function(CallSession) change) {
@@ -710,7 +852,9 @@ class FakeTrinoEngine implements TrinoEngine {
     fingerprint: '70A5 83C6 766D AAD7',
   );
 
-  void _seedDemo() {
+  /// The demo contacts and requests, and with [withChats] the chats and the
+  /// calls.
+  void _seedDemo({bool withChats = true}) {
     final now = _clock();
     DateTime ago(int minutes) => now.subtract(Duration(minutes: minutes));
     DateTime daysAgo(int days, int hour, int minute) => DateTime(now.year, now.month, now.day - days, hour, minute);
@@ -781,7 +925,7 @@ class FakeTrinoEngine implements TrinoEngine {
           message('chat-lucia', false, '¡Gracias!', daysAgo(3, 19, 15)),
         ]),
     ];
-    for (final room in rooms) {
+    for (final room in withChats ? rooms : const <_Room>[]) {
       _rooms[room.id] = room;
       _messagesOf(room.id).value = List.unmodifiable(room.messages);
     }
@@ -804,7 +948,7 @@ class FakeTrinoEngine implements TrinoEngine {
       call('ana', 'Ana Torres', CallDirection.outgoing, ago(24), 4),
       call('ana', 'Ana Torres', CallDirection.missed, ago(16)),
     ]) {
-      _addCall(record);
+      if (withChats) _addCall(record);
     }
 
     DateTime today(int hour, int minute) => daysAgo(0, hour, minute);
