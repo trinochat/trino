@@ -45,8 +45,9 @@ Future<void> loadFonts() async {
   }
 }
 
-Future<void> shot(WidgetTester tester, String name) async {
-  await tester.pumpAndSettle();
+/// Without [settle], as it is now, such as while a button's spinner turns.
+Future<void> shot(WidgetTester tester, String name, {bool settle = true}) async {
+  if (settle) await tester.pumpAndSettle();
   final boundary = tester.renderObject<RenderRepaintBoundary>(find.byKey(appBoundaryKey));
   await tester.runAsync(() async {
     final image = await boundary.toImage(pixelRatio: 3);
@@ -128,6 +129,65 @@ void main() {
       await tester.pumpAndSettle();
       await tester.tap(find.text('Dispositivos'));
       await shot(tester, '$name-18-devices');
+    }, skip: skip != false);
+
+    testWidgets('the connection screens in $name', (tester) async {
+      Future<void> tapText(String text) async {
+        await tester.ensureVisible(find.text(text).last);
+        await tester.pumpAndSettle();
+        await tester.tap(find.text(text).last);
+        await tester.pumpAndSettle();
+      }
+
+      Future<void> back() async {
+        await tester.tap(find.bySemanticsLabel('Volver').last);
+        await tester.pumpAndSettle();
+      }
+
+      final engine = FakeTrinoEngine(clock: () => testNow, connectAfter: const Duration(seconds: 2))
+        ..setNetwork(const NetworkState.failed(NetworkProblem.blocked));
+      await pumpApp(tester, engine: engine, appearance: appearance);
+      await tapText('Ver qué hacer');
+      await shot(tester, '$name-19-net-failed');
+      await tapText('Conectar sin protección…');
+      await shot(tester, '$name-20-net-unprotected-ask');
+      await tapText('Cancelar');
+      await tester.tap(find.text('Probar otra forma de conectarse'));
+      await tester.pump();
+      await shot(tester, '$name-21-net-trying', settle: false);
+      await tester.pump(const Duration(seconds: 2));
+      await shot(tester, '$name-22-net-connected');
+      await tapText('Volver a los chats');
+      engine.setNetwork(const NetworkState.failed(NetworkProblem.clock));
+      await tester.pumpAndSettle();
+      await tapText('Ver qué hacer');
+      await shot(tester, '$name-23-net-clock');
+      await back();
+      engine.setNetwork(const NetworkState.connected());
+
+      await openTab(tester, 'Ajustes');
+      await tapText('Privacidad');
+      await shot(tester, '$name-24-privacy');
+      await tapText('Conexión');
+      await shot(tester, '$name-25-connection');
+      await tapText('Opciones avanzadas');
+      await shot(tester, '$name-26-connection-advanced');
+      await tapText('Si en tu red bloquean Tor');
+      await shot(tester, '$name-27-bridges');
+      await tapText('Opciones avanzadas');
+      await tapText('Tengo un código que me dieron');
+      await tester.enterText(find.byType(TextField), 'esto no es un código');
+      await tapText('Guardar el código');
+      await shot(tester, '$name-28-bridges-code');
+      await back();
+      await tapText('Qué ven los demás');
+      await tapText('Opciones avanzadas');
+      await shot(tester, '$name-29-what-others-see');
+      await back();
+      await tapText('Conectar sin protección (solo esta vez)…');
+      await tapText('Conectar sin protección');
+      await tester.scrollUntilVisible(find.text('Sin protección hasta que cierres Trino'), -200);
+      await shot(tester, '$name-30-connection-unprotected');
     }, skip: skip != false);
 
     testWidgets('the first run in $name', (tester) async {
