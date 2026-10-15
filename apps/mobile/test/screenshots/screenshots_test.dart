@@ -112,6 +112,22 @@ void main() {
       await shot(tester, '$name-07-settings');
       await tester.tap(find.text('Apariencia'));
       await shot(tester, '$name-08-appearance');
+      await tester.tap(find.bySemanticsLabel('Volver'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Cuenta y seguridad'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Desbloquear con huella o Face ID'));
+      await shot(tester, '$name-15-security');
+      await tester.tap(find.text('Pedir la contraseña'));
+      await shot(tester, '$name-16-security-reask');
+      await tester.tap(find.text('Cada 3 días').last);
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Protección reforzada'));
+      await shot(tester, '$name-17-security-reinforced');
+      await tester.tap(find.bySemanticsLabel('Volver'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Dispositivos'));
+      await shot(tester, '$name-18-devices');
     }, skip: skip != false);
 
     testWidgets('the first run in $name', (tester) async {
