@@ -109,12 +109,25 @@ class Profile {
 
 @immutable
 class Contact {
-  const Contact({required this.id, required this.name, required this.trust, required this.fingerprint});
+  const Contact({
+    required this.id,
+    required this.name,
+    required this.trust,
+    required this.fingerprint,
+    this.blocked = false,
+  });
 
   final String id;
   final String name;
   final Trust trust;
   final String fingerprint;
+
+  /// Nothing from them arrives: no messages, no calls, no requests. They are
+  /// not told. The contact and the chat stay on this phone.
+  final bool blocked;
+
+  Contact copyWith({bool? blocked}) =>
+      Contact(id: id, name: name, trust: trust, fingerprint: fingerprint, blocked: blocked ?? this.blocked);
 }
 
 @immutable
@@ -132,6 +145,7 @@ class ChatSummary {
     this.lastActivity,
     this.unread = 0,
     this.draft,
+    this.muted = false,
   });
 
   final String id;
@@ -155,7 +169,42 @@ class ChatSummary {
   /// What you left written in the composer.
   final String? draft;
 
+  /// Its messages do not sound. A new group starts as
+  /// [EngineSettings.muteGroups] says.
+  final bool muted;
+
   bool get isGroup => kind == ChatKind.group;
+}
+
+/// Someone in a group, you included.
+@immutable
+class GroupMember {
+  const GroupMember({required this.name, this.contactId, this.isAdmin = false, this.isYou = false});
+
+  final String name;
+
+  /// Null for you, and for a member who is not your contact.
+  final String? contactId;
+
+  /// Administers the group: only they can change its members, and each
+  /// change goes signed.
+  final bool isAdmin;
+  final bool isYou;
+}
+
+/// Who is in a group and who administers it.
+@immutable
+class GroupDetails {
+  const GroupDetails({required this.chatId, required this.members});
+
+  final String chatId;
+
+  /// You included: who administers first, then the others, you last unless
+  /// you administer.
+  final List<GroupMember> members;
+
+  GroupMember? get admin => members.where((member) => member.isAdmin).firstOrNull;
+  bool get youAdminister => admin?.isYou ?? false;
 }
 
 @immutable
@@ -724,6 +773,28 @@ abstract interface class TrinoEngine {
   Future<void> saveDraft(String chatId, String draft);
   Future<void> markRead(String chatId);
 
+  /// Mutes or unmutes a chat's notifications.
+  Future<void> setChatMuted(String chatId, bool muted);
+
+  /// Deletes the chat and its messages from this phone only: the other
+  /// person and your other devices keep theirs. The contact and the call
+  /// history stay.
+  Future<void> deleteChat(String chatId);
+
+  /// Who is in a group and who administers it.
+  Future<GroupDetails> groupDetails(String chatId);
+
+  /// The groups you are in with a contact.
+  Future<List<ChatSummary>> groupsInCommon(String contactId);
+
+  /// You stop getting the group's messages, and it is deleted from this
+  /// phone. Throws [StateError] for a direct chat.
+  Future<void> leaveGroup(String chatId);
+
+  /// From now on nothing from the contact arrives; see [Contact.blocked].
+  Future<void> blockContact(String contactId);
+  Future<void> unblockContact(String contactId);
+
   // Message requests.
 
   /// The latest first.
@@ -784,7 +855,9 @@ abstract interface class TrinoEngine {
 
   /// The user saw the calls (the Llamadas tab): the count goes back to 0.
   Future<void> markCallsSeen();
-  Future<void> startCall(String contactId);
+
+  /// With [video], the call starts with the camera on.
+  Future<void> startCall(String contactId, {bool video = false});
   Future<void> setMuted(bool muted);
   Future<void> setSpeaker(bool on);
   Future<void> setCamera(bool on);

@@ -436,10 +436,93 @@ class FakeTrinoEngine implements TrinoEngine {
     _publish(room);
   }
 
+  @override
+  Future<void> setChatMuted(String chatId, bool muted) async {
+    final room = _rooms[chatId];
+    if (room == null || room.muted == muted) return;
+    room.muted = muted;
+    _publishChats();
+  }
+
+  @override
+  Future<void> deleteChat(String chatId) async => _removeRoom(chatId);
+
+  @override
+  Future<GroupDetails> groupDetails(String chatId) async {
+    final room = _rooms[chatId];
+    if (room == null || room.kind != ChatKind.group) throw StateError('No group $chatId');
+    final contacts = {for (final contact in _contacts.value) contact.id: contact};
+    final you = GroupMember(name: _profile.value?.name ?? demoName, isYou: true, isAdmin: room.adminId == null);
+    final others = [
+      for (final id in room.memberIds)
+        GroupMember(name: contacts[id]?.name ?? id, contactId: id, isAdmin: room.adminId == id),
+    ];
+    final members = [you, ...others]..sort((a, b) => _memberRank(a).compareTo(_memberRank(b)));
+    return GroupDetails(chatId: chatId, members: List.unmodifiable(members));
+  }
+
+  /// Who administers first, then the others in their order, then you.
+  static int _memberRank(GroupMember member) => member.isAdmin
+      ? 0
+      : member.isYou
+      ? 2
+      : 1;
+
+  @override
+  Future<List<ChatSummary>> groupsInCommon(String contactId) async => List.unmodifiable(
+    _chats.value.where((chat) => chat.isGroup && (_rooms[chat.id]?.memberIds.contains(contactId) ?? false)),
+  );
+
+  @override
+  Future<void> leaveGroup(String chatId) async {
+    if (_rooms[chatId]?.kind != ChatKind.group) throw StateError('No group $chatId');
+    _removeRoom(chatId);
+  }
+
+  @override
+  Future<void> blockContact(String contactId) async => _setBlocked(contactId, true);
+
+  @override
+  Future<void> unblockContact(String contactId) async => _setBlocked(contactId, false);
+
+  void _setBlocked(String contactId, bool blocked) {
+    final contact = _contacts.value.firstWhere((c) => c.id == contactId);
+    // Requests from the same identity are dropped too.
+    blocked ? _blocked.add(contact.fingerprint) : _blocked.remove(contact.fingerprint);
+    _contacts.value = List.unmodifiable([
+      for (final c in _contacts.value) c.id == contactId ? c.copyWith(blocked: blocked) : c,
+    ]);
+  }
+
+  bool _isBlocked(String? contactId) => _contacts.value.any((c) => c.id == contactId && c.blocked);
+
+  void _removeRoom(String chatId) {
+    if (_rooms.remove(chatId) == null) return;
+    _messagesOf(chatId).value = const [];
+    _publishChats();
+  }
+
+  /// For tests and demos: a group with [memberIds], administered by
+  /// [adminId], or by you without it. It starts muted as
+  /// [EngineSettings.muteGroups] says. Returns its chat's id.
+  String addGroup({required String title, required List<String> memberIds, String? adminId}) {
+    final room = _Room(
+      id: 'chat-group-${_nextId++}',
+      kind: ChatKind.group,
+      title: title,
+      memberIds: List.unmodifiable(memberIds),
+      adminId: adminId,
+      createdAt: _clock(),
+    )..muted = _settings.value.muteGroups;
+    _rooms[room.id] = room;
+    _publish(room);
+    return room.id;
+  }
+
   /// For tests and demos: a message arrives.
   void receive(String chatId, String text, {String? sender}) {
     final room = _rooms[chatId];
-    if (room == null) return;
+    if (room == null || _isBlocked(room.contactId)) return;
     room.messages.add(
       ChatMessage(id: 'm${_nextId++}', chatId: chatId, outgoing: false, text: text, sentAt: _clock(), sender: sender),
     );
@@ -662,6 +745,7 @@ class FakeTrinoEngine implements TrinoEngine {
   /// For tests and demos: [contactId] called now and nobody answered.
   void missCall(String contactId) {
     final contact = _contacts.value.firstWhere((c) => c.id == contactId);
+    if (contact.blocked) return;
     _addCall(
       CallRecord(
         id: 'call-${_nextId++}',
@@ -674,7 +758,7 @@ class FakeTrinoEngine implements TrinoEngine {
   }
 
   @override
-  Future<void> startCall(String contactId) async {
+  Future<void> startCall(String contactId, {bool video = false}) async {
     if (_call.value != null) return;
     final contact = _contacts.value.firstWhere((c) => c.id == contactId);
     _call.value = CallSession(
@@ -684,6 +768,7 @@ class FakeTrinoEngine implements TrinoEngine {
       sas: _sas,
       path: callPath,
       elapsed: callStartsAt,
+      camera: video,
     );
     _callStartedAt = _clock();
     _updateCallTimer();
@@ -872,13 +957,14 @@ class FakeTrinoEngine implements TrinoEngine {
             title: room.title,
             contactId: room.contactId,
             trust: contacts[room.contactId]?.trust ?? Trust.unverified,
-            memberNames: room.memberNames,
+            memberNames: [for (final id in room.memberIds) contacts[id]?.name ?? id],
             lastMessage: last?.text,
             lastSender: last?.sender,
             lastIsMine: last?.outgoing ?? false,
             lastActivity: last?.sentAt ?? room.createdAt,
             unread: room.unread,
             draft: room.draft,
+            muted: room.muted,
           ),
     ]..sort((a, b) => b.lastActivity!.compareTo(a.lastActivity!));
     _chats.value = List.unmodifiable(summaries);
@@ -934,7 +1020,8 @@ class FakeTrinoEngine implements TrinoEngine {
           id: 'chat-familia',
           kind: ChatKind.group,
           title: 'Familia',
-          memberNames: const ['Mamá', 'Papá'],
+          memberIds: const ['mama', 'papa'],
+          adminId: 'mama',
           createdAt: ago(600),
           unread: 1,
         )
@@ -1037,7 +1124,8 @@ class _Room {
     required this.title,
     required this.createdAt,
     this.contactId,
-    this.memberNames = const [],
+    this.memberIds = const [],
+    this.adminId,
     this.unread = 0,
     this.draft,
   });
@@ -1046,11 +1134,17 @@ class _Room {
   final ChatKind kind;
   final String title;
   final String? contactId;
-  final List<String> memberNames;
+
+  /// The other members of a group, as contact ids.
+  final List<String> memberIds;
+
+  /// The contact who administers a group; null when you do.
+  final String? adminId;
   final DateTime createdAt;
   final messages = <ChatMessage>[];
   int unread;
   String? draft;
+  bool muted = false;
 }
 
 /// A value and its changes: each listener gets the current value first, then
