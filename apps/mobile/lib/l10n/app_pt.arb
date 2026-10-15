@@ -179,7 +179,7 @@
   "notifRingVolume": "Volume do toque",
   "notifRingVolumeDesc": "Começa suave e sobe aos poucos.",
   "notifVibrateOnRing": "Vibrar ao receber uma chamada",
-  "notifSilentNote": "Se o celular estiver no silencioso, o Trino não toca: só vibra, se você deixar isso ligado.",
+  "notifSilentNote": "O Trino respeita o modo do celular: no vibrar só vibra, e no silencioso não toca.",
   "notifDemoIncomingCall": "Simular uma chamada recebida (demonstração)",
 
   "privacyKeepConnected": "Continuar conectado com o Trino fechado",

@@ -33,7 +33,7 @@ void main() {
     expect(find.text('Empieza suave y sube poco a poco.'), findsOneWidget);
     expect(find.text('Vibrar al recibir una llamada'), findsOneWidget);
     expect(
-      find.text('Si el celular está en silencio, Trino no suena: solo vibra, si lo dejas encendido.'),
+      find.text('Trino respeta el modo del celular: en vibración solo vibra, y en silencio no suena.'),
       findsOneWidget,
     );
     expect(

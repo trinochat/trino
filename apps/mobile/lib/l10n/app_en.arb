@@ -179,7 +179,7 @@
   "notifRingVolume": "Ringtone volume",
   "notifRingVolumeDesc": "Starts soft and rises little by little.",
   "notifVibrateOnRing": "Vibrate when a call comes in",
-  "notifSilentNote": "If your phone is on silent, Trino doesn't ring: it only vibrates, if you leave that on.",
+  "notifSilentNote": "Trino follows your phone's mode: on vibrate it only vibrates, and on silent it doesn't ring.",
   "notifDemoIncomingCall": "Simulate an incoming call (demo)",
 
   "privacyKeepConnected": "Stay connected with Trino closed",
