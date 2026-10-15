@@ -26,6 +26,8 @@ class FakeTrinoEngine implements TrinoEngine {
        _network = _Live(connectAfter == null ? const NetworkState.connected() : const NetworkState.connecting()) {
     if (onboarded) {
       _passphrase = demoPassphrase;
+      // Started unlocked: as if the passphrase had just been typed.
+      if (!locked) _lastPassphraseAt = _clock();
       _profile.value = _demoProfile(demoName);
       _seedDemo();
     }
@@ -68,6 +70,9 @@ class FakeTrinoEngine implements TrinoEngine {
   bool _totpEnabled = false;
   bool _totpVerified = false;
   LockReason _lockReason = LockReason.coldStart;
+
+  /// When the passphrase was last typed, for the reask interval.
+  DateTime? _lastPassphraseAt;
   var _nextId = 0;
 
   // Identity and lock.
@@ -76,8 +81,22 @@ class FakeTrinoEngine implements TrinoEngine {
   Stream<IdentityState> get identityState => _identityState.stream;
 
   @override
-  Future<UnlockInfo> unlockInfo() async =>
-      UnlockInfo(name: _profile.value?.name ?? '', totpEnabled: _totpEnabled, reason: _lockReason);
+  Future<UnlockInfo> unlockInfo() async {
+    final settings = _settings.value;
+    final offered = settings.biometricUnlock && !settings.reinforcedProtection && _lockReason != LockReason.coldStart;
+    final interval = switch (settings.reaskInterval) {
+      ReaskInterval.day => const Duration(days: 1),
+      ReaskInterval.threeDays => const Duration(days: 3),
+      ReaskInterval.week => const Duration(days: 7),
+    };
+    final last = _lastPassphraseAt;
+    final due = last == null || !_clock().isBefore(last.add(interval));
+    return UnlockInfo(
+      totpEnabled: _totpEnabled,
+      reason: offered && due ? LockReason.reask : _lockReason,
+      biometricAllowed: offered && !due,
+    );
+  }
 
   static const _minLength = 10;
   static const _common = {
@@ -141,6 +160,7 @@ class FakeTrinoEngine implements TrinoEngine {
     _totpEnabled = withTotp;
     _profile.value = _demoProfile(name.trim());
     _seedDemo();
+    _lastPassphraseAt = _clock();
     _identityState.value = IdentityState.unlocked;
   }
 
@@ -153,8 +173,16 @@ class FakeTrinoEngine implements TrinoEngine {
     if (passphrase != _passphrase || !codeOk) {
       return _totpEnabled ? UnlockResult.wrongPassphraseOrCode : UnlockResult.wrongPassphrase;
     }
+    _lastPassphraseAt = _clock();
     _identityState.value = IdentityState.unlocked;
     return UnlockResult.ok;
+  }
+
+  @override
+  Future<bool> unlockWithBiometrics() async {
+    if (_identityState.value != IdentityState.locked || !(await unlockInfo()).biometricAllowed) return false;
+    _identityState.value = IdentityState.unlocked;
+    return true;
   }
 
   @override
@@ -171,6 +199,7 @@ class FakeTrinoEngine implements TrinoEngine {
     _passphrase = null;
     _totpEnabled = _totpVerified = false;
     _lockReason = LockReason.coldStart;
+    _lastPassphraseAt = null;
     _profile.value = null;
     _rooms.clear();
     for (final live in _messages.values) {

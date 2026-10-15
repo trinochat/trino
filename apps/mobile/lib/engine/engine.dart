@@ -15,7 +15,16 @@ enum IdentityState {
 }
 
 /// Why the app is locked, for the unlock screen.
-enum LockReason { coldStart, manual, idle }
+enum LockReason {
+  /// The app or the phone restarted: the passphrase is always asked.
+  coldStart,
+  manual,
+  idle,
+
+  /// With biometric unlock on: the reask interval passed since the last time
+  /// the passphrase was typed, so it is asked again.
+  reask,
+}
 
 /// Where the connection to the network stands, said in words on screen.
 /// Trino always connects through Tor unless the user asks otherwise.
@@ -245,17 +254,22 @@ class CallSession {
       );
 }
 
-/// What the unlock screen shows before you type anything.
+/// What the unlock screen shows before you type anything. It carries no name:
+/// nothing personal shows before unlocking ("Hola de nuevo" for everyone).
 @immutable
 class UnlockInfo {
-  const UnlockInfo({required this.name, required this.totpEnabled, required this.reason, this.idleMinutes});
+  const UnlockInfo({required this.totpEnabled, required this.reason, this.idleMinutes, this.biometricAllowed = false});
 
-  final String name;
   final bool totpEnabled;
   final LockReason reason;
 
   /// With [LockReason.idle]: after how long.
   final int? idleMinutes;
+
+  /// The fingerprint or the face can open Trino now: biometric unlock is on,
+  /// reinforced protection is off, this is not a cold start and the reask
+  /// interval has not passed since the passphrase was last typed.
+  final bool biometricAllowed;
 }
 
 @immutable
@@ -437,6 +451,10 @@ abstract interface class TrinoEngine {
   /// [verifyTotp] must come first.
   Future<void> createIdentity({required String name, required String passphrase, required bool withTotp});
   Future<UnlockResult> unlock(String passphrase, {String? code});
+
+  /// After the phone confirmed the fingerprint or the face. Opens only when
+  /// [UnlockInfo.biometricAllowed]; says whether it opened.
+  Future<bool> unlockWithBiometrics();
   Future<void> lock();
 
   /// Deletes the identity, the chats and the contacts from this phone.

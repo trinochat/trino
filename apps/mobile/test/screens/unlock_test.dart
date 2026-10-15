@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:trino_mobile/ui/avatar.dart';
 import 'package:trino_mobile/ui/text_field.dart';
 
 import '../support/app_harness.dart';
@@ -24,9 +25,24 @@ Future<TestApp> pumpLocked(WidgetTester tester, {bool withTotp = false}) async {
 }
 
 void main() {
-  testWidgets('greets by name and says why it is locked', (tester) async {
+  testWidgets('says the passphrase is asked again when the biometric interval passed', (tester) async {
+    var time = testNow;
+    final engine = FakeTrinoEngine(clock: () => time);
+    await tester.runAsync(() async {
+      await engine.updateSettings(const EngineSettings(biometricUnlock: true));
+      await engine.lock();
+    });
+    time = testNow.add(const Duration(days: 3));
+    await pumpApp(tester, engine: engine);
+    expect(find.text('Hola de nuevo'), findsOneWidget);
+    expect(find.text('Por tu seguridad, Trino te pide la contraseña cada cierto tiempo.'), findsOneWidget);
+  });
+
+  testWidgets('greets without a name or a photo, and says why it is locked', (tester) async {
     await pumpApp(tester, engine: testEngine(locked: true));
-    expect(find.text('Hola de nuevo, Sofía'), findsOneWidget);
+    expect(find.text('Hola de nuevo'), findsOneWidget);
+    expect(find.textContaining('Sofía'), findsNothing);
+    expect(find.byType(TrinoAvatar), findsNothing);
     expect(find.text('Escribe tu contraseña para abrir tus chats.'), findsOneWidget);
     expect(fieldLabeled('Contraseña'), findsOneWidget);
     expect(fieldLabeled('Código de tu app autenticadora'), findsNothing);
@@ -90,7 +106,7 @@ void main() {
     expect(find.text('¿Borrar esta identidad?'), findsOneWidget);
     await tester.tap(find.text('Cancelar'));
     await tester.pumpAndSettle();
-    expect(find.text('Hola de nuevo, Sofía'), findsOneWidget);
+    expect(find.text('Hola de nuevo'), findsOneWidget);
 
     await tester.tap(find.text('Borrar identidad y empezar de cero'));
     await tester.pumpAndSettle();

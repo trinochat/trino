@@ -194,10 +194,11 @@
   "onbBack": "Back",
   "onbNext": "Continue",
 
-  "unlockTitle": "Welcome back, {name}",
+  "unlockTitle": "Welcome back",
   "unlockLockedIdle": "{minutes, plural, =1{Trino locked after 1 minute without activity.} other{Trino locked after {minutes} minutes without activity.}}",
   "unlockLockedManual": "You locked Trino.",
   "unlockColdStart": "Enter your password to open your chats.",
+  "unlockReask": "For your safety, Trino asks for your password every so often.",
   "unlockPassLabel": "Password",
   "unlockCodeLabel": "Code from your authenticator app",
   "unlockCodeHint": "The code changes every 30 seconds.",

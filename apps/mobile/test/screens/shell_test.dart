@@ -46,7 +46,7 @@ void main() {
 
   testWidgets('a locked app starts at the unlock screen, showing no chats', (tester) async {
     await pumpApp(tester, engine: testEngine(locked: true));
-    expect(find.text('Hola de nuevo, Sofía'), findsOneWidget);
+    expect(find.text('Hola de nuevo'), findsOneWidget);
     expect(find.text('Ana Torres'), findsNothing);
   });
 
@@ -57,7 +57,7 @@ void main() {
     // The app locks itself, as the auto-lock will.
     unawaited(app.engine.lock());
     await tester.pumpAndSettle();
-    expect(find.text('Hola de nuevo, Sofía'), findsOneWidget);
+    expect(find.text('Hola de nuevo'), findsOneWidget);
     expect(find.text('Perfecto, nos vemos el jueves'), findsNothing);
   });
 }

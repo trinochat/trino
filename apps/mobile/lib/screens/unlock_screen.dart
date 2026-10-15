@@ -10,7 +10,6 @@ import '../app/scope.dart';
 import '../design/theme.dart';
 import '../engine/engine.dart';
 import '../l10n/app_localizations.dart';
-import '../ui/avatar.dart';
 import '../ui/banner.dart';
 import '../ui/button.dart';
 import '../ui/text_field.dart';
@@ -110,6 +109,7 @@ class _UnlockScreenState extends State<UnlockScreen> {
     LockReason.coldStart => l10n.unlockColdStart,
     LockReason.manual => l10n.unlockLockedManual,
     LockReason.idle => l10n.unlockLockedIdle(info.idleMinutes ?? 1),
+    LockReason.reask => l10n.unlockReask,
   };
 
   @override
@@ -126,12 +126,10 @@ class _UnlockScreenState extends State<UnlockScreen> {
             return ListView(
               padding: const EdgeInsets.fromLTRB(24, 40, 24, 24),
               children: [
-                Center(child: TrinoAvatar(name: info.name, size: 72)),
-                const SizedBox(height: 16),
                 Semantics(
                   container: true,
                   header: true,
-                  child: Text(l10n.unlockTitle(info.name), textAlign: TextAlign.center, style: text.headline),
+                  child: Text(l10n.unlockTitle, textAlign: TextAlign.center, style: text.headline),
                 ),
                 const SizedBox(height: 8),
                 Text(_reason(info, l10n), textAlign: TextAlign.center, style: text.secondary),

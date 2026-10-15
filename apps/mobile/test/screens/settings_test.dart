@@ -137,7 +137,7 @@ void main() {
 
     await tester.tap(find.text('Bloquear ahora'));
     await tester.pumpAndSettle();
-    expect(find.text('Hola de nuevo, Sofía'), findsOneWidget);
+    expect(find.text('Hola de nuevo'), findsOneWidget);
     expect(find.text('Bloqueaste Trino.'), findsOneWidget);
   });
 

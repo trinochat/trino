@@ -194,10 +194,11 @@
   "onbBack": "Voltar",
   "onbNext": "Continuar",
 
-  "unlockTitle": "Olá de novo, {name}",
+  "unlockTitle": "Olá de novo",
   "unlockLockedIdle": "{minutes, plural, =1{O Trino foi bloqueado após 1 minuto sem atividade.} other{O Trino foi bloqueado após {minutes} minutos sem atividade.}}",
   "unlockLockedManual": "Você bloqueou o Trino.",
   "unlockColdStart": "Digite sua senha para abrir suas conversas.",
+  "unlockReask": "Para sua segurança, o Trino pede sua senha de tempos em tempos.",
   "unlockPassLabel": "Senha",
   "unlockCodeLabel": "Código do seu app autenticador",
   "unlockCodeHint": "O código muda a cada 30 segundos.",
