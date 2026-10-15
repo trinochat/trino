@@ -145,6 +145,13 @@ pub(crate) fn show(app: &AppHandle) {
     }
 }
 
+/// Open the app's first window. tauri.conf.json does not let Tauri make it
+/// (`create: false`), so it takes the navigation guard as the renewed ones
+/// do.
+pub(crate) fn open_main(app: &AppHandle) -> tauri::Result<WebviewWindow> {
+    open(app, None)
+}
+
 /// Open the window of tauri.conf.json: where `placement` says, shown once
 /// its page has loaded, or as the config says.
 fn open(app: &AppHandle, placement: Option<Placement>) -> tauri::Result<WebviewWindow> {
@@ -156,7 +163,14 @@ fn open(app: &AppHandle, placement: Option<Placement>) -> tauri::Result<WebviewW
         .find(|window| window.label == MAIN)
         .cloned()
         .ok_or(tauri::Error::WindowNotFound)?;
-    let mut builder = WebviewWindowBuilder::from_config(app, &config)?;
+    // It never goes anywhere but the app (Tor design §4, R-10).
+    let dev_url = if tauri::is_dev() {
+        app.config().build.dev_url.clone()
+    } else {
+        None
+    };
+    let mut builder = WebviewWindowBuilder::from_config(app, &config)?
+        .on_navigation(move |url| crate::navigation::allowed(url, dev_url.as_ref()));
     if let Some(placement) = placement {
         builder = builder
             .visible(false)

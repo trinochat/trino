@@ -44,7 +44,6 @@ import {
   onProfileUpdated,
   onResyncNeeded,
   onSessionEstablished,
-  openLink,
   type NodeInfo,
 } from '../lib/api';
 import { makeAvatar } from '../lib/avatar';
@@ -57,7 +56,7 @@ import { ContactDetailsPanel, type ContactDetailsApi } from '../screens/contact-
 import { ContactsDialog, NewChatDialog, ShareCodePanel, type ContactsApi } from '../screens/contacts';
 import { GroupPanel, NewGroupDialog, groupPrefs, type GroupApi } from '../screens/group';
 import { SettingsScreen, type SettingsPlatform } from '../screens/settings';
-import { netScreensApi, type NetScreensApi } from '../screens/net';
+import { linkBackend, netScreensApi, useLinkOpener, type LinkApi, type NetScreensApi } from '../screens/net';
 import { ShellScreen, type ShellApi, type ShellEvents, type ShellScreenProps } from '../screens/shell';
 import type { OnboardingIntent, ShellSlots } from '../screens/types';
 import { VerifyContactDialog } from '../screens/verify';
@@ -108,8 +107,8 @@ export interface MainDeps {
   notify(title: string, body: string): Promise<void>;
   /** Asks the system to let Trino notify, as the chats open. */
   ensureNotifyPermission(): Promise<boolean>;
-  /** A link of a message, in the system's browser. */
-  openLink(url: string): void;
+  /** A link of a message, in the system's browser, after the backend's question (card 10). */
+  links: LinkApi;
   window: WindowFocus;
   /** The preferences of this device. */
   prefs: Prefs;
@@ -158,7 +157,7 @@ const DEVICE_DEPS: MainDeps = {
   settings: settingsBackend,
   notify,
   ensureNotifyPermission,
-  openLink,
+  links: linkBackend,
   window: TAURI_WINDOW_FOCUS,
   prefs: devicePrefs,
   capabilities: buildCapabilities,
@@ -186,6 +185,7 @@ export function MainScreen({ intent, onLock, onAutolockChanged, onWiped, onCallG
   const t = useT();
   const d = useMemo<MainDeps>(() => ({ ...DEVICE_DEPS, ...deps }), [deps]);
   const caps = d.capabilities;
+  const links = useLinkOpener(d.links);
 
   // Whether Trino is in front: the window's focus, which Tauri reports.
   // document.hasFocus() is unreliable in the webview (it can say focused while
@@ -324,7 +324,7 @@ export function MainScreen({ intent, onLock, onAutolockChanged, onWiped, onCallG
         }}
         onLock={onLock}
         initialIntent={intent}
-        openLink={d.openLink}
+        openLink={links.openLink}
         isWindowFocused={isWindowFocused}
         settings={{
           onIdentityWiped: onWiped,
@@ -344,6 +344,7 @@ export function MainScreen({ intent, onLock, onAutolockChanged, onWiped, onCallG
         it waits, still unread, while the call screen covers the shell.
       */}
       {calls.slot.covering ? null : legacyMarksNotice}
+      {links.dialog}
     </>
   );
 }

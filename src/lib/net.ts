@@ -92,6 +92,12 @@ export interface UpdateInfo {
   freeze: NewsFreeze | null;
 }
 
+/**
+ * What `open_link` did (links_cmds.rs `LinkAnswer`): ask first, showing the
+ * address as it will open; or opened, with "No volver a preguntar" kept or not.
+ */
+export type LinkAnswer = { state: 'ask'; address: string } | { state: 'opened'; remembered: boolean };
+
 /** The commands. Tauri turns the camelCase keys into the Rust parameters. */
 export const netApi = {
   status: (): Promise<NetStatus> => invoke('net_status'),
@@ -116,6 +122,12 @@ export const netApi = {
   updateStatus: (): Promise<UpdateInfo> => invoke('update_status'),
   /** "Buscar actualizaciones cada día". */
   setDailyUpdates: (on: boolean): Promise<UpdateInfo> => invoke('update_set_daily', { on }),
+  /**
+   * A link in the browser, outside Tor (card 10): the backend asks first
+   * unless the person said not to; `confirmed` is the yes to that question.
+   */
+  openLink: (url: string, confirmed: boolean, dontAskAgain: boolean): Promise<LinkAnswer> =>
+    invoke('open_link', { url, confirmed, dontAskAgain }),
 };
 
 export type NetApi = typeof netApi;

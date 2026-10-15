@@ -236,12 +236,17 @@ describe('the two boxes of the welcome step', () => {
     expect(api.createIdentity).not.toHaveBeenCalled();
   });
 
+  // Without an href (Tor design §4, R-10): the WebView has nothing to
+  // resolve or follow; the browser opens it through openLink, which asks.
   it('link to the public document, opened in the system browser', () => {
     const { openLink } = setup();
     const link = screen.getByRole('link', { name: 'Leer cómo Trino trata tus datos' });
-    expect(link.getAttribute('href')).toBe(PRIVACY_POLICY_URL);
+    expect(link.hasAttribute('href')).toBe(false);
+    expect(link.tabIndex).toBe(0);
     fireEvent.click(link);
     expect(openLink).toHaveBeenCalledWith(PRIVACY_POLICY_URL);
+    fireEvent.keyDown(link, { key: 'Enter' });
+    expect(openLink).toHaveBeenCalledTimes(2);
   });
 
   it('leave a record with the date, the versions and the new public key', async () => {

@@ -21,6 +21,13 @@ describe('index.html', () => {
   // main.tsx marks <html> with the appearance and the accessibility settings
   // before the first render (src/design/apply.ts). A theme of the page's own,
   // like the old data-theme, or a class on <html> or <body>, would fight them.
+  // Design test 34 (Tor design §3 L2, R-10): the WebView resolves no name
+  // ahead of time; links have no href either, so there is nothing to resolve.
+  it('index_html_turns_dns_prefetch_off', () => {
+    const meta = page.head.querySelector('meta[http-equiv="x-dns-prefetch-control"]');
+    expect(meta?.getAttribute('content')).toBe('off');
+  });
+
   it('carries no theme of its own on <html> or <body>', () => {
     expect(page.documentElement.getAttributeNames()).toEqual(['lang']);
     expect(page.body.getAttributeNames()).toEqual([]);

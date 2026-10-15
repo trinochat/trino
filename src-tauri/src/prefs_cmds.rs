@@ -46,8 +46,12 @@ const DEVICE_PREFS: [&str; 3] = [
 ];
 
 /// The entries of `prefs.bin` only the backend writes: never handed to the
-/// frontend, never taken from it.
-pub(crate) const BACKEND_PREFS: [&str; 1] = [super::bridges_cmds::NET_BRIDGES];
+/// frontend, never taken from it. The private bridge lines, and "No volver
+/// a preguntar" before opening a link (links_cmds.rs).
+pub(crate) const BACKEND_PREFS: [&str; 2] = [
+    super::bridges_cmds::NET_BRIDGES,
+    super::links_cmds::LINKS_NO_ASK,
+];
 
 /// Entries no one uses any more: the unlock takes what they held
 /// elsewhere, the frontend never gets them, and the next save drops them.

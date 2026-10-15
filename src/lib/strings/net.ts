@@ -69,6 +69,10 @@ export const net: AreaStrings = {
     'net.seen.microsoft':
       'Windows y el motor web de Trino le mandan datos de diagnóstico a Microsoft por su cuenta, y un informe si el motor web se cae. No llevan tus mensajes.',
     'net.seen.folder': 'En este computador queda una carpeta que muestra que usas Tor. «Borrar todo» la borra; en algunos discos puede quedar un rastro.',
+    'net.link.body': 'Este enlace se abre en tu navegador, sin protección. La página verá desde dónde te conectas.',
+    'net.link.dontAsk': 'No volver a preguntar',
+    'net.link.open': 'Abrir',
+    'net.link.error': 'No se pudo abrir el enlace.',
   },
   en: {
     'net.welcome.title': 'Trino connects privately',
@@ -128,6 +132,10 @@ export const net: AreaStrings = {
     'net.seen.microsoft':
       'Windows and Trino’s web engine send diagnostic data to Microsoft on their own, and a report if the web engine crashes. They don’t carry your messages.',
     'net.seen.folder': 'This computer keeps a folder that shows you use Tor. “Erase everything” erases it; some disks may keep a trace.',
+    'net.link.body': 'This link opens in your browser, without protection. The page will see where you connect from.',
+    'net.link.dontAsk': 'Don’t ask again',
+    'net.link.open': 'Open',
+    'net.link.error': 'Couldn’t open the link.',
   },
   pt: {
     'net.welcome.title': 'O Trino se conecta de forma privada',
@@ -187,5 +195,9 @@ export const net: AreaStrings = {
     'net.seen.microsoft':
       'O Windows e o motor web do Trino enviam dados de diagnóstico à Microsoft por conta própria, e um relatório se o motor web travar. Eles não levam suas mensagens.',
     'net.seen.folder': 'Este computador guarda uma pasta que mostra que você usa o Tor. «Apagar tudo» a apaga; em alguns discos pode ficar um rastro.',
+    'net.link.body': 'Este link abre no seu navegador, sem proteção. A página verá de onde você se conecta.',
+    'net.link.dontAsk': 'Não perguntar de novo',
+    'net.link.open': 'Abrir',
+    'net.link.error': 'Não foi possível abrir o link.',
   },
 };

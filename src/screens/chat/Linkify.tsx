@@ -1,11 +1,15 @@
 /**
- * The text of a message with its web addresses as real links. A link opens
- * in the system browser through `onOpenLink`, never inside the app. It is
+ * The text of a message with its web addresses as links. A link opens in
+ * the system browser through `onOpenLink`, never inside the app, and has no
+ * href (Tor design §4, R-10): a span with the role of a link, reached with
+ * Tab and opened with Enter or a click, so the WebView has no address to
+ * resolve, prefetch, preconnect or drag. Its address is in `data-link`, for
+ * the message's menu. It is
  * underlined and takes the colour of the text around it, so it reads in your
  * bubble and in theirs: what marks it is the underline, not a colour
  * (accesibilidad.md §3.2).
  */
-import { Fragment, type MouseEvent } from 'react';
+import { Fragment, type KeyboardEvent, type MouseEvent } from 'react';
 import { cx } from '../../ui';
 import { BUBBLE_RING } from './bubble-ring';
 
@@ -64,9 +68,14 @@ export interface LinkifyProps {
 
 export function Linkify({ text, onOpenLink }: LinkifyProps) {
   const open = (url: string) => (event: MouseEvent) => {
-    // The webview never follows the link itself.
     event.preventDefault();
     if (event.type === 'click' || event.button === 1) onOpenLink(url);
+  };
+  // A link answers Enter, as a native one does; Space scrolls.
+  const key = (url: string) => (event: KeyboardEvent) => {
+    if (event.key !== 'Enter') return;
+    event.preventDefault();
+    onOpenLink(url);
   };
   return (
     <>
@@ -74,15 +83,18 @@ export function Linkify({ text, onOpenLink }: LinkifyProps) {
         part.url === undefined ? (
           <Fragment key={index}>{part.text}</Fragment>
         ) : (
-          <a
+          <span
             key={index}
-            href={part.url}
+            role="link"
+            tabIndex={0}
+            data-link={part.url}
             onClick={open(part.url)}
             onAuxClick={open(part.url)}
-            className={cx('rounded-sm underline [overflow-wrap:anywhere]', BUBBLE_RING)}
+            onKeyDown={key(part.url)}
+            className={cx('cursor-pointer rounded-sm underline [overflow-wrap:anywhere]', BUBBLE_RING)}
           >
             {part.text}
-          </a>
+          </span>
         ),
       )}
     </>

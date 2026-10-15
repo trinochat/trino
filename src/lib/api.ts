@@ -6,13 +6,7 @@ import {
   requestPermission,
   sendNotification,
 } from '@tauri-apps/plugin-notification';
-import { openUrl } from '@tauri-apps/plugin-opener';
 import type { PrefsImportState, PrefsImported, PrefsMap } from './prefs-session';
-
-// Open a URL in the system browser (not inside the webview).
-export function openLink(url: string): void {
-  openUrl(url).catch(e => console.error('openUrl failed', e));
-}
 
 let notifPermission: boolean | null = null;
 export async function ensureNotifyPermission(): Promise<boolean> {

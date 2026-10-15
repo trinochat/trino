@@ -407,7 +407,7 @@ pub async fn net_bridges_try(
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use crate::fsutil::scratch::ScratchDir;
     use crate::net_cmds::tests::{becomes, fake_tor};
@@ -420,7 +420,7 @@ mod tests {
                          cert=YXJlIGZyZXF1ZW50bHkgZnVsbCBvZiBsaXR0bGUgbWVzc2FnZXMgeW91IGNhbiBmaW5kLg iat-mode=0";
 
     /// An account in `home`, unlocked as `open_session` fills the session.
-    fn unlocked_account(home: &Path) -> InnerState {
+    pub(crate) fn unlocked_account(home: &Path) -> InnerState {
         let files = DataFiles::in_home(home.to_path_buf());
         let (me, app) =
             create_account(&files, "ana", PASSPHRASE, None, fsutil::atomic_write).unwrap();

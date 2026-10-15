@@ -230,7 +230,7 @@ function setup({
     settings,
     notify,
     ensureNotifyPermission: vi.fn(async () => true),
-    openLink: vi.fn(),
+    links: { open: vi.fn(async () => ({ state: 'opened' as const, remembered: false })) },
     window: {
       isFocused: async () => front.now,
       onFocusChanged: async listener => {

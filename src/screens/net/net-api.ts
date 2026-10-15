@@ -4,6 +4,7 @@
  * `invoke`. The app passes `netScreensApi`, the real ones.
  */
 import { netApi, onNetChanged, onUpdateChanged, type NetApi } from '../../lib/net';
+import type { LinkApi } from './LinkOpener';
 
 export type NetScreensApi = Pick<
   NetApi,
@@ -20,6 +21,9 @@ export type NetScreensApi = Pick<
   onNetChanged: typeof onNetChanged;
   onUpdateChanged: typeof onUpdateChanged;
 };
+
+/** Links in the browser, after the backend's question (card 10): `open_link`. */
+export const linkBackend: LinkApi = { open: netApi.openLink };
 
 /** The real backend. */
 export const netScreensApi: NetScreensApi = {

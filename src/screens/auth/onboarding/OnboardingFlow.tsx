@@ -18,7 +18,7 @@
 import { useEffect, useId, useRef, useState } from 'react';
 import { THEMES } from '../../../design/tokens';
 import { useAppearance } from '../../../design/useAppearance';
-import { isCommandError, openLink as openInBrowser } from '../../../lib/api';
+import { isCommandError } from '../../../lib/api';
 import { makeAvatar as makeProfileAvatar } from '../../../lib/avatar';
 import { accountPrefsStorage } from '../../../lib/prefs-session';
 import { useT } from '../../../lib/i18n';
@@ -56,8 +56,8 @@ export interface OnboardingFlowOptions {
    * local CL-2a, design H5).
    */
   consentStorage?: ConsentStorage;
-  /** Opens the public document in the system browser: `openLink` of api.ts. */
-  openLink?(url: string): void;
+  /** Opens the public document in the system browser, after asking (src/screens/net/LinkOpener.tsx). */
+  openLink(url: string): void;
   /** The clock of the consent record, in ms: `Date.now`. */
   now?(): number;
 }
@@ -72,7 +72,7 @@ export function OnboardingFlow({
   profileSync = false,
   makeAvatar = makeProfileAvatar,
   consentStorage,
-  openLink = openInBrowser,
+  openLink,
   now = Date.now,
 }: OnboardingFlowProps & OnboardingFlowOptions) {
   const t = useT();

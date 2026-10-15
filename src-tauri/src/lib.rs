@@ -10,6 +10,7 @@ mod a11y;
 mod command_error;
 mod commands;
 mod fsutil;
+mod navigation;
 mod net_cmds;
 mod news_cmds;
 mod passphrase;
@@ -202,9 +203,9 @@ pub fn run() {
                     })
                     .build(_app)?;
                 _app.manage(window_renewal::Renewal::default());
-                if let Some(window) = _app.get_webview_window(window_renewal::MAIN) {
-                    window_renewal::prepare(&window);
-                }
+                // The first window, made here with the navigation guard
+                // (Tor design §4, R-10); `open` prepares it.
+                window_renewal::open_main(_app.handle())?;
             }
             // Windows: lock when Windows locks, sleeps or hibernates, unless
             // the account turned it off (design §7.2); and no heap in a crash
@@ -223,6 +224,7 @@ pub fn run() {
         })
         .manage(AppState::with_tor())
         .invoke_handler(tauri::generate_handler![
+            commands::links_cmds::open_link,
             commands::status,
             commands::totp_begin,
             commands::totp_verify,

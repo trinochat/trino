@@ -44,6 +44,7 @@ import { useAutoLock } from './app/useAutoLock';
 import { withAccountPrefs, type AccountPrefsApi } from './app/account-prefs';
 import { startFirstConnection } from './app/first-connection';
 import { netApi } from './lib/net';
+import { linkBackend, useLinkOpener, type LinkApi } from './screens/net';
 
 export type { MainProps };
 
@@ -65,6 +66,8 @@ export interface AppApi extends OnboardingApi, UnlockApi, AccountPrefsApi, Store
   onVaultLocked(cb: (reason: SessionLockReason) => void): Promise<UnlistenFn>;
   /** "Bloquear" in the tray during a call: lock as "Bloquear" does. */
   onLockRequested(cb: () => void): Promise<UnlistenFn>;
+  /** Links in the browser, after asking (card 10): `open_link` unless a test brings its own. */
+  links?: LinkApi;
 }
 
 const BACKEND: AppApi = {
@@ -130,6 +133,8 @@ function App({ api: given = BACKEND, windowApi = TAURI_WINDOW, Main = MainScreen
   // chats never open on the defaults.
   const backend = useMemo(() => withAccountPrefs(given, session), [given, session]);
   const [phase, dispatch] = useReducer(phaseReducer, INITIAL_PHASE);
+  // The first run's link to the public document asks before the browser opens it.
+  const links = useLinkOpener(given.links ?? linkBackend);
   const [lang, setLangState] = useState<Lang>(detectLang);
   useDocumentLang(lang);
   const t = useMemo(() => makeT(lang), [lang]);
@@ -333,6 +338,7 @@ function App({ api: given = BACKEND, windowApi = TAURI_WINDOW, Main = MainScreen
                     profileSync={capabilities.profileSync}
                     onCreated={(_created, intent) => openChats({ type: 'created', intent })}
                     onVaultExists={() => dispatch({ type: 'vaultExists' })}
+                    openLink={links.openLink}
                   />
                 ) : null}
                 {phase.kind === 'unlock' ? (
@@ -360,6 +366,7 @@ function App({ api: given = BACKEND, windowApi = TAURI_WINDOW, Main = MainScreen
                 ) : null}
               </div>
             </div>
+            {links.dialog}
           </ToastProvider>
         </AppearanceProvider>
       </I18nContext.Provider>

@@ -57,6 +57,25 @@ describe('Linkify', () => {
     expect(classes).not.toContain('focus-visible:outline-ui-accent-text');
   });
 
+  // Design test 60 (Tor design §4, R-10): no href, so the WebView has no
+  // address to resolve, prefetch, preconnect or drag, and nothing to follow.
+  it('links_render_without_href: a link the keyboard reaches, with no address for the WebView', () => {
+    const onOpenLink = vi.fn();
+    const { container } = render(<Linkify text="Mira https://example.org/articulo hoy" onOpenLink={onOpenLink} />);
+    const link = screen.getByRole('link', { name: 'https://example.org/articulo' });
+    expect(link.tagName).toBe('SPAN');
+    expect(link.hasAttribute('href')).toBe(false);
+    expect(container.querySelector('[href]')).toBeNull();
+    expect(link.tabIndex).toBe(0);
+    fireEvent.keyDown(link, { key: 'Enter' });
+    expect(onOpenLink).toHaveBeenCalledWith('https://example.org/articulo');
+    fireEvent.keyDown(link, { key: ' ' });
+    expect(onOpenLink).toHaveBeenCalledTimes(1); // a link answers Enter, not Space
+    fireEvent.mouseUp(link, { button: 1 });
+    fireEvent(link, new MouseEvent('auxclick', { bubbles: true, cancelable: true, button: 1 }));
+    expect(onOpenLink).toHaveBeenCalledTimes(2);
+  });
+
   it('shows a text without addresses as it is', () => {
     const { container } = render(<Linkify text={'Hola\nqué tal'} onOpenLink={() => {}} />);
     expect(container.textContent).toBe('Hola\nqué tal');

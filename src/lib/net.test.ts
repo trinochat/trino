@@ -40,6 +40,8 @@ describe('the network commands', () => {
     ['tryBridge', () => netApi.tryBridge('snowflake'), 'net_bridges_try', { transport: 'snowflake' }],
     ['updateStatus', () => netApi.updateStatus(), 'update_status', undefined],
     ['setDailyUpdates', () => netApi.setDailyUpdates(false), 'update_set_daily', { on: false }],
+    // A link in the browser, after its question (card 10; links_cmds.rs).
+    ['openLink', () => netApi.openLink('https://example.org/', true, false), 'open_link', { url: 'https://example.org/', confirmed: true, dontAskAgain: false }],
   ] as const)('%s calls %s', async (_name, call, command, args) => {
     await call();
     expect(invoke.mock.calls).toEqual([args === undefined ? [command] : [command, args]]);

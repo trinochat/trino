@@ -65,6 +65,11 @@ const KEYS: string[] = [
   'net.seen.bridges',
   'net.seen.microsoft',
   'net.seen.folder',
+  // Opening a link in the browser (card 10).
+  'net.link.body',
+  'net.link.dontAsk',
+  'net.link.open',
+  'net.link.error',
 ];
 
 const PLACEHOLDERS: Record<string, string[]> = {

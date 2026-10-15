@@ -185,9 +185,9 @@ export function MessageItem({ msg, now, sender, authorName, actions }: MessageIt
     const onBubble = bubble.contains(target);
     // The options button is the message's too; the rest of the row is blank.
     if (!onBubble && !target.closest('[aria-haspopup="menu"]')) return null;
-    const link = onBubble ? target.closest('a[href]') : null;
+    const link = onBubble ? target.closest('[data-link]') : null;
     if (link) {
-      const url = link.getAttribute('href') ?? '';
+      const url = link.getAttribute('data-link') ?? '';
       return {
         label: t('msg2.linkMenu'),
         entries: [

@@ -78,17 +78,25 @@ export function WelcomeStep({ state, send, headingId, headingRef, ageRef, privac
           onChange={event => send({ type: 'setPrivacy', checked: event.target.checked })}
           {...boxState(state.privacyAccepted)}
         />
-        <a
-          href={PRIVACY_POLICY_URL}
-          onClick={event => {
+        {/* No href (Tor design §4, R-10): the browser opens it, after asking. */}
+        <span
+          role="link"
+          tabIndex={0}
+          onClick={() => openLink(PRIVACY_POLICY_URL)}
+          onKeyDown={event => {
+            if (event.key !== 'Enter') return;
             event.preventDefault();
             openLink(PRIVACY_POLICY_URL);
           }}
-          className={cx('ms-8 inline-flex min-h-11 items-center gap-1.5 self-start rounded-ui text-ui-md', LINK_TEXT, FOCUS_RING)}
+          className={cx(
+            'ms-8 inline-flex min-h-11 cursor-pointer items-center gap-1.5 self-start rounded-ui text-ui-md',
+            LINK_TEXT,
+            FOCUS_RING,
+          )}
         >
           {t('onb.privacyLink')}
           <ExternalLink aria-hidden="true" {...iconSize('sm', 'shrink-0')} />
-        </a>
+        </span>
         {refused ? <InlineError id={errorId}>{t('onb.errConsent')}</InlineError> : null}
       </div>
       <Button type="submit" variant="primary" size="lg" fullWidth>

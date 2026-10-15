@@ -163,6 +163,9 @@ pub(crate) mod lock_cmds;
 // Tor (TOR-7): bridges, kept in the store and handed to Tor.
 #[path = "bridges_cmds.rs"]
 pub(crate) mod bridges_cmds;
+// Tor (TOR-6): links open in the browser only here, after asking.
+#[path = "links_cmds.rs"]
+pub(crate) mod links_cmds;
 // Cifrado local (CL-6b): copying without the clipboard history.
 #[path = "clipboard_cmds.rs"]
 pub(crate) mod clipboard_cmds;
