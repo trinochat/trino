@@ -8,6 +8,7 @@ import 'package:trino_mobile/app/app.dart';
 import 'package:trino_mobile/app/language.dart';
 import 'package:trino_mobile/app/scope.dart';
 import 'package:trino_mobile/design/appearance.dart';
+import 'package:trino_mobile/engine/engine.dart';
 import 'package:trino_mobile/engine/fake_engine.dart';
 import 'package:trino_mobile/l10n/app_localizations.dart';
 
@@ -21,8 +22,18 @@ export 'harness.dart';
 /// 11:00 on Friday 9 October 2026: the demo's "10:42" is today.
 final testNow = DateTime(2026, 10, 9, 11);
 
-FakeTrinoEngine testEngine({bool onboarded = true, bool locked = false, Duration callStartsAt = Duration.zero}) =>
-    FakeTrinoEngine(clock: () => testNow, onboarded: onboarded, locked: locked, callStartsAt: callStartsAt);
+FakeTrinoEngine testEngine({
+  bool onboarded = true,
+  bool locked = false,
+  Duration callStartsAt = Duration.zero,
+  CallPath callPath = CallPath.relay,
+}) => FakeTrinoEngine(
+  clock: () => testNow,
+  onboarded: onboarded,
+  locked: locked,
+  callStartsAt: callStartsAt,
+  callPath: callPath,
+);
 
 /// Around the whole app, so a test can capture what it shows.
 const appBoundaryKey = ValueKey('app-boundary');

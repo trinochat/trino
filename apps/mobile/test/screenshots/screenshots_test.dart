@@ -89,7 +89,6 @@ void main() {
       await shot(tester, '$name-04-call-key');
       await tester.tap(find.text('Coinciden'));
       await tester.pumpAndSettle();
-      await tester.tap(find.text('Conexión directa'));
       await shot(tester, '$name-05-call-verified');
       await tester.tap(find.bySemanticsLabel('Colgar'));
       await tester.pumpAndSettle();

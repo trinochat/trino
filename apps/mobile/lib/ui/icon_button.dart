@@ -8,9 +8,10 @@ import '../design/theme.dart';
 /// `ghost` for header actions, `muted` for secondary tools such as the
 /// composer's, `secondary` outlined, `primary` for the one main action (send),
 /// `accent` for an action drawn in the accent without a fill (call back),
-/// `danger` for removals, and `dangerSolid` for hanging up: dangerBg on danger,
-/// which keeps 3:1 in every theme where white on danger does not.
-enum IconButtonVariant { ghost, muted, secondary, primary, accent, danger, dangerSolid }
+/// `danger` for removals, and `dangerSoft` for hanging up: the danger icon on
+/// the soft dangerBg, which reaches contrast in the dark themes too, where a
+/// solid red would glare.
+enum IconButtonVariant { ghost, muted, secondary, primary, accent, danger, dangerSoft }
 
 class TrinoIconButton extends StatelessWidget {
   const TrinoIconButton({
@@ -57,7 +58,7 @@ class TrinoIconButton extends StatelessWidget {
             IconButtonVariant.primary => (t.accent, t.accentInk, null),
             IconButtonVariant.accent => (null, t.accentText, null),
             IconButtonVariant.danger => (null, t.danger, null),
-            IconButtonVariant.dangerSolid => (t.danger, t.dangerBg, null),
+            IconButtonVariant.dangerSoft => (t.dangerBg, t.danger, null),
           };
     final side = border == null ? BorderSide.none : BorderSide(color: border);
     final ShapeBorder shape = circle

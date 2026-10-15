@@ -56,7 +56,7 @@ const nonTextPairs = <Pair>[
   ('ok', 'surface'),
   ('accent', 'surface'), // switch on, selected segment
   ('accent', 'bg'),
-  ('dangerBg', 'danger'), // the hang-up icon on its button
+  ('danger', 'dangerBg'), // the hang-up icon on its soft button
   ('accentText', 'surface'), // tab indicators and the focus ring
   ('accentText', 'bg'),
 ];

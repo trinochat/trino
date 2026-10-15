@@ -199,16 +199,6 @@ class ChatMessage {
   );
 }
 
-/// One symbol of a call's short authentication string: the emoji and the id
-/// of its word, which the app translates.
-@immutable
-class SasSymbol {
-  const SasSymbol(this.id, this.emoji);
-
-  final String id;
-  final String emoji;
-}
-
 /// How the call's media travels. Through the call server (a relay that
 /// passes the audio, "Por el servidor de llamadas") the other person does not
 /// see your IP; direct, they do. Trino calls through the server.
@@ -258,8 +248,13 @@ class CallSession {
   final String contactId;
   final String peerName;
 
-  /// Seven symbols, the same on both phones unless someone is in the middle.
-  final List<SasSymbol> sas;
+  /// The call's short authentication string: seven indices, 0 to 63, into
+  /// the SAS v2 table (assets/sas/sas-v2.json, the desktop's own), the same
+  /// on both sides unless someone is in the middle. The engine derives them
+  /// (docs/sas-v2.md: SHA-256 over the call id, both identity digests and
+  /// both DTLS fingerprints, each of the first 7 bytes shifted right by 2), as
+  /// only it holds those inputs; the app just draws and names them.
+  final List<int> sas;
   final Duration elapsed;
   final CallPath path;
 

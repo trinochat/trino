@@ -73,22 +73,26 @@ void main() {
     );
     expect(spanish, containsPair('callBack', 'Devolver la llamada a {name}'));
     expect(spanish, containsPair('draftPrefix', 'Borrador:'));
-    expect(spanish, containsPair('keyCompareTitle', 'Compara estos emojis con {name}'));
-    expect(spanish, containsPair('keyMatch', 'Coinciden'));
-    expect(spanish, containsPair('keyMismatch', 'No coinciden'));
-    expect(spanish, containsPair('callVerified', 'Verificada'));
-    expect(spanish, containsPair('callDirect', 'Conexión directa'));
+    expect(spanish, containsPair('callKeyLabel', 'Clave'));
+    expect(spanish, containsPair('keyCompareTitle', 'Comparen la clave'));
     expect(
       spanish,
       containsPair(
-        'callDirectNote',
-        '{name} puede ver tu IP mientras dure la llamada. Pronto podrás llamar sin mostrarla.',
+        'keyCompareBody',
+        'Léanse las palabras en voz alta. Si son las mismas, nadie se metió en la llamada.',
       ),
     );
+    expect(spanish, containsPair('keyMatch', 'Coinciden'));
+    expect(spanish, containsPair('keyMismatch', 'No coinciden'));
+    expect(spanish, containsPair('callVerified', 'Verificada'));
+    expect(spanish, containsPair('callRelay', 'Por el servidor de llamadas'));
+    expect(spanish, containsPair('callDirect', 'Conexión directa'));
+    expect(spanish, containsPair('callDirectNote', '{name} puede ver tu IP mientras dure la llamada.'));
     expect(
       [spanish['callMute'], spanish['callSpeaker'], spanish['callCamera'], spanish['callHangUp']],
-      ['Silenciar', 'Altavoz', 'Cámara', 'Colgar'],
+      ['Silenciar', 'Parlante', 'Video', 'Colgar'],
     );
+    expect(spanish.containsKey('sasWord'), isFalse, reason: 'the words come from the SAS v2 table, not from i18n');
     expect(spanish, containsPair('addContact', 'Agregar contacto'));
     expect(spanish, containsPair('shareMyCode', 'Compartir mi código'));
     expect(spanish, containsPair('profileSubtitle', 'Tu nombre y tu código'));

@@ -1,8 +1,10 @@
-// A call, full screen. At the top, a small pill with the seven emojis of the
-// call's key: tapping it opens the comparison ("Compara estos emojis con
-// Ana"), and once both say they match it reads "Verificada". Under the name,
-// the time and "Conexión directa" as plain text; tapping that explains that
-// the other person sees your IP. At the bottom, the controls.
+// A call, full screen. At the top, the key, small: "Clave" and the first
+// symbols of the call's SAS v2 as outline icons. Tapping it opens "Comparen la
+// clave" with the 7 symbols and their words, "Coinciden" and "No coinciden";
+// once matched, the key reads "Verificada". Under the name, the time and how
+// the call travels in words: "Por el servidor de llamadas", which needs no
+// note, or, if a direct path ever shows up, "Conexión directa", which explains
+// on a tap that the other person sees your IP. At the bottom, the controls.
 import 'dart:async';
 
 import 'package:flutter/material.dart';
@@ -16,6 +18,7 @@ import '../ui/avatar.dart';
 import '../ui/banner.dart';
 import '../ui/button.dart';
 import '../ui/icon_button.dart';
+import '../ui/sas_symbol.dart';
 
 class CallScreen extends StatefulWidget {
   const CallScreen({super.key});
@@ -23,7 +26,11 @@ class CallScreen extends StatefulWidget {
   static Route<void> route() => MaterialPageRoute(fullscreenDialog: true, builder: (_) => const CallScreen());
 
   static const keyPillKey = ValueKey('call-key-pill');
+  static const keyDialogKey = ValueKey('call-key-dialog');
   static const connectionKey = ValueKey('call-connection');
+
+  /// How many symbols the small key shows; the dialog shows all 7.
+  static const keyPreviewLength = 4;
 
   @override
   State<CallScreen> createState() => _CallScreenState();
@@ -32,8 +39,10 @@ class CallScreen extends StatefulWidget {
 class _CallScreenState extends State<CallScreen> {
   late final TrinoEngine _engine = context.engine;
   StreamSubscription<CallSession?>? _subscription;
-  CallSession? _call;
-  var _keyOpen = false;
+
+  /// The call, for this screen and for the comparison dialog above it.
+  final _call = ValueNotifier<CallSession?>(null);
+  var _dialogOpen = false;
   var _noteOpen = false;
 
   @override
@@ -45,187 +54,186 @@ class _CallScreenState extends State<CallScreen> {
   void _onCall(CallSession? call) {
     if (!mounted) return;
     if (call == null) {
-      // The call ended: back to where it started.
-      if (_call != null) Navigator.of(context).pop();
+      // The call ended: back to where it started, closing the comparison first.
+      if (_call.value != null) {
+        final navigator = Navigator.of(context);
+        if (_dialogOpen) navigator.pop();
+        navigator.pop();
+      }
       return;
     }
-    setState(() => _call = call);
+    _call.value = call;
   }
 
   @override
   void dispose() {
     unawaited(_subscription?.cancel());
+    _call.dispose();
     super.dispose();
   }
 
-  void _answerKey({required bool matches}) {
-    unawaited(_engine.confirmSas(matches: matches));
-    if (matches) setState(() => _keyOpen = false);
+  Future<void> _openKey() async {
+    setState(() => _noteOpen = false);
+    _dialogOpen = true;
+    await showDialog<void>(
+      context: context,
+      builder: (context) => ValueListenableBuilder<CallSession?>(
+        valueListenable: _call,
+        builder: (context, call, _) => call == null
+            ? const SizedBox.shrink()
+            : _KeyDialog(
+                key: CallScreen.keyDialogKey,
+                call: call,
+                onAnswer: ({required matches}) {
+                  unawaited(_engine.confirmSas(matches: matches));
+                  if (matches) Navigator.of(context).pop();
+                },
+              ),
+      ),
+    );
+    _dialogOpen = false;
   }
 
   @override
-  Widget build(BuildContext context) {
-    final call = _call;
-    final t = context.tokens;
-    if (call == null) return Scaffold(backgroundColor: t.bg, body: const SizedBox.expand());
-    final l10n = context.l10n;
-    return PopScope(
-      // A call ends with "Colgar", not with the back gesture.
-      canPop: false,
-      child: Semantics(
-        label: l10n.callWith(call.peerName),
-        explicitChildNodes: true,
-        child: Scaffold(
-          backgroundColor: t.bg,
-          body: SafeArea(
-            child: Column(
-              children: [
-                const SizedBox(height: 8),
-                _KeyPill(
-                  key: CallScreen.keyPillKey,
-                  call: call,
-                  open: _keyOpen,
-                  onTap: () => setState(() {
-                    _keyOpen = !_keyOpen;
-                    _noteOpen = false;
-                  }),
-                ),
-                Expanded(
-                  child: LayoutBuilder(
-                    builder: (context, viewport) => SingleChildScrollView(
-                      padding: const EdgeInsets.fromLTRB(20, 12, 20, 12),
-                      child: ConstrainedBox(
-                        // Centred in the room left while the panel is closed.
-                        constraints: BoxConstraints(minHeight: viewport.maxHeight - 24),
-                        child: Column(
-                          mainAxisAlignment: _keyOpen ? MainAxisAlignment.start : MainAxisAlignment.center,
-                          children: [
-                            if (_keyOpen)
-                              _KeyPanel(call: call, onAnswer: _answerKey)
-                            else
+  Widget build(BuildContext context) => ValueListenableBuilder<CallSession?>(
+    valueListenable: _call,
+    builder: (context, call, _) {
+      final t = context.tokens;
+      if (call == null) return Scaffold(backgroundColor: t.bg, body: const SizedBox.expand());
+      final l10n = context.l10n;
+      return PopScope(
+        // A call ends with "Colgar", not with the back gesture.
+        canPop: false,
+        child: Semantics(
+          label: l10n.callWith(call.peerName),
+          explicitChildNodes: true,
+          child: Scaffold(
+            backgroundColor: t.bg,
+            body: SafeArea(
+              child: Column(
+                children: [
+                  const SizedBox(height: 8),
+                  _KeyPill(key: CallScreen.keyPillKey, call: call, onTap: _openKey),
+                  Expanded(
+                    child: LayoutBuilder(
+                      builder: (context, viewport) => SingleChildScrollView(
+                        padding: const EdgeInsets.fromLTRB(20, 12, 20, 12),
+                        child: ConstrainedBox(
+                          constraints: BoxConstraints(minHeight: viewport.maxHeight - 24),
+                          child: Column(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
                               TrinoAvatar(name: call.peerName, size: 120),
-                            const SizedBox(height: 20),
-                            Text(call.peerName, textAlign: TextAlign.center, style: context.text.headline),
-                            const SizedBox(height: 4),
-                            _ConnectionLine(
-                              call: call,
-                              open: _noteOpen,
-                              onTap: () => setState(() {
-                                _noteOpen = !_noteOpen;
-                                _keyOpen = false;
-                              }),
-                            ),
-                            if (_noteOpen)
-                              Padding(
-                                padding: const EdgeInsets.only(top: 8),
-                                child: Semantics(
-                                  container: true,
-                                  liveRegion: true,
-                                  child: DecoratedBox(
-                                    decoration: BoxDecoration(
-                                      color: t.surface,
-                                      border: Border.all(color: t.line),
-                                      borderRadius: BorderRadius.circular(t.radius),
-                                    ),
-                                    child: Padding(
-                                      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-                                      child: Text(
-                                        l10n.callDirectNote(call.peerName),
-                                        style: context.text.secondary.copyWith(color: t.ink),
-                                      ),
-                                    ),
-                                  ),
-                                ),
+                              const SizedBox(height: 20),
+                              Text(call.peerName, textAlign: TextAlign.center, style: context.text.headline),
+                              const SizedBox(height: 4),
+                              _PathLine(
+                                call: call,
+                                open: _noteOpen,
+                                onTap: () => setState(() => _noteOpen = !_noteOpen),
                               ),
-                          ],
+                              if (_noteOpen && call.path == CallPath.direct) _DirectNote(peerName: call.peerName),
+                            ],
+                          ),
                         ),
                       ),
                     ),
                   ),
-                ),
-                _Controls(call: call, engine: _engine),
-                const SizedBox(height: 16),
-              ],
+                  _Controls(call: call, engine: _engine),
+                  const SizedBox(height: 16),
+                ],
+              ),
             ),
           ),
         ),
-      ),
-    );
-  }
+      );
+    },
+  );
 }
 
+/// "Clave" and the first symbols, small; "Verificada" once matched. A plain
+/// bordered box, as the desktop's key: no colour carries the state.
 class _KeyPill extends StatelessWidget {
-  const _KeyPill({super.key, required this.call, required this.open, required this.onTap});
+  const _KeyPill({super.key, required this.call, required this.onTap});
 
   final CallSession call;
-  final bool open;
   final VoidCallback onTap;
 
   @override
   Widget build(BuildContext context) {
     final t = context.tokens;
     final l10n = context.l10n;
-    final label = call.verified ? l10n.callKeyVerified : l10n.callKeyClosed(call.peerName);
-    return Semantics(
-      container: true,
-      button: true,
-      expanded: open,
-      label: label,
-      onTap: onTap,
-      child: ExcludeSemantics(
-        child: Material(
-          type: MaterialType.transparency,
-          child: InkWell(
-            onTap: onTap,
-            customBorder: const StadiumBorder(),
-            child: Padding(
-              // A 48 dp target around a slimmer pill.
-              padding: const EdgeInsets.symmetric(vertical: 4, horizontal: 2),
-              child: DecoratedBox(
-                decoration: ShapeDecoration(
-                  color: t.surface,
-                  shape: StadiumBorder(side: BorderSide(color: t.line)),
-                ),
-                child: ConstrainedBox(
-                  constraints: const BoxConstraints(minHeight: 40),
-                  child: Padding(
-                    padding: const EdgeInsets.fromLTRB(14, 4, 10, 4),
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        if (call.verified) ...[
-                          TrinoIcon(TrinoIcons.check, size: 16, color: t.accentText),
-                          const SizedBox(width: 6),
-                          Text(
-                            l10n.callVerified,
-                            style: context.text.secondary.copyWith(color: t.accentText, fontWeight: FontWeight.w700),
-                          ),
-                        ] else
-                          for (final symbol in call.sas)
-                            Padding(
-                              padding: const EdgeInsets.symmetric(horizontal: 1.5),
-                              child: Text(
-                                symbol.emoji,
-                                style: const TextStyle(fontSize: 17, height: 1.2, fontFamilyFallback: kEmojiFallback),
+    return SasTableBuilder(
+      // Holds the place while the table loads, so nothing jumps.
+      placeholder: const SizedBox(height: 48),
+      builder: (context, table) {
+        final words = table.words(call.sas, Localizations.localeOf(context).languageCode).join(', ');
+        return Semantics(
+          container: true,
+          button: true,
+          label: call.verified ? l10n.callKeyVerified : l10n.callKeyClosed(words, call.peerName),
+          onTap: onTap,
+          child: ExcludeSemantics(
+            child: Material(
+              type: MaterialType.transparency,
+              child: InkWell(
+                onTap: onTap,
+                borderRadius: BorderRadius.circular(t.radius),
+                child: Padding(
+                  // A 48 dp target around a slimmer box.
+                  padding: const EdgeInsets.symmetric(vertical: 4, horizontal: 2),
+                  child: DecoratedBox(
+                    decoration: BoxDecoration(
+                      color: t.surface,
+                      border: Border.all(color: t.line),
+                      borderRadius: BorderRadius.circular(t.radius),
+                    ),
+                    child: ConstrainedBox(
+                      constraints: const BoxConstraints(minHeight: 40),
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            if (call.verified) ...[
+                              TrinoIcon(TrinoIcons.check, size: 16, color: t.accentText),
+                              const SizedBox(width: 6),
+                              Text(
+                                l10n.callVerified,
+                                style: context.text.secondary.copyWith(
+                                  color: t.accentText,
+                                  fontWeight: FontWeight.w700,
+                                ),
                               ),
-                            ),
-                        const SizedBox(width: 6),
-                        TrinoIcon(open ? TrinoIcons.chevronUp : TrinoIcons.chevronDown, size: 16, color: t.muted),
-                      ],
+                            ] else ...[
+                              Text(l10n.callKeyLabel, style: context.text.secondary),
+                              const SizedBox(width: 8),
+                              for (final index in call.sas.take(CallScreen.keyPreviewLength))
+                                Padding(
+                                  padding: const EdgeInsets.symmetric(horizontal: 3),
+                                  child: SasIcon(symbol: table.symbol(index), size: 16),
+                                ),
+                            ],
+                          ],
+                        ),
+                      ),
                     ),
                   ),
                 ),
               ),
             ),
           ),
-        ),
-      ),
+        );
+      },
     );
   }
 }
 
-class _KeyPanel extends StatelessWidget {
-  const _KeyPanel({required this.call, required this.onAnswer});
+/// "Comparen la clave": the 7 symbols with their words, read aloud by both
+/// people. "No coinciden" keeps it open with the warning; the last answer
+/// counts.
+class _KeyDialog extends StatelessWidget {
+  const _KeyDialog({super.key, required this.call, required this.onAnswer});
 
   final CallSession call;
   final void Function({required bool matches}) onAnswer;
@@ -235,84 +243,59 @@ class _KeyPanel extends StatelessWidget {
     final t = context.tokens;
     final text = context.text;
     final l10n = context.l10n;
-    return DecoratedBox(
-      decoration: BoxDecoration(
-        color: t.surface,
-        border: Border.all(color: t.line),
+    return Dialog(
+      backgroundColor: t.surface,
+      surfaceTintColor: Colors.transparent,
+      insetPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 24),
+      shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(t.radiusLg),
-        boxShadow: t.shadow,
+        side: BorderSide(color: t.line),
       ),
-      child: Padding(
-        padding: const EdgeInsets.all(16),
+      child: SingleChildScrollView(
+        padding: const EdgeInsets.all(20),
         child: Column(
+          mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            Semantics(
-              container: true,
-              header: true,
-              child: Text(l10n.keyCompareTitle(call.peerName), style: text.bodyStrong),
-            ),
-            const SizedBox(height: 6),
+            Semantics(container: true, header: true, child: Text(l10n.keyCompareTitle, style: text.title)),
+            const SizedBox(height: 8),
             if (call.mismatch)
               TrinoBanner(tone: BannerTone.danger, message: l10n.keyMismatchAlert)
             else
-              Text(l10n.keyCompareBody(call.peerName), style: text.secondary),
+              Text(l10n.keyCompareBody, style: text.secondary),
             const SizedBox(height: 16),
-            Semantics(
-              container: true,
-              label: l10n.keyList,
-              explicitChildNodes: true,
-              child: Wrap(
-                alignment: WrapAlignment.center,
-                spacing: 10,
-                runSpacing: 12,
-                children: [
-                  for (final symbol in call.sas)
-                    ConstrainedBox(
-                      constraints: const BoxConstraints(minWidth: 56),
-                      child: Column(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          // Screen readers read the words; emoji names would differ by phone.
-                          ExcludeSemantics(
-                            child: Text(
-                              symbol.emoji,
-                              style: const TextStyle(fontSize: 26, height: 1.2, fontFamilyFallback: kEmojiFallback),
-                            ),
-                          ),
-                          const SizedBox(height: 4),
-                          Text(
-                            context.l10n.sasWord(symbol.id),
-                            textAlign: TextAlign.center,
-                            style: text.caption.copyWith(color: t.ink, fontWeight: FontWeight.w600),
-                          ),
-                        ],
+            SasTableBuilder(
+              builder: (context, table) => Semantics(
+                container: true,
+                label: l10n.keyList,
+                explicitChildNodes: true,
+                child: Wrap(
+                  alignment: WrapAlignment.center,
+                  spacing: 4,
+                  runSpacing: 12,
+                  children: [
+                    for (final index in call.sas)
+                      ConstrainedBox(
+                        constraints: const BoxConstraints(minWidth: 64),
+                        child: SasSymbolTile(symbol: table.symbol(index)),
                       ),
-                    ),
-                ],
+                  ],
+                ),
               ),
             ),
-            const SizedBox(height: 16),
-            Row(
-              children: [
-                Expanded(
-                  child: TrinoButton(
-                    label: l10n.keyMatch,
-                    variant: ButtonVariant.primary,
-                    expand: true,
-                    onPressed: () => onAnswer(matches: true),
-                  ),
-                ),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: TrinoButton(
-                    label: l10n.keyMismatch,
-                    variant: ButtonVariant.danger,
-                    expand: true,
-                    onPressed: () => onAnswer(matches: false),
-                  ),
-                ),
-              ],
+            const SizedBox(height: 20),
+            TrinoButton(
+              label: l10n.keyMatch,
+              variant: ButtonVariant.primary,
+              expand: true,
+              onPressed: () => onAnswer(matches: true),
+            ),
+            const SizedBox(height: 8),
+            TrinoButton(
+              label: l10n.keyMismatch,
+              variant: ButtonVariant.secondary,
+              expand: true,
+              onPressed: () => onAnswer(matches: false),
             ),
           ],
         ),
@@ -321,10 +304,11 @@ class _KeyPanel extends StatelessWidget {
   }
 }
 
-/// "03:21 · Conexión directa": the time, and the path of the call as plain
-/// text that explains itself when tapped.
-class _ConnectionLine extends StatelessWidget {
-  const _ConnectionLine({required this.call, required this.open, required this.onTap});
+/// "04:12 · Por el servidor de llamadas": the time and how the call travels,
+/// as plain text. Only a direct path, which shows your IP, can be tapped for
+/// its note.
+class _PathLine extends StatelessWidget {
+  const _PathLine({required this.call, required this.open, required this.onTap});
 
   final CallSession call;
   final bool open;
@@ -334,35 +318,39 @@ class _ConnectionLine extends StatelessWidget {
   Widget build(BuildContext context) {
     final t = context.tokens;
     final text = context.text;
+    final l10n = context.l10n;
+    final style = text.secondary.copyWith(fontSize: 15);
     return Wrap(
       alignment: WrapAlignment.center,
       crossAxisAlignment: WrapCrossAlignment.center,
       children: [
         Text(formatDuration(call.elapsed), style: text.mono.copyWith(fontSize: 15)),
         ExcludeSemantics(child: Text('  ·  ', style: text.secondary)),
-        Semantics(
-          key: CallScreen.connectionKey,
-          container: true,
-          button: true,
-          expanded: open,
-          child: Material(
-            type: MaterialType.transparency,
-            child: InkWell(
-              onTap: onTap,
-              borderRadius: BorderRadius.circular(t.radius),
-              child: ConstrainedBox(
-                constraints: const BoxConstraints(minHeight: 48, minWidth: 48),
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 4),
-                  child: Center(
-                    widthFactor: 1,
-                    child: Text(
-                      context.l10n.callDirect,
-                      style: text.secondary.copyWith(
-                        fontSize: 15,
-                        decoration: TextDecoration.underline,
-                        decorationStyle: TextDecorationStyle.dotted,
-                        decorationColor: t.muted,
+        switch (call.path) {
+          CallPath.relay => Text(l10n.callRelay, textAlign: TextAlign.center, style: style),
+          CallPath.direct => Semantics(
+            key: CallScreen.connectionKey,
+            container: true,
+            button: true,
+            expanded: open,
+            child: Material(
+              type: MaterialType.transparency,
+              child: InkWell(
+                onTap: onTap,
+                borderRadius: BorderRadius.circular(t.radius),
+                child: ConstrainedBox(
+                  constraints: const BoxConstraints(minHeight: 48, minWidth: 48),
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 4),
+                    child: Center(
+                      widthFactor: 1,
+                      child: Text(
+                        l10n.callDirect,
+                        style: style.copyWith(
+                          decoration: TextDecoration.underline,
+                          decorationStyle: TextDecorationStyle.dotted,
+                          decorationColor: t.muted,
+                        ),
                       ),
                     ),
                   ),
@@ -370,8 +358,37 @@ class _ConnectionLine extends StatelessWidget {
               ),
             ),
           ),
-        ),
+        },
       ],
+    );
+  }
+}
+
+class _DirectNote extends StatelessWidget {
+  const _DirectNote({required this.peerName});
+
+  final String peerName;
+
+  @override
+  Widget build(BuildContext context) {
+    final t = context.tokens;
+    return Padding(
+      padding: const EdgeInsets.only(top: 8),
+      child: Semantics(
+        container: true,
+        liveRegion: true,
+        child: DecoratedBox(
+          decoration: BoxDecoration(
+            color: t.surface,
+            border: Border.all(color: t.line),
+            borderRadius: BorderRadius.circular(t.radius),
+          ),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+            child: Text(context.l10n.callDirectNote(peerName), style: context.text.secondary.copyWith(color: t.ink)),
+          ),
+        ),
+      ),
     );
   }
 }
@@ -438,7 +455,7 @@ class _Control extends StatelessWidget {
             label: label,
             circle: true,
             size: 64,
-            variant: hangUp ? IconButtonVariant.dangerSolid : IconButtonVariant.secondary,
+            variant: hangUp ? IconButtonVariant.dangerSoft : IconButtonVariant.secondary,
             pressed: pressed,
             onPressed: onPressed,
           ),

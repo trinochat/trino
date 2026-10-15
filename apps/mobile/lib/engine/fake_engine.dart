@@ -19,6 +19,7 @@ class FakeTrinoEngine implements TrinoEngine {
     this.connectAfter,
     this.sendDelay = Duration.zero,
     this.callStartsAt = Duration.zero,
+    this.callPath = CallPath.relay,
     this.linkConfirmAfter,
   }) : _clock = clock ?? DateTime.now,
        _identityState = _Live(
@@ -52,6 +53,9 @@ class FakeTrinoEngine implements TrinoEngine {
   final Duration? connectAfter;
   final Duration sendDelay;
   final Duration callStartsAt;
+
+  /// How new calls travel: through the server, unless a test asks otherwise.
+  final CallPath callPath;
   final Duration? linkConfirmAfter;
   final DateTime Function() _clock;
 
@@ -627,15 +631,8 @@ class FakeTrinoEngine implements TrinoEngine {
 
   // Calls.
 
-  static const _sas = [
-    SasSymbol('fox', '🦊'),
-    SasSymbol('guitar', '🎸'),
-    SasSymbol('cactus', '🌵'),
-    SasSymbol('anchor', '⚓'),
-    SasSymbol('mushroom', '🍄'),
-    SasSymbol('bicycle', '🚲'),
-    SasSymbol('bell', '🔔'),
-  ];
+  /// The symbols of the mock: Gato, Pluma, Sol, Rayo, Café, Avión, Castillo.
+  static const _sas = [0, 9, 17, 23, 31, 40, 52];
 
   @override
   Stream<CallSession?> get call => _call.stream;
@@ -672,6 +669,7 @@ class FakeTrinoEngine implements TrinoEngine {
       contactId: contactId,
       peerName: contact.name,
       sas: _sas,
+      path: callPath,
       elapsed: callStartsAt,
     );
     _callStartedAt = _clock();

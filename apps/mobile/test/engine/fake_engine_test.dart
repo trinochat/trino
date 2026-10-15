@@ -148,7 +148,9 @@ void main() {
       await pumpEventQueue();
       final call = sessions.last!;
       expect((call.peerName, call.sas.length, call.verified), ('Ana Torres', 7, false));
-      expect(call.sas.map((s) => s.id).toSet(), hasLength(7));
+      // Indices into the SAS v2 table, as the mock shows them.
+      expect(call.sas, [0, 9, 17, 23, 31, 40, 52]);
+      expect(call.path, CallPath.relay, reason: 'Trino calls through the server');
 
       await engine.confirmSas(matches: false);
       await pumpEventQueue();
