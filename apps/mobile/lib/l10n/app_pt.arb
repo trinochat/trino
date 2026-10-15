@@ -351,6 +351,7 @@
   "devicesHoldsKey": "guarda a chave da conta",
   "devicesHoldsKeyNote": "Este celular criou sua conta e guarda a chave dela, por isso não pode ser desvinculado.",
   "devicesUnlink": "Desvincular",
+  "devicesUnlinkThis": "Desvincular este celular",
   "devicesUnlinkTitle": "Desvincular este celular?",
   "devicesUnlinkBody": "Este celular volta ao início e deixa de receber suas mensagens. Suas conversas e seus contatos são apagados daqui; no seu computador eles continuam. Para usá-lo de novo, vincule-o outra vez com o código QR do seu computador.",
   "devicesUnlinkFailed": "Não foi possível desvincular este celular. Tente novamente.",

@@ -351,6 +351,7 @@
   "devicesHoldsKey": "holds the account key",
   "devicesHoldsKeyNote": "This phone created your account and holds its key, so it can't be unlinked.",
   "devicesUnlink": "Unlink",
+  "devicesUnlinkThis": "Unlink this phone",
   "devicesUnlinkTitle": "Unlink this phone?",
   "devicesUnlinkBody": "This phone goes back to the start and stops receiving your messages. Your chats and contacts are deleted from here; they stay on your computer. To use it again, link it again with your computer's QR code.",
   "devicesUnlinkFailed": "This phone couldn't be unlinked. Try again.",

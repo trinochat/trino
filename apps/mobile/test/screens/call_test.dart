@@ -153,6 +153,25 @@ void main() {
     final hangUpIcon = find.descendant(of: hangUpButton, matching: find.byType(TrinoIcon));
     expect(painterOf<TrinoIconPainter>(tester, hangUpIcon).color, t.danger);
     expect(fillOf(tester, hangUpIcon), t.dangerBg);
+    // The soft fill alone is about 1.1:1 against the call's background, so the
+    // circle's edge is drawn in danger, which reaches 3:1 (contrast_test).
+    final hangUpShape =
+        tester
+                .widgetList<DecoratedBox>(find.descendant(of: hangUpButton, matching: find.byType(DecoratedBox)))
+                .map((box) => box.decoration)
+                .whereType<ShapeDecoration>()
+                .single
+                .shape
+            as CircleBorder;
+    expect(hangUpShape.side.color, t.danger);
+    expect(hangUpShape.side.width, greaterThanOrEqualTo(2));
+    for (final label in ['Silenciar', 'Parlante', 'Video', 'Colgar']) {
+      expect(
+        tester.getSemantics(find.bySemanticsLabel(label)),
+        isSemantics(isButton: true, isFocusable: true, hasTapAction: true),
+        reason: '$label is a real button',
+      );
+    }
     expect(colorOfText(tester, 'Colgar'), t.danger);
     await expectLater(tester, meetsGuideline(androidTapTargetGuideline));
     await expectLater(tester, meetsGuideline(labeledTapTargetGuideline));

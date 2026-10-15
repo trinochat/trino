@@ -1,6 +1,6 @@
 // Dispositivos: the devices of your account, this phone first. Each device can
 // unlink itself; the computer, which holds the account key, can remove any.
-// So "Desvincular" shows only on this phone's row, and not at all when this
+// So "Desvincular este celular" shows only on this phone's row, and not at all when this
 // phone created the account and holds the key. There is no "Vincular" here:
 // a phone links only at its first run.
 import 'package:flutter/material.dart';
@@ -128,25 +128,32 @@ class _DeviceRow extends StatelessWidget {
         ? lastSeenLabel(context, lastSeen, now)
         : linkedLabel(context, device.linkedAt, now);
     final onUnlink = this.onUnlink;
-    return Row(
+    final row = ListRow(
+      icon: switch (device.platform) {
+        DevicePlatform.android || DevicePlatform.ios => TrinoIcons.smartphone,
+        _ => TrinoIcons.laptop,
+      },
+      title: device.isThisDevice ? l10n.devicesThisPhone : device.name,
+      subtitle: '$model · $when',
+    );
+    if (onUnlink == null) return row;
+    // On its own line under the row, as Telegram ends a session: the words
+    // name the device, and they fit at any text size.
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        Expanded(
-          child: ListRow(
-            icon: switch (device.platform) {
-              DevicePlatform.android || DevicePlatform.ios => TrinoIcons.smartphone,
-              _ => TrinoIcons.laptop,
-            },
-            title: device.isThisDevice ? l10n.devicesThisPhone : device.name,
-            subtitle: '$model · $when',
-          ),
+        row,
+        Align(
+          alignment: AlignmentDirectional.centerStart,
+          child: _UnlinkButton(label: l10n.devicesUnlinkThis, onPressed: onUnlink),
         ),
-        if (onUnlink != null) _UnlinkButton(label: l10n.devicesUnlink, onPressed: onUnlink),
       ],
     );
   }
 }
 
-/// "Desvincular" as words in the danger colour, with a full tap target.
+/// "Desvincular este celular" as words in the danger colour, with a full tap
+/// target: a real button for touch, the keyboard and screen readers.
 class _UnlinkButton extends StatelessWidget {
   const _UnlinkButton({required this.label, required this.onPressed});
 
@@ -156,7 +163,10 @@ class _UnlinkButton extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final t = context.tokens;
+    // Its own node, so screen readers announce it as a button and not as part
+    // of the row's text.
     return Semantics(
+      container: true,
       button: true,
       child: Material(
         type: MaterialType.transparency,

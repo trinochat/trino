@@ -58,12 +58,18 @@ const nonTextPairs = <Pair>[
   ('accent', 'surface'), // switch on, selected segment
   ('accent', 'bg'),
   ('danger', 'dangerBg'), // the hang-up icon on its soft button
+  ('danger', 'bg'), // the hang-up circle's edge against the call's background
   ('accentText', 'surface'), // tab indicators and the focus ring
   ('accentText', 'bg'),
 ];
 
 /// Where a control can sit: panels, the screen, the bars and pressed rows.
 const backgrounds = ['surface', 'bg', 'side', 'raised'];
+
+/// Fills that do NOT reach 3:1 against the screen and so need an edge: the
+/// soft red of "Colgar" (about 1.1:1). The call screen draws it with a danger
+/// edge, checked above and in call_test.
+const softFillsNeedingAnEdge = <Pair>[('dangerBg', 'bg')];
 
 /// The boundary of a text field, normal or invalid, on every background.
 final boundaryPairs = <Pair>[
@@ -102,6 +108,10 @@ void main() {
 
           test('text field boundaries, normal and invalid, reach 3:1 on every background', () {
             expect(failures(tokens, boundaryPairs, 3), isEmpty);
+          });
+
+          test('the soft hang-up fill alone stays under 3:1, which is why it has an edge', () {
+            expect(failures(tokens, softFillsNeedingAnEdge, 3), hasLength(softFillsNeedingAnEdge.length));
           });
 
           test('the switch tracks and knobs reach 3:1', () {

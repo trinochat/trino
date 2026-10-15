@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:trino_mobile/screens/onboarding_screen.dart';
 import 'package:trino_mobile/screens/settings/devices_screen.dart';
@@ -9,6 +10,7 @@ import '../support/app_harness.dart';
 const unlinkBody =
     'Este celular vuelve al inicio y deja de recibir tus mensajes. Se borran de aquí tus chats y tus contactos; en '
     'tu computador siguen. Para volver a usarlo, vincúlalo otra vez con el código QR de tu computador.';
+const unlinkThis = 'Desvincular este celular';
 const noteSelf =
     'Cada aparato puede desvincularse solo. Tu computador, que guarda la llave de la cuenta, puede quitar a cualquiera.';
 const noteLost =
@@ -27,18 +29,20 @@ List<(String, String?)> rowsOf(WidgetTester tester) =>
     tester.widgetList<ListRow>(find.byType(ListRow)).map((row) => (row.title, row.subtitle)).toList();
 
 void main() {
-  testWidgets('this phone first, then the computer, in words; "Desvincular" only on this phone', (tester) async {
+  testWidgets('this phone first, then the computer, in words; "Desvincular este celular" only on this phone', (
+    tester,
+  ) async {
     await openDevices(tester);
     expect(rowsOf(tester), [
       ('Este celular', 'Pixel 8 · vinculado hoy'),
       ('Computador de la casa', 'Windows · activo hace 5 min'),
     ]);
-    expect(find.text('Desvincular'), findsOneWidget);
+    expect(find.text(unlinkThis), findsOneWidget);
     expect(
-      find.descendant(of: find.byKey(const ValueKey('device-this')), matching: find.text('Desvincular')),
+      find.descendant(of: find.byKey(const ValueKey('device-this')), matching: find.text(unlinkThis)),
       findsOneWidget,
     );
-    expect(colorOfText(tester, 'Desvincular'), tokensIn(tester).danger);
+    expect(colorOfText(tester, unlinkThis), tokensIn(tester).danger);
     expect(find.text(noteSelf), findsOneWidget);
     expect(find.text(noteLost), findsOneWidget);
     expect(find.textContaining('Vincular'), findsNothing, reason: 'linking only happens at the first run');
@@ -48,7 +52,7 @@ void main() {
 
   testWidgets('unlinking asks first, says what happens, and takes this phone back to the start', (tester) async {
     final app = await openDevices(tester);
-    await tester.tap(find.text('Desvincular'));
+    await tester.tap(find.text(unlinkThis));
     await tester.pumpAndSettle();
     expect(find.text('¿Desvincular este celular?'), findsOneWidget);
     expect(find.text(unlinkBody), findsOneWidget);
@@ -57,7 +61,7 @@ void main() {
     expect(find.text('Este celular'), findsOneWidget);
     expect(await tester.runAsync(() => app.engine.identityState.first), IdentityState.unlocked);
 
-    await tester.tap(find.text('Desvincular'));
+    await tester.tap(find.text(unlinkThis));
     await tester.pumpAndSettle();
     await tester.tap(find.descendant(of: find.byType(Dialog), matching: find.text('Desvincular')));
     await tester.pumpAndSettle();
@@ -65,12 +69,37 @@ void main() {
     expect(find.byType(OnboardingScreen), findsOneWidget);
   });
 
+  testWidgets('"Desvincular este celular" is a real button: named for screen readers and usable by keyboard', (
+    tester,
+  ) async {
+    await openDevices(tester);
+    final button = find.bySemanticsLabel(unlinkThis);
+    expect(button, findsOneWidget);
+    expect(
+      tester.getSemantics(button),
+      isSemantics(isButton: true, isFocusable: true, hasTapAction: true, hasFocusAction: true),
+    );
+
+    // Tab until the button has the focus, then Enter opens the confirmation.
+    for (var i = 0; i < 20 && find.text('¿Desvincular este celular?').evaluate().isEmpty; i++) {
+      await tester.sendKeyEvent(LogicalKeyboardKey.tab);
+      await tester.pump();
+      final focused = FocusManager.instance.primaryFocus?.context;
+      if (focused != null &&
+          find.descendant(of: find.byWidget(focused.widget), matching: find.text(unlinkThis)).evaluate().isNotEmpty) {
+        await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+        await tester.pumpAndSettle();
+      }
+    }
+    expect(find.text('¿Desvincular este celular?'), findsOneWidget);
+  });
+
   testWidgets('a phone that created the account holds its key: no unlink, and it says why', (tester) async {
     final engine = testEngine(onboarded: false);
     await engine.createIdentity(name: 'Sofía', passphrase: FakeTrinoEngine.demoPassphrase, withTotp: false);
     await openDevices(tester, engine: engine);
     expect(rowsOf(tester), [('Este celular', 'Pixel 8 · guarda la llave de la cuenta')]);
-    expect(find.text('Desvincular'), findsNothing);
+    expect(find.text(unlinkThis), findsNothing);
     expect(
       find.text('Este celular creó tu cuenta y guarda su llave, por eso no se puede desvincular.'),
       findsOneWidget,
