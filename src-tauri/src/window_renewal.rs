@@ -76,8 +76,8 @@ impl Placement {
 /// Destroy the window, to open it again once it is gone. Once at a time: a
 /// renewal under way is not started twice.
 pub(crate) fn renew(app: &AppHandle) {
-    let renewal = app.state::<Renewal>();
-    let Some(window) = app.get_webview_window(MAIN) else {
+    let (Some(renewal), Some(window)) = (app.try_state::<Renewal>(), app.get_webview_window(MAIN))
+    else {
         return;
     };
     // Read before taking the lock: these getters wait for the event loop,
@@ -107,8 +107,28 @@ pub(crate) fn renew(app: &AppHandle) {
 
 /// The event loop's side: open the new window as the old one is gone, and
 /// keep the app running meanwhile.
+///
+/// On Linux the event loop reports events before `setup` has run, and so
+/// before the renewal is managed: `state` would panic there, and Trino
+/// would die as it starts.
 pub(crate) fn on_run_event(app: &AppHandle, event: &RunEvent) {
-    let renewal = app.state::<Renewal>();
+    let renewal = app.try_state::<Renewal>();
+    on_run_event_with(renewal.as_deref(), event, |placement| {
+        open(app, placement).is_ok()
+    });
+}
+
+/// `on_run_event` with the app's renewal, if there is one yet, and `open`
+/// to open the new window, which says whether it did. Without a renewal
+/// there is nothing to renew yet.
+fn on_run_event_with(
+    renewal: Option<&Renewal>,
+    event: &RunEvent,
+    open: impl FnOnce(Option<Placement>) -> bool,
+) {
+    let Some(renewal) = renewal else {
+        return;
+    };
     match event {
         RunEvent::WindowEvent {
             label,
@@ -121,7 +141,7 @@ pub(crate) fn on_run_event(app: &AppHandle, event: &RunEvent) {
                 .unwrap_or_else(PoisonError::into_inner)
                 .take();
             // If it cannot open now, "Abrir trino" in the tray tries again.
-            if placement.is_some() && open(app, placement).is_ok() {
+            if placement.is_some() && open(placement) {
                 renewal.active.store(false, Ordering::SeqCst);
             }
         }
@@ -141,7 +161,9 @@ pub(crate) fn show(app: &AppHandle) {
         let _ = window.unminimize();
         let _ = window.set_focus();
     } else if open(app, None).is_ok() {
-        app.state::<Renewal>().active.store(false, Ordering::SeqCst);
+        if let Some(renewal) = app.try_state::<Renewal>() {
+            renewal.active.store(false, Ordering::SeqCst);
+        }
     }
 }
 
@@ -245,5 +267,60 @@ pub(crate) fn prepare(_window: &WebviewWindow) {
                 true
             });
         });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The events a test can make: Tauri builds the others itself.
+    fn events() -> [RunEvent; 4] {
+        [
+            RunEvent::Ready,
+            RunEvent::Resumed,
+            RunEvent::MainEventsCleared,
+            RunEvent::Exit,
+        ]
+    }
+
+    /// On Linux the event loop reports events before `setup` has run, so
+    /// before the renewal is managed there. Asking for it then panicked
+    /// ("state() called before manage() for window_renewal::Renewal") and
+    /// Trino died as it started. Without one there is nothing to renew:
+    /// an event changes nothing and opens nothing.
+    #[test]
+    fn a_run_event_before_the_renewal_is_managed_does_nothing() {
+        for event in events() {
+            on_run_event_with(None, &event, |_| panic!("opened a window"));
+        }
+    }
+
+    /// With the renewal managed, the same events leave it as it was.
+    #[test]
+    fn a_run_event_that_is_not_about_the_window_leaves_the_renewal_alone() {
+        let renewal = Renewal::default();
+        renewal.active.store(true, Ordering::SeqCst);
+        for event in events() {
+            on_run_event_with(Some(&renewal), &event, |_| panic!("opened a window"));
+        }
+        assert!(renewal.active.load(Ordering::SeqCst));
+        assert!(renewal.pending.lock().unwrap().is_none());
+    }
+
+    /// Every way into the renewal from the app (`on_run_event`, `show` and
+    /// `renew`, each of which can come before `setup`) asks with
+    /// `try_state`: `state` panics while it is not managed yet.
+    #[test]
+    fn the_renewal_is_only_asked_for_with_try_state() {
+        let source = include_str!("window_renewal.rs");
+        let code = &source[..source.find("#[cfg(test)]").unwrap()];
+        let asked = code.matches("try_state::<Renewal>()").count();
+        assert_eq!(
+            code.matches("state::<Renewal>()").count(),
+            asked,
+            "the renewal asked for with state()"
+        );
+        assert!(asked >= 3, "on_run_event, show and renew ask for it");
     }
 }
