@@ -98,6 +98,9 @@
   "noContacts": "Aún no tienes contactos.",
 
   "call": "Llamar",
+  "videoCall": "Videollamada",
+  "chatInfoOpen": "Ver la info de {name}",
+  "@chatInfoOpen": {"description": "The screen-reader name of the chat header's avatar and name, one button.", "placeholders": {"name": {"type": "String"}}},
   "messages": "Mensajes",
   "messageLabel": "Mensaje",
   "composerHint": "Mensaje",

@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:trino_mobile/screens/call_screen.dart';
 import 'package:trino_mobile/screens/chat_screen.dart';
+import 'package:trino_mobile/screens/info/contact_info_screen.dart';
+import 'package:trino_mobile/screens/info/group_info_screen.dart';
 import 'package:trino_mobile/ui/avatar.dart';
 import 'package:trino_mobile/ui/call_event_line.dart';
 import 'package:trino_mobile/ui/chat_row.dart';
@@ -19,7 +21,7 @@ TrinoIconButton sendButton(WidgetTester tester) => tester.widget<TrinoIconButton
 );
 
 void main() {
-  testWidgets('header: back, avatar, the name with its shield, and the call button', (tester) async {
+  testWidgets('header: back, avatar, the name with its shield, and the call and video buttons', (tester) async {
     await pumpApp(tester);
     await openChat(tester, 'Ana Torres');
     final header = find.byKey(ChatScreen.headerKey);
@@ -31,10 +33,16 @@ void main() {
       TrustKind.verified,
     );
     expect(find.descendant(of: header, matching: find.bySemanticsLabel('Llamar')), findsOneWidget);
+    expect(find.descendant(of: header, matching: find.bySemanticsLabel('Videollamada')), findsOneWidget);
+    final xs = [
+      tester.getCenter(find.text('Ana Torres')).dx,
+      tester.getCenter(find.bySemanticsLabel('Llamar')).dx,
+      tester.getCenter(find.bySemanticsLabel('Videollamada')).dx,
+    ];
+    expect(xs, orderedEquals([...xs]..sort()), reason: 'the name, then call, then video');
     // The state in words under the name, not a coloured label.
     expect(find.descendant(of: header, matching: find.text('Verificada')), findsOneWidget);
     expect(colorOfText(tester, 'Verificada'), tokensIn(tester, find.byType(ChatScreen)).muted);
-    expect(tester.getSemantics(find.text('Ana Torres')).label, 'Ana Torres\nVerificada');
     await expectLater(tester, meetsGuideline(androidTapTargetGuideline));
     await expectLater(tester, meetsGuideline(labeledTapTargetGuideline));
   });
@@ -130,6 +138,34 @@ void main() {
     expect(find.descendant(of: bubbleWith('Llego a las 7'), matching: find.text('Papá')), findsOneWidget);
     expect(find.text('3 miembros'), findsOneWidget);
     expect(find.bySemanticsLabel('Llamar'), findsNothing, reason: 'group calls do not exist yet');
+    expect(find.bySemanticsLabel('Videollamada'), findsNothing);
+  });
+
+  testWidgets('the avatar and the name are one button that opens the contact info', (tester) async {
+    await pumpApp(tester);
+    await openChat(tester, 'Ana Torres');
+    final button = find.bySemanticsLabel('Ver la info de Ana Torres');
+    expect(button, findsOneWidget);
+    expect(tester.getSemantics(button), isSemantics(isButton: true, hasTapAction: true, value: 'Verificada'));
+    final avatar = find.descendant(of: find.byKey(ChatScreen.headerKey), matching: find.byType(TrinoAvatar));
+    expect(tester.getRect(button).contains(tester.getCenter(avatar)), isTrue, reason: 'the avatar is part of it');
+    expect(tester.getRect(button).height, greaterThanOrEqualTo(48));
+
+    await tester.tap(find.text('Ana Torres'));
+    await tester.pumpAndSettle();
+    expect(find.byType(ContactInfoScreen), findsOneWidget);
+  });
+
+  testWidgets('in a group, the name opens the group info', (tester) async {
+    await pumpApp(tester);
+    await openChat(tester, 'Familia');
+    expect(
+      tester.getSemantics(find.bySemanticsLabel('Ver la info de Familia')),
+      isSemantics(isButton: true, hasTapAction: true, value: '3 miembros'),
+    );
+    await tester.tap(find.text('3 miembros'));
+    await tester.pumpAndSettle();
+    expect(find.byType(GroupInfoScreen), findsOneWidget);
   });
 
   testWidgets('the send button turns active with text, and sending adds the message', (tester) async {
@@ -214,11 +250,22 @@ void main() {
     }
   });
 
-  testWidgets('the call button opens the call', (tester) async {
-    await pumpApp(tester);
+  testWidgets('the call button opens an audio call', (tester) async {
+    final app = await pumpApp(tester);
     await openChat(tester, 'Ana Torres');
     await tester.tap(find.bySemanticsLabel('Llamar'));
     await tester.pumpAndSettle();
     expect(find.byType(CallScreen), findsOneWidget);
+    expect((await tester.runAsync(() => app.engine.call.first))!.camera, isFalse);
+  });
+
+  testWidgets('the video button opens the call with the camera on', (tester) async {
+    final app = await pumpApp(tester);
+    await openChat(tester, 'Ana Torres');
+    await tester.tap(find.bySemanticsLabel('Videollamada'));
+    await tester.pumpAndSettle();
+    expect(find.byType(CallScreen), findsOneWidget);
+    final call = await tester.runAsync(() => app.engine.call.first);
+    expect((call!.contactId, call.camera), ('ana', true));
   });
 }

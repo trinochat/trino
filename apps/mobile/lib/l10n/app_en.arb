@@ -74,6 +74,8 @@
   "noContacts": "You have no contacts yet.",
 
   "call": "Call",
+  "videoCall": "Video call",
+  "chatInfoOpen": "See the info of {name}",
   "messages": "Messages",
   "messageLabel": "Message",
   "composerHint": "Message",

@@ -1,5 +1,6 @@
-// A conversation: the header (back, avatar, name with its shield and the
-// state in words under it, call), the messages by day with the calls as
+// A conversation: the header (back; avatar and name with its shield and the
+// state in words under it, one button that opens the info; call and video),
+// the messages by day with the calls as
 // centred lines among them, and the composer. Enter writes a new line; the send button
 // sends, and it turns active only when there is something to send.
 import 'dart:async';
@@ -22,6 +23,8 @@ import '../ui/trust_badge.dart';
 import 'call_screen.dart';
 import 'chats_screen.dart';
 import 'common.dart';
+import 'info/contact_info_screen.dart';
+import 'info/group_info_screen.dart';
 
 class ChatScreen extends StatefulWidget {
   const ChatScreen({super.key, required this.chat});
@@ -66,20 +69,31 @@ class _ChatScreenState extends State<ChatScreen> {
     _composer.clear();
   }
 
-  Future<void> _call() async {
+  Future<void> _call({bool video = false}) async {
     final contactId = widget.chat.contactId;
     if (contactId == null) return;
     final navigator = Navigator.of(context);
-    await _engine.startCall(contactId);
+    await _engine.startCall(contactId, video: video);
     await navigator.push(CallScreen.route());
   }
+
+  void _openInfo() => unawaited(
+    Navigator.of(context)
+        .push(widget.chat.isGroup ? GroupInfoScreen.route(widget.chat) : ContactInfoScreen.route(widget.chat)),
+  );
 
   @override
   Widget build(BuildContext context) => Scaffold(
     body: SafeArea(
       child: Column(
         children: [
-          _Header(key: ChatScreen.headerKey, chat: widget.chat, onCall: _call),
+          _Header(
+            key: ChatScreen.headerKey,
+            chat: widget.chat,
+            onInfo: _openInfo,
+            onCall: _call,
+            onVideoCall: () => _call(video: true),
+          ),
           Expanded(
             child: StreamBuilder<List<ChatMessage>>(
               stream: _messages,
@@ -98,15 +112,24 @@ class _ChatScreenState extends State<ChatScreen> {
 }
 
 class _Header extends StatelessWidget {
-  const _Header({super.key, required this.chat, required this.onCall});
+  const _Header({super.key, required this.chat, required this.onInfo, required this.onCall, required this.onVideoCall});
 
   final ChatSummary chat;
+  final VoidCallback onInfo;
   final VoidCallback onCall;
+  final VoidCallback onVideoCall;
 
   @override
   Widget build(BuildContext context) {
     final l10n = context.l10n;
     final trust = trustOf(chat, l10n);
+    final subtitle = chat.isGroup
+        ? l10n.groupMembers(chat.memberNames.length + 1)
+        : switch (chat.trust) {
+            Trust.verified => l10n.chatVerified,
+            Trust.unverified => l10n.contactUnverified,
+            Trust.keyChanged => l10n.contactKeyChanged,
+          };
     return DecoratedBox(
       decoration: BoxDecoration(
         border: Border(bottom: BorderSide(color: context.tokens.line)),
@@ -116,57 +139,79 @@ class _Header extends StatelessWidget {
         child: Row(
           children: [
             TrinoIconButton(icon: TrinoIcons.back, label: l10n.back, onPressed: () => Navigator.maybePop(context)),
-            TrinoAvatar(name: chat.title, size: 40, kind: chat.isGroup ? AvatarKind.group : AvatarKind.person),
-            const SizedBox(width: 10),
             Expanded(
-              child: MergeSemantics(
-                child: Semantics(
-                  header: true,
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Row(
+              // One button: it reads its name and, as its value, the state.
+              child: Semantics(
+                container: true,
+                button: true,
+                label: l10n.chatInfoOpen(chat.title),
+                value: subtitle,
+                onTap: onInfo,
+                excludeSemantics: true,
+                child: Material(
+                  type: MaterialType.transparency,
+                  child: InkWell(
+                    onTap: onInfo,
+                    borderRadius: BorderRadius.circular(context.tokens.radius),
+                    child: ConstrainedBox(
+                      constraints: const BoxConstraints(minHeight: 48),
+                      child: Row(
                         children: [
-                          Flexible(
-                            child: Text(
-                              chat.title,
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: context.text.bodyStrong.copyWith(fontFamily: context.tokens.display, fontSize: 17),
+                          TrinoAvatar(
+                            name: chat.title,
+                            size: 40,
+                            kind: chat.isGroup ? AvatarKind.group : AvatarKind.person,
+                          ),
+                          const SizedBox(width: 10),
+                          Expanded(
+                            child: Column(
+                              mainAxisSize: MainAxisSize.min,
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Row(
+                                  children: [
+                                    Flexible(
+                                      child: Text(
+                                        chat.title,
+                                        maxLines: 1,
+                                        overflow: TextOverflow.ellipsis,
+                                        style: context.text.bodyStrong.copyWith(
+                                          fontFamily: context.tokens.display,
+                                          fontSize: 17,
+                                        ),
+                                      ),
+                                    ),
+                                    if (trust != null) ...[
+                                      const SizedBox(width: 4),
+                                      TrustBadge(kind: trust.kind, label: trust.label, compact: true),
+                                    ],
+                                  ],
+                                ),
+                                Text(
+                                  subtitle,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: context.text.caption.copyWith(
+                                    color: chat.trust == Trust.keyChanged && !chat.isGroup
+                                        ? context.tokens.warn
+                                        : context.tokens.muted,
+                                  ),
+                                ),
+                              ],
                             ),
                           ),
-                          if (trust != null) ...[
-                            const SizedBox(width: 4),
-                            // The words below say it to screen readers.
-                            ExcludeSemantics(
-                              child: TrustBadge(kind: trust.kind, label: trust.label, compact: true),
-                            ),
-                          ],
                         ],
                       ),
-                      if (chat.isGroup)
-                        Text(l10n.groupMembers(chat.memberNames.length + 1), style: context.text.caption)
-                      else
-                        Text(
-                          switch (chat.trust) {
-                            Trust.verified => l10n.chatVerified,
-                            Trust.unverified => l10n.contactUnverified,
-                            Trust.keyChanged => l10n.contactKeyChanged,
-                          },
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: context.text.caption.copyWith(
-                            color: chat.trust == Trust.keyChanged ? context.tokens.warn : context.tokens.muted,
-                          ),
-                        ),
-                    ],
+                    ),
                   ),
                 ),
               ),
             ),
             // Calls are one to one for now.
-            if (!chat.isGroup) TrinoIconButton(icon: TrinoIcons.phone, label: l10n.call, onPressed: onCall),
+            if (!chat.isGroup) ...[
+              TrinoIconButton(icon: TrinoIcons.phone, label: l10n.call, onPressed: onCall),
+              TrinoIconButton(icon: TrinoIcons.video, label: l10n.videoCall, onPressed: onVideoCall),
+            ],
           ],
         ),
       ),
