@@ -21,7 +21,9 @@
  * Tor (TOR-6): with the network (`net`), the inbox shows its one line
  * (net-model.ts), "Ver qué hacer" opens "No se pudo conectar", and its
  * "Conectar sin protección…" asks first (card 5); nothing goes without Tor
- * on its own.
+ * on its own. A new version shows as a compact notice under the line (card
+ * 8). When Arti is too old for the Tor network, "Trino necesita
+ * actualizarse" (card 9) opens once by itself and then from "Ver qué hacer".
  *
  * Ctrl+K goes back to Chats and to the search. Ctrl+L, which locks, is the
  * app's (App.tsx), as is the lock itself.
@@ -74,6 +76,7 @@ import { torLineOf } from '../net/net-model';
 import { useNetStatus } from '../net/useNetStatus';
 import { updateNoticeOf } from '../net/update-model';
 import { useUpdateInfo } from '../net/useUpdateInfo';
+import { UpdateNeededDialog } from '../net/UpdateNeededDialog';
 import { WithoutTorDialog } from '../net/WithoutTorDialog';
 import { useInvites } from './useInvites';
 import { useStrangerAttempts } from './useStrangerAttempts';
@@ -126,7 +129,9 @@ type Overlay =
   | { kind: 'forward'; from: ConvoRef; key: string }
   /** "No se pudo conectar" (card 3), then its question (card 5). */
   | { kind: 'torFailed' }
-  | { kind: 'withoutTor' };
+  | { kind: 'withoutTor' }
+  /** "Trino necesita actualizarse" (card 9): Arti too old for the Tor network. */
+  | { kind: 'updateNeeded' };
 
 /** Where the focus goes once a change took the control that had it off the page. */
 type FocusTarget = 'main' | 'settings' | { row: string | null };
@@ -343,6 +348,15 @@ export function ShellScreen(props: ShellScreenProps) {
   const selectedCallKey = fromCall && open?.kind === 'contact' && open.handle === fromCall.peer ? fromCall.key : null;
 
   const closeOverlay = () => setOverlay(null);
+  // Arti too old for the Tor network (card 9): said once, as soon as it is known, over nothing else;
+  // afterwards from "Ver qué hacer".
+  const updateNeededShown = useRef(false);
+  const obsolete = netStatus?.state === 'obsolete';
+  useEffect(() => {
+    if (!obsolete || updateNeededShown.current || overlay) return;
+    updateNeededShown.current = true;
+    setOverlay({ kind: 'updateNeeded' });
+  }, [obsolete, overlay]);
   const openConvo = (ref: ConvoRef) => {
     setOpen(ref);
     setMain('convo');
@@ -649,7 +663,7 @@ export function ShellScreen(props: ShellScreenProps) {
         }),
       });
     }
-  } else if ((shown?.kind === 'torFailed' || shown?.kind === 'withoutTor') && net) {
+  } else if ((shown?.kind === 'torFailed' || shown?.kind === 'withoutTor' || shown?.kind === 'updateNeeded') && net) {
     // "Ver qué hacer" goes with the line once it changes: the focus that
     // fell with it goes back to the list.
     const closeTor = () => {
@@ -657,7 +671,9 @@ export function ShellScreen(props: ShellScreenProps) {
       moveFocus({ row: openKey });
     };
     overlayContent =
-      shown.kind === 'torFailed' ? (
+      shown.kind === 'updateNeeded' ? (
+        <UpdateNeededDialog status={netStatus} api={net} onClose={closeTor} />
+      ) : shown.kind === 'torFailed' ? (
         <ConnectFailedDialog
           status={netStatus}
           api={net}
@@ -748,7 +764,10 @@ export function ShellScreen(props: ShellScreenProps) {
                   text: t(torLine.key, torLine.vars),
                   tone: torLine.tone,
                   ...(torLine.action && {
-                    action: { label: t('net.line.seeWhat'), onAction: () => setOverlay({ kind: 'torFailed' }) },
+                    action: {
+                      label: t('net.line.seeWhat'),
+                      onAction: () => setOverlay({ kind: netStatus?.state === 'obsolete' ? 'updateNeeded' : 'torFailed' }),
+                    },
                   }),
                 }
               }

@@ -19,8 +19,8 @@
  * list with TOR-8. Tor itself has no switch: it is always on, and the only
  * way without it is "solo esta vez".
  */
-import { ArrowLeft, ChevronDown } from 'lucide-react';
-import { useEffect, useId, useState, type ReactNode } from 'react';
+import { ArrowLeft } from 'lucide-react';
+import { useEffect, useId, useState } from 'react';
 import { useT } from '../../lib/i18n';
 import type { BridgesInfo, UpdateInfo } from '../../lib/net';
 import { Button, cx, FOCUS_RING, IconButton, iconSize, Switch } from '../../ui';
@@ -28,6 +28,7 @@ import { ErrorLine } from '../settings/ErrorLine';
 import { SettingsRows } from '../settings/SettingsRows';
 import { SettingsSection } from '../settings/SettingsSection';
 import { listenAll } from '../shell/listen';
+import { Advanced } from './Advanced';
 import type { NetScreensApi } from './net-api';
 import { settingsStatusOf } from './net-model';
 import { useNetStatus } from './useNetStatus';
@@ -38,33 +39,6 @@ export interface ConnectionViewProps {
   /** "Volver a Privacidad". */
   onBack(): void;
   autoFocus?: boolean;
-}
-
-/** "Opciones avanzadas": closed at first, a button that says whether it is open. */
-function Advanced({ children }: { children: ReactNode }) {
-  const t = useT();
-  const id = useId();
-  const [open, setOpen] = useState(false);
-  return (
-    <div className="flex flex-col gap-2.5">
-      <button
-        type="button"
-        aria-expanded={open}
-        aria-controls={id}
-        onClick={() => setOpen(!open)}
-        className={cx(
-          'inline-flex min-h-11 items-center gap-1.5 self-start rounded-ui px-1 font-ui text-ui-md font-semibold text-ui-muted hover:text-ui-ink',
-          FOCUS_RING,
-        )}
-      >
-        {t('net.settings.advanced')}
-        <ChevronDown {...iconSize('sm', cx('transition-transform reduce-motion:transition-none', open && 'rotate-180'))} aria-hidden="true" />
-      </button>
-      <div id={id} className="flex flex-col gap-2.5">
-        {open ? children : null}
-      </div>
-    </div>
-  );
 }
 
 export function ConnectionView({ api, onBack, autoFocus }: ConnectionViewProps) {

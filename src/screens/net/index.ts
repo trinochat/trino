@@ -7,4 +7,5 @@ export { useNetStatus } from './useNetStatus';
 export { useUpdateInfo } from './useUpdateInfo';
 export { updateNoticeOf, type UpdateNotice, type UpdateRun } from './update-model';
 export { WithoutTorDialog, type WithoutTorDialogProps } from './WithoutTorDialog';
+export { UpdateNeededDialog, type UpdateNeededDialogProps } from './UpdateNeededDialog';
 export { ConnectionView, type ConnectionViewProps } from './ConnectionView';

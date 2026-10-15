@@ -929,6 +929,25 @@ describe('ShellScreen: Tor', () => {
     expect(net.checkUpdateNow).toHaveBeenCalledTimes(1);
   });
 
+  // PropTorSimple card 9 (Tor design §6.5): Arti too old for the Tor network. Trino says it once, as
+  // soon as it knows, and again from "Ver qué hacer"; closed, it does not come back by itself.
+  it('shows "Trino necesita actualizarse" once when Tor is too old, and again from "Ver qué hacer"', async () => {
+    const { api: net } = fakeNet({ state: 'obsolete', confirmed: true });
+    setup({ net });
+    const dialog = await screen.findByRole('dialog', {
+      name: 'Trino necesita actualizarse para seguir conectándose de forma privada',
+    });
+    expect(screen.queryByRole('dialog', { name: 'No se pudo conectar' })).toBeNull();
+    fireEvent.keyDown(dialog, { key: 'Escape' });
+    expect(screen.queryByRole('dialog')).toBeNull();
+    await row('Ana');
+    expect(screen.queryByRole('dialog')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Ver qué hacer' }));
+    expect(
+      await screen.findByRole('dialog', { name: 'Trino necesita actualizarse para seguir conectándose de forma privada' }),
+    ).toBeTruthy();
+  });
+
   it('says nothing of Tor without the network', async () => {
     setup();
     await row('Ana');
