@@ -1318,8 +1318,33 @@ mod tests {
         cell
     }
 
+    /// The shortest run of bytes looked for in a sealed file. Sealed bytes
+    /// look random, so a shorter one turns up in them by chance: "ana" or
+    /// "rev" in the 4 KB this test seals, about once in 1,500 files (2 in
+    /// 3,000 when measured for TOR-12), and this test once failed that way.
+    /// An 8-byte one, about once in 10^12 files, even counting every piece
+    /// of the plaintext.
+    const SHORTEST_NEEDLE: usize = 8;
+
+    /// Every run of `SHORTEST_NEEDLE` bytes in `raw`.
+    fn pieces(raw: &[u8]) -> std::collections::HashSet<&[u8]> {
+        raw.windows(SHORTEST_NEEDLE).collect()
+    }
+
+    /// Whether `needle` is in `raw`, byte for byte.
+    fn holds(raw: &[u8], needle: &[u8]) -> bool {
+        assert!(
+            needle.len() >= SHORTEST_NEEDLE,
+            "{:?} is too short to look for in sealed bytes",
+            String::from_utf8_lossy(needle)
+        );
+        raw.windows(needle.len()).any(|window| window == needle)
+    }
+
     #[test]
     fn profiles_are_sealed_in_the_store_and_come_back_on_reload() {
+        // A contact's name here, long enough to look for (`SHORTEST_NEEDLE`).
+        const ANA: &str = "ana-del-almacen";
         let scratch = ScratchDir::new("profiles-bin");
         let mut inner = InnerState {
             identity: Some(create_identity()),
@@ -1332,10 +1357,10 @@ mod tests {
             ..Profiles::default()
         };
         let theirs = msg(5, "Ana Nombre", "Sobre Ana", Some(&photo(PNG)));
-        receive(&mut inner.profiles, "ana", &theirs, NOW);
+        receive(&mut inner.profiles, ANA, &theirs, NOW);
         receive(
             &mut inner.profiles,
-            "ana",
+            ANA,
             &text_with(r#","prof":{"v":1,"have":12}"#),
             NOW,
         );
@@ -1343,21 +1368,31 @@ mod tests {
         try_save(&inner).unwrap();
 
         let path = scratch.path().join("store").join(PROFILES_FILE);
-        let raw = String::from_utf8_lossy(&std::fs::read(&path).unwrap()).to_string();
+        let raw = std::fs::read(&path).unwrap();
         for secret in [
             "Mi secreto",
             "Ana Nombre",
             "Sobre Ana",
             "iVBORw0KGgo",
-            "ana",
-            "rev",
+            ANA,
+            r#""rev":12"#,
         ] {
-            assert!(!raw.contains(secret), "{secret} in the clear");
+            assert!(!holds(&raw, secret.as_bytes()), "{secret} in the clear");
+        }
+        // Nor any other piece of what was sealed, field names included.
+        let sealed = pieces(&raw);
+        let plain = serde_json::to_vec(&inner.profiles).unwrap();
+        for piece in plain.windows(SHORTEST_NEEDLE) {
+            assert!(
+                !sealed.contains(piece),
+                "{:?} in the clear",
+                String::from_utf8_lossy(piece)
+            );
         }
         let back = reloaded(scratch.path());
         assert_eq!(back.about, "Mi secreto sobre mí");
         assert_eq!(back.rev, 12);
-        assert_eq!(back.contacts["ana"], inner.profiles.contacts["ana"]);
+        assert_eq!(back.contacts[ANA], inner.profiles.contacts[ANA]);
     }
 
     #[test]
