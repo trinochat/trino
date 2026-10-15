@@ -13,6 +13,7 @@ import 'package:trino_mobile/engine/fake_engine.dart';
 import 'package:trino_mobile/l10n/app_localizations.dart';
 import 'package:trino_mobile/platform/biometrics.dart';
 import 'package:trino_mobile/platform/call_sounds.dart';
+import 'package:trino_mobile/platform/proximity.dart';
 import 'package:trino_mobile/platform/qr_scanner.dart';
 
 import 'harness.dart';
@@ -20,6 +21,7 @@ import 'harness.dart';
 export 'package:trino_mobile/engine/engine.dart';
 export 'package:trino_mobile/engine/fake_engine.dart';
 export 'package:trino_mobile/platform/call_sounds.dart';
+export 'package:trino_mobile/platform/proximity.dart';
 export 'package:trino_mobile/platform/qr_scanner.dart';
 
 export 'harness.dart';
@@ -69,6 +71,7 @@ Future<TestApp> pumpApp(
   DemoQrScanner? scanner,
   DemoCallSounds? sounds,
   VoidCallback? demoIncomingCall,
+  ProximityScreen? proximity,
 }) async {
   usePhone(tester);
   if (textScale != 1) {
@@ -98,6 +101,7 @@ Future<TestApp> pumpApp(
         scanner: app.scanner,
         callSounds: app.sounds,
         demoIncomingCall: demoIncomingCall,
+        proximity: proximity,
       ),
     ),
   );

@@ -10,6 +10,7 @@ import '../engine/engine.dart';
 import '../l10n/app_localizations.dart';
 import '../platform/biometrics.dart';
 import '../platform/call_sounds.dart';
+import '../platform/proximity.dart';
 import '../platform/qr_scanner.dart';
 import '../screens/home_shell.dart';
 import '../screens/onboarding_screen.dart';
@@ -29,6 +30,7 @@ class TrinoApp extends StatefulWidget {
     this.scanner,
     this.callSounds,
     this.demoIncomingCall,
+    this.proximity,
   });
 
   final TrinoEngine engine;
@@ -50,6 +52,10 @@ class TrinoApp extends StatefulWidget {
   /// Only the demo app (main.dart) gives it: a call rings in when asked, from
   /// a clearly labelled entry in Ajustes › Notificaciones.
   final VoidCallback? demoIncomingCall;
+
+  /// The screen next to the face during calls; the screen stays on when not
+  /// given.
+  final ProximityScreen? proximity;
 
   @override
   State<TrinoApp> createState() => _TrinoAppState();
@@ -86,6 +92,7 @@ class _TrinoAppState extends State<TrinoApp> {
     scanner: _scanner,
     callSounds: _callSounds,
     demoIncomingCall: widget.demoIncomingCall,
+    proximity: widget.proximity,
     child: ListenableBuilder(
       listenable: Listenable.merge([_appearance, _language]),
       builder: (context, _) => MaterialApp(

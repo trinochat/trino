@@ -1,6 +1,8 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <!-- A call that rings in vibrates (lib/platform/call_sounds.dart). -->
     <uses-permission android:name="android.permission.VIBRATE" />
+    <!-- The screen turns off next to the face during an audio call (lib/platform/proximity.dart). -->
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
     <application
         android:label="Trino"
         android:name="${applicationName}"

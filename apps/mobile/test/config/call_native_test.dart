@@ -6,6 +6,7 @@ import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:trino_mobile/platform/call_sounds.dart';
+import 'package:trino_mobile/platform/proximity.dart';
 
 const kotlinDir = 'android/app/src/main/kotlin/app/trino/trino_mobile';
 
@@ -63,6 +64,24 @@ void main() {
     test('the manifest asks for the vibration permission', () {
       expect(manifest(), contains('<uses-permission android:name="android.permission.VIBRATE"'));
     });
+
+    test('the screen turns off next to the face with a proximity wake lock, where the phone has the sensor', () {
+      final code = kotlin();
+      expect(code, contains('"${PlatformProximityScreen.channelName}"'));
+      expect(code, contains('"enable"'));
+      expect(code, contains('"disable"'));
+      expect(code, contains('PowerManager.PROXIMITY_SCREEN_OFF_WAKE_LOCK'));
+      expect(code, contains('isWakeLockLevelSupported(PowerManager.PROXIMITY_SCREEN_OFF_WAKE_LOCK)'));
+      expect(code, contains('"trino:call"'), reason: 'the wake lock tag, as the system lists it');
+      expect(code, contains('.release('));
+      final activity = read('$kotlinDir/MainActivity.kt');
+      expect(activity, contains('ProximityScreen('));
+      expect(activity, contains('proximity?.dispose()'), reason: 'released with the engine');
+    });
+
+    test('the manifest asks for the wake lock permission the proximity lock needs', () {
+      expect(manifest(), contains('<uses-permission android:name="android.permission.WAKE_LOCK"'));
+    });
   });
 
   group('iOS', () {
@@ -84,6 +103,12 @@ void main() {
       expect(delegate, contains('.soloAmbient'), reason: 'the category the switch silences');
       expect(delegate, contains('kSystemSoundID_Vibrate'));
       expect(delegate, contains('result("unknown")'), reason: 'iOS has no public API for the switch');
+    });
+
+    test('turns proximity monitoring on and off on its channel', () {
+      expect(delegate, contains('"${PlatformProximityScreen.channelName}"'));
+      expect(delegate, contains('UIDevice.current.isProximityMonitoringEnabled = true'));
+      expect(delegate, contains('UIDevice.current.isProximityMonitoringEnabled = false'));
     });
   });
 }

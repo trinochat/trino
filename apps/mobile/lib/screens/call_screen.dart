@@ -10,6 +10,11 @@
 // time: a call you make says "Llamando…" with the controls, and one that rings
 // in says "te está llamando por Trino" with Rechazar (the danger edge, as
 // Colgar) and Contestar (filled with the accent).
+//
+// During an audio call (connected or ringing out) with the speaker and the
+// camera off, the proximity sensor turns the screen off next to the face. The
+// speaker, the camera, hanging up, leaving the screen and pausing the app turn
+// it back on.
 import 'dart:async';
 
 import 'package:flutter/material.dart';
@@ -19,6 +24,7 @@ import '../app/scope.dart';
 import '../design/icons.dart';
 import '../design/theme.dart';
 import '../engine/engine.dart';
+import '../platform/proximity.dart';
 import '../ui/avatar.dart';
 import '../ui/banner.dart';
 import '../ui/button.dart';
@@ -43,7 +49,13 @@ class CallScreen extends StatefulWidget {
 
 class _CallScreenState extends State<CallScreen> {
   late final TrinoEngine _engine = context.engine;
+  late final ProximityScreen _proximity = context.proximity;
+  late final AppLifecycleListener _lifecycle;
   StreamSubscription<CallSession?>? _subscription;
+
+  /// The app went to the background: the sensor lets go until it comes back.
+  var _paused = false;
+  var _proximityOn = false;
 
   /// The call, for this screen and for the comparison dialog above it.
   final _call = ValueNotifier<CallSession?>(null);
@@ -51,14 +63,43 @@ class _CallScreenState extends State<CallScreen> {
   var _noteOpen = false;
 
   @override
+  void initState() {
+    super.initState();
+    _lifecycle = AppLifecycleListener(
+      onStateChange: (state) {
+        if (state == AppLifecycleState.paused || state == AppLifecycleState.detached) _paused = true;
+        if (state == AppLifecycleState.resumed) _paused = false;
+        _syncProximity();
+      },
+    );
+  }
+
+  @override
   void didChangeDependencies() {
     super.didChangeDependencies();
     _subscription ??= _engine.call.listen(_onCall);
   }
 
+  /// On only for an audio call, connected or ringing out, with the speaker
+  /// off, while the app is in front.
+  void _syncProximity({bool leaving = false}) {
+    final call = _call.value;
+    final on =
+        !leaving &&
+        !_paused &&
+        call != null &&
+        !call.speaker &&
+        !call.camera &&
+        (call.phase == CallPhase.connected || call.phase == CallPhase.calling);
+    if (on == _proximityOn) return;
+    _proximityOn = on;
+    unawaited(on ? _proximity.enable() : _proximity.disable());
+  }
+
   void _onCall(CallSession? call) {
     if (!mounted) return;
     if (call == null) {
+      _syncProximity(leaving: true);
       // The call ended: back to where it started, closing the comparison first.
       if (_call.value != null) {
         final navigator = Navigator.of(context);
@@ -68,10 +109,13 @@ class _CallScreenState extends State<CallScreen> {
       return;
     }
     _call.value = call;
+    _syncProximity();
   }
 
   @override
   void dispose() {
+    _syncProximity(leaving: true);
+    _lifecycle.dispose();
     unawaited(_subscription?.cancel());
     _call.dispose();
     super.dispose();

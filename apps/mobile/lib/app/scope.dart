@@ -1,5 +1,6 @@
 // What every screen reaches: the engine, the appearance, the language, the
-// clock, the phone's biometrics, its QR scanner and its call sounds. Provided above the
+// clock, the phone's biometrics, its QR scanner, its call sounds and its
+// proximity sensor. Provided above the
 // MaterialApp, so pushed pages see it too.
 import 'package:flutter/widgets.dart';
 
@@ -8,6 +9,7 @@ import '../engine/engine.dart';
 import '../l10n/app_localizations.dart';
 import '../platform/biometrics.dart';
 import '../platform/call_sounds.dart';
+import '../platform/proximity.dart';
 import '../platform/qr_scanner.dart';
 import 'language.dart';
 
@@ -22,6 +24,7 @@ class AppScope extends InheritedWidget {
     this.scanner,
     this.callSounds,
     this.demoIncomingCall,
+    this.proximity,
     required super.child,
   });
 
@@ -44,6 +47,9 @@ class AppScope extends InheritedWidget {
   /// Rings a demo call; only the demo app gives it.
   final VoidCallback? demoIncomingCall;
 
+  /// The screen next to the face; null keeps it on.
+  final ProximityScreen? proximity;
+
   static AppScope of(BuildContext context) => context.dependOnInheritedWidgetOfExactType<AppScope>()!;
 
   /// Without a dependency, for State lifecycle methods and callbacks. The
@@ -59,7 +65,8 @@ class AppScope extends InheritedWidget {
       biometrics != oldWidget.biometrics ||
       scanner != oldWidget.scanner ||
       callSounds != oldWidget.callSounds ||
-      demoIncomingCall != oldWidget.demoIncomingCall;
+      demoIncomingCall != oldWidget.demoIncomingCall ||
+      proximity != oldWidget.proximity;
 }
 
 extension AppContext on BuildContext {
@@ -69,6 +76,7 @@ extension AppContext on BuildContext {
   BiometricAuth get biometrics => AppScope.read(this).biometrics;
   QrScanner get scanner => AppScope.read(this).scanner ?? _demoScanner;
   CallSounds get callSounds => AppScope.read(this).callSounds ?? _silentSounds;
+  ProximityScreen get proximity => AppScope.read(this).proximity ?? _screenStaysOn;
 }
 
 /// For a scope given no scanner, such as a single screen under test.
@@ -76,3 +84,6 @@ final _demoScanner = DemoQrScanner();
 
 /// For a scope given no call sounds.
 final _silentSounds = DemoCallSounds();
+
+/// For a scope given no proximity sensor.
+final _screenStaysOn = DemoProximityScreen();

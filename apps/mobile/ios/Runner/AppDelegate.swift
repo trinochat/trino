@@ -6,6 +6,7 @@ import UIKit
 @main
 @objc class AppDelegate: FlutterAppDelegate, FlutterImplicitEngineDelegate {
   private let callSounds = CallSounds()
+  private let proximity = ProximityScreen()
 
   override func application(
     _ application: UIApplication,
@@ -19,6 +20,9 @@ import UIKit
     // The app's own channels (lib/platform/), on the engine's messenger.
     if let registrar = engineBridge.pluginRegistry.registrar(forPlugin: "TrinoCallSounds") {
       callSounds.attach(to: registrar.messenger())
+    }
+    if let registrar = engineBridge.pluginRegistry.registrar(forPlugin: "TrinoProximityScreen") {
+      proximity.attach(to: registrar.messenger())
     }
   }
 }
@@ -116,5 +120,31 @@ final class CallSounds {
     vibration = Timer.scheduledTimer(withTimeInterval: every, repeats: true) { _ in
       AudioServicesPlaySystemSound(kSystemSoundID_Vibrate)
     }
+  }
+}
+
+/// The native half of lib/platform/proximity.dart: while enabled, the
+/// proximity sensor turns the screen off next to the face. On a device without
+/// the sensor the property stays false and the screen stays on.
+final class ProximityScreen {
+  static let channelName = "org.trinochat.app/proximity"
+
+  private var channel: FlutterMethodChannel?
+
+  func attach(to messenger: FlutterBinaryMessenger) {
+    let channel = FlutterMethodChannel(name: ProximityScreen.channelName, binaryMessenger: messenger)
+    channel.setMethodCallHandler { call, result in
+      switch call.method {
+      case "enable":
+        UIDevice.current.isProximityMonitoringEnabled = true
+        result(UIDevice.current.isProximityMonitoringEnabled)
+      case "disable":
+        UIDevice.current.isProximityMonitoringEnabled = false
+        result(nil)
+      default:
+        result(FlutterMethodNotImplemented)
+      }
+    }
+    self.channel = channel
   }
 }
