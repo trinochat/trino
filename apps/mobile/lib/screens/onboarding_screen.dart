@@ -1,6 +1,9 @@
-// The first run, as on the desktop: language, name, password (with its
-// confirmation and the honest "nobody can recover it"), style, optional
-// two-step verification, and "Todo listo" with your code.
+// The first run. The welcome offers two ways in, "Crear una cuenta" and "Ya
+// uso Trino en mi computador", with the language in words below them.
+// Creating an account says first how Trino connects (Tor, in plain words,
+// with a way out to the bridges when Tor is blocked), then asks for a name,
+// a password (with the honest "nobody can recover it"), the style, optional
+// two-step verification, and ends at "Todo listo" with your code.
 import 'dart:async';
 
 import 'package:flutter/material.dart';
@@ -17,8 +20,9 @@ import '../ui/button.dart';
 import '../ui/list_row.dart';
 import '../ui/text_field.dart';
 import 'common.dart';
+import 'connection/bridges_screen.dart';
 
-enum _Step { welcome, name, password, style, twofa, twofaSetup, done }
+enum _Step { welcome, tor, name, password, style, twofa, twofaSetup, done }
 
 class OnboardingScreen extends StatefulWidget {
   const OnboardingScreen({super.key, required this.onFinished});
@@ -31,8 +35,6 @@ class OnboardingScreen extends StatefulWidget {
 }
 
 class _OnboardingScreenState extends State<OnboardingScreen> {
-  static const _counted = 5;
-
   late final TrinoEngine _engine = context.engine;
   final _name = TextEditingController();
   final _pass = TextEditingController();
@@ -56,15 +58,6 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
     }
     super.dispose();
   }
-
-  int? get _stepNumber => switch (_step) {
-    _Step.welcome => 1,
-    _Step.name => 2,
-    _Step.password => 3,
-    _Step.style => 4,
-    _Step.twofa || _Step.twofaSetup => 5,
-    _Step.done => null,
-  };
 
   void _go(_Step step) => setState(() => _step = step);
 
@@ -142,7 +135,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
   @override
   Widget build(BuildContext context) {
     final l10n = context.l10n;
-    final number = _stepNumber;
+    if (_step == _Step.welcome) return _welcome(l10n);
     return Scaffold(
       body: SafeArea(
         child: Column(
@@ -150,11 +143,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
             Padding(
               padding: const EdgeInsets.fromLTRB(24, 16, 24, 0),
               child: Row(
-                children: [
-                  ExcludeSemantics(child: Text(context.tokens.wordmark, style: context.text.title)),
-                  const Spacer(),
-                  if (number != null) Text(l10n.onbStepOf(number, _counted), style: context.text.caption),
-                ],
+                children: [ExcludeSemantics(child: Text(context.tokens.wordmark, style: context.text.title))],
               ),
             ),
             Expanded(
@@ -173,6 +162,93 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
     );
   }
 
+  /// The wordmark, what Trino is in one line, and the two ways in.
+  Widget _welcome(AppLocalizations l10n) {
+    final t = context.tokens;
+    final current = Localizations.localeOf(context);
+    return Scaffold(
+      body: SafeArea(
+        child: Column(
+          children: [
+            Expanded(
+              child: SingleChildScrollView(
+                padding: const EdgeInsets.fromLTRB(24, 48, 24, 16),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    ExcludeSemantics(
+                      child: Text(
+                        t.wordmark,
+                        style: context.text.largeTitle.copyWith(fontSize: 36, color: t.accentText),
+                      ),
+                    ),
+                    const SizedBox(height: 24),
+                    _title(l10n.onbTagline),
+                    _body(l10n.onbIntro),
+                  ],
+                ),
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(24, 8, 24, 8),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  TrinoButton(
+                    label: l10n.onbCreate,
+                    variant: ButtonVariant.primary,
+                    expand: true,
+                    onPressed: () => _go(_Step.tor),
+                  ),
+                  const SizedBox(height: 8),
+                  TrinoButton(label: l10n.linkStart, expand: true, onPressed: null),
+                  const SizedBox(height: 4),
+                  Center(
+                    child: TrinoButton(
+                      label: languageName(current),
+                      icon: TrinoIcons.globe,
+                      variant: ButtonVariant.quiet,
+                      onPressed: () => unawaited(_chooseLanguage()),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// The languages, each named in itself; choosing one applies it at once.
+  Future<void> _chooseLanguage() {
+    final language = AppScope.read(context).language;
+    final current = Localizations.localeOf(context).languageCode;
+    return showModalBottomSheet<void>(
+      context: context,
+      builder: (sheet) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            SectionLabel(sheet.l10n.onbLanguage),
+            for (final (:locale, :name) in kLanguages)
+              ChoiceRow(
+                title: name,
+                selected: locale.languageCode == current,
+                onTap: () {
+                  language.setLocale(locale);
+                  Navigator.of(sheet).pop();
+                },
+              ),
+            const SizedBox(height: 8),
+          ],
+        ),
+      ),
+    );
+  }
+
   Widget _title(String text) =>
       Semantics(container: true, header: true, child: Text(text, style: context.text.headline));
 
@@ -184,22 +260,9 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
   List<Widget> _content(AppLocalizations l10n) {
     switch (_step) {
       case _Step.welcome:
-        final language = AppScope.of(context).language;
-        final current = Localizations.localeOf(context).languageCode;
-        return [
-          _title(l10n.onbWelcomeTitle),
-          _body(l10n.onbWelcomeBody),
-          TrinoLabel(l10n.onbLanguage),
-          const SizedBox(height: 4),
-          for (final (:locale, :name) in kLanguages)
-            ChoiceRow(
-              title: name,
-              selected: locale.languageCode == current,
-              // Aligned with the title above, inside the page's own padding.
-              padding: const EdgeInsets.symmetric(vertical: 10),
-              onTap: () => language.setLocale(locale),
-            ),
-        ];
+        return const [];
+      case _Step.tor:
+        return [_title(l10n.onbTorTitle), _body(l10n.onbTorBody)];
       case _Step.name:
         return [
           _title(l10n.onbNameTitle),
@@ -243,7 +306,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
             autofillHints: const [AutofillHints.newPassword],
           ),
           const SizedBox(height: 20),
-          TrinoBanner(tone: BannerTone.warn, title: l10n.onbNoRecoveryTitle, message: l10n.onbNoRecoveryBody),
+          _NoRecoveryNote(l10n.onbNoRecovery),
         ];
       case _Step.style:
         final appearance = AppScope.of(context).appearance;
@@ -331,9 +394,18 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
     );
     switch (_step) {
       case _Step.welcome:
-        return [primary(l10n.onbStart, () => _go(_Step.name))];
+        return const [];
+      case _Step.tor:
+        return [
+          backAndNext(_Step.welcome, () => _go(_Step.name)),
+          secondary(
+            l10n.onbTorBlocked,
+            () => unawaited(Navigator.of(context).push(BridgesScreen.route())),
+            variant: ButtonVariant.quiet,
+          ),
+        ];
       case _Step.name:
-        return [backAndNext(_Step.welcome, _submitName)];
+        return [backAndNext(_Step.tor, _submitName)];
       case _Step.password:
         return [backAndNext(_Step.name, _submitPassword)];
       case _Step.style:
@@ -363,6 +435,28 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
     PassphraseStrength.good => l10n.onbStrengthGood,
     PassphraseStrength.strong => l10n.onbStrengthStrong,
   };
+}
+
+/// "Si la olvidas, nadie la puede recuperar…": a line with a lock, not a panel.
+class _NoRecoveryNote extends StatelessWidget {
+  const _NoRecoveryNote(this.text);
+
+  final String text;
+
+  @override
+  Widget build(BuildContext context) => Row(
+    crossAxisAlignment: CrossAxisAlignment.start,
+    children: [
+      Padding(
+        padding: const EdgeInsets.only(top: 1),
+        child: TrinoIcon(TrinoIcons.lock, size: 18, color: context.tokens.muted),
+      ),
+      const SizedBox(width: 8),
+      Expanded(
+        child: Text(text, style: context.text.secondary.copyWith(color: context.tokens.ink)),
+      ),
+    ],
+  );
 }
 
 /// A style to choose, previewed in its own tokens.

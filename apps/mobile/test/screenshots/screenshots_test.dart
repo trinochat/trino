@@ -193,7 +193,10 @@ void main() {
     testWidgets('the first run in $name', (tester) async {
       await pumpApp(tester, engine: testEngine(onboarded: false), appearance: appearance);
       await shot(tester, '$name-09-welcome');
-      await tester.tap(find.text('Empezar'));
+      await tester.tap(find.text('Crear una cuenta'));
+      await tester.pumpAndSettle();
+      await shot(tester, '$name-31-onb-tor');
+      await tester.tap(find.text('Continuar'));
       await tester.pumpAndSettle();
       await tester.enterText(find.byType(TextField), 'Sofía');
       await tester.tap(find.text('Continuar'));

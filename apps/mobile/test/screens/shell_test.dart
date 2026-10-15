@@ -79,7 +79,7 @@ void main() {
 
   testWidgets('a fresh install starts at the first run', (tester) async {
     await pumpApp(tester, engine: testEngine(onboarded: false));
-    expect(find.text('Te damos la bienvenida a Trino'), findsOneWidget);
+    expect(find.text('Mensajes privados, sin número de teléfono'), findsOneWidget);
     expect(find.byKey(const ValueKey('bottom-tabs')), findsNothing);
   });
 

@@ -114,6 +114,6 @@ void main() {
       find.descendant(of: find.byType(Dialog), matching: find.text('Borrar identidad y empezar de cero')),
     );
     await tester.pumpAndSettle();
-    expect(find.text('Te damos la bienvenida a Trino'), findsOneWidget);
+    expect(find.text('Mensajes privados, sin número de teléfono'), findsOneWidget);
   });
 }

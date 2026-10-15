@@ -156,11 +156,12 @@ void main() {
   });
 
   test('speaks of this phone, not of the desktop\'s computer', () {
-    // Only Dispositivos names the computer: there it is the other device of
-    // the account, never this one. Spain's "equipo" stays out everywhere.
+    // Only Dispositivos and linking name the computer: there it is the other
+    // device of the account, never this one. Spain's "equipo" stays out
+    // everywhere.
     for (final (locale, desktopWord) in [('es', 'equipo'), ('en', 'computer'), ('pt', 'computador')]) {
       for (final MapEntry(:key, :value) in messagesOf(arb(locale)).entries) {
-        if (key.startsWith('devices') && desktopWord != 'equipo') continue;
+        if ((key.startsWith('devices') || key.startsWith('link')) && desktopWord != 'equipo') continue;
         expect(value.toLowerCase().contains(desktopWord), isFalse, reason: '$locale $key: "$value"');
       }
     }
