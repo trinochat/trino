@@ -1533,7 +1533,12 @@ mod tests {
     /// ready, and only then does its deadline count. Without the wait it
     /// would fail with TorNotReady at once and be tried again only after
     /// its pause (here 10 s).
-    #[tokio::test]
+    ///
+    /// On tokio's paused clock: time moves only while nothing in the test
+    /// has work to do, so the in-memory handshake after Tor is ready never
+    /// runs into the 300 ms deadline, however loaded the machine is. On the
+    /// real clock it did, about once in six runs under load (TOR-12).
+    #[tokio::test(start_paused = true)]
     async fn a_relay_deadline_starts_when_tor_is_ready() {
         use crate::fsutil::scratch::ScratchDir;
         use crate::net_cmds::tests::fake_tor;
@@ -1543,7 +1548,14 @@ mod tests {
         let mut server = tor.listen("relay.trino.invalid", 80);
         tokio::spawn(async move {
             while let Some(io) = server.accept().await {
-                tokio::spawn(tokio_tungstenite::accept_async(io));
+                // The socket stays open until the client closes it: one
+                // the relay dropped at once would be connected only for
+                // an instant, which the test could miss.
+                tokio::spawn(async move {
+                    if let Ok(mut ws) = tokio_tungstenite::accept_async(io).await {
+                        while let Some(Ok(_)) = ws.next().await {}
+                    }
+                });
             }
         });
         net.start();
@@ -1577,11 +1589,39 @@ mod tests {
             "tried before Tor was ready"
         );
         fake.ready();
+        // Tor's state comes from a thread of its own, which the paused
+        // clock does not wait for: waited for without a timer, so the
+        // clock stays where it is meanwhile.
+        within_real_time(
+            Duration::from_secs(10),
+            "Tor to be ready",
+            net.until_ready(),
+        )
+        .await;
 
         wait_until("the relay once Tor is ready", || client.is_connected()).await;
         assert_eq!(attempts.load(Ordering::SeqCst), 1);
         client.close();
         net.stop();
+    }
+
+    /// `future`, failing the test once it has taken `limit` of real time:
+    /// for what another thread does, which a paused clock does not wait
+    /// for and no tokio timer can bound.
+    async fn within_real_time<T>(
+        limit: Duration,
+        what: &str,
+        future: impl std::future::Future<Output = T>,
+    ) -> T {
+        let (expired, expiry) = tokio::sync::oneshot::channel::<()>();
+        std::thread::spawn(move || {
+            std::thread::sleep(limit);
+            let _ = expired.send(());
+        });
+        tokio::select! {
+            out = future => out,
+            _ = expiry => panic!("timed out waiting for {what}"),
+        }
     }
 
     /// Tor design §3 R1: a relay with an onion is reached there first,

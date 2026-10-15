@@ -106,3 +106,6 @@ webview2-com = "=0.38.2"
 proptest = "1"
 # Tor as an in-memory pipe, and a direct transport that fails the test.
 trino-net = { path = "../crates/trino-net", features = ["test-util"] }
+# tokio's paused clock (`start_paused`), for tests whose deadlines must not
+# depend on how loaded the machine is. Only a feature: no new crate.
+tokio = { version = "1", features = ["test-util"] }
