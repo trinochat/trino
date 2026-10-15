@@ -29,6 +29,11 @@ flutter:
   # Generates the localizations from lib/l10n/*.arb (see l10n.yaml).
   generate: true
 
+  assets:
+    # The SAS v2 symbols, copied byte for byte from the desktop's
+    # assets/sas/sas-v2.json (feat/rediseno @ 7b3d454); see lib/sas/sas_table.dart.
+    - assets/sas/sas-v2.json
+
   # Bundled, unmodified, under the SIL Open Font License (OFL.txt beside each).
   # The variable fonts take their weight from FontWeight (the wght axis).
   fonts:
