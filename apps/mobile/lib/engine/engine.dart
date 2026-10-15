@@ -82,6 +82,9 @@ enum ChatKind { direct, group }
 /// Delivery of your own message. The protocol reports no "read" state.
 enum MessageStatus { sending, sent, failed }
 
+/// The tone of an incoming call: "Trino suave", or none.
+enum Ringtone { soft, silent }
+
 /// What notifications show; "only the name" is the recommended default.
 enum NotificationPreview { nameAndMessage, nameOnly, nothing }
 
@@ -644,6 +647,9 @@ class EngineSettings {
     this.biometricUnlock = false,
     this.reaskInterval = ReaskInterval.threeDays,
     this.reinforcedProtection = false,
+    this.ringtone = Ringtone.soft,
+    this.ringVolume = 60,
+    this.vibrateOnRing = true,
   });
 
   final NotificationPreview notificationPreview;
@@ -670,6 +676,16 @@ class EngineSettings {
   /// Always asks for the passphrase: biometric unlock is not offered.
   final bool reinforcedProtection;
 
+  /// The tone of an incoming call. It starts soft and rises to [ringVolume].
+  final Ringtone ringtone;
+
+  /// From 0 to 100, as the desktop's slider; also the ringback's volume.
+  final int ringVolume;
+
+  /// Vibrates while a call rings in, also with the phone on vibrate. With the
+  /// phone on silent nothing rings or vibrates.
+  final bool vibrateOnRing;
+
   EngineSettings copyWith({
     NotificationPreview? notificationPreview,
     bool? messageSound,
@@ -681,6 +697,9 @@ class EngineSettings {
     bool? biometricUnlock,
     ReaskInterval? reaskInterval,
     bool? reinforcedProtection,
+    Ringtone? ringtone,
+    int? ringVolume,
+    bool? vibrateOnRing,
   }) => EngineSettings(
     notificationPreview: notificationPreview ?? this.notificationPreview,
     messageSound: messageSound ?? this.messageSound,
@@ -692,6 +711,9 @@ class EngineSettings {
     biometricUnlock: biometricUnlock ?? this.biometricUnlock,
     reaskInterval: reaskInterval ?? this.reaskInterval,
     reinforcedProtection: reinforcedProtection ?? this.reinforcedProtection,
+    ringtone: ringtone ?? this.ringtone,
+    ringVolume: ringVolume ?? this.ringVolume,
+    vibrateOnRing: vibrateOnRing ?? this.vibrateOnRing,
   );
 }
 
@@ -779,8 +801,9 @@ abstract interface class TrinoEngine {
   Stream<EngineSettings> get settings;
 
   /// The engine keeps the rules: a custom bridge forces
-  /// [EngineSettings.connectAfterUnlockOnly] on, and reinforced protection
-  /// forces [EngineSettings.biometricUnlock] off.
+  /// [EngineSettings.connectAfterUnlockOnly] on, reinforced protection
+  /// forces [EngineSettings.biometricUnlock] off, and
+  /// [EngineSettings.ringVolume] stays between 0 and 100.
   Future<void> updateSettings(EngineSettings settings);
 
   // Contacts and chats.

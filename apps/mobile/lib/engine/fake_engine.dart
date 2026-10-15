@@ -353,6 +353,7 @@ class FakeTrinoEngine implements TrinoEngine {
   EngineSettings _withRules(EngineSettings settings) => settings.copyWith(
     connectAfterUnlockOnly: settings.connectAfterUnlockOnly || _bridges.value.hasCustomBridge,
     biometricUnlock: settings.biometricUnlock && !settings.reinforcedProtection,
+    ringVolume: settings.ringVolume.clamp(0, 100),
   );
 
   // Contacts and chats.
