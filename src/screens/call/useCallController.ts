@@ -184,6 +184,8 @@ export interface CallController {
   consent: DirectConsentRequest | null;
   /** Through `answerDirectConsent`; anything but true cancels. */
   answerConsent(allow: boolean): void;
+  /** Tor is still connecting: the call keeps ringing meanwhile (R-11). */
+  waitingForTor: boolean;
   media: MediaState;
   localStream: MediaStream | null;
   remoteStream: MediaStream | null;
@@ -276,6 +278,7 @@ export function useCallController(deps: CallControllerDeps): CallController {
   const [video, setVideo] = useState(false);
   const [mode, setMode] = useState<ConnectionMode | null>(null);
   const [consent, setConsent] = useState<DirectConsentRequest | null>(null);
+  const [waitingForTor, setWaitingForTor] = useState(false);
   const [media, setMedia] = useState<MediaState>(NO_MEDIA);
   const [localStream, setLocalStream] = useState<MediaStream | null>(null);
   const [remoteStream, setRemoteStream] = useState<MediaStream | null>(null);
@@ -667,6 +670,9 @@ export function useCallController(deps: CallControllerDeps): CallController {
       onSasInputs: inputs => {
         if (!disposed) actions.onSasInputs(inputs);
       },
+      onWaitingForTor: waiting => {
+        if (!disposed) setWaitingForTor(waiting);
+      },
     });
     let unlisten: (() => void) | null = null;
     latest.current.deps.events
@@ -709,6 +715,7 @@ export function useCallController(deps: CallControllerDeps): CallController {
     mode,
     consent,
     answerConsent: actions.answerConsent,
+    waitingForTor,
     media,
     localStream,
     remoteStream,

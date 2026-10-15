@@ -199,12 +199,12 @@ describe('the calls', () => {
     await placeCall();
     let question = screen.getByRole('alertdialog', {
       name: 'No se pudo proteger la llamada.',
-      description: '¿Llamar directo? Tu contacto verá tu IP.',
+      description: '¿Llamar sin protección? Tu contacto verá desde dónde te conectas.',
     });
     expect(document.activeElement).toBe(within(question).getByRole('button', { name: 'Cancelar' }));
     expect(FakePc.instances).toHaveLength(0);
 
-    await press(within(question).getByRole('button', { name: 'Llamar directo' }));
+    await press(within(question).getByRole('button', { name: 'Llamar' }));
     expect(FakePc.instances).toHaveLength(1);
     expect(FakePc.instances[0]!.config.iceTransportPolicy).toBe('all');
     await press(within(callScreen()!).getByRole('button', { name: 'Colgar' }));

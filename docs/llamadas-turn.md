@@ -108,9 +108,11 @@ llamada protegida:
   Luego programa la siguiente renovación.
 - Antes de un reinicio de ICE también las renueva, para que los relays nuevos
   nazcan con credenciales que duren.
-- Cada renovación es una petición nueva, con otra llave de un solo uso y otro
-  circuito, porque el backend no sabe qué petición es de qué llamada. Por eso
-  un reinicio de ICE espera el minado y la petición por Tor (unos 2–6 s).
+- Cada petición nombra su llamada (`get_turn_servers` recibe el `callId`). Una
+  renovación dentro de la misma llamada firma con la llave de esa llamada y va
+  por su circuito, pero pide credenciales nuevas; otra llamada, un bloqueo o
+  una sesión nueva usan otra llave y otro circuito. Un reinicio de ICE igual
+  espera el minado y la petición por Tor (unos 2–6 s).
 - Si la renovación falla, se reintenta cada minuto, hasta 3 veces seguidas.
   **Nunca** pasa a directa ni pregunta: si el relay se cae, la llamada termina
   como cualquier llamada rota.
@@ -120,7 +122,7 @@ llamada protegida:
 Si no hay TURN (sin red, Worker caído, cupo agotado, respuesta inválida o bóveda
 bloqueada), la UI pregunta:
 
-> No se pudo proteger la llamada. ¿Llamar directo? Tu contacto verá tu IP.
+> No se pudo proteger la llamada. ¿Llamar sin protección? Tu contacto verá desde dónde te conectas.
 
 - Cancelar es la opción por defecto: tiene el foco y Escape también cancela.
 - Al **llamar**, "no" cancela la llamada sin abrir el micrófono ni enviar nada.
@@ -179,10 +181,14 @@ En el backend, los errores llegan a la UI como `CommandError`:
 - `internal`: firma, prueba de trabajo o respuesta inválida;
 - `tor_not_ready`: Tor todavía se está conectando y no se pidió nada.
 
-El mensaje (en inglés, para el log) empieza por `turn:`. Hoy la UI no distingue
-entre ellos: cualquier fallo lleva a la pregunta anterior. Con TOR-6,
-`tor_not_ready` dejará de llevar a ella: la llamada sigue sonando con "Tor
-todavía se está conectando…" (R-11).
+El mensaje (en inglés, para el log) empieza por `turn:`. Cualquier fallo con
+Tor listo lleva a la pregunta anterior, salvo `tor_not_ready`, que **nunca**
+lleva a ella (R-11): mientras Tor se conecta, la llamada sigue sonando con
+"Todavía conectando de forma privada. La llamada sigue sonando…", y las
+credenciales se vuelven a pedir cada 3 s mientras suena (45 s). Si Tor no
+conecta en ese tiempo, la llamada termina sin preguntar nada (al contestar, se
+rechaza). Si no, un contacto podría llamar justo al abrir Trino para que
+aceptes ir directo por apuro.
 
 ## Costo y abuso
 
@@ -202,8 +208,9 @@ trabajo y los límites diarios existen por eso.
   - un Worker de prueba sobre un Tor en memoria, con TLS de una CA de prueba:
     cuerpo, cabeceras (el User-Agent `Trino`), errores, redirección, tamaño,
     límite de tiempo, reloj desfasado y Tor sin conectar;
-  - una llave, un circuito y unas credenciales nuevas por llamada, sin
-    reutilizar nada, y el bloqueo con una petición en curso;
+  - una llave, un circuito y unas credenciales nuevas por llamada; dentro de
+    una llamada, sus renovaciones con su llave y su circuito; y el bloqueo con
+    una petición en curso;
   - el mapeo de errores.
 - Frontend: `src/lib/call.test.ts`, con un `RTCPeerConnection` falso
   (`src/lib/call-test-support.ts`), y `src/lib/ice-privacy.test.ts`. Cubren:

@@ -840,3 +840,119 @@ describe('choosing the devices of a call', () => {
     expect(cb.onError).not.toHaveBeenCalled();
   });
 });
+
+// Tor design §9.3, §10.5 and design test 63 (R-11; PropTorSimple card 12):
+// while Tor is still connecting, the call keeps ringing and the credentials
+// are asked again within the ring's time; a direct call is never offered
+// then, or a contact could ring just as Trino opens to rush you into one.
+// It is offered only when Tor is ready and the server fails.
+describe('Tor still connecting', () => {
+  const TOR_NOT_READY = { code: 'tor_not_ready', message: 'tor is not ready' };
+
+  async function setupWaiting() {
+    const { call, cb } = await setup();
+    const onWaitingForTor = vi.fn();
+    call.initCall({ ...cb, onWaitingForTor });
+    return { call, cb, onWaitingForTor };
+  }
+
+  it('tor_not_ready_never_offers_a_direct_call: placing keeps waiting, then ends without asking', async () => {
+    vi.useFakeTimers();
+    api.getTurnServers.mockRejectedValue(TOR_NOT_READY);
+    const { call, cb, onWaitingForTor } = await setupWaiting();
+    const placing = call.startCall(PEER, false);
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(onWaitingForTor).toHaveBeenLastCalledWith(true);
+    expect(lastState(cb)).toBe('starting');
+    expect(api.getTurnServers.mock.calls.length).toBeGreaterThan(1);
+    await vi.advanceTimersByTimeAsync(120_000);
+    await placing;
+    expect(consentRequests(cb)).toEqual([]);
+    expect(api.getCallConfig).not.toHaveBeenCalled();
+    expect(getUserMedia).not.toHaveBeenCalled();
+    expect(FakePc.instances).toHaveLength(0);
+    expect(api.sendCallSignal).not.toHaveBeenCalled();
+    expect(cb.onError).toHaveBeenCalledWith('connection');
+    expect(onWaitingForTor).toHaveBeenLastCalledWith(false);
+    expect(lastState(cb)).toBe('ended');
+  });
+
+  it('places the protected call once Tor connects, without asking', async () => {
+    vi.useFakeTimers();
+    api.getTurnServers.mockRejectedValueOnce(TOR_NOT_READY).mockResolvedValue(turnOk());
+    const { call, cb, onWaitingForTor } = await setupWaiting();
+    const placing = call.startCall(PEER, false);
+    await vi.advanceTimersByTimeAsync(10_000);
+    await placing;
+    expect(onWaitingForTor.mock.calls).toEqual([[true], [false]]);
+    expect(consentRequests(cb)).toEqual([]);
+    expect(FakePc.instances[0]!.config).toEqual(PROTECTED_CONFIG);
+    expect(lastState(cb)).toBe('ringing-out');
+  });
+
+  it('answering never offers a direct answer either: it declines once the wait is over', async () => {
+    vi.useFakeTimers();
+    api.getTurnServers.mockRejectedValue(TOR_NOT_READY);
+    const { call, cb, onWaitingForTor } = await setupWaiting();
+    call.handleSignal(PEER, offerFrom());
+    const accepting = call.acceptIncoming();
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(onWaitingForTor).toHaveBeenLastCalledWith(true);
+    expect(consentRequests(cb)).toEqual([]);
+    await vi.advanceTimersByTimeAsync(120_000);
+    await accepting;
+    expect(consentRequests(cb)).toEqual([]);
+    expect(api.getCallConfig).not.toHaveBeenCalled();
+    expect(sent().map(s => s.signal.t)).toEqual(['reject']);
+    expect(lastState(cb)).toBe('ended');
+  });
+
+  it('asks before going direct only when Tor is ready and the server fails', async () => {
+    vi.useFakeTimers();
+    api.getTurnServers.mockRejectedValueOnce(TOR_NOT_READY).mockRejectedValue(TURN_DOWN);
+    const { call, cb } = await setupWaiting();
+    const placing = call.startCall(PEER, false);
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(consentRequests(cb)).toEqual([{ peer: PEER, outgoing: true }]);
+    call.answerDirectConsent(false);
+    await placing;
+  });
+
+  it('stops waiting when the call is hung up meanwhile', async () => {
+    vi.useFakeTimers();
+    api.getTurnServers.mockRejectedValue(TOR_NOT_READY);
+    const { call, cb, onWaitingForTor } = await setupWaiting();
+    const placing = call.startCall(PEER, false);
+    await vi.advanceTimersByTimeAsync(5_000);
+    call.hangup();
+    await vi.advanceTimersByTimeAsync(120_000);
+    await placing;
+    const asked = api.getTurnServers.mock.calls.length;
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(api.getTurnServers.mock.calls.length).toBe(asked);
+    expect(onWaitingForTor).toHaveBeenLastCalledWith(false);
+    expect(consentRequests(cb)).toEqual([]);
+  });
+});
+
+// TOR-4's first deviation, closed here: each request names its call, so the
+// backend signs a call's renewals with that call's key and token.
+describe('the call each TURN request is for', () => {
+  it('names the placed call, and its renewals name it too', async () => {
+    api.getTurnServers.mockResolvedValue(turnOk());
+    const { call } = await setup();
+    const pc = await connectedCall(call);
+    const id = sent()[0]!.signal.callId;
+    pc.moveTo('failed'); // an ICE restart asks for fresh credentials
+    await settle();
+    expect(api.getTurnServers.mock.calls).toEqual([[id], [id]]);
+  });
+
+  it('names the call being answered', async () => {
+    api.getTurnServers.mockResolvedValue(turnOk());
+    const { call } = await setup();
+    call.handleSignal(PEER, offerFrom());
+    await call.acceptIncoming();
+    expect(api.getTurnServers.mock.calls).toEqual([[OFFER_ID]]);
+  });
+});

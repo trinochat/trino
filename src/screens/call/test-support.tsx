@@ -67,6 +67,7 @@ export function fakeController(over: Partial<CallController> = {}): CallControll
     mode: null,
     consent: null,
     answerConsent: vi.fn(),
+    waitingForTor: false,
     media: { muted: false, cameraOn: false, hasVideo: false },
     localStream: null,
     remoteStream: null,

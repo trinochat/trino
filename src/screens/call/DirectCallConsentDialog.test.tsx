@@ -25,9 +25,17 @@ describe('DirectCallConsentDialog', () => {
       show(OUTGOING);
       const dialog = screen.getByRole('alertdialog', {
         name: 'No se pudo proteger la llamada.',
-        description: '¿Llamar directo? Tu contacto verá tu IP.',
+        description: '¿Llamar sin protección? Tu contacto verá desde dónde te conectas.',
       });
       expect(dialog.getAttribute('aria-modal')).toBe('true');
+    });
+
+    // Card 12: Cancelar is the main button; going without protection is not.
+    it('draws Cancelar as the main button and "Llamar" as a plain one', () => {
+      show(OUTGOING);
+      expect(screen.getByRole('button', { name: 'Cancelar' }).className).toContain('bg-ui-accent');
+      expect(screen.getByRole('button', { name: 'Llamar' }).className).not.toContain('bg-ui-accent');
+      expect(screen.getByRole('button', { name: 'Llamar' }).className).not.toContain('bg-ui-danger');
     });
 
     it('focuses Cancel, the safe answer, and gives false on Escape', () => {
@@ -37,13 +45,13 @@ describe('DirectCallConsentDialog', () => {
       expect(onAnswer.mock.calls).toEqual([[false]]);
     });
 
-    it('gives false on Cancel and true only on "Llamar directo"', () => {
+    it('gives false on Cancel and true only on "Llamar"', () => {
       const { onAnswer, unmount } = show(OUTGOING);
       fireEvent.click(screen.getByRole('button', { name: 'Cancelar' }));
       expect(onAnswer.mock.calls).toEqual([[false]]);
       unmount();
       const second = show(OUTGOING);
-      fireEvent.click(screen.getByRole('button', { name: 'Llamar directo' }));
+      fireEvent.click(screen.getByRole('button', { name: 'Llamar' }));
       expect(second.onAnswer.mock.calls).toEqual([[true]]);
     });
   });
@@ -53,7 +61,7 @@ describe('DirectCallConsentDialog', () => {
       const { onAnswer } = show(INCOMING);
       screen.getByRole('alertdialog', {
         name: 'No se pudo proteger la llamada.',
-        description: '¿Contestar directo? Ana Torres verá tu IP.',
+        description: '¿Contestar sin protección? Ana Torres verá desde dónde te conectas.',
       });
       const decline = screen.getByRole('button', { name: 'No contestar' });
       expect(document.activeElement).toBe(decline);
@@ -61,9 +69,9 @@ describe('DirectCallConsentDialog', () => {
       expect(onAnswer.mock.calls).toEqual([[false]]);
     });
 
-    it('gives true only on "Contestar directo"', () => {
+    it('gives true only on "Contestar"', () => {
       const { onAnswer } = show(INCOMING);
-      fireEvent.click(screen.getByRole('button', { name: 'Contestar directo' }));
+      fireEvent.click(screen.getByRole('button', { name: 'Contestar' }));
       expect(onAnswer.mock.calls).toEqual([[true]]);
     });
   });
@@ -75,7 +83,7 @@ describe('DirectCallConsentDialog', () => {
 
   it('closes when the question goes away, so a late click does nothing', () => {
     const { onAnswer, rerender } = show(OUTGOING);
-    const confirm = screen.getByRole('button', { name: 'Llamar directo' });
+    const confirm = screen.getByRole('button', { name: 'Llamar' });
     rerender(<DirectCallConsentDialog consent={null} peerName="Ana Torres" onAnswer={onAnswer} />);
     expect(screen.queryByRole('alertdialog')).toBeNull();
     fireEvent.click(confirm);
@@ -84,7 +92,7 @@ describe('DirectCallConsentDialog', () => {
 
   it('answers once: a second click on the same question does nothing', () => {
     const { onAnswer } = show(OUTGOING);
-    const confirm = screen.getByRole('button', { name: 'Llamar directo' });
+    const confirm = screen.getByRole('button', { name: 'Llamar' });
     fireEvent.click(confirm);
     fireEvent.click(confirm);
     fireEvent.click(screen.getByRole('button', { name: 'Cancelar' }));
@@ -93,10 +101,10 @@ describe('DirectCallConsentDialog', () => {
 
   it('asks again for a new question', () => {
     const { onAnswer, rerender } = show(OUTGOING);
-    fireEvent.click(screen.getByRole('button', { name: 'Llamar directo' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Llamar' }));
     rerender(<DirectCallConsentDialog consent={null} peerName="Ana Torres" onAnswer={onAnswer} />);
     rerender(<DirectCallConsentDialog consent={{ ...OUTGOING }} peerName="Ana Torres" onAnswer={onAnswer} />);
-    fireEvent.click(screen.getByRole('button', { name: 'Llamar directo' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Llamar' }));
     expect(onAnswer.mock.calls).toEqual([[true], [true]]);
   });
 
@@ -105,7 +113,7 @@ describe('DirectCallConsentDialog', () => {
     const { storage, accesses } = countingStorage();
     vi.stubGlobal('localStorage', storage);
     const { onAnswer } = show(OUTGOING);
-    fireEvent.click(screen.getByRole('button', { name: 'Llamar directo' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Llamar' }));
     expect(onAnswer).toHaveBeenCalledWith(true);
     expect(accesses).toEqual([]);
   });
@@ -115,7 +123,7 @@ describe('DirectCallConsentDialog', () => {
     renderIn(<DirectCallConsentDialog consent={INCOMING} peerName="Ana" onAnswer={onAnswer} />, 'en');
     screen.getByRole('alertdialog', {
       name: 'The call could not be protected.',
-      description: 'Answer directly? Ana will see your IP address.',
+      description: 'Answer without protection? Ana will see where you connect from.',
     });
     screen.getByRole('button', { name: 'Don’t answer' });
   });

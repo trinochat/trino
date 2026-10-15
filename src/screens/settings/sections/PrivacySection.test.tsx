@@ -13,7 +13,7 @@ import { PrivacySection } from './PrivacySection';
 afterEach(cleanup);
 
 const CALLS_LINE =
-  'Tus llamadas pasan por un servidor de Cloudflare: tu contacto no ve tu IP, pero Cloudflare sí. Si una llamada no se puede proteger, Trino te pregunta antes de llamar directo.';
+  'En las llamadas, Cloudflare —la empresa que pasa el audio— ve desde dónde te conectas. Tu contacto no lo ve. Trino pide cada llamada por separado, para que Cloudflare no la una con tu cuenta.';
 
 function setup(nodes: NodeInfo[]) {
   let current = nodes;

@@ -105,6 +105,12 @@ export function CallScreen({ controller: call, devices, sinkId, onSinkChange }: 
               <span className="font-ui-mono">{status}</span>
               <ConnectionModeLine mode={call.mode} ringing={ringing} />
             </div>
+            {/* Tor still connecting (R-11, card 12): the call keeps ringing, and nothing offers to go direct. */}
+            {call.waitingForTor && (
+              <p role="status" className="m-0 text-ui-md leading-normal text-ui-muted">
+                {t('call2.screen.torWait')}
+              </p>
+            )}
           </div>
           <IconButton
             aria-label={t('call2.screen.back')}

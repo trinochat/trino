@@ -77,7 +77,7 @@ export const settings: AreaStrings = {
     'settings2.privacy.loading': 'Cargando tus contactos…',
     'settings2.privacy.back': 'Volver a Privacidad',
     'settings2.privacy.callsLine':
-      'Tus llamadas pasan por un servidor de Cloudflare: tu contacto no ve tu IP, pero Cloudflare sí. Si una llamada no se puede proteger, Trino te pregunta antes de llamar directo.',
+      'En las llamadas, Cloudflare —la empresa que pasa el audio— ve desde dónde te conectas. Tu contacto no lo ve. Trino pide cada llamada por separado, para que Cloudflare no la una con tu cuenta.',
     // The block of screen captures (SC-1). The Windows names: Recortes, Impr Pant, Lupa.
     'settings2.privacy.captures': 'Bloquear capturas de pantalla',
     'settings2.privacy.capturesBody':
@@ -423,7 +423,7 @@ export const settings: AreaStrings = {
     'settings2.privacy.loading': 'Loading your contacts…',
     'settings2.privacy.back': 'Back to Privacy',
     'settings2.privacy.callsLine':
-      'Your calls go through a Cloudflare server: your contact doesn’t see your IP, but Cloudflare does. If a call can’t be protected, Trino asks you before calling directly.',
+      'In calls, Cloudflare —the company that carries the audio— sees where you connect from. Your contact doesn’t. Trino asks for each call separately, so Cloudflare can’t link it to your account.',
     'settings2.privacy.captures': 'Block screenshots',
     'settings2.privacy.capturesBody':
       'In screenshots, recordings and screen sharing (Snipping Tool, Print Screen, OBS, Zoom, Meet), the Trino window comes out black or does not appear. It does not stop someone from taking a photo of the screen with another phone. If you use Windows Magnifier or need to share your screen, turn it off.',
@@ -758,7 +758,7 @@ export const settings: AreaStrings = {
     'settings2.privacy.loading': 'Carregando seus contatos…',
     'settings2.privacy.back': 'Voltar para Privacidade',
     'settings2.privacy.callsLine':
-      'Suas chamadas passam por um servidor da Cloudflare: seu contato não vê seu IP, mas a Cloudflare vê. Se uma chamada não puder ser protegida, o Trino pergunta antes de ligar diretamente.',
+      'Nas chamadas, a Cloudflare —a empresa que transmite o áudio— vê de onde você se conecta. Seu contato não vê. O Trino pede cada chamada separadamente, para que a Cloudflare não a ligue à sua conta.',
     'settings2.privacy.captures': 'Bloquear capturas de tela',
     'settings2.privacy.capturesBody':
       'Em capturas, gravações e no compartilhamento de tela (Ferramenta de Captura, Print Screen, OBS, Zoom, Meet), a janela do Trino fica preta ou não aparece. Não impede que alguém tire uma foto da tela com outro celular. Se você usa a Lupa do Windows ou precisa compartilhar sua tela, desative.',

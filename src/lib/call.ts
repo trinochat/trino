@@ -9,7 +9,15 @@
 // be had, the user is asked before a `direct` call (STUN from
 // `get_call_config`); there is never a silent fallback, and a "no" cancels.
 // A protected call renews its TURN credentials before they expire, and before
-// an ICE restart; a failed renewal never turns it into a direct call.
+// an ICE restart; a failed renewal never turns it into a direct call. Each
+// request names its call (`callId`), so the backend signs a call's renewals
+// with that call's one-time key and token (Tor design §3 T1).
+//
+// While Tor is still connecting (`tor_not_ready`), the call keeps ringing
+// (`onWaitingForTor`) and the credentials are asked again within the ring's
+// time; a direct call is never offered then, or a contact could ring just as
+// Trino opens to rush you into one (Tor design §9.3, R-11). The question
+// comes only when Tor is ready and the server fails.
 //
 // Design notes:
 // - Explicit offer/answer for call setup (predictable ringing UX), plus
@@ -108,6 +116,9 @@ export interface CallCallbacks {
   // fingerprint changes (docs/sas-v2.md, "The DTLS fingerprint rule"). It is
   // the call's only SAS: the emoji code of 0.1.0 went with the old screen.
   onSasInputs: (inputs: SasInputs) => void;
+  // Tor is still connecting: the call keeps ringing meanwhile (true), and
+  // stops waiting (false) once Tor answered, or the call is over.
+  onWaitingForTor?: (waiting: boolean) => void;
 }
 
 interface Signal {
@@ -239,6 +250,10 @@ const HANGUP_BYE_TIMEOUT_MS = 1_200;
 const RELAY_REFRESH_MARGIN_S = 10 * 60;
 const RELAY_RETRY_MS = 60_000; // also the shortest wait before a refresh
 const RELAY_REFRESH_ATTEMPTS = 3; // failures in a row before giving up
+// While Tor connects, the credentials are asked again this often, for as
+// long as a call rings; the backend itself waits for Tor before answering.
+const TOR_WAIT_MS = RING_TIMEOUT_MS;
+const TOR_RETRY_MS = 3_000;
 
 const AUDIO_CONSTRAINTS: MediaTrackConstraints = {
   echoCancellation: true,
@@ -335,6 +350,8 @@ let policy: CandidatePolicy = 'public';
 let mode: ConnectionMode | null = null;
 // Resolves the open "call directly?" question, if any.
 let consentResolve: ((allow: boolean) => void) | null = null;
+// The call waits for Tor to connect (onWaitingForTor).
+let waitingForTor = false;
 const candidates = new OutgoingCandidates('public');
 const endedCalls = new RecentIds(ENDED_CALLS_REMEMBERED);
 // Mirror of holdsMedia(state) in the backend (set_call_active).
@@ -414,6 +431,17 @@ export function answerDirectConsent(allow: boolean): void {
   settleConsent(allow === true);
 }
 
+function setWaitingForTor(waiting: boolean): void {
+  if (waitingForTor === waiting) return;
+  waitingForTor = waiting;
+  cbs?.onWaitingForTor?.(waiting);
+}
+
+/** Tor is still connecting: nothing was asked, and nothing went direct. */
+function isTorNotReady(error: unknown): boolean {
+  return isRecord(error) && error.code === 'tor_not_ready';
+}
+
 interface Route {
   mode: ConnectionMode;
   servers: IceServerConfig[];
@@ -421,22 +449,39 @@ interface Route {
 }
 
 /**
- * TURN first, asked afresh for every call: the backend caches the credentials
- * and knows when they expire. Without TURN, ask before going direct. Null:
- * do not place or answer this call (declined, or the call ended meanwhile).
+ * TURN first, asked afresh for every call (`id`). While Tor connects, it
+ * waits as long as a call rings and never offers a direct call (R-11); with
+ * Tor ready and no TURN, it asks before going direct. Null: do not place or
+ * answer this call (declined, Tor never connected, or the call ended).
  */
-async function resolveRoute(my: number): Promise<Route | null> {
+async function resolveRoute(my: number, id: string): Promise<Route | null> {
   let relays: IceServerConfig[] = [];
   let expiresAt: number | undefined;
-  try {
-    const turn = await api.getTurnServers();
-    relays = relayServers(turn.ice_servers);
-    expiresAt = turn.expires_at;
-  } catch (error) {
-    console.error('TURN credentials unavailable', error);
+  let torNotReady = false;
+  const deadline = Date.now() + TOR_WAIT_MS;
+  for (;;) {
+    try {
+      const turn = await api.getTurnServers(id);
+      relays = relayServers(turn.ice_servers);
+      expiresAt = turn.expires_at;
+      torNotReady = false;
+    } catch (error) {
+      torNotReady = isTorNotReady(error);
+      if (!torNotReady) console.error('TURN credentials unavailable', error);
+    }
+    if (!torNotReady || my !== generation || Date.now() >= deadline) break;
+    setWaitingForTor(true);
+    await sleep(TOR_RETRY_MS);
+    if (my !== generation) break;
   }
+  setWaitingForTor(false);
   if (my !== generation) return null;
   if (relays.length > 0) return { mode: 'protected', servers: relays, expiresAt };
+  if (torNotReady) {
+    // Tor never connected while the call rang: it ends, and nobody is asked.
+    cbs?.onError('connection');
+    return null;
+  }
   if (!(await askDirectConsent()) || my !== generation) return null;
   const servers = await loadDirectIceServers();
   return my === generation ? { mode: 'direct', servers } : null;
@@ -473,10 +518,12 @@ function clearRelayTimer(): void {
  */
 async function refreshRelays(p: RTCPeerConnection): Promise<void> {
   const my = generation;
+  const id = callId;
+  if (!id) return;
   let relays: IceServerConfig[] = [];
   let expiresAt: number | undefined;
   try {
-    const turn = await api.getTurnServers();
+    const turn = await api.getTurnServers(id);
     relays = relayServers(turn.ice_servers);
     expiresAt = turn.expires_at;
   } catch (error) {
@@ -797,7 +844,7 @@ export async function startCall(remote: string, withVideo: boolean): Promise<voi
   setState('starting');
 
   // Before the microphone opens: a "no" to a direct call must leave nothing on.
-  const route = await resolveRoute(my);
+  const route = await resolveRoute(my, id);
   if (!route) {
     if (my === generation) end();
     return;
@@ -890,7 +937,7 @@ async function answerOffer(from: string, sig: Signal, withVideo = true): Promise
   signalled = false;
   setState('connecting');
 
-  const route = await resolveRoute(my);
+  const route = await resolveRoute(my, id);
   if (!route) {
     if (my === generation) {
       // No protection and no consent to answer without it: decline.
@@ -1319,6 +1366,7 @@ async function switchTrack(
 function end(finalState: CallState = 'ended'): void {
   generation++;
   settleConsent(false); // close an open "call directly?" question
+  setWaitingForTor(false);
   clearTimers();
   if (peer && callId) endedCalls.add(callKey(peer, callId));
   stopStream(localStream);

@@ -362,9 +362,14 @@ pub(crate) mod tests {
         );
         let gate = crate::turn::TurnGate::default();
         let client = crate::turn::TurnClient::production(Arc::clone(&net));
-        assert!(crate::turn::turn_servers(&gate, &client, gate.session())
-            .await
-            .is_err());
+        assert!(crate::turn::turn_servers(
+            &gate,
+            &client,
+            gate.session(),
+            "0123456789abcdef0123456789abcdef"
+        )
+        .await
+        .is_err());
         let news = trino_net::HttpClient::new(Arc::clone(&net));
         assert_eq!(
             crate::news_cmds::fetch(&news, 1_792_065_600).await.status,

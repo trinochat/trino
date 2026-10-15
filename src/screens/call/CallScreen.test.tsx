@@ -84,6 +84,16 @@ describe('CallScreen', () => {
     expect(screen.getByRole('button', { name: 'Conexión directa' })).toBeTruthy();
   });
 
+  // Tor design §9.3, R-11 and PropTorSimple card 12: while Tor connects the
+  // call keeps ringing, and the screen says so in one line, read out.
+  it('says the call keeps ringing while it still connects privately', () => {
+    const { unmount } = show({ view: 'ringing-out' });
+    expect(callScreen().textContent).not.toMatch(/Todavía conectando/);
+    unmount();
+    show({ view: 'ringing-out', waitingForTor: true });
+    expect(screen.getByRole('status').textContent).toBe('Todavía conectando de forma privada. La llamada sigue sonando…');
+  });
+
   it('shows no call quality: there is no measure of it yet', () => {
     show({ mode: 'protected' });
     expect(screen.queryByRole('img', { name: /calidad/i })).toBeNull();

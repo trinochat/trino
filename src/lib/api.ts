@@ -564,7 +564,8 @@ export const api = {
   // STUN for a direct call, only after the user agreed to reveal their IP.
   getCallConfig: (): Promise<CallConfigResponse> => invoke('get_call_config'),
   // Rejects with a `CommandError` when protection is unavailable.
-  getTurnServers: (): Promise<TurnServersResponse> => invoke('get_turn_servers'),
+  /** TURN for the call `callId`: its renewals sign with that call's one-time key (turn.rs). */
+  getTurnServers: (callId: string): Promise<TurnServersResponse> => invoke('get_turn_servers', { callId }),
   sendCallSignal: (handle: string, payload: string): Promise<void> =>
     invoke('send_call_signal', { handle, payload }),
   // Tells the backend a call holds the microphone/camera, so closing the

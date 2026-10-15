@@ -24,6 +24,8 @@ const KEYS: string[] = [
   'call2.endConfirm.lockConfirm', 'call2.endConfirm.closeConfirm',
   // The call screen (Call:81-164).
   'call2.screen.label', 'call2.screen.calling', 'call2.screen.connecting', 'call2.screen.back',
+  // Tor still connecting while the call rings (Tor design §9.3, R-11; PropTorSimple card 12).
+  'call2.screen.torWait',
   'call2.screen.controls', 'call2.screen.mute', 'call2.screen.camera', 'call2.screen.hangup',
   'call2.screen.remoteVideo', 'call2.screen.localVideo', 'call2.screen.cameraError', 'call2.screen.microphoneError',
   // The menus of the call's devices, beside each control (12 Oct 2026).
@@ -68,7 +70,11 @@ describe('call strings', () => {
   it('ask in Spanish, before a direct call, what docs/llamadas-turn.md quotes', () => {
     const title = call.es['call2.consent.title'];
     const body = call.es['call2.consent.bodyOutgoing'];
-    expect([title, body]).toEqual(['No se pudo proteger la llamada.', '¿Llamar directo? Tu contacto verá tu IP.']);
+    // In plain words (PropTorSimple, card 12): "desde dónde te conectas", not "IP".
+    expect([title, body]).toEqual([
+      'No se pudo proteger la llamada.',
+      '¿Llamar sin protección? Tu contacto verá desde dónde te conectas.',
+    ]);
     expect(turnDoc).toContain(`> ${title} ${body}`);
   });
 

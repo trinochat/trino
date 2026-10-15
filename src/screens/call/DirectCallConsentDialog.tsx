@@ -2,7 +2,9 @@
  * The question when a call cannot be protected (TURN failed): call or answer
  * directly, showing your IP to the contact? Asked on every call, never
  * remembered, and the safe answer is the default: it has the focus and
- * Escape gives it (docs/llamadas-turn.md). It reads and writes no
+ * Escape gives it, and it is the main button (docs/llamadas-turn.md;
+ * PropTorSimple, card 12). It is asked only when Tor is ready and the
+ * server fails: never while Tor connects (call.ts, R-11). It reads and writes no
  * preference: the answer goes to call.ts through `onAnswer`, which the
  * controller turns into `answerDirectConsent`.
  */
@@ -42,11 +44,11 @@ export function DirectCallConsentDialog({ consent, peerName, onAnswer }: DirectC
       initialFocusRef={safeRef}
     >
       <div className="flex flex-wrap justify-end gap-2">
-        <Button ref={safeRef} onClick={() => answer(false)}>
-          {outgoing ? t('common2.cancel') : t('call2.consent.cancelIncoming')}
-        </Button>
-        <Button variant="danger" onClick={() => answer(true)}>
+        <Button onClick={() => answer(true)}>
           {outgoing ? t('call2.consent.confirmOutgoing') : t('call2.consent.confirmIncoming')}
+        </Button>
+        <Button ref={safeRef} variant="primary" onClick={() => answer(false)}>
+          {outgoing ? t('common2.cancel') : t('call2.consent.cancelIncoming')}
         </Button>
       </div>
     </Dialog>

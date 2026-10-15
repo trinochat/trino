@@ -64,9 +64,9 @@ describe('CallLayer', () => {
     const { controller } = layer({ view: 'connecting', consent: { peer: 'ana', outgoing: false } });
     screen.getByRole('alertdialog', {
       name: 'No se pudo proteger la llamada.',
-      description: '¿Contestar directo? Ana Torres verá tu IP.',
+      description: '¿Contestar sin protección? Ana Torres verá desde dónde te conectas.',
     });
-    fireEvent.click(screen.getByRole('button', { name: 'Contestar directo' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Contestar' }));
     expect(controller.answerConsent).toHaveBeenCalledWith(true);
   });
 

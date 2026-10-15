@@ -179,6 +179,18 @@ describe('useCallController', () => {
     });
   });
 
+  // Tor design §9.3, R-11: call.ts says while the call waits for Tor.
+  it('follows whether the call waits for Tor', () => {
+    const s = setup();
+    expect(s.result.current.waitingForTor).toBe(false);
+    act(() => s.result.current.start(PEER, false));
+    s.state('starting', newId());
+    act(() => s.cb().onWaitingForTor?.(true));
+    expect(s.result.current.waitingForTor).toBe(true);
+    act(() => s.cb().onWaitingForTor?.(false));
+    expect(s.result.current.waitingForTor).toBe(false);
+  });
+
   describe('the question of calling directly', () => {
     // docs/llamadas-turn.md: asked on every call, never remembered, Cancel by default.
     it('comes back on every call, even after a "yes" to the same contact', () => {

@@ -8,7 +8,9 @@
 //! key made for it alone, never the account's, sends it through Tor on a
 //! token of its own, and gets credentials of its own. Nothing is kept from
 //! one call for the next, so Cloudflare can tie neither two calls nor a
-//! call and the account by the key or by the exit.
+//! call and the account by the key or by the exit. The UI names the call
+//! (its `callId`), so a renewal within it signs with that call's key and
+//! goes on its token, while the credentials are asked afresh.
 
 use crate::command_error::{CommandError, ErrorCode};
 use crate::crypto::sha256;
@@ -19,7 +21,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::future::Future;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, PoisonError};
 use std::time::Duration;
 use tauri::State;
 use thiserror::Error;
@@ -498,17 +500,31 @@ impl TurnClient {
 pub struct Session(u64);
 
 /// Ties the requests for TURN credentials to the unlocked session. It keeps
-/// no credentials: each call asks for its own (design §3 T1). Locking or
-/// wiping cancels any request in flight (docs/llamadas-turn.md).
+/// no credentials: each call asks for its own, and each renewal asks again
+/// (design §3 T1). It keeps the signer of the current call, so a renewal
+/// within that call signs with its key and goes on its token. Locking or
+/// wiping cancels any request in flight and forgets the signer
+/// (docs/llamadas-turn.md).
 pub struct TurnGate {
     /// Bumped by `clear`; wakes and voids every request of an older session.
     epoch: watch::Sender<u64>,
+    /// The current call's key and token; another call replaces it.
+    call: std::sync::Mutex<Option<CallSigner>>,
+}
+
+/// What signs the requests of one call: a key made for it and its token.
+struct CallSigner {
+    session: Session,
+    call_id: String,
+    keys: Arc<SigningKeys>,
+    iso: Iso,
 }
 
 impl Default for TurnGate {
     fn default() -> Self {
         TurnGate {
             epoch: watch::Sender::new(0),
+            call: std::sync::Mutex::new(None),
         }
     }
 }
@@ -521,9 +537,37 @@ impl TurnGate {
     }
 
     /// Void every request of the current session: one in flight returns
-    /// `Locked` at once.
+    /// `Locked` at once, and the call's key is dropped (and wiped).
     pub fn clear(&self) {
         self.epoch.send_modify(|epoch| *epoch += 1);
+        *self.call.lock().unwrap_or_else(PoisonError::into_inner) = None;
+    }
+
+    /// The key and token of `call_id` in `session`: the ones it had, or
+    /// new ones that replace the last call's.
+    fn signer(
+        &self,
+        session: Session,
+        call_id: &str,
+        client: &TurnClient,
+    ) -> (Arc<SigningKeys>, Iso) {
+        let mut call = self.call.lock().unwrap_or_else(PoisonError::into_inner);
+        match call.as_ref() {
+            Some(signer) if signer.session == session && signer.call_id == call_id => {
+                (Arc::clone(&signer.keys), signer.iso.clone())
+            }
+            _ => {
+                let signer = CallSigner {
+                    session,
+                    call_id: call_id.to_string(),
+                    keys: Arc::new(SigningKeys::one_time()),
+                    iso: client.call_iso(),
+                };
+                let found = (Arc::clone(&signer.keys), signer.iso.clone());
+                *call = Some(signer);
+                found
+            }
+        }
     }
 
     fn is_current(&self, session: Session) -> bool {
@@ -610,16 +654,26 @@ async fn signed_request(
     client.request(&header, unix_now(), iso).await
 }
 
-/// TURN servers for one call: signed with a key made for it, mined, and
-/// fetched on a token of its own. The key is dropped (and wiped) when this
-/// returns or a lock cancels it.
+/// Whether `call_id` is a call's id as call.ts makes and checks them: 16 to
+/// 64 letters, digits, `_` or `-`.
+pub(crate) fn valid_call_id(call_id: &str) -> bool {
+    (16..=64).contains(&call_id.len())
+        && call_id
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-')
+}
+
+/// TURN servers for the call `call_id`: signed with a key made for that
+/// call, mined, and fetched on its token; a renewal within the call uses
+/// the same key and token, and asks afresh. The key is dropped (and
+/// wiped) when another call or a lock replaces it.
 pub async fn turn_servers(
     gate: &TurnGate,
     client: &TurnClient,
     session: Session,
+    call_id: &str,
 ) -> Result<TurnServers, TurnError> {
-    let keys = SigningKeys::one_time();
-    let iso = client.call_iso();
+    let (keys, iso) = gate.signer(session, call_id, client);
     gate.request(session, move || async move {
         match signed_request(client, &keys, unix_now(), &iso).await {
             // A skewed clock: sign once more, dated by the Worker's clock,
@@ -633,11 +687,18 @@ pub async fn turn_servers(
     .await
 }
 
-/// TURN servers for a protected (relay-only) call, asked for this call
-/// alone. Only an unlocked session asks, but never with the account's key.
-/// Calls go direct (STUN) only after the user agrees.
+/// TURN servers for a protected (relay-only) call, asked for the call
+/// `call_id` alone (renewals within it included). Only an unlocked session
+/// asks, but never with the account's key. Calls go direct (STUN) only
+/// after the user agrees, and never because Tor is not ready (R-11).
 #[tauri::command]
-pub async fn get_turn_servers(state: State<'_, AppState>) -> Result<TurnServers, CommandError> {
+pub async fn get_turn_servers(
+    state: State<'_, AppState>,
+    call_id: String,
+) -> Result<TurnServers, CommandError> {
+    if !valid_call_id(&call_id) {
+        return Err(CommandError::internal("not a call id"));
+    }
     let session = {
         let inner = state.inner.lock().await;
         if inner.identity.is_none() {
@@ -647,7 +708,7 @@ pub async fn get_turn_servers(state: State<'_, AppState>) -> Result<TurnServers,
         state.turn.session()
     };
     let client = TurnClient::production(Arc::clone(&state.net));
-    Ok(turn_servers(&state.turn, &client, session).await?)
+    Ok(turn_servers(&state.turn, &client, session, &call_id).await?)
 }
 
 #[cfg(test)]
@@ -664,6 +725,10 @@ mod tests {
     use trino_net::mock::{Forbidden, Mock};
     use trino_net::mock_http::{self, Received, Reply};
     use trino_net::Transport;
+
+    /// Two calls, as call.ts names them (32 hex digits).
+    const CALL_A: &str = "0123456789abcdef0123456789abcdef";
+    const CALL_B: &str = "fedcba9876543210fedcba9876543210";
 
     // A fixed throwaway key, never a real identity.
     const TEST_PRIV: [u8; 32] = [7u8; 32];
@@ -1317,7 +1382,7 @@ mod tests {
             Duration::from_secs(5),
         );
         let gate = TurnGate::default();
-        let servers = turn_servers(&gate, &w.client, gate.session())
+        let servers = turn_servers(&gate, &w.client, gate.session(), CALL_A)
             .await
             .unwrap();
         assert_eq!(servers.ice_servers[0].username, "u-test");
@@ -1348,7 +1413,7 @@ mod tests {
             Duration::from_secs(5),
         );
         let gate = TurnGate::default();
-        let error = turn_servers(&gate, &w.client, gate.session())
+        let error = turn_servers(&gate, &w.client, gate.session(), CALL_A)
             .await
             .unwrap_err();
         assert!(matches!(error, TurnError::ClockSkew { .. }), "{error:?}");
@@ -1373,10 +1438,10 @@ mod tests {
         );
         let gate = TurnGate::default();
 
-        let first = turn_servers(&gate, &w.client, gate.session())
+        let first = turn_servers(&gate, &w.client, gate.session(), CALL_A)
             .await
             .unwrap();
-        let second = turn_servers(&gate, &w.client, gate.session())
+        let second = turn_servers(&gate, &w.client, gate.session(), CALL_B)
             .await
             .unwrap();
 
@@ -1398,6 +1463,87 @@ mod tests {
         assert_eq!(tokens.len(), 2);
         assert!(tokens.iter().all(|iso| iso.kind() == IsoKind::TURN));
         assert_ne!(tokens[0], tokens[1], "two calls on one token");
+    }
+
+    /// TOR-4's first deviation, closed by TOR-6: the UI names the call
+    /// (its callId), so a renewal of the credentials within one call signs
+    /// with that call's key and goes on its token, while the credentials
+    /// are asked afresh each time.
+    #[tokio::test]
+    async fn a_renewal_within_one_call_reuses_its_key_and_token_and_asks_anew() {
+        let n = now();
+        let ok = worker_body(cloudflare_servers(), 14_400, n + 14_400);
+        let w = worker(
+            vec![response("200 OK", "", &ok), response("200 OK", "", &ok)],
+            Duration::from_secs(5),
+        );
+        let gate = TurnGate::default();
+
+        for _ in 0..2 {
+            turn_servers(&gate, &w.client, gate.session(), CALL_A)
+                .await
+                .unwrap();
+        }
+
+        let seen = w.seen.lock().unwrap();
+        assert_eq!(seen.len(), 2, "every renewal asks the Worker anew");
+        let keys: Vec<String> = seen
+            .iter()
+            .map(|request| {
+                decode_auth(&header_value(&request.head, "authorization").unwrap()).pubkey
+            })
+            .collect();
+        let tokens: Vec<Iso> = w.tor.connections().into_iter().map(|(_, i)| i).collect();
+        assert_eq!(keys[0], keys[1], "a renewal signs with its call's key");
+        assert_eq!(tokens[0], tokens[1], "a renewal goes on its call's token");
+    }
+
+    /// Only the same call in the same session gets the same signer: another
+    /// call, a lock, or a session from before gets a new key and token.
+    #[test]
+    fn another_call_or_a_lock_gets_a_new_key_and_token() {
+        let client = TurnClient::production(Net::with_transports(None, Arc::new(Forbidden)));
+        let gate = TurnGate::default();
+        let session = gate.session();
+        let (a1, iso_a1) = gate.signer(session, CALL_A, &client);
+        let (a2, iso_a2) = gate.signer(session, CALL_A, &client);
+        assert!(Arc::ptr_eq(&a1, &a2));
+        assert_eq!(iso_a1, iso_a2);
+
+        let (b, iso_b) = gate.signer(session, CALL_B, &client);
+        assert_ne!(a1.pub_bytes, b.pub_bytes, "another call, another key");
+        assert_ne!(iso_a1, iso_b, "another call, another token");
+        let (a3, iso_a3) = gate.signer(session, CALL_A, &client);
+        assert_ne!(
+            a1.pub_bytes, a3.pub_bytes,
+            "a call that was replaced is not taken back"
+        );
+        assert_ne!(iso_a1, iso_a3);
+
+        gate.clear();
+        let (after, iso_after) = gate.signer(gate.session(), CALL_A, &client);
+        assert_ne!(a3.pub_bytes, after.pub_bytes, "after a lock, a new key");
+        assert_ne!(iso_a3, iso_after, "after a lock, a new token");
+        let (stale, _) = gate.signer(session, CALL_A, &client);
+        assert_ne!(
+            after.pub_bytes, stale.pub_bytes,
+            "a session from before shares nothing"
+        );
+    }
+
+    #[test]
+    fn a_call_id_is_what_the_ui_makes() {
+        assert!(valid_call_id(CALL_A));
+        assert!(valid_call_id(&"a".repeat(64)));
+        for bad in [
+            "",
+            "short",
+            "has space in it!!",
+            "ñññññññññññññññññ",
+            &"a".repeat(65),
+        ] {
+            assert!(!valid_call_id(bad), "{bad}");
+        }
     }
 
     #[test]
