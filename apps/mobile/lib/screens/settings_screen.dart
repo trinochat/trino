@@ -11,13 +11,13 @@ import '../engine/engine.dart';
 import '../ui/avatar.dart';
 import '../ui/list_row.dart';
 import 'common.dart';
+import 'settings/account_security_screen.dart';
 import 'settings/advanced_screen.dart';
 import 'settings/appearance_screen.dart';
 import 'settings/language_screen.dart';
 import 'settings/notifications_screen.dart';
 import 'settings/privacy_screen.dart';
 import 'settings/profile_screen.dart';
-import 'settings/security_screen.dart';
 
 class SettingsScreen extends StatefulWidget {
   const SettingsScreen({super.key});
@@ -62,7 +62,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   onTap: () => _open(const NotificationsScreen()),
                 ),
                 ListRow(icon: TrinoIcons.shield, title: l10n.sectionPrivacy, onTap: () => _open(const PrivacyScreen())),
-                ListRow(icon: TrinoIcons.lock, title: l10n.sectionSecurity, onTap: () => _open(const SecurityScreen())),
+                ListRow(
+                  icon: TrinoIcons.key,
+                  title: l10n.sectionAccountSecurity,
+                  onTap: () => _open(const AccountSecurityScreen()),
+                ),
                 ListRow(
                   icon: TrinoIcons.palette,
                   title: l10n.sectionAppearance,

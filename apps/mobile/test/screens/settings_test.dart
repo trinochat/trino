@@ -26,7 +26,7 @@ void main() {
     expect(find.text('Sofía'), findsOneWidget);
     expect(find.text('Tu nombre y tu código'), findsOneWidget);
     final rows = tester.widgetList<ListRow>(find.byType(ListRow)).map((row) => row.title).toList();
-    expect(rows, ['Sofía', 'Notificaciones', 'Privacidad', 'Seguridad', 'Apariencia', 'Idioma', 'Avanzado']);
+    expect(rows, ['Sofía', 'Notificaciones', 'Privacidad', 'Cuenta y seguridad', 'Apariencia', 'Idioma', 'Avanzado']);
     final idioma = tester.widget<ListRow>(find.ancestor(of: find.text('Idioma'), matching: find.byType(ListRow)));
     expect(idioma.value, 'Español');
   });
@@ -111,34 +111,6 @@ void main() {
     await tester.pumpAndSettle();
     final settings = await tester.runAsync(() => app.engine.settings.first);
     expect(settings!.connectAfterUnlockOnly, isTrue);
-  });
-
-  testWidgets('Seguridad: 2FA state, auto-lock choice, and "Bloquear ahora" locks', (tester) async {
-    await pumpApp(tester);
-    await openTab(tester, 'Ajustes');
-    await openSection(tester, 'Seguridad');
-    final twoStep = tester.widget<ListRow>(
-      find.ancestor(of: find.text('Verificación en dos pasos'), matching: find.byType(ListRow)),
-    );
-    expect(twoStep.value, 'Desactivada');
-    final autoLock = tester.widget<ListRow>(
-      find.ancestor(of: find.text('Bloqueo automático'), matching: find.byType(ListRow)),
-    );
-    expect(autoLock.value, 'Tras 5 minutos');
-
-    await tester.tap(find.text('Bloqueo automático'));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('Tras 15 minutos'));
-    await tester.pumpAndSettle();
-    expect(
-      tester.widget<ListRow>(find.ancestor(of: find.text('Bloqueo automático'), matching: find.byType(ListRow))).value,
-      'Tras 15 minutos',
-    );
-
-    await tester.tap(find.text('Bloquear ahora'));
-    await tester.pumpAndSettle();
-    expect(find.text('Hola de nuevo'), findsOneWidget);
-    expect(find.text('Bloqueaste Trino.'), findsOneWidget);
   });
 
   testWidgets('Avanzado: your key, the relays as plain text, and the diagnostic log off', (tester) async {

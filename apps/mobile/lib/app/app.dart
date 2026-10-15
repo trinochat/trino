@@ -8,6 +8,7 @@ import 'package:flutter/services.dart';
 import '../design/appearance.dart';
 import '../engine/engine.dart';
 import '../l10n/app_localizations.dart';
+import '../platform/biometrics.dart';
 import '../screens/home_shell.dart';
 import '../screens/onboarding_screen.dart';
 import '../screens/unlock_screen.dart';
@@ -15,7 +16,14 @@ import 'language.dart';
 import 'scope.dart';
 
 class TrinoApp extends StatefulWidget {
-  const TrinoApp({super.key, required this.engine, this.appearance, this.language, this.clock = DateTime.now});
+  const TrinoApp({
+    super.key,
+    required this.engine,
+    this.appearance,
+    this.language,
+    this.clock = DateTime.now,
+    this.biometrics = const DemoBiometricAuth(),
+  });
 
   final TrinoEngine engine;
 
@@ -23,6 +31,9 @@ class TrinoApp extends StatefulWidget {
   final AppearanceController? appearance;
   final LanguageController? language;
   final DateTime Function() clock;
+
+  /// The phone's fingerprint or face check; the demo until the platform code.
+  final BiometricAuth biometrics;
 
   @override
   State<TrinoApp> createState() => _TrinoAppState();
@@ -45,6 +56,7 @@ class _TrinoAppState extends State<TrinoApp> {
     appearance: _appearance,
     language: _language,
     clock: widget.clock,
+    biometrics: widget.biometrics,
     child: ListenableBuilder(
       listenable: Listenable.merge([_appearance, _language]),
       builder: (context, _) => MaterialApp(

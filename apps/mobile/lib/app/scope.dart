@@ -1,10 +1,12 @@
-// What every screen reaches: the engine, the appearance, the language and the
-// clock. Provided above the MaterialApp, so pushed pages see it too.
+// What every screen reaches: the engine, the appearance, the language, the
+// clock and the phone's biometrics. Provided above the MaterialApp, so pushed
+// pages see it too.
 import 'package:flutter/widgets.dart';
 
 import '../design/appearance.dart';
 import '../engine/engine.dart';
 import '../l10n/app_localizations.dart';
+import '../platform/biometrics.dart';
 import 'language.dart';
 
 class AppScope extends InheritedWidget {
@@ -14,6 +16,7 @@ class AppScope extends InheritedWidget {
     required this.appearance,
     required this.language,
     required this.clock,
+    this.biometrics = const DemoBiometricAuth(),
     required super.child,
   });
 
@@ -23,6 +26,9 @@ class AppScope extends InheritedWidget {
 
   /// The time now; tests fix it.
   final DateTime Function() clock;
+
+  /// The phone's fingerprint or face check.
+  final BiometricAuth biometrics;
 
   static AppScope of(BuildContext context) => context.dependOnInheritedWidgetOfExactType<AppScope>()!;
 
@@ -35,11 +41,13 @@ class AppScope extends InheritedWidget {
       engine != oldWidget.engine ||
       appearance != oldWidget.appearance ||
       language != oldWidget.language ||
-      clock != oldWidget.clock;
+      clock != oldWidget.clock ||
+      biometrics != oldWidget.biometrics;
 }
 
 extension AppContext on BuildContext {
   AppLocalizations get l10n => AppLocalizations.of(this);
   TrinoEngine get engine => AppScope.read(this).engine;
   DateTime now() => AppScope.read(this).clock();
+  BiometricAuth get biometrics => AppScope.read(this).biometrics;
 }

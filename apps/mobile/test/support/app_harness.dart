@@ -11,6 +11,7 @@ import 'package:trino_mobile/design/appearance.dart';
 import 'package:trino_mobile/engine/engine.dart';
 import 'package:trino_mobile/engine/fake_engine.dart';
 import 'package:trino_mobile/l10n/app_localizations.dart';
+import 'package:trino_mobile/platform/biometrics.dart';
 
 import 'harness.dart';
 
@@ -52,6 +53,7 @@ Future<TestApp> pumpApp(
   Appearance appearance = const Appearance(),
   Locale locale = const Locale('es'),
   double textScale = 1,
+  BiometricAuth? biometrics,
 }) async {
   usePhone(tester);
   if (textScale != 1) {
@@ -66,7 +68,13 @@ Future<TestApp> pumpApp(
   await tester.pumpWidget(
     RepaintBoundary(
       key: appBoundaryKey,
-      child: TrinoApp(engine: app.engine, appearance: app.appearance, language: app.language, clock: () => testNow),
+      child: TrinoApp(
+        engine: app.engine,
+        appearance: app.appearance,
+        language: app.language,
+        clock: () => testNow,
+        biometrics: biometrics ?? const DemoBiometricAuth(),
+      ),
     ),
   );
   await tester.pumpAndSettle();
