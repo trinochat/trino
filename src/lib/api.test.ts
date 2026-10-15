@@ -20,6 +20,7 @@ import {
   type HistItem,
   type LegacyPreview,
   type NodeInfo,
+  type NotificationTest,
   type ProfileResponse,
   type SendReceipt,
   type SentFile,
@@ -436,6 +437,17 @@ describe('the dialog at unlock', () => {
 
 // Windows' text size (Settings > Accessibility > Text size), which WebView2
 // does not apply by itself: the app reads it and follows it (a11y.rs).
+// "Probar notificación" (Settings > Notificaciones): the backend sends the
+// toast as a message's goes and says what the system did (notifications.rs).
+describe('the test notification', () => {
+  it('is sent with test_notification, which says what the system did', async () => {
+    invoke.mockResolvedValueOnce('off_for_app');
+    await expect(api.testNotification('Ana Torres', 'Nuevo mensaje')).resolves.toBe('off_for_app');
+    expect(invoke.mock.calls).toEqual([['test_notification', { title: 'Ana Torres', body: 'Nuevo mensaje' }]]);
+    expectTypeOf<NotificationTest>().toEqualTypeOf<'shown' | 'off_for_app' | 'off_for_user' | 'off_by_policy' | 'refused'>();
+  });
+});
+
 describe("the system's text size", () => {
   it('is read with system_text_scale, as a factor such as 1.25', async () => {
     invoke.mockResolvedValueOnce(1.25);

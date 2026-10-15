@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { cleanup, fireEvent, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import type { NotificationTest } from '../../../lib/api';
 import { fakeApi, memoryPrefs, renderEs } from '../test-utils';
 import type { SettingsPlatform } from '../types';
 import { NotificationsSection } from './NotificationsSection';
@@ -43,7 +44,36 @@ describe('NotificationsSection', () => {
   it('sends a test notification with what the level shows', async () => {
     const { api } = setup();
     fireEvent.click(screen.getByRole('button', { name: 'Probar notificación' }));
-    await waitFor(() => expect(api.notify).toHaveBeenCalledWith('Ana Torres', 'Nuevo mensaje'));
+    await waitFor(() => expect(api.testNotification).toHaveBeenCalledWith('Ana Torres', 'Nuevo mensaje'));
+    expect(screen.queryByRole('alert')).toBeNull();
+  });
+
+  // FIX-1: the button did nothing when Windows dropped the toast. Now it
+  // says why, and where to turn notifications on.
+  it.each([
+    ['off_for_app', 'Windows tiene apagadas las notificaciones de Trino Chat. Actívalas en Configuración › Sistema › Notificaciones.'],
+    ['off_for_user', 'Las notificaciones están apagadas en Windows. Actívalas en Configuración › Sistema › Notificaciones.'],
+    ['off_by_policy', 'Una política de este equipo no deja mostrar notificaciones.'],
+    ['refused', 'No se pudo mostrar la notificación.'],
+  ] as const)('says so when the system answers %s', async (outcome, text) => {
+    const { api } = setup('windows', { testNotification: vi.fn(async () => outcome) });
+    fireEvent.click(screen.getByRole('button', { name: 'Probar notificación' }));
+    expect((await screen.findByRole('alert')).textContent).toContain(text);
+    expect(api.testNotification).toHaveBeenCalledTimes(1);
+  });
+
+  it('says it could not be shown when the command fails, and clears it once one is shown', async () => {
+    const testNotification = vi
+      .fn<(title: string, body: string) => Promise<NotificationTest>>()
+      .mockRejectedValueOnce(new Error('no command'))
+      .mockResolvedValueOnce('shown');
+    setup('windows', { testNotification });
+    const button = screen.getByRole('button', { name: 'Probar notificación' });
+    fireEvent.click(button);
+    expect((await screen.findByRole('alert')).textContent).toContain('No se pudo mostrar la notificación.');
+    fireEvent.click(button);
+    await waitFor(() => expect(screen.queryByRole('alert')).toBeNull());
+    expect(testNotification).toHaveBeenCalledTimes(2);
   });
 
   it('switches the message sound, the calls with the window closed and the muted groups', () => {

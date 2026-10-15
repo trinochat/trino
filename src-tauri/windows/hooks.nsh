@@ -23,6 +23,13 @@
   ClearErrors
 !macroend
 
+; Trino registers its AppUserModelID for this user at start, when it is
+; missing (src-tauri/src/notifications.rs), so Windows shows its toasts
+; even from an exe that was not installed. Uninstalling removes it; the
+; icon it names is in the app data folder, which the uninstaller removes
+; when asked to.
+
 !macro NSIS_HOOK_POSTUNINSTALL
   Delete "$INSTDIR\lyrebird.old.exe"
+  DeleteRegKey HKCU "Software\Classes\AppUserModelId\app.trino.chat"
 !macroend

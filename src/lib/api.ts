@@ -31,6 +31,11 @@ export async function notify(title: string, body: string): Promise<void> {
   }
 }
 
+// What the system did with "Probar notificación" (notifications.rs): shown,
+// notifications off for Trino, off for the whole user, off by a policy, or
+// refused (an app Windows does not know, or any other failure).
+export type NotificationTest = 'shown' | 'off_for_app' | 'off_for_user' | 'off_by_policy' | 'refused';
+
 export interface StatusResponse {
   has_vault: boolean;
   is_unsealed: boolean;
@@ -580,6 +585,11 @@ export const api = {
   resyncSession: (handle: string): Promise<void> => invoke('resync_session', { handle }),
   setAutostart: (enable: boolean): Promise<void> => invoke('set_autostart', { enable }),
   getAutostart: (): Promise<boolean> => invoke('get_autostart'),
+  // "Probar notificación": the toast goes as a message's does, and the
+  // backend says what the system did with it (notifications.rs). The
+  // plugin's own `sendNotification` drops Windows' refusal.
+  testNotification: (title: string, body: string): Promise<NotificationTest> =>
+    invoke('test_notification', { title, body }),
   // The system's text size as a factor, such as 1.25 for Windows at 125 %;
   // 1 where the app cannot read it (a11y.rs). WebView2 does not apply it by
   // itself, so the frontend follows it (src/design/apply.ts).

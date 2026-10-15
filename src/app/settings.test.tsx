@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { getVersion } from '@tauri-apps/api/app';
 import { describe, expect, it } from 'vitest';
-import { api, notify, onRelayEvent } from '../lib/api';
+import { api, onRelayEvent } from '../lib/api';
 import { appWindow } from './capture-protection';
 import { platformOf, settingsBackend } from './settings';
 
@@ -40,14 +40,14 @@ describe('settingsBackend', () => {
       'listNodes',
       'blockNode',
       'shareBundle',
+      'testNotification',
     ] as const;
     for (const key of fromApi) expect(settingsBackend[key], key).toBe(api[key]);
     expect(settingsBackend.onRelayEvent).toBe(onRelayEvent);
-    expect(settingsBackend.notify).toBe(notify);
     expect(settingsBackend.getVersion).toBe(getVersion);
     // The switch of Settings › Privacidad changes the window itself (SC-1).
     expect(settingsBackend.setContentProtected).toBe(appWindow.setContentProtected);
     // Nothing more and nothing less than Settings asks for.
-    expect(Object.keys(settingsBackend).sort()).toEqual([...fromApi, 'onRelayEvent', 'notify', 'getVersion', 'setContentProtected'].sort());
+    expect(Object.keys(settingsBackend).sort()).toEqual([...fromApi, 'onRelayEvent', 'getVersion', 'setContentProtected'].sort());
   });
 });

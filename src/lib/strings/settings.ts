@@ -141,6 +141,12 @@ export const settings: AreaStrings = {
     'settings2.notif.sampleName': 'Ana Torres',
     'settings2.notif.sampleText': '¿Nos vemos el jueves a las 6?',
     'settings2.notif.test': 'Probar notificación',
+    'settings2.notif.errOffForApp':
+      'Windows tiene apagadas las notificaciones de Trino Chat. Actívalas en Configuración › Sistema › Notificaciones.',
+    'settings2.notif.errOffForUser':
+      'Las notificaciones están apagadas en Windows. Actívalas en Configuración › Sistema › Notificaciones.',
+    'settings2.notif.errOffByPolicy': 'Una política de este equipo no deja mostrar notificaciones.',
+    'settings2.notif.errRefused': 'No se pudo mostrar la notificación.',
     'settings2.notif.sound': 'Sonido de mensajes',
     'settings2.notif.soundBody': 'Un sonido corto cuando llega un mensaje.',
     'settings2.notif.callsHidden': 'Avisar de llamadas con la ventana cerrada',
@@ -482,6 +488,12 @@ export const settings: AreaStrings = {
     'settings2.notif.sampleName': 'Ana Torres',
     'settings2.notif.sampleText': 'Shall we meet on Thursday at 6?',
     'settings2.notif.test': 'Test notification',
+    'settings2.notif.errOffForApp':
+      'Windows has Trino Chat’s notifications turned off. Turn them on in Settings › System › Notifications.',
+    'settings2.notif.errOffForUser':
+      'Notifications are turned off in Windows. Turn them on in Settings › System › Notifications.',
+    'settings2.notif.errOffByPolicy': 'A policy on this computer doesn’t allow notifications.',
+    'settings2.notif.errRefused': 'The notification couldn’t be shown.',
     'settings2.notif.sound': 'Message sound',
     'settings2.notif.soundBody': 'A short sound when a message arrives.',
     'settings2.notif.callsHidden': 'Tell me about calls with the window closed',
@@ -817,6 +829,12 @@ export const settings: AreaStrings = {
     'settings2.notif.sampleName': 'Ana Torres',
     'settings2.notif.sampleText': 'A gente se encontra na quinta às 6?',
     'settings2.notif.test': 'Testar notificação',
+    'settings2.notif.errOffForApp':
+      'O Windows está com as notificações do Trino Chat desativadas. Ative-as em Configurações › Sistema › Notificações.',
+    'settings2.notif.errOffForUser':
+      'As notificações estão desativadas no Windows. Ative-as em Configurações › Sistema › Notificações.',
+    'settings2.notif.errOffByPolicy': 'Uma política deste computador não permite notificações.',
+    'settings2.notif.errRefused': 'Não foi possível mostrar a notificação.',
     'settings2.notif.sound': 'Som de mensagens',
     'settings2.notif.soundBody': 'Um som curto quando chega uma mensagem.',
     'settings2.notif.callsHidden': 'Avisar de chamadas com a janela fechada',

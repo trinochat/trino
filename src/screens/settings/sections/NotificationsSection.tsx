@@ -1,6 +1,7 @@
 /**
  * Settings > Notificaciones (Settings:50-113, plan §1.5): what a message
- * notification shows, with a preview and "Probar notificación"; the message
+ * notification shows, with a preview and "Probar notificación", which says
+ * when the system did not show it (src-tauri/src/notifications.rs); the message
  * sound, calls with the window closed and muted groups; the ringtone,
  * "Suave" or "Silencio" ("Campana" does not exist), and its volume; and, on
  * Windows only, starting with Windows. Each choice is kept in the device's
@@ -10,6 +11,7 @@
  * verified, so a real one never shows it (notification-content.ts).
  */
 import { useEffect, useId, useState } from 'react';
+import type { NotificationTest } from '../../../lib/api';
 import { useT } from '../../../lib/i18n';
 import { NOTIF_PREVIEWS, RINGTONES, type NotifPreview, type Prefs, type Ringtone } from '../../../lib/prefs';
 import { Button, cx, RadioCardGroup, Select, Switch } from '../../../ui';
@@ -19,7 +21,7 @@ import { SettingsSection } from '../SettingsSection';
 import type { SettingsApi, SettingsPlatform } from '../types';
 
 export interface NotificationsSectionProps {
-  api: Pick<SettingsApi, 'notify' | 'getAutostart' | 'setAutostart'>;
+  api: Pick<SettingsApi, 'testNotification' | 'getAutostart' | 'setAutostart'>;
   prefs: Prefs;
   platform: SettingsPlatform;
   autoFocus?: boolean;
@@ -31,6 +33,13 @@ const LEVEL_KEYS: Record<NotifPreview, string> = {
   none: 'settings2.notif.none',
 };
 const RINGTONE_KEYS: Record<Ringtone, string> = { soft: 'settings2.notif.ringSoft', silent: 'settings2.notif.ringSilent' };
+/** What "Probar notificación" says when the system does not show it. */
+const REFUSAL_KEYS: Record<Exclude<NotificationTest, 'shown'>, string> = {
+  off_for_app: 'settings2.notif.errOffForApp',
+  off_for_user: 'settings2.notif.errOffForUser',
+  off_by_policy: 'settings2.notif.errOffByPolicy',
+  refused: 'settings2.notif.errRefused',
+};
 
 /** The theme's label style, as Settings:67 draws "Vista previa". */
 const LABEL =
@@ -49,6 +58,7 @@ export function NotificationsSection({ api, prefs, platform, autoFocus }: Notifi
   const [volume, setVolume] = useState(() => prefs.getRingVolume());
   const [autostart, setAutostart] = useState<boolean | null>(null);
   const [autostartFailed, setAutostartFailed] = useState(false);
+  const [testRefused, setTestRefused] = useState<Exclude<NotificationTest, 'shown'> | null>(null);
   const toneId = useId();
   const volumeId = useId();
   const onWindows = platform === 'windows';
@@ -72,6 +82,19 @@ export function NotificationsSection({ api, prefs, platform, autoFocus }: Notifi
     { title: t('settings2.notif.sampleName'), text: t('settings2.notif.sampleText'), kind: 'text' },
     t,
   );
+
+  // Windows can drop a toast without a word; the backend says why, and so
+  // does this (FIX-1).
+  const testNotification = async () => {
+    setTestRefused(null);
+    let outcome: NotificationTest;
+    try {
+      outcome = await api.testNotification(sample.title, sample.body);
+    } catch {
+      outcome = 'refused';
+    }
+    setTestRefused(outcome === 'shown' ? null : outcome);
+  };
 
   const toggleAutostart = async (on: boolean) => {
     setAutostart(on);
@@ -118,9 +141,10 @@ export function NotificationsSection({ api, prefs, platform, autoFocus }: Notifi
             <span className="truncate text-ui-md text-ui-muted">{sample.body}</span>
           </span>
         </div>
-        <Button className="self-start" onClick={() => void api.notify(sample.title, sample.body)}>
+        <Button className="self-start" onClick={() => void testNotification()}>
           {t('settings2.notif.test')}
         </Button>
+        {testRefused ? <ErrorLine>{t(REFUSAL_KEYS[testRefused])}</ErrorLine> : null}
       </div>
 
       <div className="flex flex-col border-t border-ui-line">

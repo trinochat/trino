@@ -7,6 +7,7 @@
 import type {
   ConnectionStatus,
   NodeInfo,
+  NotificationTest,
   ProfileResponse,
   RelayObservation,
   StatusResponse,
@@ -34,7 +35,8 @@ export interface SettingsApi {
   relayInspectStop(): Promise<void>;
   /** Resolves to the function that stops listening. */
   onRelayEvent(cb: (event: RelayObservation) => void): Promise<() => void>;
-  notify(title: string, body: string): Promise<void>;
+  /** "Probar notificación": sends one, and says what the system did with it. */
+  testNotification(title: string, body: string): Promise<NotificationTest>;
   /** The app's version, from Tauri (`getVersion` of @tauri-apps/api/app). */
   getVersion(): Promise<string>;
   /** For the blocked contacts and for who does not get your profile yet. */

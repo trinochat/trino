@@ -4,7 +4,7 @@
  * SettingsScreen in the shell's main pane with these.
  */
 import { getVersion } from '@tauri-apps/api/app';
-import { api, notify, onRelayEvent } from '../lib/api';
+import { api, onRelayEvent } from '../lib/api';
 import type { ContactsApi } from '../screens/contacts';
 import type { SettingsApi, SettingsPlatform } from '../screens/settings';
 import { appWindow } from './capture-protection';
@@ -29,7 +29,7 @@ export const settingsBackend: SettingsBackend = {
   relayInspectStart: api.relayInspectStart,
   relayInspectStop: api.relayInspectStop,
   onRelayEvent,
-  notify,
+  testNotification: api.testNotification,
   getVersion,
   listNodes: api.listNodes,
   blockNode: api.blockNode,

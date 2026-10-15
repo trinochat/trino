@@ -72,7 +72,7 @@ export function fakeApi(overrides: Partial<SettingsApi> = {}): SettingsApi {
     relayInspectStart: vi.fn(async () => []),
     relayInspectStop: vi.fn(async () => {}),
     onRelayEvent: vi.fn(async () => () => {}),
-    notify: vi.fn(async () => {}),
+    testNotification: vi.fn(async () => 'shown' as const),
     getVersion: vi.fn(async () => '0.1.0'),
     listNodes: vi.fn(async () => []),
     blockNode: vi.fn(async () => {}),

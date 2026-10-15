@@ -14,6 +14,7 @@ mod media_permission;
 mod navigation;
 mod net_cmds;
 mod news_cmds;
+mod notifications;
 mod passphrase;
 mod state;
 mod store;
@@ -97,6 +98,10 @@ fn quit_app(app: &tauri::AppHandle) {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // Windows: the process is Trino Chat's own app (app.trino.chat) before
+    // any window, as the installed shortcut is (src/notifications.rs).
+    #[cfg(windows)]
+    let _ = notifications::set_process_app_id(notifications::APP_ID);
     let builder = tauri::Builder::default();
     // First of all, one Trino per user (Tor design §2.5, R-17): a second
     // start hands over to the first, which shows its window, and exits, so
@@ -148,6 +153,10 @@ pub fn run() {
                     crate::state::set_trino_home(trino_dir);
                 }
             }
+            // Windows shows toasts only for an app it knows: an exe that
+            // was not installed registers its AppUserModelID here, when it
+            // is missing (src/notifications.rs).
+            notifications::on_start(_app.handle());
             // Tor (Tor design §2.6): the UI hears every state, and Tor
             // starts now unless this is the first run or it starts at
             // unlock. Nothing goes out before.
@@ -279,6 +288,7 @@ pub fn run() {
             commands::resync_session,
             commands::set_autostart,
             a11y::system_text_scale,
+            notifications::test_notification,
             // -- W7 --
             commands::get_autostart,
             security_cmds::check_passphrase,
