@@ -85,6 +85,18 @@ export interface BridgesChecked {
   errors: BridgeLineError[];
 }
 
+/**
+ * How the first run's "Conexión" step starts Tor (TOR-6, TOR-8): straight,
+ * through a built-in way, through the lines pasted on its card 4 (kept in
+ * the backend's memory until the account is made), or by the search of the
+ * built-in ways.
+ */
+export type FirstWay =
+  | { kind: 'none' }
+  | { kind: 'builtin'; transport: TransportKind }
+  | { kind: 'private' }
+  | { kind: 'search' };
+
 /** What keeping a choice did. */
 export interface BridgesSet {
   saved: boolean;

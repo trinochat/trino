@@ -9,7 +9,8 @@
  * message when it is about the whole step.
  *
  * With `api.startConnection` (the network, TOR-6) the "Conexión" step
- * comes after the welcome, and Tor starts only from it.
+ * comes after the welcome, and Tor starts only from it; with
+ * `api.bridges` (TOR-8) its "En mi red bloquean Tor" opens the other ways.
  *
  * Beyond the contract of types.ts it takes optional stand-ins, for the tests
  * and for the integration: `makeAvatar`, the storage of the consent record,
@@ -115,7 +116,7 @@ export function OnboardingFlow({
       case 'startConnection': {
         const start = api.startConnection;
         if (!start) return;
-        attempt(() => start(effect.hidden)).then(
+        attempt(() => start(effect.way)).then(
           () => send({ type: 'connectionStarted' }),
           (error: unknown) => {
             console.warn('starting Tor failed:', codeOf(error));
@@ -181,7 +182,7 @@ export function OnboardingFlow({
 
   // A new step takes the focus to its heading; an error, to its field, or to
   // the message itself when it is about the whole step.
-  const view = `${state.step}:${state.twofa}`;
+  const view = `${state.step}:${state.twofa}:${state.bridges}`;
   const lastView = useRef<string | null>(null);
   useEffect(() => {
     const changed = lastView.current !== view;
@@ -251,7 +252,7 @@ export function OnboardingFlow({
           <WelcomeStep state={state} send={send} {...heading} ageRef={ageRef} privacyRef={privacyRef} openLink={openLink} />
         ) : null}
         {state.step === 'connection' ? (
-          <ConnectionStep state={state} send={send} {...heading} stepErrorRef={stepErrorRef} />
+          <ConnectionStep state={state} send={send} {...heading} stepErrorRef={stepErrorRef} bridges={api.bridges} />
         ) : null}
         {state.step === 'name' ? (
           <NameStep state={state} send={send} {...heading} nameRef={nameRef} profileSync={profileSync} makeAvatar={makeAvatar} />

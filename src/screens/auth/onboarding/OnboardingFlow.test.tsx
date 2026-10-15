@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { CommandError, CommandErrorCode, ForgeResponse, TotpBeginResponse } from '../../../lib/api';
 import { toShareCode } from '../../../lib/contact-code';
 import type { Lang } from '../../../lib/i18n';
+import type { BridgesChecked, BridgesInfo, BridgesSet, FirstWay } from '../../../lib/net';
 import type { OnboardingApi } from '../../types';
 import { classesOf, fakeAppearanceHost, renderAuth, resetDocument } from '../test-harness';
 import { CONSENT_STORAGE_KEY, PRIVACY_POLICY_URL, type ConsentStorage } from './consent';
@@ -580,7 +581,7 @@ describe('OnboardingFlow: the connection step', () => {
   const OPTION = 'No quiero que mi proveedor note que uso Trino';
 
   it('comes after the welcome, explains Tor once, and starts it only on "Continuar"', async () => {
-    const startConnection = vi.fn((_hidden: boolean) => Promise.resolve());
+    const startConnection = vi.fn((_way: FirstWay) => Promise.resolve());
     setup({ api: fakeApi({ startConnection }) });
     expect(screen.getByText('Paso 1 de 6')).toBeTruthy();
     passWelcome();
@@ -601,24 +602,24 @@ describe('OnboardingFlow: the connection step', () => {
 
     click('Continuar');
     await settle();
-    expect(startConnection.mock.calls).toEqual([[false]]);
+    expect(startConnection.mock.calls).toEqual([[{ kind: 'none' }]]);
     expect(heading().textContent).not.toBe('Trino se conecta de forma privada');
     expect(screen.getByText('Paso 3 de 6')).toBeTruthy();
   });
 
   it('starts it through the hidden way when the person asks for it', async () => {
-    const startConnection = vi.fn((_hidden: boolean) => Promise.resolve());
+    const startConnection = vi.fn((_way: FirstWay) => Promise.resolve());
     setup({ api: fakeApi({ startConnection }) });
     passWelcome();
     tick(OPTION);
     click('Continuar');
     await settle();
-    expect(startConnection.mock.calls).toEqual([[true]]);
+    expect(startConnection.mock.calls).toEqual([[{ kind: 'builtin', transport: 'snowflake' }]]);
   });
 
   it('says so when it could not start, and stays on the step', async () => {
     vi.spyOn(console, 'warn').mockImplementation(() => {});
-    const startConnection = vi.fn((_hidden: boolean) => Promise.reject(failure('internal')));
+    const startConnection = vi.fn((_way: FirstWay) => Promise.reject(failure('internal')));
     setup({ api: fakeApi({ startConnection }) });
     passWelcome();
     click('Continuar');
@@ -630,7 +631,103 @@ describe('OnboardingFlow: the connection step', () => {
   it('goes back to the welcome', () => {
     setup({ api: fakeApi({ startConnection: vi.fn(() => Promise.resolve()) }) });
     passWelcome();
+    expect(screen.queryByRole('button', { name: 'En mi red bloquean Tor' })).toBeNull();
     click('Atrás');
     expect(screen.getByRole('checkbox', { name: 'Tengo 18 años o más' })).toBeTruthy();
+  });
+});
+
+// TOR-8 (PropTorSimple, cards 1 and 4): "En mi red bloquean Tor" opens the
+// other ways inside the step. A way chosen there is what "Continuar"
+// starts, and the provider option follows it; the search starts at once.
+describe('OnboardingFlow: the other ways from the connection step', () => {
+  const OPTION = 'No quiero que mi proveedor note que uso Trino';
+  const INFO: BridgesInfo = { transport: 'none', private: null, lines: 0, start: 'open', program: true, builtin: ['snowflake', 'obfs4'] };
+
+  function withBridges() {
+    const startConnection = vi.fn((_way: FirstWay) => Promise.resolve());
+    const bridges = {
+      info: vi.fn(async () => INFO),
+      check: vi.fn(async (_text: string): Promise<BridgesChecked> => ({ lines: 1, errors: [] })),
+      keepCode: vi.fn(async (_text: string): Promise<BridgesSet> => ({ saved: true, errors: [], status: { state: 'off' } })),
+    };
+    setup({ api: fakeApi({ startConnection, bridges }) });
+    passWelcome();
+    return { startConnection, bridges };
+  }
+
+  async function openWays() {
+    click('En mi red bloquean Tor');
+    await settle();
+    expect(heading().textContent).toBe('Otra forma de conectarse');
+    expect(document.activeElement).toBe(heading());
+  }
+
+  it('opens them in the step, closed under "Opciones avanzadas", and goes back to the step', async () => {
+    const { startConnection } = withBridges();
+    await openWays();
+    expect(screen.getByRole('button', { name: 'Buscar una forma que funcione aquí' })).toBeTruthy();
+    expect(button('Opciones avanzadas').getAttribute('aria-expanded')).toBe('false');
+    click('Volver');
+    expect(heading().textContent).toBe('Trino se conecta de forma privada');
+    expect(document.activeElement).toBe(heading());
+    await openWays();
+    click('Atrás');
+    expect(heading().textContent).toBe('Trino se conecta de forma privada');
+    expect(startConnection).not.toHaveBeenCalled();
+  });
+
+  it('starts nothing while a way is chosen, then "Continuar" starts that way, with the option ticked', async () => {
+    const { startConnection, bridges } = withBridges();
+    await openWays();
+    click('Opciones avanzadas');
+    fireEvent.click(screen.getByRole('radio', { name: 'obfs4 (integrado)' }));
+    expect(startConnection).not.toHaveBeenCalled();
+    expect(bridges.keepCode).not.toHaveBeenCalled();
+    click('Volver');
+    expect((screen.getByRole('checkbox', { name: OPTION }) as HTMLInputElement).checked).toBe(true);
+    expect(screen.getByText('Forma elegida: obfs4.')).toBeTruthy();
+    click('Continuar');
+    await settle();
+    expect(startConnection.mock.calls).toEqual([[{ kind: 'builtin', transport: 'obfs4' }]]);
+  });
+
+  it('unticking the option goes back to no bridge', async () => {
+    const { startConnection } = withBridges();
+    await openWays();
+    click('Opciones avanzadas');
+    fireEvent.click(screen.getByRole('radio', { name: 'obfs4 (integrado)' }));
+    click('Volver');
+    tick(OPTION);
+    expect(screen.queryByText('Forma elegida: obfs4.')).toBeNull();
+    click('Continuar');
+    await settle();
+    expect(startConnection.mock.calls).toEqual([[{ kind: 'none' }]]);
+  });
+
+  it('keeps a pasted code for the first connection, then starts with it', async () => {
+    const { startConnection, bridges } = withBridges();
+    await openWays();
+    click('Opciones avanzadas');
+    fireEvent.click(screen.getByRole('radio', { name: 'Tengo un código de conexión que me dieron' }));
+    fireEvent.change(screen.getByRole('textbox', { name: 'Pega aquí el código' }), { target: { value: 'obfs4 192.0.2.10:443 …' } });
+    click('Usar este código');
+    await settle();
+    expect(bridges.keepCode.mock.calls).toEqual([['obfs4 192.0.2.10:443 …']]);
+    expect(screen.getByText('Código guardado.')).toBeTruthy();
+    click('Volver');
+    expect(screen.getByText('Forma elegida: Con un código.')).toBeTruthy();
+    click('Continuar');
+    await settle();
+    expect(startConnection.mock.calls).toEqual([[{ kind: 'private' }]]);
+  });
+
+  it('"Buscar una forma que funcione aquí" starts the search at once and goes on to the name', async () => {
+    const { startConnection } = withBridges();
+    await openWays();
+    click('Buscar una forma que funcione aquí');
+    await settle();
+    expect(startConnection.mock.calls).toEqual([[{ kind: 'search' }]]);
+    expect(screen.getByText('Paso 3 de 6')).toBeTruthy();
   });
 });

@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import type { CommandError, CommandErrorCode, ForgeResponse, TotpBeginResponse } from '../../../lib/api';
+import type { FirstWay } from '../../../lib/net';
 import {
+  hiddenOf,
   INITIAL_ONBOARDING,
   NAME_MAX,
   onboardingTransition,
@@ -347,14 +349,21 @@ describe('answers that arrive late', () => {
 // TOR-6 (PropTorSimple, card 1; Tor design §9.2, design test 50): with the
 // network, a "Conexión" step after the welcome. Tor starts only from it,
 // with the provider option's bridge if chosen, and before any account.
+// TOR-8 (card 4): "En mi red bloquean Tor" opens the other ways inside the
+// step; the way chosen there is the one "Continuar" starts, and the
+// provider option follows it.
 describe('the connection step', () => {
   const withTor = { ...INITIAL_ONBOARDING, withConnection: true };
   const agreed = drive(withTor, { type: 'setAge', checked: true }, { type: 'setPrivacy', checked: true }).state;
   const atConnection = drive(agreed, { type: 'next' }).state;
+  const NONE: FirstWay = { kind: 'none' };
+  const SNOWFLAKE: FirstWay = { kind: 'builtin', transport: 'snowflake' };
+  const OBFS4: FirstWay = { kind: 'builtin', transport: 'obfs4' };
 
   it('comes after the welcome, as step 2 of 6, and starts nothing by itself', () => {
     const { state, effects } = drive(agreed, { type: 'next' });
-    expect(state).toMatchObject({ step: 'connection', busy: null, error: null, hidden: false });
+    expect(state).toMatchObject({ step: 'connection', busy: null, error: null, way: NONE, bridges: false });
+    expect(hiddenOf(state)).toBe(false);
     expect(stepNumber(state)).toEqual({ current: 2, total: 6 });
     expect(stepNumber(withTor)).toEqual({ current: 1, total: 6 });
     expect(effects).toEqual([]);
@@ -363,12 +372,12 @@ describe('the connection step', () => {
   it('starts Tor on "Continuar", plainly or through the hidden way, then goes to the name', () => {
     const plain = drive(atConnection, { type: 'next' });
     expect(plain.state).toMatchObject({ step: 'connection', busy: 'connecting' });
-    expect(plain.effects).toEqual([{ type: 'startConnection', hidden: false }]);
-    expect(drive(plain.state, { type: 'connectionStarted' }).state).toMatchObject({ step: 'name', busy: null, started: false });
+    expect(plain.effects).toEqual([{ type: 'startConnection', way: NONE }]);
+    expect(drive(plain.state, { type: 'connectionStarted' }).state).toMatchObject({ step: 'name', busy: null, started: NONE });
 
     const hidden = drive(atConnection, { type: 'setHidden', checked: true }, { type: 'next' });
-    expect(hidden.effects).toEqual([{ type: 'startConnection', hidden: true }]);
-    expect(drive(hidden.state, { type: 'connectionStarted' }).state).toMatchObject({ step: 'name', started: true });
+    expect(hidden.effects).toEqual([{ type: 'startConnection', way: SNOWFLAKE }]);
+    expect(drive(hidden.state, { type: 'connectionStarted' }).state).toMatchObject({ step: 'name', started: SNOWFLAKE });
   });
 
   it('says so when it could not start, and stays', () => {
@@ -391,7 +400,43 @@ describe('the connection step', () => {
     expect(same.state.step).toBe('name');
 
     const other = drive(back, { type: 'setHidden', checked: true }, { type: 'next' });
-    expect(other.effects).toEqual([{ type: 'startConnection', hidden: true }]);
+    expect(other.effects).toEqual([{ type: 'startConnection', way: SNOWFLAKE }]);
+  });
+
+  it('opens the other ways inside the step, and "Atrás" there goes back to the step', () => {
+    const open = drive(atConnection, { type: 'openBridges' });
+    expect(open.state).toMatchObject({ step: 'connection', bridges: true });
+    expect(open.effects).toEqual([]);
+    expect(drive(open.state, { type: 'back' }).state).toMatchObject({ step: 'connection', bridges: false });
+    expect(drive(open.state, { type: 'closeBridges' }).state).toMatchObject({ step: 'connection', bridges: false });
+  });
+
+  it('starts the way chosen there, and the provider option follows it', () => {
+    const chosen = drive(atConnection, { type: 'openBridges' }, { type: 'setWay', way: OBFS4 }).state;
+    expect(chosen.way).toEqual(OBFS4);
+    expect(hiddenOf(chosen)).toBe(true);
+    // Ticking the option again keeps the way chosen; unticking it is no bridge.
+    expect(drive(chosen, { type: 'setHidden', checked: true }).state.way).toEqual(OBFS4);
+    expect(drive(chosen, { type: 'setHidden', checked: false }).state.way).toEqual(NONE);
+    expect(drive(chosen, { type: 'setWay', way: NONE }).state).toMatchObject({ way: NONE });
+
+    const go = drive(chosen, { type: 'next' });
+    expect(go.state).toMatchObject({ bridges: false, busy: 'connecting' });
+    expect(go.effects).toEqual([{ type: 'startConnection', way: OBFS4 }]);
+
+    const code = drive(atConnection, { type: 'setWay', way: { kind: 'private' } }, { type: 'next' });
+    expect(code.effects).toEqual([{ type: 'startConnection', way: { kind: 'private' } }]);
+  });
+
+  it('"Buscar una forma que funcione aquí" starts the search at once and goes on', () => {
+    const search = drive(atConnection, { type: 'openBridges' }, { type: 'search' });
+    expect(search.state).toMatchObject({ step: 'connection', bridges: false, busy: 'connecting', way: { kind: 'search' } });
+    expect(search.effects).toEqual([{ type: 'startConnection', way: { kind: 'search' } }]);
+    const started = drive(search.state, { type: 'connectionStarted' }).state;
+    expect(started).toMatchObject({ step: 'name', started: { kind: 'search' } });
+    expect(hiddenOf(started)).toBe(true);
+    // Back and on again: the search runs already.
+    expect(drive(started, { type: 'back' }, { type: 'next' }).effects).toEqual([]);
   });
 
   it('is not there without the network: the welcome leads to the name, as before', () => {

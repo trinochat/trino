@@ -20,6 +20,7 @@ import type {
   UnsealResponse,
 } from '../lib/api';
 import type { CallEvent } from '../lib/call-events';
+import type { BridgesChecked, BridgesInfo, BridgesSet, FirstWay } from '../lib/net';
 import type { ConvoRef } from '../lib/convo';
 import type { ProcessedFile } from '../lib/media';
 
@@ -97,11 +98,25 @@ export interface OnboardingApi {
   createIdentity(handle: string, passphrase: string, useTotp: boolean): Promise<ForgeResponse>;
   updateProfile(handle: string, avatar: string | null): Promise<void>;
   /**
-   * Start Tor from the first run's "Conexión" step (TOR-6), through a
-   * built-in bridge when `hidden` ("No quiero que mi proveedor note que uso
-   * Trino"). Left out, the step is not there and Tor starts with the account.
+   * Start Tor from the first run's "Conexión" step (TOR-6), the way chosen:
+   * straight, through a built-in bridge ("No quiero que mi proveedor note que
+   * uso Trino" is Snowflake), a code pasted on card 4, or the search of the
+   * built-in ways (TOR-8). Left out, the step is not there and Tor starts
+   * with the account.
    */
-  startConnection?(hidden: boolean): Promise<void>;
+  startConnection?(way: FirstWay): Promise<void>;
+  /** The other ways of card 4, from the step's "En mi red bloquean Tor" (TOR-8). Left out, the link is not there. */
+  bridges?: FirstRunBridgesApi;
+}
+
+/** What card 4 takes in the first run, before there is an account. */
+export interface FirstRunBridgesApi {
+  /** The built-in ways and whether this build has the bridge program (net_bridges_get). */
+  info(): Promise<BridgesInfo>;
+  /** Check pasted lines, keeping nothing (net_bridges_check). */
+  check(text: string): Promise<BridgesChecked>;
+  /** Keep pasted lines for the first connection: in memory until the account is made, then sealed (net_bridges_set). */
+  keepCode(text: string): Promise<BridgesSet>;
 }
 export type OnboardingIntent = 'chats' | 'add-contact';
 export interface OnboardingFlowProps {

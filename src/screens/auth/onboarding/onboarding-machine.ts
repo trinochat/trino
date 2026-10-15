@@ -16,9 +16,16 @@
  * chooses before the first connection ("No quiero que mi proveedor note
  * que uso Trino", a built-in bridge). Going back to it and on again starts
  * nothing new unless the choice changed.
+ *
+ * "En mi red bloquean Tor" opens the other ways (card 4, TOR-8) inside the
+ * step: a way chosen there is the one "Continuar" starts, and the provider
+ * option follows it (ticked for any bridge; unticked is none). Its
+ * "Buscar una forma que funcione aquí" is a "Continuar" of its own: the
+ * search of the built-in ways starts at once.
  */
 import type { ForgeResponse, TotpBeginResponse } from '../../../lib/api';
 import type { TVars } from '../../../lib/i18n';
+import type { FirstWay, TransportKind } from '../../../lib/net';
 import { onboardingFailure } from './errors';
 
 /** The longest name, in Unicode scalars (plan-cambios-11oct §4, W1). */
@@ -47,10 +54,12 @@ export interface OnboardingState {
   step: OnboardingStep;
   /** The network is there: the "Conexión" step is one of the steps. */
   withConnection: boolean;
-  /** "No quiero que mi proveedor note que uso Trino". */
-  hidden: boolean;
-  /** How Tor was started from the step (with the hidden way or not), or null before. */
-  started: boolean | null;
+  /** How the first connection goes in: the provider option, or a way of card 4. */
+  way: FirstWay;
+  /** Card 4, the other ways, open inside the "Conexión" step. */
+  bridges: boolean;
+  /** The way Tor was started from the step, or null before. */
+  started: FirstWay | null;
   twofa: TwofaView;
   /** "Tengo 18 años o más". */
   ageConfirmed: boolean;
@@ -87,7 +96,15 @@ export type OnboardingEvent =
   | { type: 'setPass'; value: string }
   | { type: 'setPass2'; value: string }
   | { type: 'setCode'; value: string }
+  /** "No quiero que mi proveedor note que uso Trino". */
   | { type: 'setHidden'; checked: boolean }
+  /** "En mi red bloquean Tor", and back from it. */
+  | { type: 'openBridges' }
+  | { type: 'closeBridges' }
+  /** A way of card 4. */
+  | { type: 'setWay'; way: FirstWay }
+  /** "Buscar una forma que funcione aquí". */
+  | { type: 'search' }
   | { type: 'connectionStarted' }
   | { type: 'connectionFailed' }
   /** "Empezar" or "Continuar". */
@@ -112,8 +129,8 @@ export type OnboardingEvent =
 
 /** The commands a transition asks the flow to run, with what they need. */
 export type OnboardingEffect =
-  /** Start Tor, through a built-in bridge when `hidden` (TOR-6). */
-  | { type: 'startConnection'; hidden: boolean }
+  /** Start Tor the way chosen (TOR-6, TOR-8). */
+  | { type: 'startConnection'; way: FirstWay }
   | { type: 'checkPassphrase'; passphrase: string }
   | { type: 'totpBegin'; label: string }
   | { type: 'totpVerify'; code: string }
@@ -133,7 +150,8 @@ export interface Transition {
 export const INITIAL_ONBOARDING: OnboardingState = Object.freeze({
   step: 'welcome',
   withConnection: false,
-  hidden: false,
+  way: { kind: 'none' },
+  bridges: false,
   started: null,
   twofa: 'ask',
   ageConfirmed: false,
@@ -157,6 +175,20 @@ export function stepNumber(state: OnboardingState): { current: number; total: nu
   if (state.step === 'done') return null;
   const steps: readonly OnboardingStep[] = state.withConnection ? STEPS_WITH_CONNECTION : PROGRESS_STEPS;
   return { current: steps.indexOf(state.step) + 1, total: steps.length };
+}
+
+/** The built-in way of "No quiero que mi proveedor note que uso Trino": Snowflake, the backend's first to try. */
+export const HIDDEN_TRANSPORT: TransportKind = 'snowflake';
+const HIDDEN_WAY: FirstWay = Object.freeze({ kind: 'builtin', transport: HIDDEN_TRANSPORT }) as FirstWay;
+
+/** Whether the provider option shows ticked: any way but straight to Tor. */
+export function hiddenOf(state: Pick<OnboardingState, 'way'>): boolean {
+  return state.way.kind !== 'none';
+}
+
+function sameWay(a: FirstWay | null, b: FirstWay): boolean {
+  if (a === null || a.kind !== b.kind) return false;
+  return a.kind !== 'builtin' || (b.kind === 'builtin' && a.transport === b.transport);
 }
 
 /**
@@ -211,8 +243,8 @@ function next(state: OnboardingState): Transition {
       return stay({ ...state, step: state.withConnection ? 'connection' : 'name', error: null });
     case 'connection':
       // Started already this way: nothing new to start.
-      if (state.started === state.hidden) return stay({ ...state, step: 'name', error: null });
-      return go({ ...state, busy: 'connecting', error: null }, { type: 'startConnection', hidden: state.hidden });
+      if (sameWay(state.started, state.way)) return stay({ ...state, step: 'name', bridges: false, error: null });
+      return go({ ...state, bridges: false, busy: 'connecting', error: null }, { type: 'startConnection', way: state.way });
     case 'name': {
       const error = nameError(state.name);
       return stay(error ? { ...state, error } : { ...state, step: 'password', error: null });
@@ -228,6 +260,7 @@ function next(state: OnboardingState): Transition {
 
 function back(state: OnboardingState): Transition {
   if (state.step === 'twofa' && state.twofa === 'setup') return stay({ ...state, twofa: 'ask', error: null });
+  if (state.step === 'connection' && state.bridges) return stay({ ...state, bridges: false, error: null });
   const previous = state.step === 'name' && state.withConnection ? 'connection' : PREVIOUS[state.step];
   return previous ? stay({ ...state, step: previous, twofa: 'ask', error: null }) : stay(state);
 }
@@ -319,8 +352,19 @@ function personEvent(state: OnboardingState, event: OnboardingEvent): Transition
       return stay({ ...state, pass2: event.value, error: state.error?.field === 'pass2' ? null : state.error });
     case 'setCode':
       return stay({ ...state, code: event.value, error: state.error?.field === 'code' ? null : state.error });
-    case 'setHidden':
-      return stay({ ...state, hidden: event.checked, error: null });
+    case 'setHidden': {
+      // Ticked keeps a way chosen on card 4; unticked is straight to Tor.
+      const way = event.checked ? (state.way.kind === 'none' ? HIDDEN_WAY : state.way) : { kind: 'none' as const };
+      return stay({ ...state, way, error: null });
+    }
+    case 'openBridges':
+      return state.step === 'connection' ? stay({ ...state, bridges: true, error: null }) : stay(state);
+    case 'closeBridges':
+      return stay({ ...state, bridges: false, error: null });
+    case 'setWay':
+      return state.step === 'connection' ? stay({ ...state, way: event.way, error: null }) : stay(state);
+    case 'search':
+      return state.step === 'connection' ? next({ ...state, way: { kind: 'search' } }) : stay(state);
     case 'next':
       return next(state);
     case 'back':
@@ -351,7 +395,7 @@ export function onboardingTransition(state: OnboardingState, event: OnboardingEv
     // The backend's answers count only while the flow waits for them.
     case 'connectionStarted':
       return state.busy === 'connecting'
-        ? stay({ ...state, step: 'name', busy: null, started: state.hidden, error: null })
+        ? stay({ ...state, step: 'name', busy: null, started: state.way, error: null })
         : stay(state);
     case 'connectionFailed':
       return state.busy === 'connecting'

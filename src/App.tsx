@@ -44,7 +44,8 @@ import { useAutoLock } from './app/useAutoLock';
 import { withAccountPrefs, type AccountPrefsApi } from './app/account-prefs';
 import { startFirstConnection } from './app/first-connection';
 import { netApi } from './lib/net';
-import { linkBackend, useLinkOpener, type LinkApi } from './screens/net';
+import { linkBackend, netScreensApi, useLinkOpener, type LinkApi } from './screens/net';
+import { bridgeSearchOf } from './screens/net/bridge-search';
 
 export type { MainProps };
 
@@ -84,8 +85,16 @@ const BACKEND: AppApi = {
   createIdentity: api.createIdentity,
   // The first run saves the photo only: no `about`, the payload of before K12.
   updateProfile: (handle, avatar) => api.updateProfile(handle, avatar),
-  // The first run's "Conexión" step (TOR-6): Tor starts only from it.
-  startConnection: hidden => startFirstConnection(netApi, hidden),
+  // The first run's "Conexión" step (TOR-6): Tor starts only from it, the
+  // way chosen. The search is the app's one (Ajustes and "No se pudo
+  // conectar" see it go on after the account is made).
+  startConnection: way => startFirstConnection(netApi, way, bridgeSearchOf(netScreensApi)),
+  // Its "En mi red bloquean Tor" (TOR-8, card 4).
+  bridges: {
+    info: netApi.bridges,
+    check: netApi.checkBridges,
+    keepCode: text => netApi.setBridges({ kind: 'private', text }),
+  },
   unseal: api.unseal,
   wipe: api.wipe,
   prefsSave: api.prefsSave,
