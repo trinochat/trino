@@ -321,5 +321,7 @@
   "devicesUnlinkBody": "Este celular volta ao início e deixa de receber suas mensagens. Suas conversas e seus contatos são apagados daqui; no seu computador eles continuam. Para usá-lo de novo, vincule-o outra vez com o código QR do seu computador.",
   "devicesUnlinkFailed": "Não foi possível desvincular este celular. Tente novamente.",
   "devicesNoteSelf": "Cada aparelho pode se desvincular sozinho. Seu computador, que guarda a chave da conta, pode remover qualquer um.",
-  "devicesNoteLost": "Se você perder este celular, desvincule-o pelo seu computador. Quem estiver com ele deixa de receber suas mensagens novas, mas as que já estavam no celular continuam lá."
+  "devicesNoteLost": "Se você perder este celular, desvincule-o pelo seu computador. Quem estiver com ele deixa de receber suas mensagens novas, mas as que já estavam no celular continuam lá.",
+
+  "privacySubtitle": "Quando o Trino se conecta"
 }

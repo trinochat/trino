@@ -321,5 +321,7 @@
   "devicesUnlinkBody": "This phone goes back to the start and stops receiving your messages. Your chats and contacts are deleted from here; they stay on your computer. To use it again, link it again with your computer's QR code.",
   "devicesUnlinkFailed": "This phone couldn't be unlinked. Try again.",
   "devicesNoteSelf": "Each device can unlink itself. Your computer, which holds the account key, can remove any of them.",
-  "devicesNoteLost": "If you lose this phone, unlink it from your computer. Whoever has it stops receiving your new messages, but the ones already on the phone stay there."
+  "devicesNoteLost": "If you lose this phone, unlink it from your computer. Whoever has it stops receiving your new messages, but the ones already on the phone stay there.",
+
+  "privacySubtitle": "When Trino connects"
 }

@@ -1,7 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:trino_mobile/screens/common.dart';
+import 'package:trino_mobile/screens/share_code_screen.dart';
+import 'package:trino_mobile/ui/icon_button.dart';
 import 'package:trino_mobile/ui/list_row.dart';
+import 'package:trino_mobile/ui/settings_group.dart';
 import 'package:trino_mobile/ui/switch_row.dart';
 
 import '../support/app_harness.dart';
@@ -17,31 +20,61 @@ Future<void> back(WidgetTester tester, [String label = 'Volver']) async {
 }
 
 void main() {
-  testWidgets('the profile row, then Notificaciones, Privacidad, Seguridad, Apariencia, Idioma and Avanzado', (
+  ListRow rowOf(WidgetTester tester, String title) =>
+      tester.widget<ListRow>(find.ancestor(of: find.text(title), matching: find.byType(ListRow)));
+
+  testWidgets('the profile card, then the groups: account, preferences and Avanzado', (tester) async {
+    await pumpApp(tester);
+    await openTab(tester, 'Ajustes');
+    expect(find.descendant(of: find.byType(LargeTitleBar), matching: find.text('Ajustes')), findsOneWidget);
+    final groups = [
+      for (final group in find.byType(SettingsGroup).evaluate())
+        tester
+            .widgetList<ListRow>(find.descendant(of: find.byWidget(group.widget), matching: find.byType(ListRow)))
+            .map((row) => row.title)
+            .toList(),
+    ];
+    expect(groups, [
+      ['Sofía'],
+      ['Cuenta y seguridad', 'Dispositivos', 'Privacidad'],
+      ['Notificaciones', 'Apariencia', 'Idioma'],
+      ['Avanzado'],
+    ]);
+    expect(rowOf(tester, 'Sofía').subtitle, 'Tu nombre y tu código', reason: 'no @nombre the engine does not have');
+    expect(rowOf(tester, 'Dispositivos').value, '2');
+    expect(rowOf(tester, 'Privacidad').subtitle, 'Cuándo se conecta Trino');
+    expect(rowOf(tester, 'Apariencia').value, 'Calma');
+    expect(rowOf(tester, 'Idioma').value, 'Español');
+    for (final missing in ['Seguridad', 'Accesibilidad', 'Apoyar a Trino']) {
+      expect(find.text(missing), findsNothing, reason: missing);
+    }
+    for (final title in ['Cuenta y seguridad', 'Dispositivos', 'Privacidad', 'Notificaciones', 'Avanzado']) {
+      expect(rowOf(tester, title).icon, isNotNull, reason: title);
+    }
+    await expectLater(tester, meetsGuideline(androidTapTargetGuideline));
+    await expectLater(tester, meetsGuideline(labeledTapTargetGuideline));
+  });
+
+  testWidgets('the QR button of the profile card opens your code, and Apariencia shows the style chosen', (
     tester,
   ) async {
     await pumpApp(tester);
     await openTab(tester, 'Ajustes');
-    expect(find.descendant(of: find.byType(LargeTitleBar), matching: find.text('Ajustes')), findsOneWidget);
-    expect(find.text('Sofía'), findsOneWidget);
-    expect(find.text('Tu nombre y tu código'), findsOneWidget);
-    final rows = tester.widgetList<ListRow>(find.byType(ListRow)).map((row) => row.title).toList();
-    expect(rows, [
-      'Sofía',
-      'Notificaciones',
-      'Privacidad',
-      'Cuenta y seguridad',
-      'Dispositivos',
-      'Apariencia',
-      'Idioma',
-      'Avanzado',
-    ]);
+    final qr = find.descendant(of: find.byType(SettingsGroup).first, matching: find.byType(TrinoIconButton));
     expect(
-      tester.widget<ListRow>(find.ancestor(of: find.text('Dispositivos'), matching: find.byType(ListRow))).value,
-      '2',
+      (tester.widget<TrinoIconButton>(qr).icon, tester.widget<TrinoIconButton>(qr).label),
+      (TrinoIcons.qr, 'Compartir mi código'),
     );
-    final idioma = tester.widget<ListRow>(find.ancestor(of: find.text('Idioma'), matching: find.byType(ListRow)));
-    expect(idioma.value, 'Español');
+    await tester.tap(qr);
+    await tester.pumpAndSettle();
+    expect(find.byType(ShareCodeScreen), findsOneWidget);
+    await back(tester);
+
+    await openSection(tester, 'Apariencia');
+    await tester.tap(find.text('Terminal'));
+    await tester.pumpAndSettle();
+    await back(tester);
+    expect(rowOf(tester, 'Apariencia').value, 'Terminal');
   });
 
   testWidgets('Apariencia changes the theme at once: style, mode and accent', (tester) async {
