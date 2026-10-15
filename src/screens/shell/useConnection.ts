@@ -1,8 +1,8 @@
 /**
- * The connection's state, only from what the backend says
- * (K3): `connection_status` at first, then `connection-changed`. Never a
- * fixed "connected", as App.tsx had, and nothing about Tor, which the app
- * does not have.
+ * The relays' state, only from what the backend says (K3):
+ * `connection_status` at first, then `connection-changed`. Never a fixed
+ * "connected", as App.tsx had. Tor's own state is src/screens/net's
+ * (useNetStatus); while its line shows, the inbox leaves this notice out.
  *
  * With no relay up, it says "Conectando…" for a while after unlocking, when
  * the relays are still answering, and "Sin conexión · reintentando" once

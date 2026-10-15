@@ -49,9 +49,12 @@ cuenta nueva entra a Tor por otra guarda.
 | Salir | Se detiene, y `lyrebird` con él |
 | Borrar todo | Se detiene, olvida los puentes privados y se destruye `tor/` |
 
-La primera vez espera a la persona: el paso "Conexión" (TOR-6) o crear la
-cuenta lo arrancan, para que quien necesita un puente lo elija antes de
-cualquier conexión a Tor.
+La primera vez espera a la persona: el paso "Conexión" de la bienvenida o
+crear la cuenta lo arrancan, para que quien necesita un puente lo elija antes
+de cualquier conexión a Tor. Ese paso guarda primero cómo entrar (sin puente,
+o el Snowflake integrado si marcas "No quiero que mi proveedor note que uso
+Trino", que tarda de 1 a 2 minutos la primera vez) y después arranca Tor; si
+no se puede guardar, no arranca de otra forma.
 
 Solo puede haber un Trino abierto por usuario: si abres otro, le pasa el
 turno al que ya estaba (que muestra su ventana) y se cierra. Con `TRINO_HOME`
@@ -70,11 +73,46 @@ La interfaz los recibe con el evento `net-changed` y los pide con
 | `blocked` (`kind`, `pct`) | Arti dice que algo lo bloquea (`offline`, `filtering`, `cantReachTor`, `clockSkewed`, `cantBootstrap`), o no avanza en el tiempo de su transporte (`noProgress`): 45 s directo, 90 s con obfs4 o WebTunnel, 120 s con Snowflake o meek (spike S3). Tor sigue intentando debajo |
 | `ptMissing` | El transporte necesita el programa de puentes (`lyrebird`) y no está, o no es el que trae Trino |
 | `obsolete` (`confirmed`) | Arti es muy viejo para la red |
-| `direct` | "Conectar sin Tor (solo esta vez)" |
+| `direct` | "Conectar sin protección (solo esta vez)" |
 
 `net_start` arranca Tor (el paso "Conexión") y `net_retry` lo detiene y lo
-arranca otra vez ("Volver a intentar", "Intentar de nuevo"). Los comandos de
-"Conectar sin Tor" y "Volver a usar Tor" llegan con sus pantallas (TOR-6).
+arranca otra vez ("Volver a intentar", "Intentar de nuevo").
+
+## Conectar sin protección
+
+- `net_connect_without_tor` ("Conectar sin protección", después de su
+  pregunta, cuyo botón principal es Cancelar): todo sale sin Tor hasta cerrar
+  Trino. Vive en memoria y nunca se guarda; la próxima vez Trino se conecta
+  por Tor. Es el único lugar de la app que construye el permiso de la sesión.
+- `net_back_to_tor` ("Volver a conectarse de forma privada"): todo vuelve a
+  Tor, y lo arranca si no estaba corriendo.
+- En los dos casos se mueven también los WebSockets ya abiertos: cada relay
+  (y el inspector) sigue `Net::route()`, cierra el socket abierto por el
+  camino anterior y lo abre en el acto por el nuevo. Un intento que termina
+  después del cambio se descarta y se repite. Nada más sale por el camino
+  viejo.
+- `net_set_start_on_unlock` (`on`): "Conectarse solo después de desbloquear"
+  en `settings.json`. Con puentes privados queda encendida y no se puede
+  apagar. Elegir un puente integrado o ninguno ya no la cambia; dejar los
+  puentes privados sí vuelve a "al abrir".
+
+## Pantallas (TOR-6)
+
+Siguen las maquetas aprobadas (`PropTorSimple`): palabras sencillas por
+defecto y lo técnico en "Opciones avanzadas".
+
+- **Bienvenida, paso "Conexión"**: después del idioma; Tor se explica una vez.
+- **Bandeja**: una línea de texto bajo el nombre, sin pastilla ni punto:
+  "Conectando de forma privada… 40 %", "Esperando internet…", "No se pudo
+  conectar." con "Ver qué hacer", o "Sin protección" mientras dure.
+  Conectado, desaparece.
+- **No se pudo conectar**: el motivo en palabras sencillas, "Probar otra
+  forma de conectarse" (el primer integrado, Snowflake), "Volver a intentar",
+  y al final, pequeño, "Conectar sin protección…". Con la hora mal, solo
+  "Volver a intentar".
+- **Ajustes › Privacidad › Conexión**: el estado, "Qué ven los demás",
+  "Buscar actualizaciones cada día" y, en "Opciones avanzadas",
+  "Conectarse solo después de desbloquear".
 
 ## Plazos
 
@@ -217,9 +255,9 @@ una versión, está en `docs/updater.md`.
 
 ## Lo que falta
 
-- Las pantallas (TOR-6 y TOR-8), y la opción propia de "Conectar a Tor solo
-  después de desbloquear": hoy, dejar los puentes privados devuelve el
-  arranque a "al abrir".
+- Las pantallas de los puentes (TOR-8): "En mi red bloquean Tor", la búsqueda
+  automática y pegar un código; hasta entonces, "Probar otra forma de
+  conectarse" usa el primer integrado.
 - `lyrebird` para Linux (un pin con su SHA-256).
 - Las pantallas del actualizador (el aviso de "listo para instalar", el
   interruptor en Ajustes y la de "versión vieja"). Mientras tanto, el WebView
