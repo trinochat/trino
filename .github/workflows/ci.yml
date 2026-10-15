@@ -75,6 +75,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # The per-process network audit (docs/audit-tor.md) runs by hand,
+      # as an administrator; its tests only read sample events and change
+      # nothing on the runner.
+      - name: Network audit script (offline tests)
+        if: matrix.os == 'windows-latest'
+        run: pwsh -NoProfile -File scripts/audit-tor.tests.ps1
+
       - name: Linux system dependencies (WebKitGTK, tray, dialogs)
         if: matrix.os == 'ubuntu-22.04'
         run: |
