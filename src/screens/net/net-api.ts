@@ -17,6 +17,9 @@ export type NetScreensApi = Pick<
   | 'setStartOnUnlock'
   | 'updateStatus'
   | 'setDailyUpdates'
+  | 'checkUpdateNow'
+  | 'installUpdate'
+  | 'checkUpdateWithoutTor'
 > & {
   onNetChanged: typeof onNetChanged;
   onUpdateChanged: typeof onUpdateChanged;
@@ -36,6 +39,9 @@ export const netScreensApi: NetScreensApi = {
   setStartOnUnlock: netApi.setStartOnUnlock,
   updateStatus: netApi.updateStatus,
   setDailyUpdates: netApi.setDailyUpdates,
+  checkUpdateNow: netApi.checkUpdateNow,
+  installUpdate: netApi.installUpdate,
+  checkUpdateWithoutTor: netApi.checkUpdateWithoutTor,
   onNetChanged,
   onUpdateChanged,
 };

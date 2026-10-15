@@ -15,12 +15,17 @@
  * panel, and gone once connected. While it shows, it says why the servers
  * are down too, so the notice of the servers waits until Tor is ready.
  *
+ * A new version of Trino (TOR-6, PropTorSimple card 8) is a compact region
+ * under that line: its text, one main action, and "Más tarde" when it may
+ * wait; between two thin lines, no panel. Nothing installs without its
+ * button.
+ *
  * Each list scrolls on its own and keeps at least 8 rem. Everything between
  * the head and the foot is one region that scrolls when it does not fit, as
  * at 200 % in a small window: #root cuts off whatever overflows
  * (accesibilidad.md §4.7, rule 9), so nothing there may only shrink.
  */
-import { PhoneOutgoing, Plus, Search, WifiOff } from 'lucide-react';
+import { Download, PhoneOutgoing, Plus, Search, WifiOff } from 'lucide-react';
 import { useId, type Ref } from 'react';
 import type { TorLineTone } from '../net/net-model';
 import { useT } from '../../lib/i18n';
@@ -51,6 +56,8 @@ export interface InboxPanelProps {
   connection: Connection | null;
   /** Tor's line (card 2), in the same live region; null or left out while connected. */
   tor?: TorLineView | null;
+  /** A new version of Trino (card 8); null or left out without one. */
+  update?: UpdateNoticeView | null;
   me: { handle: string; avatarSrc?: string };
   onNewChat(): void;
   onNewCall(): void;
@@ -96,6 +103,15 @@ export interface TorLineView {
   action?: { label: string; onAction(): void };
 }
 
+/** The notice of a new version as the shell words it (card 8). */
+export interface UpdateNoticeView {
+  text: string;
+  /** The one main action: "Instalar y reiniciar", "Revisar ahora"… */
+  action?: { label: string; onAction(): void };
+  /** "Más tarde". */
+  later?: { label: string; onAction(): void };
+}
+
 /** Quiet while it works, stronger when it needs you, a warning without protection. */
 const TOR_TONES: Readonly<Record<TorLineTone, string>> = {
   muted: 'text-ui-muted',
@@ -117,6 +133,7 @@ export function InboxPanel(props: InboxPanelProps) {
   const { connection, calls, tab, notice } = props;
   const onCalls = calls !== null && tab === 'calls';
   const tor = props.tor ?? null;
+  const update = props.update ?? null;
   const offline = !tor && connection?.status === 'offline';
 
   const visible = filterItems(props.items, props.filter, props.search, props.keepKey ?? null);
@@ -220,6 +237,32 @@ export function InboxPanel(props: InboxPanelProps) {
             </>
           )}
         </div>
+        {update && (
+          <div
+            role="region"
+            aria-label={t('net.update.region')}
+            className="flex flex-col gap-2 border-y border-ui-line px-1 py-2.5"
+          >
+            <span className="flex items-start gap-2 text-ui-md font-semibold leading-[1.45]">
+              <Download {...iconSize('md', 'mt-0.5 shrink-0 text-ui-accent-text')} aria-hidden="true" />
+              <span className="min-w-0">{update.text}</span>
+            </span>
+            {(update.action || update.later) && (
+              <div className="flex flex-wrap items-center gap-1.5">
+                {update.action && (
+                  <Button variant="primary" onClick={update.action.onAction}>
+                    {update.action.label}
+                  </Button>
+                )}
+                {update.later && (
+                  <Button variant="ghost" onClick={update.later.onAction}>
+                    {update.later.label}
+                  </Button>
+                )}
+              </div>
+            )}
+          </div>
+        )}
         {notice && (
           <Banner
             tone="info"

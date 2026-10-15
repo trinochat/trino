@@ -72,6 +72,8 @@ import { ConnectFailedDialog } from '../net/ConnectFailedDialog';
 import type { NetScreensApi } from '../net/net-api';
 import { torLineOf } from '../net/net-model';
 import { useNetStatus } from '../net/useNetStatus';
+import { updateNoticeOf } from '../net/update-model';
+import { useUpdateInfo } from '../net/useUpdateInfo';
 import { WithoutTorDialog } from '../net/WithoutTorDialog';
 import { useInvites } from './useInvites';
 import { useStrangerAttempts } from './useStrangerAttempts';
@@ -220,6 +222,16 @@ export function ShellScreen(props: ShellScreenProps) {
   const net = props.net ?? null;
   const netStatus = useNetStatus(net);
   const torLine = torLineOf(netStatus);
+  // A new version (card 8): "Más tarde" hides the state it was pressed on, until another comes.
+  const updateInfo = useUpdateInfo(net);
+  const updateNotice = updateNoticeOf(updateInfo);
+  const updateKey = updateInfo ? JSON.stringify([updateInfo.state, updateInfo.freeze]) : null;
+  const [updateLater, setUpdateLater] = useState<string | null>(null);
+  const runUpdate = (run: 'install' | 'checkNow') => {
+    if (!net) return;
+    const command = run === 'install' ? net.installUpdate : net.checkUpdateNow;
+    command().catch(error => console.error(run === 'install' ? 'update_install failed' : 'update_check_now failed', error));
+  };
   const channel = useAnnouncements(props.loadFeed ?? loadAnnouncementFeed, prefs);
   const strangers = useStrangerAttempts(events);
   const invites = useInvites(api, events);
@@ -739,6 +751,29 @@ export function ShellScreen(props: ShellScreenProps) {
                     action: { label: t('net.line.seeWhat'), onAction: () => setOverlay({ kind: 'torFailed' }) },
                   }),
                 }
+              }
+              update={
+                updateNotice && updateKey !== updateLater
+                  ? {
+                      text: t(updateNotice.key, updateNotice.vars),
+                      ...(updateNotice.action && {
+                        action: {
+                          label: t(updateNotice.action.key),
+                          onAction: () => runUpdate(updateNotice.action!.run),
+                        },
+                      }),
+                      ...(updateNotice.later && {
+                        later: {
+                          label: t('net.update.later'),
+                          onAction: () => {
+                            // The notice goes with its button: the focus goes back to the list.
+                            setUpdateLater(updateKey);
+                            moveFocus({ row: openKey });
+                          },
+                        },
+                      }),
+                    }
+                  : null
               }
               me={{ handle: props.me.handle, ...(props.me.avatar && { avatarSrc: props.me.avatar }) }}
               onNewChat={() => setOverlay({ kind: 'newChat', purpose: 'chat' })}

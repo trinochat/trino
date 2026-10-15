@@ -65,6 +65,20 @@ const KEYS: string[] = [
   'net.seen.bridges',
   'net.seen.microsoft',
   'net.seen.folder',
+  // A new version, in the inbox (card 8), and TOR-10's freeze.
+  'net.update.region',
+  'net.update.ready',
+  'net.update.install',
+  'net.update.later',
+  'net.update.waitingForCall',
+  'net.update.installing',
+  'net.update.installFailed',
+  'net.update.notDownloaded',
+  'net.update.tryAgain',
+  'net.update.unchecked',
+  'net.update.uncheckedRecent',
+  'net.update.checkNow',
+  'net.update.saved',
   // Opening a link in the browser (card 10).
   'net.link.body',
   'net.link.dontAsk',
@@ -74,6 +88,7 @@ const KEYS: string[] = [
 
 const PLACEHOLDERS: Record<string, string[]> = {
   'net.line.starting': ['pct'],
+  'net.update.unchecked': ['n'],
 };
 
 describe('net strings', () => {

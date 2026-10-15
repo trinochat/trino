@@ -339,6 +339,55 @@ describe('InboxPanel: the head and the foot', () => {
     expect(classesOf(screen.getByRole('status').firstElementChild)).toEqual(expect.arrayContaining(['text-ui-warn', 'font-bold']));
   });
 
+  // TOR-6, PropTorSimple card 8: a new version is a compact region under the head, one main action and
+  // "Más tarde" when given; no panel, no pill. Nothing installs without the press.
+  it('shows the notice of a new version as a compact region with its main action and "Más tarde"', () => {
+    const install = vi.fn();
+    const later = vi.fn();
+    renderEs(
+      <InboxPanel
+        {...props({
+          update: {
+            text: 'Hay una versión nueva de Trino lista para instalar.',
+            action: { label: 'Instalar y reiniciar', onAction: install },
+            later: { label: 'Más tarde', onAction: later },
+          },
+        })}
+      />,
+    );
+    const region = screen.getByRole('region', { name: 'Versión nueva' });
+    expect(region.textContent).toContain('Hay una versión nueva de Trino lista para instalar.');
+    expect(classesOf(region)).not.toContain('bg-ui-warn-bg');
+    const main = within(region).getByRole('button', { name: 'Instalar y reiniciar' });
+    expect(main.className).toContain('bg-ui-accent');
+    fireEvent.click(main);
+    expect(install).toHaveBeenCalledTimes(1);
+    fireEvent.click(within(region).getByRole('button', { name: 'Más tarde' }));
+    expect(later).toHaveBeenCalledTimes(1);
+    expect(region.querySelector('svg')?.getAttribute('aria-hidden')).toBe('true');
+  });
+
+  it('shows no region of a new version without one, and no "Más tarde" unless given', () => {
+    const { rerender } = renderEs(<InboxPanel {...props()} />);
+    expect(screen.queryByRole('region', { name: 'Versión nueva' })).toBeNull();
+    rerender(
+      <LangCtx.Provider value={{ lang: 'es', setLang: () => {} }}>
+        <I18nContext.Provider value={makeT('es')}>
+          <InboxPanel
+            {...props({
+              update: {
+                text: 'Hace 16 días que Trino no puede revisar si hay versiones nuevas.',
+                action: { label: 'Revisar ahora', onAction: () => {} },
+              },
+            })}
+          />
+        </I18nContext.Provider>
+      </LangCtx.Provider>,
+    );
+    const region = screen.getByRole('region', { name: 'Versión nueva' });
+    expect(within(region).getAllByRole('button').map(button => button.textContent)).toEqual(['Revisar ahora']);
+  });
+
   it('shows a notice with its action', () => {
     const onAction = vi.fn();
     renderEs(<InboxPanel {...props({ notice: { text: 'Tienes invitaciones a grupos sin responder.', onAction } })} />);

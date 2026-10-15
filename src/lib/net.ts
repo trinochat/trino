@@ -122,6 +122,16 @@ export const netApi = {
   updateStatus: (): Promise<UpdateInfo> => invoke('update_status'),
   /** "Buscar actualizaciones cada día". */
   setDailyUpdates: (on: boolean): Promise<UpdateInfo> => invoke('update_set_daily', { on }),
+  /** "Revisar ahora" or "Intentar de nuevo": a check through Tor, in the background (`update-changed`). */
+  checkUpdateNow: (): Promise<UpdateInfo> => invoke('update_check_now'),
+  /** "Instalar y reiniciar": the yes. During a call it waits for the hang-up. */
+  installUpdate: (): Promise<UpdateInfo> => invoke('update_install'),
+  /**
+   * "Descargarla sin protección…" on "Trino necesita actualizarse" (card 9),
+   * after its confirmation: only while Arti is obsolete, to trinochat.org and
+   * GitHub only, with the same signatures.
+   */
+  checkUpdateWithoutTor: (): Promise<UpdateInfo> => invoke('update_check_without_tor'),
   /**
    * A link in the browser, outside Tor (card 10): the backend asks first
    * unless the person said not to; `confirmed` is the yes to that question.

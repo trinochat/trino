@@ -33,6 +33,9 @@ export function fakeNet(status: NetStatus = READY) {
     setStartOnUnlock: vi.fn(async (on: boolean): Promise<BridgesInfo> => ({ ...BRIDGES, start: on ? 'on_unlock' : 'open' })),
     updateStatus: vi.fn(async () => UPDATES),
     setDailyUpdates: vi.fn(async (on: boolean): Promise<UpdateInfo> => ({ ...UPDATES, daily: on })),
+    checkUpdateNow: vi.fn(async (): Promise<UpdateInfo> => ({ ...UPDATES, state: { state: 'checking' } })),
+    installUpdate: vi.fn(async () => UPDATES),
+    checkUpdateWithoutTor: vi.fn(async (): Promise<UpdateInfo> => ({ ...UPDATES, state: { state: 'checking' } })),
     onNetChanged: vi.fn(async (cb: (status: NetStatus) => void) => {
       netListeners.add(cb);
       return () => netListeners.delete(cb);

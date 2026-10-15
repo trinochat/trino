@@ -17,7 +17,7 @@ import type {
   VerifyContactSlotProps,
 } from '../types';
 import { ShellScreen, type ShellScreenProps } from './ShellScreen';
-import { fakeNet } from '../net/test-support';
+import { fakeNet, UPDATES } from '../net/test-support';
 import { appearanceHost, fakeApi, fakeEvents, fakePrefs } from './test-fakes';
 
 afterEach(cleanup);
@@ -895,6 +895,38 @@ describe('ShellScreen: Tor', () => {
     await act(async () => fireEvent.click(screen.getByRole('button', { name: 'Conectar sin protección' })));
     expect(net.connectWithoutTor).toHaveBeenCalledTimes(1);
     expect(screen.queryByRole('alertdialog')).toBeNull();
+  });
+
+  // PropTorSimple card 8 (Tor design §6.3, §6.4): the notice of a new version, compact, under the head.
+  it('offers a version that is ready, installs only on its button, and "Más tarde" hides it', async () => {
+    const { api: net, emit } = fakeNet();
+    setup({ net });
+    await row('Ana');
+    expect(screen.queryByRole('region', { name: 'Versión nueva' })).toBeNull();
+    act(() => emit.update({ ...UPDATES, state: { state: 'ready', version: '0.2.0' } }));
+    const region = screen.getByRole('region', { name: 'Versión nueva' });
+    expect(region.textContent).toContain('Hay una versión nueva de Trino lista para instalar.');
+    expect(net.installUpdate).not.toHaveBeenCalled();
+    await act(async () => fireEvent.click(within(region).getByRole('button', { name: 'Instalar y reiniciar' })));
+    expect(net.installUpdate).toHaveBeenCalledTimes(1);
+    fireEvent.click(within(region).getByRole('button', { name: 'Más tarde' }));
+    expect(screen.queryByRole('region', { name: 'Versión nueva' })).toBeNull();
+    await waitFor(() => expect(document.activeElement).not.toBe(document.body));
+    // Another state brings it back: a later version, or a failure.
+    act(() => emit.update({ ...UPDATES, state: { state: 'failed', reason: 'download' } }));
+    expect(screen.getByRole('region', { name: 'Versión nueva' }).textContent).toContain(
+      'Hay una versión nueva, pero no se pudo descargar.',
+    );
+  });
+
+  it('says how long Trino could not check for versions, and checks on "Revisar ahora"', async () => {
+    const { api: net } = fakeNet();
+    net.updateStatus.mockResolvedValue({ ...UPDATES, freeze: { kind: 'unchecked', days: 16 } });
+    setup({ net });
+    const region = await screen.findByRole('region', { name: 'Versión nueva' });
+    expect(region.textContent).toContain('Hace 16 días que Trino no puede revisar si hay versiones nuevas.');
+    await act(async () => fireEvent.click(within(region).getByRole('button', { name: 'Revisar ahora' })));
+    expect(net.checkUpdateNow).toHaveBeenCalledTimes(1);
   });
 
   it('says nothing of Tor without the network', async () => {
