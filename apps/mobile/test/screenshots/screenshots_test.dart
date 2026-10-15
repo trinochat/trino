@@ -193,6 +193,10 @@ void main() {
     testWidgets('the first run in $name', (tester) async {
       await pumpApp(tester, engine: testEngine(onboarded: false), appearance: appearance);
       await shot(tester, '$name-09-welcome');
+      await tester.tap(find.text('Español'));
+      await shot(tester, '$name-39-onb-language');
+      await tester.tapAt(const Offset(195, 100));
+      await tester.pumpAndSettle();
       await tester.tap(find.text('Crear una cuenta'));
       await tester.pumpAndSettle();
       await shot(tester, '$name-31-onb-tor');
@@ -205,9 +209,53 @@ void main() {
       await shot(tester, '$name-10-password');
     }, skip: skip != false);
 
+    testWidgets('linking this phone in $name', (tester) async {
+      Future<void> tapText(String text) async {
+        await tester.ensureVisible(find.text(text).last);
+        await tester.pumpAndSettle();
+        await tester.tap(find.text(text).last);
+        await tester.pumpAndSettle();
+      }
+
+      final app = await pumpApp(tester, engine: testEngine(onboarded: false), appearance: appearance);
+      await tapText('Ya uso Trino en mi computador');
+      await shot(tester, '$name-32-link-intro');
+      await tapText('Escanear el código');
+      await shot(tester, '$name-33-link-scan');
+      app.scanner.simulate('https://example.com/premio');
+      await shot(tester, '$name-34-link-scan-invalid');
+      await tapText('Simular escaneo (demostración)');
+      await shot(tester, '$name-35-link-confirm');
+      app.engine.failLink(LinkFailure.expired);
+      await shot(tester, '$name-36-link-expired');
+      await tapText('Empezar de nuevo');
+      await tapText('Escanear el código');
+      await tapText('Simular escaneo (demostración)');
+      app.engine
+        ..confirmLinkOnComputer()
+        ..setLinkProgress(35);
+      await shot(tester, '$name-37-link-done');
+      await tapText('Continuar');
+      await tester.enterText(find.byType(TextField).first, 'otra frase larga y mía');
+      await shot(tester, '$name-38-link-password');
+    }, skip: skip != false);
+
     testWidgets('the unlock screen in $name', (tester) async {
       await pumpApp(tester, engine: testEngine(locked: true), appearance: appearance);
       await shot(tester, '$name-11-unlock');
+      await tester.enterText(find.byType(TextField), 'otra cosa');
+      await tester.tap(find.text('Desbloquear'));
+      await shot(tester, '$name-40-unlock-error');
+      await tester.tap(find.text('Borrar todo y empezar de nuevo…'));
+      await shot(tester, '$name-42-unlock-wipe');
+    }, skip: skip != false);
+
+    testWidgets('the unlock screen with the fingerprint in $name', (tester) async {
+      final engine = testEngine();
+      await tester.runAsync(() => engine.updateSettings(const EngineSettings(biometricUnlock: true)));
+      engine.lockForIdle(5);
+      await pumpApp(tester, engine: engine, appearance: appearance);
+      await shot(tester, '$name-41-unlock-biometric');
     }, skip: skip != false);
   }
 }
