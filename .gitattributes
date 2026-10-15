@@ -27,3 +27,7 @@
 /crates/trino-net/src/update/testdata/*.bin binary
 /crates/trino-net/src/update/testdata/*.sig binary
 /crates/trino-net/src/update/testdata/*.pub binary
+
+# The wry patch for WebView2 crash reports (docs/upstream/): kept byte for
+# byte, so `git apply` takes it on any checkout.
+/docs/upstream/*.patch text eol=lf

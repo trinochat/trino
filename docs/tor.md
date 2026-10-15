@@ -151,6 +151,13 @@ servidor de Vite) y a `blob:`, `data:` y `about:blank`, que no salen a la red
 la capability no tiene `opener:allow-open-url`, y `index.html` apaga el DNS
 anticipado.
 
+Lo que WebView2 manda a Microsoft por su cuenta sale fuera de Trino. Eso
+incluye sus informes de fallos: las banderas de Chromium no los apagan (spike
+S5), y la opción que sí lo hace (`IsCustomCrashReportingEnabled`) no se puede
+poner desde Tauri. El cambio para wry y el texto del PR están listos en
+`docs/upstream/wry-custom-crash-reporting.*` (decisión 20), sin publicar.
+Mientras tanto, `traces.rs` borra los minivolcados al abrir cada ventana.
+
 ## Plazos
 
 Cada conexión cuenta su plazo desde que Tor está listo. Un relay espera a

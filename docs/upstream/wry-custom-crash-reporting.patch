@@ -1,0 +1,96 @@
+From: davidalmeidac <253847613+davidalmeidac@users.noreply.github.com>
+Subject: [PATCH] feat(windows): add `with_custom_crash_reporting` to keep WebView2 crash reports local
+
+Against wry 0.55.1 as published on crates.io (the version Tauri 2.11.5
+builds). Rebase it onto wry's `dev` branch before opening a pull request.
+See docs/upstream/wry-custom-crash-reporting.md.
+
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -1677,6 +1677,7 @@
+   extension_path: Option<PathBuf>,
+   default_context_menus: bool,
+   environment: Option<ICoreWebView2Environment>,
++  custom_crash_reporting: bool,
+ }
+ 
+ #[cfg(windows)]
+@@ -1692,6 +1693,7 @@
+       browser_extensions_enabled: false,
+       extension_path: None,
+       environment: None,
++      custom_crash_reporting: false, // This is WebView2's default behavior
+     }
+   }
+ }
+@@ -1776,6 +1778,24 @@
+   /// Set the environment for the webview.
+   /// Useful if you need to share the same environment, for instance when using the [`WebViewBuilder::with_new_window_req_handler`].
+   fn with_environment(self, environment: ICoreWebView2Environment) -> Self;
++
++  /// Determines whether WebView2's crash reports stay with the app instead of being sent to Microsoft.
++  ///
++  /// When `true`, the WebView2 Runtime does not send crash data to Microsoft's endpoint; the crash dumps
++  /// are still written locally, to the folder `ICoreWebView2Environment11::FailureReportFolderPath` names,
++  /// where the app can handle them (or delete them). See `ICoreWebView2EnvironmentOptions3::IsCustomCrashReportingEnabled`:
++  /// <https://learn.microsoft.com/en-us/microsoft-edge/webview2/reference/win32/icorewebview2environmentoptions3#get_iscustomcrashreportingenabled>
++  ///
++  /// The default value is `false`, WebView2's own default: it then follows the operating system's consent
++  /// for diagnostic data.
++  ///
++  /// This is an option of the environment, so it only applies when wry creates one: it does nothing together
++  /// with [`with_environment`](Self::with_environment), which brings an environment that already exists.
++  ///
++  /// ## Warning
++  ///
++  /// Webview instances with different custom crash reporting settings must also have different [data directories](WebContext::new).
++  fn with_custom_crash_reporting(self, enabled: bool) -> Self;
+ }
+ 
+ #[cfg(windows)]
+@@ -1824,6 +1844,11 @@
+     self.platform_specific.environment.replace(environment);
+     self
+   }
++
++  fn with_custom_crash_reporting(mut self, enabled: bool) -> Self {
++    self.platform_specific.custom_crash_reporting = enabled;
++    self
++  }
+ }
+ 
+ #[cfg(target_os = "android")]
+@@ -2511,4 +2536,14 @@
+       panic!("{}", error);
+     }
+   }
++
++  #[test]
++  #[cfg(windows)]
++  fn custom_crash_reporting_is_off_unless_asked_for() {
++    assert!(!PlatformSpecificWebViewAttributes::default().custom_crash_reporting);
++    let builder = WebViewBuilder::new().with_custom_crash_reporting(true);
++    assert!(builder.platform_specific.custom_crash_reporting);
++    let builder = builder.with_custom_crash_reporting(false);
++    assert!(!builder.platform_specific.custom_crash_reporting);
++  }
+ }
+--- a/src/webview2/mod.rs
++++ b/src/webview2/mod.rs
+@@ -340,6 +340,8 @@
+ 
+       options.set_scroll_bar_style(scroll_bar_style);
+ 
++      options.set_is_custom_crash_reporting_enabled(pl_attrs.custom_crash_reporting);
++
+       CreateCoreWebView2EnvironmentWithOptions(
+         PCWSTR::null(),
+         &data_directory.unwrap_or_default(),
+--- /dev/null
++++ b/.changes/custom-crash-reporting.md
+@@ -0,0 +1,5 @@
++---
++"wry": minor
++---
++
++On Windows, add `WebViewBuilderExtWindows::with_custom_crash_reporting` to set WebView2's `IsCustomCrashReportingEnabled`, so its crash reports are not sent to Microsoft.
