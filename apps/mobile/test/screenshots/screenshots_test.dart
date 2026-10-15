@@ -296,6 +296,36 @@ void main() {
       await shot(tester, '$name-48-group-admin-muted');
     }, skip: skip != false);
 
+    testWidgets('the calls that ring and the call settings in $name', (tester) async {
+      Future<void> tapText(String text) async {
+        await tester.ensureVisible(find.text(text).last);
+        await tester.pumpAndSettle();
+        await tester.tap(find.text(text).last);
+        await tester.pumpAndSettle();
+      }
+
+      final app = await pumpApp(tester, engine: testEngine(answerAfter: null), appearance: appearance);
+      app.engine.receiveCall('ana');
+      await shot(tester, '$name-49-call-incoming');
+      await tester.tap(find.bySemanticsLabel('Rechazar'));
+      await tester.pumpAndSettle();
+
+      await openChat(tester, 'Ana Torres');
+      await tester.tap(find.bySemanticsLabel('Llamar'));
+      await tester.pumpAndSettle();
+      await shot(tester, '$name-50-call-calling');
+      await tester.tap(find.bySemanticsLabel('Colgar'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.bySemanticsLabel('Volver'));
+      await tester.pumpAndSettle();
+
+      await openTab(tester, 'Ajustes');
+      await tapText('Notificaciones');
+      await shot(tester, '$name-51-notif-calls');
+      await tapText('Tono de llamada');
+      await shot(tester, '$name-52-notif-ringtone');
+    }, skip: skip != false);
+
     testWidgets('the unlock screen with the fingerprint in $name', (tester) async {
       final engine = testEngine();
       await tester.runAsync(() => engine.updateSettings(const EngineSettings(biometricUnlock: true)));
