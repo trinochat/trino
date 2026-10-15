@@ -19,6 +19,26 @@ import type {
 import { ShellScreen, type ShellScreenProps } from './ShellScreen';
 import { fakeNet, UPDATES } from '../net/test-support';
 import { appearanceHost, fakeApi, fakeEvents, fakePrefs } from './test-fakes';
+import type { InboxListProps } from '../inbox/InboxList';
+
+/**
+ * Each time the inbox's list renders (FIX-2). The real InboxList, counted:
+ * when it is memo(render), the count goes inside the memo, which stays
+ * the real one; a plain function is counted on each call.
+ */
+const inboxList = vi.hoisted(() => ({ renders: 0 }));
+vi.mock('../inbox/InboxList', async importOriginal => {
+  const { memo } = await import('react');
+  const actual = await importOriginal<typeof import('../inbox/InboxList')>();
+  type Render = (props: InboxListProps) => ReactElement | null;
+  const real = actual.InboxList as unknown as Render & { type?: Render; compare?: Parameters<typeof memo>[1] | null };
+  const render: Render = real.type ?? real;
+  const counted: Render = props => {
+    inboxList.renders += 1;
+    return render(props);
+  };
+  return { ...actual, InboxList: real.type ? memo(counted, real.compare ?? undefined) : counted };
+});
 
 afterEach(cleanup);
 
@@ -952,5 +972,71 @@ describe('ShellScreen: Tor', () => {
     setup();
     await row('Ana');
     expect(screen.queryByText(/de forma privada|Sin protección/)).toBeNull();
+  });
+});
+
+// FIX-2: the app froze now and then on a switch between sections of
+// Settings. The section lived in the shell, so each switch rendered the
+// whole shell again, the inbox's list and every row with it; so did every
+// net-changed and update-changed. They render only what shows them now.
+describe('ShellScreen: what renders again', () => {
+  it('leaves the inbox alone when Settings switches section', async () => {
+    const { slots } = setup();
+    await row('Ana');
+    fireEvent.click(screen.getByRole('button', { name: 'Ajustes' }));
+    const before = inboxList.renders;
+    for (const section of ['notifications', 'privacy', 'appearance', 'profile'] as const) {
+      act(() => lastProps(slots.settings).onSectionChange(section));
+      expect(screen.getByTestId('settings').getAttribute('data-section')).toBe(section);
+    }
+    expect(inboxList.renders).toBe(before);
+  });
+
+  it('comes back to the section Settings was on', async () => {
+    const { slots } = setup();
+    await row('Ana');
+    fireEvent.click(screen.getByRole('button', { name: 'Ajustes' }));
+    act(() => lastProps(slots.settings).onSectionChange('notifications'));
+    act(() => lastProps(slots.settings).onClose());
+    expect(screen.queryByTestId('settings')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Ajustes' }));
+    expect(screen.getByTestId('settings').getAttribute('data-section')).toBe('notifications');
+  });
+
+  it('renders only the line, not the shell or the list, on net-changed and update-changed', async () => {
+    const { api: net, emit } = fakeNet({ state: 'starting', pct: 40 });
+    const { slots } = setup({ net });
+    fireEvent.click(await row('Ana'));
+    await screen.findByText('Conectando de forma privada… 40 %');
+    const list = inboxList.renders;
+    const shell = slots.chat.mock.calls.length;
+
+    act(() => emit.net({ state: 'starting', pct: 60 }));
+    expect(screen.getByText('Conectando de forma privada… 60 %')).toBeTruthy();
+    act(() => emit.update({ ...UPDATES, state: { state: 'ready', version: '0.2.0' } }));
+    expect(screen.getByRole('region', { name: 'Versión nueva' })).toBeTruthy();
+    act(() => emit.net({ state: 'ready', transport: 'none' }));
+    expect(screen.queryByText(/Conectando de forma privada/)).toBeNull();
+
+    expect(inboxList.renders).toBe(list);
+    // The chat is rendered by the shell: it did not render again.
+    expect(slots.chat.mock.calls.length).toBe(shell);
+  });
+
+  it('leaves the list alone when a dialog opens over the shell', async () => {
+    setup();
+    await row('Ana');
+    const before = inboxList.renders;
+    fireEvent.click(screen.getByRole('button', { name: 'Nuevo chat' }));
+    expect(screen.getByTestId('new-chat')).toBeTruthy();
+    expect(inboxList.renders).toBe(before);
+  });
+
+  it('renders the list again when what it shows changes', async () => {
+    const { emit } = setup();
+    await row('Ana');
+    const before = inboxList.renders;
+    act(() => emit.messageReceived({ from_handle: 'Bea', text: 'hola', timestamp: NOW }));
+    await waitFor(() => expect(inboxList.renders).toBeGreaterThan(before));
   });
 });

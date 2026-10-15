@@ -22,7 +22,7 @@
  * muted. The row stays marked while its menu is open.
  */
 import { Bell, BellOff, Info, Phone, Video } from 'lucide-react';
-import { useState } from 'react';
+import { memo, useState } from 'react';
 import { rowTime } from '../../lib/dates';
 import { useT } from '../../lib/i18n';
 import { useLang } from '../../lib/i18n-context';
@@ -80,7 +80,20 @@ function rowEntries(item: InboxItem, actions: InboxRowActions, t: (key: string) 
   return entries;
 }
 
-export function InboxList({ items, selectedKey, onSelect, now, emptyText, rowActions, ...name }: InboxListProps) {
+/**
+ * Memoized (FIX-2): the shell renders again for much that the list does not
+ * show, such as a dialog that opens, and the list renders every row. With
+ * the same props it does not render again.
+ */
+export const InboxList = memo(function InboxList({
+  items,
+  selectedKey,
+  onSelect,
+  now,
+  emptyText,
+  rowActions,
+  ...name
+}: InboxListProps) {
   const t = useT();
   const { lang } = useLang();
   /** The row whose menu was asked for; it is marked while the menu is open. */
@@ -144,4 +157,4 @@ export function InboxList({ items, selectedKey, onSelect, now, emptyText, rowAct
       {contextMenu.menu}
     </ul>
   );
-}
+});

@@ -21,13 +21,51 @@ function capitalize(text: string, lang: Lang): string {
   return text.charAt(0).toLocaleUpperCase(lang) + text.slice(1);
 }
 
+/*
+ * The sets of options, one object each: a formatter is built once per
+ * language and set (FIX-2). Building one is slow, and every row of the
+ * inbox, every separator of a chat and every call in the log asks for one
+ * on each render.
+ */
+const CLOCK: Intl.DateTimeFormatOptions = { hour: '2-digit', minute: '2-digit' };
+const WEEKDAY_SHORT: Intl.DateTimeFormatOptions = { weekday: 'short' };
+const WEEKDAY_LONG: Intl.DateTimeFormatOptions = { weekday: 'long' };
+const DAY_MONTH_SHORT: Intl.DateTimeFormatOptions = { day: 'numeric', month: 'short' };
+const DAY_MONTH_LONG: Intl.DateTimeFormatOptions = { day: 'numeric', month: 'long' };
+const SHORT_DATE: Intl.DateTimeFormatOptions = { day: 'numeric', month: 'numeric', year: '2-digit' };
+const LONG_DATE: Intl.DateTimeFormatOptions = { day: 'numeric', month: 'long', year: 'numeric' };
+
+/** The formatters built so far, by set of options and then by language. */
+const formatters = new Map<Intl.DateTimeFormatOptions, Map<Lang, Intl.DateTimeFormat>>();
+const relativeFormatters = new Map<Lang, Intl.RelativeTimeFormat>();
+
 function format(ts: number, lang: Lang, options: Intl.DateTimeFormatOptions): string {
-  return new Intl.DateTimeFormat(lang, options).format(dateOf(ts));
+  let byLang = formatters.get(options);
+  if (!byLang) {
+    byLang = new Map();
+    formatters.set(options, byLang);
+  }
+  let formatter = byLang.get(lang);
+  if (!formatter) {
+    formatter = new Intl.DateTimeFormat(lang, options);
+    byLang.set(lang, formatter);
+  }
+  return formatter.format(dateOf(ts));
+}
+
+/** "Ayer", "Yesterday", "Ontem": the day before, in words. */
+function yesterday(lang: Lang): string {
+  let formatter = relativeFormatters.get(lang);
+  if (!formatter) {
+    formatter = new Intl.RelativeTimeFormat(lang, { numeric: 'auto' });
+    relativeFormatters.set(lang, formatter);
+  }
+  return formatter.format(-1, 'day');
 }
 
 /** Hours and minutes: "09:05", "09:05 AM". */
 export function clockTime(ts: number, lang: Lang): string {
-  return format(ts, lang, { hour: '2-digit', minute: '2-digit' });
+  return format(ts, lang, CLOCK);
 }
 
 /**
@@ -38,10 +76,10 @@ export function clockTime(ts: number, lang: Lang): string {
 export function rowTime(ts: number, now: number, lang: Lang): string {
   const days = daysBefore(ts, now);
   if (days === 0) return clockTime(ts, lang);
-  if (days === 1) return capitalize(new Intl.RelativeTimeFormat(lang, { numeric: 'auto' }).format(-1, 'day'), lang);
-  if (days > 1 && days < 7) return capitalize(format(ts, lang, { weekday: 'short' }), lang);
-  if (dateOf(ts).getFullYear() === dateOf(now).getFullYear()) return format(ts, lang, { day: 'numeric', month: 'short' });
-  return format(ts, lang, { day: 'numeric', month: 'numeric', year: '2-digit' });
+  if (days === 1) return capitalize(yesterday(lang), lang);
+  if (days > 1 && days < 7) return capitalize(format(ts, lang, WEEKDAY_SHORT), lang);
+  if (dateOf(ts).getFullYear() === dateOf(now).getFullYear()) return format(ts, lang, DAY_MONTH_SHORT);
+  return format(ts, lang, SHORT_DATE);
 }
 
 /**
@@ -53,9 +91,9 @@ export function dayLabel(ts: number, now: number, lang: Lang, t: TFunction): str
   const days = daysBefore(ts, now);
   if (days === 0) return t('time2.today');
   if (days === 1) return t('time2.yesterday');
-  if (days > 1 && days < 7) return capitalize(format(ts, lang, { weekday: 'long' }), lang);
-  if (dateOf(ts).getFullYear() === dateOf(now).getFullYear()) return format(ts, lang, { day: 'numeric', month: 'long' });
-  return format(ts, lang, { day: 'numeric', month: 'long', year: 'numeric' });
+  if (days > 1 && days < 7) return capitalize(format(ts, lang, WEEKDAY_LONG), lang);
+  if (dateOf(ts).getFullYear() === dateOf(now).getFullYear()) return format(ts, lang, DAY_MONTH_LONG);
+  return format(ts, lang, LONG_DATE);
 }
 
 /** A call's length: "03:21", and "1:02:03" from one hour on. */

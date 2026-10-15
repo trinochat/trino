@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { clockTime, dayLabel, durationLabel, rowTime } from './dates';
 import { makeT, type Lang } from './i18n';
 
@@ -93,5 +93,52 @@ describe('durationLabel', () => {
     expect(durationLabel(61.9)).toBe('01:01');
     expect(durationLabel(-5)).toBe('00:00');
     expect(durationLabel(Number.NaN)).toBe('00:00');
+  });
+});
+
+// FIX-2: every row of the inbox built its own Intl.DateTimeFormat on every
+// render, and the inbox rendered again on each switch between sections of
+// Settings. A formatter is built once per language and set of options.
+describe('the formatters', () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.resetModules();
+  });
+
+  /** dates.ts afresh, with nothing built yet. */
+  const fresh = async () => {
+    vi.resetModules();
+    return import('./dates');
+  };
+
+  it('builds one Intl.DateTimeFormat per language and options, and reuses it', async () => {
+    const dates = await fresh();
+    const built = vi.spyOn(Intl, 'DateTimeFormat');
+    const today = at(2026, 10, 9, 9, 5);
+    expect(dates.clockTime(today, 'es')).toBe('09:05');
+    expect(dates.clockTime(at(2026, 10, 9, 10, 15), 'es')).toBe('10:15');
+    expect(dates.rowTime(today, NOW, 'es')).toBe('09:05');
+    expect(built).toHaveBeenCalledTimes(1);
+
+    // Another language, or other options, is another formatter, once.
+    expect(dates.clockTime(at(2026, 10, 9, 21, 5), 'pt')).toBe('21:05');
+    expect(dates.rowTime(at(2026, 10, 5), NOW, 'es')).toBe('Lun');
+    expect(dates.rowTime(at(2026, 10, 3), NOW, 'es')).toBe('Sáb');
+    expect(dates.rowTime(at(2026, 3, 3), NOW, 'es')).toBe('3 mar');
+    expect(dates.rowTime(at(2026, 3, 4), NOW, 'es')).toBe('4 mar');
+    expect(built).toHaveBeenCalledTimes(4);
+    expect(dates.dayLabel(at(2026, 3, 3), NOW, 'es', makeT('es'))).toBe('3 de marzo');
+    expect(dates.dayLabel(at(2026, 3, 4), NOW, 'es', makeT('es'))).toBe('4 de marzo');
+    expect(built).toHaveBeenCalledTimes(5);
+  });
+
+  it('builds one Intl.RelativeTimeFormat per language for "Ayer"', async () => {
+    const dates = await fresh();
+    const built = vi.spyOn(Intl, 'RelativeTimeFormat');
+    expect(dates.rowTime(at(2026, 10, 8, 23, 59), NOW, 'es')).toBe('Ayer');
+    expect(dates.rowTime(at(2026, 10, 8, 7, 0), NOW, 'es')).toBe('Ayer');
+    expect(built).toHaveBeenCalledTimes(1);
+    expect(dates.rowTime(at(2026, 10, 8, 7, 0), NOW, 'en')).toBe('Yesterday');
+    expect(built).toHaveBeenCalledTimes(2);
   });
 });

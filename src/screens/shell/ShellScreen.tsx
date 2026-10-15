@@ -25,14 +25,21 @@
  * 8). When Arti is too old for the Tor network, "Trino necesita
  * actualizarse" (card 9) opens once by itself and then from "Ver qué hacer".
  *
+ * What renders again (FIX-2): the inbox gets the same props for as long as
+ * what it shows stays the same, so a dialog, a switch between sections of
+ * Settings (whose section is SettingsPane's) or the details beside a chat
+ * leave its list alone. Tor's state and the updater's are followed by what
+ * shows them (ShellInbox, the dialogs, ObsoleteWatch), never by the shell.
+ *
  * Ctrl+K goes back to Chats and to the search. Ctrl+L, which locks, is the
  * app's (App.tsx), as is the lock itself.
  */
-import { Fragment, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type MutableRefObject, type ReactNode } from 'react';
 import { THEMES } from '../../design/tokens';
 import { useAppearance } from '../../design/useAppearance';
 import { loadAnnouncementFeed, type AnnouncementFeed } from '../../lib/announcements';
 import type { NodeInfo } from '../../lib/api';
+import type { NetStatus } from '../../lib/net';
 import { convoKey } from '../../lib/convo';
 import { useT } from '../../lib/i18n';
 import { prefs as devicePrefs } from '../../lib/prefs';
@@ -42,7 +49,6 @@ import { buildInboxItems } from '../inbox/inbox-model';
 import type { CallFilter } from '../inbox/call-history-model';
 import type { CallRowView } from '../inbox/CallRow';
 import type { InboxRowActions } from '../inbox/InboxList';
-import { InboxPanel } from '../inbox/InboxPanel';
 import type { InboxTab } from '../inbox/InboxTabs';
 import type {
   CallSlot,
@@ -59,6 +65,7 @@ import type {
   SettingsSlotProps,
   ShellSlots,
 } from '../types';
+import { ShellInbox } from './ShellInbox';
 import { useDrafts } from './drafts';
 import { ForwardDialog } from './ForwardDialog';
 import { useShellLayout } from './layout';
@@ -72,10 +79,7 @@ import { shellErrorText } from './shell-error';
 import { useConversations, type ShellError } from './useConversations';
 import { ConnectFailedDialog } from '../net/ConnectFailedDialog';
 import type { NetScreensApi } from '../net/net-api';
-import { torLineOf } from '../net/net-model';
 import { useNetStatus } from '../net/useNetStatus';
-import { updateNoticeOf } from '../net/update-model';
-import { useUpdateInfo } from '../net/useUpdateInfo';
 import { UpdateNeededDialog } from '../net/UpdateNeededDialog';
 import { WithoutTorDialog } from '../net/WithoutTorDialog';
 import { useInvites } from './useInvites';
@@ -136,6 +140,57 @@ type Overlay =
 /** Where the focus goes once a change took the control that had it off the page. */
 type FocusTarget = 'main' | 'settings' | { row: string | null };
 
+/**
+ * The same function on every render, which calls the latest `fn`: for the
+ * props of the memoized inbox, whose handlers read the shell's state of the
+ * render they were made in.
+ */
+function useStable<A extends unknown[], R>(fn: (...args: A) => R): (...args: A) => R {
+  const ref = useRef(fn);
+  ref.current = fn;
+  return useCallback((...args: A) => ref.current(...args), []);
+}
+
+/**
+ * Settings in the main pane, with its section: held here, so a switch
+ * between sections renders Settings alone and not the shell (FIX-2). The
+ * shell keeps the last one in `remember`, and Settings opens there again.
+ */
+function SettingsPane({
+  slot,
+  remember,
+  ...props
+}: Omit<SettingsSlotProps, 'section' | 'onSectionChange'> & {
+  slot: ShellSlots['settings'];
+  remember: MutableRefObject<SettingsSectionId>;
+}) {
+  const [section, setSection] = useState(remember.current);
+  const onSectionChange = useCallback(
+    (id: SettingsSectionId) => {
+      remember.current = id;
+      setSection(id);
+    },
+    [remember],
+  );
+  return slot({ section, onSectionChange, ...props });
+}
+
+/**
+ * Tells the shell whether Arti is too old for the Tor network (card 9), and
+ * shows nothing: the shell renders again only when that changes, not on
+ * each `net-changed`.
+ */
+function ObsoleteWatch({ net, onChange }: { net: NetScreensApi; onChange(obsolete: boolean): void }) {
+  const obsolete = useNetStatus(net)?.state === 'obsolete';
+  useEffect(() => onChange(obsolete), [obsolete, onChange]);
+  return null;
+}
+
+/** A dialog that shows Tor's state follows it itself, not through the shell. */
+function WithNetStatus({ net, children }: { net: NetScreensApi; children(status: NetStatus | null): ReactNode }) {
+  return <>{children(useNetStatus(net))}</>;
+}
+
 export function ShellScreen(props: ShellScreenProps) {
   const { api, events, slots, call, capabilities } = props;
   const prefs = props.prefs ?? devicePrefs;
@@ -149,7 +204,8 @@ export function ShellScreen(props: ShellScreenProps) {
 
   const [open, setOpen] = useState<ConvoRef | null>(null);
   const [main, setMain] = useState<'convo' | 'settings'>('convo');
-  const [section, setSection] = useState<SettingsSectionId>('profile');
+  /** The section Settings was on: SettingsPane's, kept here for when it opens again. */
+  const section = useRef<SettingsSectionId>('profile');
   const [pane, setPane] = useState<'list' | 'main'>('list');
   const [details, setDetails] = useState(false);
   const [overlay, setOverlay] = useState<Overlay | null>(() =>
@@ -225,18 +281,10 @@ export function ShellScreen(props: ShellScreenProps) {
   const { drafts, setDraft, moveDraft } = useDrafts();
   const connection = useConnection(api, events, capabilities.connection);
   const net = props.net ?? null;
-  const netStatus = useNetStatus(net);
-  const torLine = torLineOf(netStatus);
-  // A new version (card 8): "Más tarde" hides the state it was pressed on, until another comes.
-  const updateInfo = useUpdateInfo(net);
-  const updateNotice = updateNoticeOf(updateInfo);
-  const updateKey = updateInfo ? JSON.stringify([updateInfo.state, updateInfo.freeze]) : null;
+  /** Arti too old for the Tor network, as ObsoleteWatch tells. */
+  const [obsolete, setObsolete] = useState(false);
+  /** The update state "Más tarde" was pressed on (card 8), which ShellInbox leaves hidden. */
   const [updateLater, setUpdateLater] = useState<string | null>(null);
-  const runUpdate = (run: 'install' | 'checkNow') => {
-    if (!net) return;
-    const command = run === 'install' ? net.installUpdate : net.checkUpdateNow;
-    command().catch(error => console.error(run === 'install' ? 'update_install failed' : 'update_check_now failed', error));
-  };
   const channel = useAnnouncements(props.loadFeed ?? loadAnnouncementFeed, prefs);
   const strangers = useStrangerAttempts(events);
   const invites = useInvites(api, events);
@@ -351,7 +399,6 @@ export function ShellScreen(props: ShellScreenProps) {
   // Arti too old for the Tor network (card 9): said once, as soon as it is known, over nothing else;
   // afterwards from "Ver qué hacer".
   const updateNeededShown = useRef(false);
-  const obsolete = netStatus?.state === 'obsolete';
   useEffect(() => {
     if (!obsolete || updateNeededShown.current || overlay) return;
     updateNeededShown.current = true;
@@ -407,58 +454,112 @@ export function ShellScreen(props: ShellScreenProps) {
    * on this device that the inbox reads as it renders, so muting one renders
    * the shell again; Novedades keeps its own.
    */
-  const rowActions: InboxRowActions = {
-    onToggleMuted: ref => {
-      if (ref.kind === 'channel') {
-        channel.toggleMuted();
-      } else if (ref.kind === 'group') {
-        prefs.setGroupMuted(ref.gid, !prefs.getGroupMuted(ref.gid));
-        setMutes(count => count + 1);
-      }
-    },
-    onOpenDetails: ref => {
-      openConvo(ref);
-      setDetails(true);
-    },
-    canCall: callable,
-    onCall: (handle, video) => call.start(handle, video),
-  };
-
-  const mutedGroups = new Set(conv.groups.filter(group => prefs.getGroupMuted(group.gid)).map(group => group.gid));
-  const items = buildInboxItems({
-    nodes: conv.nodes,
-    groups: conv.groups,
-    channel: { latest: channel.latest, unread: channel.unread, muted: channel.muted },
-    messages: conv.messages,
-    unread: conv.unread,
-    drafts,
-    trust: conv.trust,
-    mutedGroups,
-    t,
+  const onToggleMuted = useStable((ref: ConvoRef) => {
+    if (ref.kind === 'channel') {
+      channel.toggleMuted();
+    } else if (ref.kind === 'group') {
+      prefs.setGroupMuted(ref.gid, !prefs.getGroupMuted(ref.gid));
+      setMutes(count => count + 1);
+    }
   });
-  const callRows: CallRowView[] | null = capabilities.callLog
-    ? callLog.entries.map(entry => {
-        const node = nodeOf(entry.peer);
-        return {
-          entry,
-          name: entry.peer,
-          ...(node?.avatar && { avatarSrc: node.avatar }),
-          callable: node !== undefined && !node.blocked,
-        };
-      })
-    : null;
-  const notice =
-    invites.invites.length > 0
-      ? { text: t('inbox.invites.notice'), onAction: () => setOverlay({ kind: 'contacts', tab: 'invites' }) }
-      : strangers > strangersSeen
-        ? {
-            text: t('inbox.stranger.notice'),
-            onAction: () => {
-              setStrangersSeen(strangers);
-              setOverlay({ kind: 'contacts', tab: 'invites' });
-            },
-          }
-        : null;
+  const onOpenDetails = useStable((ref: ConvoRef) => {
+    openConvo(ref);
+    setDetails(true);
+  });
+  const canCall = useStable(callable);
+  const onCallFromRow = useStable((handle: string, video: boolean) => call.start(handle, video));
+  const rowActions: InboxRowActions = useMemo(
+    () => ({ onToggleMuted, onOpenDetails, canCall, onCall: onCallFromRow }),
+    [onToggleMuted, onOpenDetails, canCall, onCallFromRow],
+  );
+
+  // The marks are read on every render, as before; the chats are built again only when one changed.
+  const mutedKey = conv.groups
+    .filter(group => prefs.getGroupMuted(group.gid))
+    .map(group => group.gid)
+    .join('\n');
+  const { nodes, groups, messages, unread: unreadCounts, trust } = conv;
+  const { latest: channelLatest, unread: channelUnread, muted: channelMuted } = channel;
+  const items = useMemo(
+    () =>
+      buildInboxItems({
+        nodes,
+        groups,
+        channel: { latest: channelLatest, unread: channelUnread, muted: channelMuted },
+        messages,
+        unread: unreadCounts,
+        drafts,
+        trust,
+        mutedGroups: new Set(mutedKey ? mutedKey.split('\n') : []),
+        t,
+      }),
+    [nodes, groups, channelLatest, channelUnread, channelMuted, messages, unreadCounts, drafts, trust, mutedKey, t],
+  );
+  const callEntries = callLog.entries;
+  const callRows: CallRowView[] | null = useMemo(
+    () =>
+      capabilities.callLog
+        ? callEntries.map(entry => {
+            const node = nodes.find(candidate => candidate.handle === entry.peer);
+            return {
+              entry,
+              name: entry.peer,
+              ...(node?.avatar && { avatarSrc: node.avatar }),
+              callable: node !== undefined && !node.blocked,
+            };
+          })
+        : null,
+    [capabilities.callLog, callEntries, nodes],
+  );
+  const hasInvites = invites.invites.length > 0;
+  const notice = useMemo(
+    () =>
+      hasInvites
+        ? { text: t('inbox.invites.notice'), onAction: () => setOverlay({ kind: 'contacts', tab: 'invites' }) }
+        : strangers > strangersSeen
+          ? {
+              text: t('inbox.stranger.notice'),
+              onAction: () => {
+                setStrangersSeen(strangers);
+                setOverlay({ kind: 'contacts', tab: 'invites' });
+              },
+            }
+          : null,
+    [hasInvites, strangers, strangersSeen, t],
+  );
+  const { handle: myHandle, avatar: myAvatar } = props.me;
+  const me = useMemo(() => ({ handle: myHandle, ...(myAvatar && { avatarSrc: myAvatar }) }), [myHandle, myAvatar]);
+  const onSelect = useStable((ref: ConvoRef) => {
+    openConvo(ref);
+    setKept(convoKey(ref));
+  });
+  const onFilterChange = useStable((next: InboxFilter) => {
+    setFilter(next);
+    setKept(null);
+  });
+  const onSeeWhat = useStable((kind: 'torFailed' | 'updateNeeded') => setOverlay({ kind }));
+  const onUpdateLater = useStable((key: string | null) => {
+    // The notice goes with its button: the focus goes back to the list.
+    setUpdateLater(key);
+    moveFocus({ row: openKey });
+  });
+  const onNewChat = useStable(() => setOverlay({ kind: 'newChat', purpose: 'chat' }));
+  const onNewCall = useStable(() => setOverlay({ kind: 'newChat', purpose: 'call' }));
+  const onCallBack = useStable((handle: string) => call.start(handle, false));
+  const onOpenCallChat = useStable((handle: string, key: string) => {
+    // A chat for someone who is no longer a contact could only fail to send.
+    if (!nodeOf(handle)) return;
+    openConvo({ kind: 'contact', handle });
+    setFromCall({ key, peer: handle });
+  });
+  const onShareCode = useStable(() => setOverlay({ kind: 'contacts', tab: 'share' }));
+  const onOpenSettings = useStable(() => {
+    setMain('settings');
+    setPane('main');
+    setDetails(false);
+    moveFocus('main');
+  });
+  const onAddContact = useStable(() => setOverlay({ kind: 'contacts', tab: 'add' }));
 
   let chat: ReactNode = null;
   if (open && open.kind !== 'channel') {
@@ -515,19 +616,21 @@ export function ShellScreen(props: ShellScreenProps) {
 
   const mainContent =
     main === 'settings'
-      ? slots.settings({
-          section,
-          onSectionChange: setSection,
-          onClose: () => {
-            setMain('convo');
-            if (single) setPane('list');
-            moveFocus('settings');
-          },
-          onLockNow: props.onLock,
-          // A contact unblocked there is blocked no more in its chat.
-          onContactsChanged: () => void conv.refreshNodes(),
-          ...props.settings,
-        })
+      ? (
+          <SettingsPane
+            slot={slots.settings}
+            remember={section}
+            onClose={() => {
+              setMain('convo');
+              if (single) setPane('list');
+              moveFocus('settings');
+            }}
+            onLockNow={props.onLock}
+            // A contact unblocked there is blocked no more in its chat.
+            onContactsChanged={() => void conv.refreshNodes()}
+            {...props.settings}
+          />
+        )
       : open?.kind === 'channel'
         ? slots.channel({
             announcements: channel.announcements,
@@ -672,14 +775,18 @@ export function ShellScreen(props: ShellScreenProps) {
     };
     overlayContent =
       shown.kind === 'updateNeeded' ? (
-        <UpdateNeededDialog status={netStatus} api={net} onClose={closeTor} />
+        <WithNetStatus net={net}>{status => <UpdateNeededDialog status={status} api={net} onClose={closeTor} />}</WithNetStatus>
       ) : shown.kind === 'torFailed' ? (
-        <ConnectFailedDialog
-          status={netStatus}
-          api={net}
-          onClose={closeTor}
-          onEscape={() => setOverlay({ kind: 'withoutTor' })}
-        />
+        <WithNetStatus net={net}>
+          {status => (
+            <ConnectFailedDialog
+              status={status}
+              api={net}
+              onClose={closeTor}
+              onEscape={() => setOverlay({ kind: 'withoutTor' })}
+            />
+          )}
+        </WithNetStatus>
       ) : (
         <WithoutTorDialog api={net} onClose={closeTor} onDone={closeTor} />
       );
@@ -741,62 +848,25 @@ export function ShellScreen(props: ShellScreenProps) {
               single ? 'min-w-0 flex-1' : 'w-[20rem] shrink-0',
             )}
           >
-            <InboxPanel
+            <ShellInbox
+              net={net}
+              updateLater={updateLater}
+              onSeeWhat={onSeeWhat}
+              onUpdateLater={onUpdateLater}
               wordmark={THEMES[`${appearance.style}-light`].wordmark}
               items={items}
               selectedKey={openKey}
-              onSelect={ref => {
-                openConvo(ref);
-                setKept(convoKey(ref));
-              }}
+              onSelect={onSelect}
               keepKey={kept}
               filter={filter}
-              onFilterChange={next => {
-                setFilter(next);
-                setKept(null);
-              }}
+              onFilterChange={onFilterChange}
               search={search}
               onSearchChange={setSearch}
               searchRef={searchRef}
               connection={connection}
-              tor={
-                torLine && {
-                  text: t(torLine.key, torLine.vars),
-                  tone: torLine.tone,
-                  ...(torLine.action && {
-                    action: {
-                      label: t('net.line.seeWhat'),
-                      onAction: () => setOverlay({ kind: netStatus?.state === 'obsolete' ? 'updateNeeded' : 'torFailed' }),
-                    },
-                  }),
-                }
-              }
-              update={
-                updateNotice && updateKey !== updateLater
-                  ? {
-                      text: t(updateNotice.key, updateNotice.vars),
-                      ...(updateNotice.action && {
-                        action: {
-                          label: t(updateNotice.action.key),
-                          onAction: () => runUpdate(updateNotice.action!.run),
-                        },
-                      }),
-                      ...(updateNotice.later && {
-                        later: {
-                          label: t('net.update.later'),
-                          onAction: () => {
-                            // The notice goes with its button: the focus goes back to the list.
-                            setUpdateLater(updateKey);
-                            moveFocus({ row: openKey });
-                          },
-                        },
-                      }),
-                    }
-                  : null
-              }
-              me={{ handle: props.me.handle, ...(props.me.avatar && { avatarSrc: props.me.avatar }) }}
-              onNewChat={() => setOverlay({ kind: 'newChat', purpose: 'chat' })}
-              onNewCall={() => setOverlay({ kind: 'newChat', purpose: 'call' })}
+              me={me}
+              onNewChat={onNewChat}
+              onNewCall={onNewCall}
               tab={tab}
               onTabChange={setTab}
               calls={callRows}
@@ -804,23 +874,13 @@ export function ShellScreen(props: ShellScreenProps) {
               onCallFilterChange={setCallFilter}
               missedUnseen={callLog.missedUnseen}
               selectedCallKey={selectedCallKey}
-              onCallBack={handle => call.start(handle, false)}
-              onOpenCallChat={(handle, key) => {
-                // A chat for someone who is no longer a contact could only fail to send.
-                if (!nodeOf(handle)) return;
-                openConvo({ kind: 'contact', handle });
-                setFromCall({ key, peer: handle });
-              }}
-              onShareCode={() => setOverlay({ kind: 'contacts', tab: 'share' })}
-              onOpenSettings={() => {
-                setMain('settings');
-                setPane('main');
-                setDetails(false);
-                moveFocus('main');
-              }}
+              onCallBack={onCallBack}
+              onOpenCallChat={onOpenCallChat}
+              onShareCode={onShareCode}
+              onOpenSettings={onOpenSettings}
               settingsRef={settingsRef}
               hasContacts={!conv.nodesLoaded || conv.nodes.length > 0 || conv.groups.length > 0}
-              onAddContact={() => setOverlay({ kind: 'contacts', tab: 'add' })}
+              onAddContact={onAddContact}
               notice={notice}
               now={conv.now}
               rowActions={rowActions}
@@ -854,6 +914,7 @@ export function ShellScreen(props: ShellScreenProps) {
       <div aria-hidden="true" className="pointer-events-none absolute inset-0 [background-image:var(--t-scan)]" />
       {detailsLayout === 'dialog' && detailsPanel}
       {overlayContent}
+      {net && <ObsoleteWatch net={net} onChange={setObsolete} />}
       {call.layer}
     </div>
   );

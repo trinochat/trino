@@ -57,3 +57,47 @@ describe('useNetStatus', () => {
     expect(hook.result.current).toBeNull();
   });
 });
+
+// FIX-2: each component that shows Tor's state follows it itself, instead of
+// the whole shell; they share one question and one listener.
+describe('useNetStatus, shared', () => {
+  it('asks the backend once and listens once for every component that follows it', async () => {
+    const { api, emit, listening } = fakeNet({ state: 'starting', pct: 10 });
+    const one = renderHook(() => useNetStatus(api));
+    const two = renderHook(() => useNetStatus(api));
+    await flush();
+    expect(api.status).toHaveBeenCalledTimes(1);
+    expect(api.onNetChanged).toHaveBeenCalledTimes(1);
+    expect(listening()).toBe(1);
+    act(() => emit.net({ state: 'starting', pct: 50 }));
+    expect(one.result.current).toEqual({ state: 'starting', pct: 50 });
+    expect(two.result.current).toEqual({ state: 'starting', pct: 50 });
+  });
+
+  it('gives one that comes later the state at once', async () => {
+    const { api, emit } = fakeNet();
+    renderHook(() => useNetStatus(api));
+    await flush();
+    act(() => emit.net({ state: 'direct' }));
+    const later = renderHook(() => useNetStatus(api));
+    expect(later.result.current).toEqual({ state: 'direct' });
+    expect(api.status).toHaveBeenCalledTimes(1);
+  });
+
+  it('listens until the last one goes, then forgets and asks again', async () => {
+    const { api, listening } = fakeNet({ state: 'starting', pct: 20 });
+    const one = renderHook(() => useNetStatus(api));
+    const two = renderHook(() => useNetStatus(api));
+    await flush();
+    one.unmount();
+    expect(listening()).toBe(1);
+    two.unmount();
+    expect(listening()).toBe(0);
+    api.status.mockResolvedValueOnce(READY);
+    const again = renderHook(() => useNetStatus(api));
+    expect(again.result.current).toBeNull();
+    await flush();
+    expect(again.result.current).toEqual(READY);
+    expect(api.status).toHaveBeenCalledTimes(2);
+  });
+});

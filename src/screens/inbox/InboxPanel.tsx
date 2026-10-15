@@ -26,7 +26,7 @@
  * (accesibilidad.md §4.7, rule 9), so nothing there may only shrink.
  */
 import { Download, PhoneOutgoing, Plus, Search, WifiOff } from 'lucide-react';
-import { useId, type Ref } from 'react';
+import { memo, useId, useMemo, type Ref } from 'react';
 import type { TorLineTone } from '../net/net-model';
 import { useT } from '../../lib/i18n';
 import { Banner, Button, FOCUS_RING, IconButton, Input, cx, iconSize } from '../../ui';
@@ -127,7 +127,11 @@ const FILTER_LABELS: Readonly<Record<InboxFilter, string>> = {
   groups: 'inbox.filter.groups',
 };
 
-export function InboxPanel(props: InboxPanelProps) {
+/**
+ * Memoized (FIX-2), as its list is: the shell hands it the same props for as
+ * long as what it shows stays the same.
+ */
+export const InboxPanel = memo(function InboxPanel(props: InboxPanelProps) {
   const t = useT();
   const searchId = useId();
   const { connection, calls, tab, notice } = props;
@@ -136,7 +140,10 @@ export function InboxPanel(props: InboxPanelProps) {
   const update = props.update ?? null;
   const offline = !tor && connection?.status === 'offline';
 
-  const visible = filterItems(props.items, props.filter, props.search, props.keepKey ?? null);
+  const { items, filter, search } = props;
+  const keepKey = props.keepKey ?? null;
+  // The same array for the same chats, so the list does not render again for nothing.
+  const visible = useMemo(() => filterItems(items, filter, search, keepKey), [items, filter, search, keepKey]);
   const chats = (
     <>
       <div className="relative flex items-center">
@@ -305,4 +312,4 @@ export function InboxPanel(props: InboxPanelProps) {
       />
     </div>
   );
-}
+});

@@ -11,7 +11,7 @@
  * 12 Oct 2026). Null says nothing: without the capability, or when the
  * backend cannot say.
  */
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import type { ConnectionStatus } from '../../lib/api';
 import type { Connection } from '../types';
 import { listenAll } from './listen';
@@ -54,8 +54,11 @@ export function useConnection(
     // The backend is the app's for as long as the shell lives.
   }, [enabled]);
 
-  if (!enabled || failed) return null;
-  if (!last) return { status: 'connecting' };
-  if (last.up > 0) return { status: 'connected', up: last.up, total: last.total };
-  return wasUp || graceOver ? { status: 'offline', up: 0, total: last.total } : { status: 'connecting' };
+  // The same object while nothing changed, so the inbox does not render again for nothing (FIX-2).
+  return useMemo((): Connection | null => {
+    if (!enabled || failed) return null;
+    if (!last) return { status: 'connecting' };
+    if (last.up > 0) return { status: 'connected', up: last.up, total: last.total };
+    return wasUp || graceOver ? { status: 'offline', up: 0, total: last.total } : { status: 'connecting' };
+  }, [enabled, failed, last, wasUp, graceOver]);
 }
