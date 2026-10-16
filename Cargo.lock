@@ -8023,6 +8023,7 @@ dependencies = [
  "hex",
  "hkdf",
  "hmac",
+ "rand 0.8.7",
  "secp256k1",
  "serde",
  "serde_json",

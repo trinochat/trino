@@ -43,6 +43,8 @@ chrono = { version = "0.4", features = ["serde"] }
 hkdf = "0.12"
 hmac = "0.12"
 sha2 = "0.10"
+# The one-time key each call's TURN request is signed with (turn.rs).
+rand = "0.8"
 
 [dev-dependencies]
 # Tor as an in-memory pipe, and a direct transport that fails the test.
