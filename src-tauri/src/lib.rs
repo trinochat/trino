@@ -431,15 +431,23 @@ mod tests {
             }
         }
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
-        let manifest = std::fs::read_to_string(root.join("Cargo.toml")).unwrap();
-        assert!(
-            !manifest
-                .lines()
-                .any(|line| line.trim_start().starts_with(DEPENDENCY)),
-            "src-tauri/Cargo.toml depends on it"
-        );
+        // The engine (M4-0) is the app's code too, moved apart from Tauri.
+        let engine = root.join("../crates/trino-engine");
+        for (name, dir) in [
+            ("src-tauri", root),
+            ("crates/trino-engine", engine.as_path()),
+        ] {
+            let manifest = std::fs::read_to_string(dir.join("Cargo.toml")).unwrap();
+            assert!(
+                !manifest
+                    .lines()
+                    .any(|line| line.trim_start().starts_with(DEPENDENCY)),
+                "{name}/Cargo.toml depends on it"
+            );
+        }
         let mut files = vec![root.join("build.rs")];
         sources(&root.join("src"), &mut files);
+        sources(&engine.join("src"), &mut files);
         assert!(files.len() > 20, "the sources were not found");
         for file in files {
             let source = std::fs::read_to_string(&file).unwrap();
@@ -469,6 +477,8 @@ mod tests {
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
         let mut files = Vec::new();
         sources(&root.join("src"), &mut files);
+        // The engine (M4-0) names it nowhere: only the app's two files may.
+        sources(&root.join("../crates/trino-engine/src"), &mut files);
         files.push(root.join("build.rs"));
         assert!(files.len() > 20, "the sources were not found");
 
@@ -508,6 +518,7 @@ mod tests {
         let mut files = vec![root.join("build.rs")];
         sources(&root.join("src"), &mut files);
         sources(&root.join("../crates/trino-net/src"), &mut files);
+        sources(&root.join("../crates/trino-engine/src"), &mut files);
         assert!(files.len() > 30, "the sources were not found");
         for file in files {
             let source = std::fs::read_to_string(&file).unwrap();
@@ -552,7 +563,7 @@ mod tests {
     /// Tor design §2.3 and test 74 (R-25): nothing writes logs to disk but
     /// diag.rs (in debug builds, fixed text). No code installs a tracing
     /// subscriber, so Arti's events go nowhere, and no logging crate is a
-    /// dependency of the app or of trino-net. (Arti's own tree carries a
+    /// dependency of the app, of trino-net or of the engine. (Arti's own tree carries a
     /// subscriber crate, through tor-proto's tor-rtmock; nothing calls it.)
     #[test]
     fn nothing_outside_diag_writes_logs() {
@@ -578,9 +589,15 @@ mod tests {
         }
         let app = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
         let net = app.join("../crates/trino-net");
-        let mut files = vec![app.join("Cargo.toml"), net.join("Cargo.toml")];
+        let engine = app.join("../crates/trino-engine");
+        let mut files = vec![
+            app.join("Cargo.toml"),
+            net.join("Cargo.toml"),
+            engine.join("Cargo.toml"),
+        ];
         sources(&app.join("src"), &mut files);
         sources(&net.join("src"), &mut files);
+        sources(&engine.join("src"), &mut files);
         assert!(files.len() > 30, "the sources were not found");
         for file in files {
             let text = std::fs::read_to_string(&file).unwrap();

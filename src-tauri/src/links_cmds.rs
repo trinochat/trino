@@ -240,9 +240,10 @@ mod tests {
         let permissions = capability["permissions"].to_string();
         assert!(!permissions.contains("opener:"), "{permissions}");
 
-        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+        let app = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
         let mut callers = Vec::new();
-        let mut stack = vec![dir];
+        // The engine (M4-0) opens nothing either.
+        let mut stack = vec![app.join("src"), app.join("../crates/trino-engine/src")];
         while let Some(dir) = stack.pop() {
             for entry in std::fs::read_dir(dir).unwrap() {
                 let path = entry.unwrap().path();
