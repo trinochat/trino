@@ -1561,7 +1561,8 @@ mod tests {
     fn the_command_never_signs_with_the_identity() {
         // Decision 18: the account's key never reaches the Worker. The
         // command reads only whether a session is open.
-        let source = include_str!("turn.rs");
+        // As checked out: on Windows, git may give the file CRLF line ends.
+        let source = include_str!("turn.rs").replace("\r\n", "\n");
         let command = &source[source
             .find("pub async fn get_turn_servers")
             .expect("the command")..];
