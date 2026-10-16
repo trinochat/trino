@@ -8,18 +8,23 @@ import 'package:trino_mobile/ui/bottom_tabs.dart';
 import '../support/app_harness.dart';
 
 void main() {
-  testWidgets('opens on Chats and moves between the bottom tabs', (tester) async {
+  testWidgets('opens on Chats, second from the left, and moves between the bottom tabs', (tester) async {
     await pumpApp(tester);
     final tabs = find.byKey(const ValueKey('bottom-tabs'));
-    for (final label in ['Chats', 'Llamadas', 'Contactos', 'Ajustes']) {
+    for (final label in ['Llamadas', 'Chats', 'Contactos', 'Ajustes']) {
       expect(find.descendant(of: tabs, matching: find.text(label)), findsOneWidget);
     }
-    expect(tester.widget<BottomTabs>(tabs).items.map((item) => item.icon), [
-      TrinoIcons.chats,
+    // A beta tester's suggestion: Chats, the tab used most, sits in one of the
+    // two middle places, closer to the thumb, swapped with Llamadas.
+    final bar = tester.widget<BottomTabs>(tabs);
+    expect(bar.items.map((item) => item.icon), [
       TrinoIcons.phone,
+      TrinoIcons.chats,
       TrinoIcons.contacts,
       TrinoIcons.settings,
     ]);
+    expect(bar.selected, 1);
+    expect(tester.getSemantics(find.descendant(of: tabs, matching: find.text('Chats'))), isSemantics(isSelected: true));
     expect(find.descendant(of: find.byType(LargeTitleBar), matching: find.text('Chats')), findsOneWidget);
 
     await openTab(tester, 'Contactos');

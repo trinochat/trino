@@ -1,4 +1,6 @@
-// The four tabs: Chats, Llamadas, Contactos and Ajustes, with the bottom bar.
+// The four tabs: Llamadas, Chats, Contactos and Ajustes, with the bottom bar.
+// Chats, the most used, sits second, in the middle and nearer the thumb (a
+// beta tester's suggestion), and the app opens on it.
 // Llamadas counts the missed calls not seen yet; looking at it clears them.
 // The inbox's "Ver qué hacer" opens "No se pudo conectar". A call that rings
 // in opens the call screen over whatever is open.
@@ -29,8 +31,8 @@ class HomeShell extends StatefulWidget {
 }
 
 class _HomeShellState extends State<HomeShell> {
-  static const _chatsTab = 0;
-  static const _callsTab = 1;
+  static const _callsTab = 0;
+  static const _chatsTab = 1;
   static const _contactsTab = 2;
 
   late final TrinoEngine _engine = context.engine;
@@ -100,8 +102,8 @@ class _HomeShellState extends State<HomeShell> {
       body: IndexedStack(
         index: _tab,
         children: [
-          ChatsScreen(onNetworkHelp: () => Navigator.of(context).push(ConnectionFailedScreen.route())),
           const CallsScreen(),
+          ChatsScreen(onNetworkHelp: () => Navigator.of(context).push(ConnectionFailedScreen.route())),
           const ContactsScreen(),
           const SettingsScreen(),
         ],
@@ -109,8 +111,8 @@ class _HomeShellState extends State<HomeShell> {
       bottomNavigationBar: BottomTabs(
         key: const ValueKey('bottom-tabs'),
         items: [
-          (icon: TrinoIcons.chats, label: l10n.tabChats),
           (icon: TrinoIcons.phone, label: l10n.tabCalls),
+          (icon: TrinoIcons.chats, label: l10n.tabChats),
           (icon: TrinoIcons.contacts, label: l10n.tabContacts),
           (icon: TrinoIcons.settings, label: l10n.tabSettings),
         ],
