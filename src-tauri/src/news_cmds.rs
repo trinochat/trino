@@ -18,11 +18,9 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tauri::State;
+pub(crate) use trino_engine::prefs::OLD_MIN_SEQ;
 use trino_net::news::{self, News, Seen, Signer};
 use trino_net::{HttpClient, Net};
-
-/// The preference where the WebView kept the highest `seq` before.
-pub(crate) const OLD_MIN_SEQ: &str = "trino:announcements:minSeq";
 
 /// The news now: every mirror through Tor, in a session of its own (Tor
 /// design §2.7), verified against "Trino Updates", with what this device
@@ -46,12 +44,6 @@ fn now() -> u64 {
         .duration_since(UNIX_EPOCH)
         .map(|since| since.as_secs())
         .unwrap_or(0)
-}
-
-/// The account's old `minSeq`, if `prefs` (the store's preferences, every
-/// entry) has one that is a number.
-pub(crate) fn old_min_seq(prefs: Option<&serde_json::Value>) -> Option<u64> {
-    prefs?.get(OLD_MIN_SEQ)?.as_str()?.trim().parse().ok()
 }
 
 /// The old `minSeq` among the entries the import took, if any.
@@ -81,6 +73,7 @@ mod tests {
     use super::*;
     use crate::fsutil::scratch::ScratchDir;
     use crate::net_cmds::tests::{becomes, fake_tor};
+    use trino_engine::prefs::old_min_seq;
     use trino_net::mock::Mock;
     use trino_net::news::NewsStatus;
     use trino_net::{mock_http, NetStatus, TransportKind};

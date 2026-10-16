@@ -13,7 +13,9 @@
 // does, so `crate::crypto::…` reads the same in the code moved here.
 pub use trino_core::{call_signal, crypto, envelope, group, identity, ratchet, totp, vault, x3dh};
 
+pub mod account;
 pub mod blossom;
+pub mod bridges;
 pub mod call_log;
 pub mod command_error;
 pub mod connection;
@@ -26,6 +28,7 @@ pub mod groups;
 pub mod lock;
 pub mod nostr;
 pub mod passphrase;
+pub mod prefs;
 pub mod profile;
 pub mod send;
 pub mod session;

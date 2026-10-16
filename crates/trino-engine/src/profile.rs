@@ -2270,4 +2270,79 @@ mod tests {
         );
         assert_eq!(*asked.lock().unwrap(), [vec!["bob".to_string()]]);
     }
+
+    // ---- M4-0c: from the app, now that the account's files are here ----
+
+    #[test]
+    fn a_legacy_profiles_bin_that_does_not_decrypt_is_kept_aside_and_a_new_one_started() {
+        let scratch = ScratchDir::new("profiles-damaged");
+        let path = scratch.path().join(PROFILES_FILE);
+        // Damaged, or another identity's: no key here opens it.
+        let damaged = b"a nonce, then a ciphertext that no key here opens".to_vec();
+        std::fs::write(&path, &damaged).unwrap();
+        let me = create_identity();
+        let mut inner = InnerState {
+            identity: Some(me.clone()),
+            storage: legacy_cell(scratch.path(), &me),
+            ..InnerState::default()
+        };
+
+        let found = legacy_found(&path, &me);
+        load_found(&mut inner, found, NOW);
+
+        // Its bytes stay, for whoever can still read them,
+        let aside = scratch.path().join(DAMAGED_PROFILES_FILE);
+        assert_eq!(std::fs::read(&aside).unwrap(), damaged);
+        // and the session goes on with a new profiles.bin, sealed as
+        // earlier versions seal it.
+        assert!(!inner.profiles.not_loaded);
+        assert_eq!(inner.profiles.rev, NOW as u64);
+        let Found::Ready(json) = legacy_found(&path, &me) else {
+            panic!("not saved")
+        };
+        let saved: Profiles = serde_json::from_slice(&json).unwrap();
+        assert_eq!(saved.rev, NOW as u64);
+    }
+
+    #[test]
+    fn a_legacy_profiles_bin_that_cannot_be_read_is_kept_and_never_written() {
+        let scratch = ScratchDir::new("profiles-unreadable");
+        // A directory where profiles.bin should be: reading it fails, and
+        // not because it is missing, as a file another program holds would.
+        let path = scratch.path().join(PROFILES_FILE);
+        std::fs::create_dir(&path).unwrap();
+        std::fs::write(path.join("inside"), b"keep").unwrap();
+        let me = create_identity();
+        let mut inner = InnerState {
+            identity: Some(me.clone()),
+            storage: legacy_cell(scratch.path(), &me),
+            ..InnerState::default()
+        };
+
+        let found = legacy_found(&path, &me);
+        load_found(&mut inner, found, NOW);
+
+        assert!(inner.profiles.not_loaded);
+        assert_eq!(inner.profiles.rev, 0, "no first revision over the old one");
+        assert!(!scratch.path().join(DAMAGED_PROFILES_FILE).exists());
+        // This session never writes profiles.bin, and the profile cannot be
+        // edited: its revision would go back.
+        assert!(try_save(&inner).is_err());
+        let error = check_editable(&inner.profiles).unwrap_err();
+        assert_eq!(error.code, ErrorCode::Io);
+        assert_eq!(std::fs::read(path.join("inside")).unwrap(), b"keep");
+        // Locking forgets that, with the rest.
+        inner.profiles.forget();
+        assert!(!inner.profiles.not_loaded);
+    }
+
+    /// The files of an account not moved to the store yet, in `home`.
+    fn legacy_cell(home: &Path, me: &Identity) -> crate::store::session::StorageCell {
+        let files = crate::account::DataFiles::in_home(home.to_path_buf());
+        let cell = crate::store::session::StorageCell::default();
+        cell.set(crate::store::session::Storage::Legacy(Box::new(
+            crate::storage::legacy_files(&files, me),
+        )));
+        cell
+    }
 }

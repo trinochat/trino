@@ -13,20 +13,24 @@ mod tests {
         // `only_a_debug_build_keeps_a_log_and_the_running_build_decides`:
         // the clean-up whenever a session opens (unseal and forge) goes by
         // the build that is running.
-        let commands = include_str!("commands.rs")
+        // Both open in the engine's account.rs since M4-0c.
+        let account = include_str!("../../crates/trino-engine/src/account.rs")
             .split("#[cfg(test)]")
             .next()
             .unwrap();
         let clean_ups = "remove_stale_log(&files.home, crate::diag::Build::CURRENT)";
-        assert_eq!(commands.matches(clean_ups).count(), 2, "unseal and forge");
+        assert_eq!(account.matches(clean_ups).count(), 2, "unseal and forge");
     }
 
     #[test]
     fn a_wipe_removes_both_logs() {
-        // The wipe lives in storage_cmds.rs since cifrado local (CL-1b).
-        let storage: String = include_str!("storage_cmds.rs").split_whitespace().collect();
+        // The wipe lives in storage_cmds.rs since cifrado local (CL-1b), and
+        // in the engine's storage.rs since M4-0c.
+        let storage: String = include_str!("../../crates/trino-engine/src/storage.rs")
+            .split_whitespace()
+            .collect();
         let wipe = storage
-            .split("pub(super)fnwipe_home(")
+            .split("pubfnwipe_home(")
             .nth(1)
             .and_then(|rest| rest.split("#[cfg(test)]").next())
             .unwrap();
@@ -98,7 +102,7 @@ mod tests {
     /// The files that log: the commands module with its child modules (the
     /// contacts, groups, history and profile commands), what moved from them
     /// into the engine, and the relay client.
-    const LOGGING_SOURCES: [(&str, &str); 10] = [
+    const LOGGING_SOURCES: [(&str, &str); 14] = [
         ("commands.rs", include_str!("commands.rs")),
         ("contacts_cmds.rs", include_str!("contacts_cmds.rs")),
         ("groups_cmds.rs", include_str!("groups_cmds.rs")),
@@ -112,6 +116,22 @@ mod tests {
         (
             "engine/session.rs",
             include_str!("../../crates/trino-engine/src/session.rs"),
+        ),
+        (
+            "engine/account.rs",
+            include_str!("../../crates/trino-engine/src/account.rs"),
+        ),
+        (
+            "engine/storage.rs",
+            include_str!("../../crates/trino-engine/src/storage.rs"),
+        ),
+        (
+            "engine/prefs.rs",
+            include_str!("../../crates/trino-engine/src/prefs.rs"),
+        ),
+        (
+            "engine/bridges.rs",
+            include_str!("../../crates/trino-engine/src/bridges.rs"),
         ),
         (
             "engine/send.rs",

@@ -502,17 +502,18 @@ mod tests {
         let code: String = code.split_whitespace().collect();
         assert!(!code.contains("fs::write("), "a plain write");
         assert!(code.contains("write_vault_noted_in(&self.storage,vault,bytes,self.spk)"));
-        // That one notes the re-seal in the store and writes atomically.
-        let storage: String = include_str!("storage_cmds.rs")
+        // That one notes the re-seal in the store and writes atomically
+        // (the engine's storage.rs since M4-0c).
+        let storage: String = include_str!("../../crates/trino-engine/src/storage.rs")
             .split("#[cfg(test)]")
             .next()
             .unwrap()
             .split_whitespace()
             .collect();
         let noted = storage
-            .split("pub(crate)fnwrite_vault_noted(")
+            .split("pubfnwrite_vault_noted(")
             .nth(1)
-            .and_then(|rest| rest.split("pub(crate)fn").next())
+            .and_then(|rest| rest.split("pubfn").next())
             .unwrap();
         assert!(!noted.contains("fs::write("), "a plain write");
         assert!(noted.contains("fsutil::atomic_write(vault,bytes)"));

@@ -22,11 +22,12 @@
 //!   works (trino-net's `try_bridge`); nothing changes without a tap.
 
 use super::*;
-use trino_net::tor::bridges::{self, BridgeError, BridgeLine, Bridges, BUILTIN};
+use crate::state::vault_path;
+use crate::store::session::PrefsImport;
+use std::path::Path;
+pub(crate) use trino_engine::bridges::{stored_lines, NET_BRIDGES};
+use trino_net::tor::bridges::{self, BridgeError, Bridges, BUILTIN};
 use trino_net::{Net, NetStatus, PtLauncher, StartWhen, TorSettings, TransportKind};
-
-/// The key of the private lines in `prefs.bin`.
-pub(crate) const NET_BRIDGES: &str = "net.bridges";
 
 /// lyrebird's SHA-256 for each target, as scripts/fetch-lyrebird.sh wrote
 /// it.
@@ -161,16 +162,6 @@ pub(crate) fn check(text: &str) -> Checked {
     }
 }
 
-/// The private lines kept under `net.bridges`, if they are bridges.
-pub(crate) fn stored_lines(stored: Option<&str>) -> Option<Vec<BridgeLine>> {
-    bridges::parse_pasted(stored?).ok()
-}
-
-/// The private lines in a `prefs.bin` as `load_session` read it.
-pub(crate) fn stored_in(prefs: Option<&serde_json::Value>) -> Option<Vec<BridgeLine>> {
-    stored_lines(prefs?.get(NET_BRIDGES)?.as_str())
-}
-
 /// Whether the session in `inner` has a store to seal private lines in.
 fn has_store(inner: &InnerState) -> bool {
     inner.identity.is_some()
@@ -258,18 +249,6 @@ pub(crate) fn choose(
         errors: Vec::new(),
         status: net.status_now(),
     })
-}
-
-/// The first run's private lines, sealed in the account just made.
-pub(crate) fn keep_first_run_lines(inner: &InnerState, net: &Net) -> Result<(), CommandError> {
-    let Bridges::Private(lines) = net.bridges() else {
-        return Ok(());
-    };
-    if prefs_cmds::current_map(inner).contains_key(NET_BRIDGES) {
-        return Ok(());
-    }
-    let kept = Zeroizing::new(bridges::to_stored(&lines));
-    prefs_cmds::set_backend_pref(inner, NET_BRIDGES, Some(&kept))
 }
 
 /// The bridges as the UI shows them.
@@ -409,9 +388,12 @@ pub async fn net_bridges_try(
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
+    use crate::fsutil;
     use crate::fsutil::scratch::ScratchDir;
     use crate::net_cmds::tests::{becomes, fake_tor};
     use std::collections::BTreeMap;
+    use trino_engine::bridges::keep_first_run_lines;
+    use trino_engine::storage::{apply_loaded, load_session};
     use trino_net::{BridgeError, NetStatus, PtLauncher, StartWhen, TorSettings, TransportKind};
 
     const NOW: i64 = 1_760_000_000;

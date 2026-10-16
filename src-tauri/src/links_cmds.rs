@@ -20,9 +20,7 @@
 
 use super::*;
 use tauri::Url;
-
-/// The entry of `prefs.bin` that holds "No volver a preguntar".
-pub(crate) const LINKS_NO_ASK: &str = "net.linksNoAsk";
+pub(crate) use trino_engine::prefs::LINKS_NO_ASK;
 
 /// Longer than any address worth opening.
 const MAX_LINK_CHARS: usize = 4096;

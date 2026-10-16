@@ -62,6 +62,14 @@ mod tests {
                 include_str!("../../crates/trino-engine/src/session.rs"),
             ),
             (
+                "engine/account.rs",
+                include_str!("../../crates/trino-engine/src/account.rs"),
+            ),
+            (
+                "engine/storage.rs",
+                include_str!("../../crates/trino-engine/src/storage.rs"),
+            ),
+            (
                 "engine/send.rs",
                 include_str!("../../crates/trino-engine/src/send.rs"),
             ),
