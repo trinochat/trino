@@ -11,4 +11,13 @@ publish = false
 # drives it through its commands, and the Android and iPhone apps will
 # through FFI. tests/no_tauri.rs keeps Tauri out of its dependency tree.
 
+[features]
+# What the app's tests take from the engine (`fsutil::scratch`). Only the
+# app's dev-dependencies turn it on, as trino-net's `test-util`.
+test-util = []
+
 [dependencies]
+# Protocol and cryptography, at the same commit as the app's (Cargo.lock).
+trino-core = { git = "https://github.com/trinochat/trino-core", rev = "3421e168c94da92d21234e1a8c1587d552b0002b" }
+thiserror = "1"
+zeroize = { version = "1", features = ["derive"] }

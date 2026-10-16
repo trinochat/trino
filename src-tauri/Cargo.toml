@@ -24,6 +24,10 @@ trino-core = { git = "https://github.com/trinochat/trino-core", rev = "3421e168c
 # permits to go without it (Tor design §2). No Tauri in it.
 trino-net = { path = "../crates/trino-net" }
 
+# The session's state and logic, apart from Tauri (M4-0): the commands
+# here wrap it.
+trino-engine = { path = "../crates/trino-engine" }
+
 tauri = { version = "2", features = ["tray-icon", "image-png"] }
 tauri-plugin-opener = "2"
 tauri-plugin-notification = "2"
@@ -106,6 +110,8 @@ webview2-com = "=0.38.2"
 proptest = "1"
 # Tor as an in-memory pipe, and a direct transport that fails the test.
 trino-net = { path = "../crates/trino-net", features = ["test-util"] }
+# The engine's scratch directories for tests that touch the disk.
+trino-engine = { path = "../crates/trino-engine", features = ["test-util"] }
 # tokio's paused clock (`start_paused`), for tests whose deadlines must not
 # depend on how loaded the machine is. Only a feature: no new crate.
 tokio = { version = "1", features = ["test-util"] }

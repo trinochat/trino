@@ -8015,6 +8015,11 @@ dependencies = [
 [[package]]
 name = "trino-engine"
 version = "0.1.0"
+dependencies = [
+ "thiserror 1.0.69",
+ "trino-core",
+ "zeroize",
+]
 
 [[package]]
 name = "trino-gui"
@@ -8047,6 +8052,7 @@ dependencies = [
  "tokio",
  "tokio-tungstenite",
  "trino-core",
+ "trino-engine",
  "trino-net",
  "webkit2gtk",
  "webview2-com",

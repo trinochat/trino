@@ -353,18 +353,19 @@ fn sync_dir_of(path: &Path) {
 #[cfg(not(unix))]
 fn sync_dir_of(_path: &Path) {}
 
-/// Scratch directories for tests that touch the disk.
-#[cfg(test)]
-pub(crate) mod scratch {
+/// Scratch directories for tests that touch the disk: the engine's, and
+/// the app's through the `test-util` feature.
+#[cfg(any(test, feature = "test-util"))]
+pub mod scratch {
     use std::path::{Path, PathBuf};
     use std::sync::atomic::{AtomicU64, Ordering};
 
     /// An empty directory under the system temp dir, unique to this test run
     /// and removed again when dropped.
-    pub(crate) struct ScratchDir(PathBuf);
+    pub struct ScratchDir(PathBuf);
 
     impl ScratchDir {
-        pub(crate) fn new(label: &str) -> Self {
+        pub fn new(label: &str) -> Self {
             static COUNTER: AtomicU64 = AtomicU64::new(0);
             let path = std::env::temp_dir().join(format!(
                 "trino-gui-test-{label}-{}-{}",
@@ -376,7 +377,7 @@ pub(crate) mod scratch {
             ScratchDir(path)
         }
 
-        pub(crate) fn path(&self) -> &Path {
+        pub fn path(&self) -> &Path {
             &self.0
         }
     }

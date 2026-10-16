@@ -8,3 +8,10 @@
 //!   trino-net's, both taken as they are.
 //! - It moves here from src-tauri a piece at a time, without changing what
 //!   the app does: the app's tests are the safety net.
+
+// The protocol and cryptography are trino-core's, re-exported as the app
+// does, so `crate::crypto::…` reads the same in the code moved here.
+pub use trino_core::{call_signal, crypto, envelope, group, identity, ratchet, totp, vault, x3dh};
+
+pub mod fsutil;
+pub mod passphrase;
