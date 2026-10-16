@@ -137,6 +137,99 @@ void main() {
     });
   });
 
+  group('pinned chats', () {
+    Future<List<String>> titles() async => [for (final chat in await engine.chats.first) chat.title];
+    Future<ChatSummary> chat(String id) async => (await engine.chats.first).firstWhere((c) => c.id == id);
+
+    test('none is pinned at first', () async {
+      expect((await engine.chats.first).where((c) => c.pinned), isEmpty);
+      expect((await chat('chat-lucia')).pinnedAt, isNull);
+    });
+
+    test('a pinned chat goes first, the latest pinned on top, and the rest by activity', () async {
+      await engine.setChatPinned('chat-lucia', true);
+      expect(await titles(), ['Lucía', 'Ana Torres', 'Familia', 'Carlos Méndez']);
+      final lucia = await chat('chat-lucia');
+      expect((lucia.pinned, lucia.pinnedAt), (true, now));
+
+      await engine.setChatPinned('chat-carlos', true);
+      expect(await titles(), ['Carlos Méndez', 'Lucía', 'Ana Torres', 'Familia']);
+
+      // Activity moves the others, never above or among the pinned ones.
+      engine.receive('chat-familia', 'Ya llegué');
+      await engine.saveDraft('chat-lucia', 'Ahorita te la mando');
+      expect(await titles(), ['Carlos Méndez', 'Lucía', 'Familia', 'Ana Torres']);
+    });
+
+    test('unpinning puts the chat back where its activity says', () async {
+      await engine.setChatPinned('chat-lucia', true);
+      await engine.setChatPinned('chat-lucia', false);
+      expect(await titles(), ['Ana Torres', 'Familia', 'Carlos Méndez', 'Lucía']);
+      expect((await chat('chat-lucia')).pinned, isFalse);
+    });
+
+    test('pinning a pinned chat again keeps its place', () async {
+      await engine.setChatPinned('chat-lucia', true);
+      await engine.setChatPinned('chat-carlos', true);
+      await engine.setChatPinned('chat-lucia', true);
+      expect(await titles(), ['Carlos Méndez', 'Lucía', 'Ana Torres', 'Familia']);
+    });
+
+    test('at most $maxPinnedChats: the next one is refused, and nothing changes', () async {
+      final ids = [
+        'chat-ana',
+        'chat-familia',
+        'chat-carlos',
+        'chat-lucia',
+        engine.addGroup(title: 'Trabajo', memberIds: const ['carlos']),
+        engine.addGroup(title: 'Vecinos', memberIds: const ['lucia']),
+      ];
+      for (final id in ids.take(maxPinnedChats)) {
+        await engine.setChatPinned(id, true);
+      }
+      final before = await engine.chats.first;
+      await expectLater(engine.setChatPinned(ids.last, true), throwsA(isA<TooManyPinnedChats>()));
+      expect((await chat(ids.last)).pinned, isFalse);
+      expect((await engine.chats.first).map((c) => c.id), before.map((c) => c.id));
+
+      // Unpinning one makes room.
+      await engine.setChatPinned(ids.first, false);
+      await engine.setChatPinned(ids.last, true);
+      expect((await chat(ids.last)).pinned, isTrue);
+    });
+  });
+
+  group('marking a chat unread', () {
+    Future<ChatSummary> chat(String id) async => (await engine.chats.first).firstWhere((c) => c.id == id);
+
+    test('marks a read chat, with no number: the count stays 0', () async {
+      final lucia = await chat('chat-lucia');
+      expect((lucia.unread, lucia.markedUnread, lucia.isUnread), (0, false, false));
+      await engine.markUnread('chat-lucia');
+      final marked = await chat('chat-lucia');
+      expect((marked.unread, marked.markedUnread, marked.isUnread), (0, true, true));
+    });
+
+    test('does nothing to a chat with unread messages: it already is', () async {
+      await engine.markUnread('chat-ana');
+      final ana = await chat('chat-ana');
+      expect((ana.unread, ana.markedUnread, ana.isUnread), (1, false, true));
+    });
+
+    test('markRead clears the mark as it clears the count, and opening the chat calls it', () async {
+      await engine.markUnread('chat-lucia');
+      await engine.markRead('chat-lucia');
+      final lucia = await chat('chat-lucia');
+      expect((lucia.unread, lucia.markedUnread, lucia.isUnread), (0, false, false));
+    });
+
+    test('does not move the chat', () async {
+      final before = (await engine.chats.first).map((c) => c.id).toList();
+      await engine.markUnread('chat-lucia');
+      expect((await engine.chats.first).map((c) => c.id), before);
+    });
+  });
+
   group('contacts', () {
     test('adds a contact from a trino2 code and rejects anything else', () async {
       final contact = await engine.addContact('trino2:AQRBbmEgVG9ycmVzX2ZpZDQ2MWQ3YjBl');

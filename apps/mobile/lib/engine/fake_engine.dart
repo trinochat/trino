@@ -441,9 +441,32 @@ class FakeTrinoEngine implements TrinoEngine {
   @override
   Future<void> markRead(String chatId) async {
     final room = _rooms[chatId];
-    if (room == null || room.unread == 0) return;
+    if (room == null || (room.unread == 0 && !room.markedUnread)) return;
     room.unread = 0;
+    room.markedUnread = false;
     _publish(room);
+  }
+
+  @override
+  Future<void> markUnread(String chatId) async {
+    final room = _rooms[chatId];
+    if (room == null || room.unread > 0 || room.markedUnread) return;
+    room.markedUnread = true;
+    _publishChats();
+  }
+
+  @override
+  Future<void> setChatPinned(String chatId, bool pinned) async {
+    final room = _rooms[chatId];
+    if (room == null || (room.pinnedAt != null) == pinned) return;
+    if (pinned && _rooms.values.where((r) => r.pinnedAt != null).length >= maxPinnedChats) {
+      throw const TooManyPinnedChats();
+    }
+    // Pinned in the same instant as another (a test clock), it still goes on
+    // top: the order of pinning decides.
+    room.pinnedAt = pinned ? _clock() : null;
+    room.pinOrder = pinned ? _nextId++ : 0;
+    _publishChats();
   }
 
   @override
@@ -1045,9 +1068,18 @@ class FakeTrinoEngine implements TrinoEngine {
             unread: room.unread,
             draft: room.draft,
             muted: room.muted,
+            pinnedAt: room.pinnedAt,
+            markedUnread: room.markedUnread,
           ),
-    ]..sort((a, b) => b.lastActivity!.compareTo(a.lastActivity!));
+    ]..sort(_order);
     _chats.value = List.unmodifiable(summaries);
+  }
+
+  /// The pinned chats first, the latest pinned on top; then by activity.
+  int _order(ChatSummary a, ChatSummary b) {
+    if (a.pinned != b.pinned) return a.pinned ? -1 : 1;
+    if (a.pinned) return _rooms[b.id]!.pinOrder.compareTo(_rooms[a.id]!.pinOrder);
+    return b.lastActivity!.compareTo(a.lastActivity!);
   }
 
   static DateTime _latest(DateTime a, DateTime? b) => b != null && b.isAfter(a) ? b : a;
@@ -1231,6 +1263,11 @@ class _Room {
   /// the chat moves up, as in WhatsApp.
   DateTime? draftAt;
   bool muted = false;
+  bool markedUnread = false;
+  DateTime? pinnedAt;
+
+  /// Grows with each pin: the latest pinned goes on top.
+  int pinOrder = 0;
 }
 
 /// A value and its changes: each listener gets the current value first, then

@@ -149,6 +149,8 @@ class ChatSummary {
     this.unread = 0,
     this.draft,
     this.muted = false,
+    this.pinnedAt,
+    this.markedUnread = false,
   });
 
   final String id;
@@ -176,7 +178,34 @@ class ChatSummary {
   /// [EngineSettings.muteGroups] says.
   final bool muted;
 
+  /// When it was pinned: pinned chats go first, the latest pinned on top.
+  /// Null when it is not pinned. At most [maxPinnedChats] are.
+  final DateTime? pinnedAt;
+
+  /// The user marked it unread ("No leído") with nothing new in it: the row
+  /// shows a mark with no number, and [unread] stays 0. Opening the chat
+  /// ([TrinoEngine.markRead]) clears it.
+  final bool markedUnread;
+
   bool get isGroup => kind == ChatKind.group;
+  bool get pinned => pinnedAt != null;
+
+  /// Has unread messages, or was marked unread.
+  bool get isUnread => unread > 0 || markedUnread;
+}
+
+/// How many chats can be pinned at once.
+const maxPinnedChats = 5;
+
+/// Pinning one more chat than [maxPinnedChats]: the user has to unpin one
+/// first. Nothing changed.
+class TooManyPinnedChats implements Exception {
+  const TooManyPinnedChats();
+
+  int get max => maxPinnedChats;
+
+  @override
+  String toString() => 'TooManyPinnedChats($max)';
 }
 
 /// Someone in a group, you included.
@@ -815,7 +844,8 @@ abstract interface class TrinoEngine {
   /// The direct chat with a contact, created if needed.
   Future<String> openChat(String contactId);
 
-  /// By activity, the latest first.
+  /// The pinned chats first, the latest pinned on top; then the others by
+  /// activity, the latest first. A draft with new words counts as activity.
   Stream<List<ChatSummary>> get chats;
 
   /// Oldest first.
@@ -823,7 +853,19 @@ abstract interface class TrinoEngine {
   Future<void> send(String chatId, String text);
   Future<void> retry(String chatId, String messageId);
   Future<void> saveDraft(String chatId, String draft);
+
+  /// Clears the unread count and the mark of [markUnread]. Opening a chat
+  /// calls it.
   Future<void> markRead(String chatId);
+
+  /// Marks a chat unread with nothing new in it ([ChatSummary.markedUnread]).
+  /// Nothing happens to a chat that already has unread messages.
+  Future<void> markUnread(String chatId);
+
+  /// Pins or unpins a chat. Pinning one more than [maxPinnedChats] throws
+  /// [TooManyPinnedChats] and changes nothing; pinning a pinned chat keeps
+  /// its place.
+  Future<void> setChatPinned(String chatId, bool pinned);
 
   /// Mutes or unmutes a chat's notifications.
   Future<void> setChatMuted(String chatId, bool muted);
