@@ -8013,6 +8013,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "trino-engine"
+version = "0.1.0"
+
+[[package]]
 name = "trino-gui"
 version = "0.1.0"
 dependencies = [

@@ -1,0 +1,14 @@
+[package]
+name = "trino-engine"
+version = "0.1.0"
+description = "Trino Chat's engine: the session's state and logic, apart from any UI"
+authors = ["davidalmeidac"]
+edition = "2021"
+license = "AGPL-3.0-only"
+publish = false
+
+# No Tauri and nothing of the desktop UI in here (M4-0): the desktop app
+# drives it through its commands, and the Android and iPhone apps will
+# through FFI. tests/no_tauri.rs keeps Tauri out of its dependency tree.
+
+[dependencies]

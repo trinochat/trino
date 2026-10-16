@@ -4,6 +4,9 @@
 #   crates/trino-net   — every connection the client opens: Tor, and the two
 #                        permits to go without it (no Tauri in it, so the
 #                        engine M4 extracts takes it as it is)
+#   crates/trino-engine — the session's state and logic, apart from any UI
+#                        (M4-0): the desktop app wraps it in its commands,
+#                        and the mobile apps will reach it through FFI
 #
 # The protocol and cryptography live in their own repository so they can be
 # reviewed without this application around them:
@@ -15,7 +18,7 @@
 
 [workspace]
 resolver = "2"
-members = ["src-tauri", "crates/trino-net"]
+members = ["src-tauri", "crates/trino-net", "crates/trino-engine"]
 # Patched copies of crates.io crates (vendor/README.md): not Trino's own, so
 # not built, linted or formatted as members.
 exclude = ["vendor"]

@@ -40,6 +40,7 @@ exceptions = [
     { name = "trino-gui", allow = ["AGPL-3.0-only"] },
     { name = "trino-core", allow = ["AGPL-3.0-only"] },
     { name = "trino-net", allow = ["AGPL-3.0-only"] },
+    { name = "trino-engine", allow = ["AGPL-3.0-only"] },
 ]
 
 [bans]
