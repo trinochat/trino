@@ -16,15 +16,19 @@ pub use trino_core::{call_signal, crypto, envelope, group, identity, ratchet, to
 pub mod blossom;
 pub mod call_log;
 pub mod command_error;
+pub mod contacts;
 pub mod diag;
 mod engine;
 pub mod events;
 pub mod fsutil;
+pub mod groups;
 pub mod lock;
 pub mod nostr;
 pub mod passphrase;
 pub mod profile;
+pub mod session;
 pub mod state;
+pub mod storage;
 pub mod store;
 #[cfg(any(test, feature = "test-util"))]
 pub mod testing;

@@ -52,6 +52,15 @@ mod tests {
             ("contacts_cmds.rs", include_str!("contacts_cmds.rs")),
             ("groups_cmds.rs", include_str!("groups_cmds.rs")),
             ("history_cmds.rs", include_str!("history_cmds.rs")),
+            // M4-0c: what moved into the engine still emits only there.
+            (
+                "engine/groups.rs",
+                include_str!("../../crates/trino-engine/src/groups.rs"),
+            ),
+            (
+                "engine/session.rs",
+                include_str!("../../crates/trino-engine/src/session.rs"),
+            ),
         ] {
             assert!(
                 emits_only_through_the_sink(source),

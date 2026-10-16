@@ -356,43 +356,6 @@ pub(super) fn apply_loaded(
     profile::load_found(inner, profiles, now);
 }
 
-/// The account as `account.bin` keeps it: the profile, the contacts, the
-/// blocked contacts, the groups and the invitations.
-pub(crate) fn account_of(inner: &InnerState) -> AccountFile {
-    let mut friends: Vec<FriendRecord> = inner.friends.values().cloned().collect();
-    friends.sort_by(|a, b| a.handle.cmp(&b.handle));
-    let mut blocked: Vec<String> = inner.blocked.iter().cloned().collect();
-    blocked.sort();
-    let mut groups: Vec<GroupRoster> = inner.groups.values().cloned().collect();
-    groups.sort_by(|a, b| a.group_id.cmp(&b.group_id));
-    let mut group_invites: Vec<GroupInvite> = inner.group_invites.values().cloned().collect();
-    group_invites.sort_by_key(|invite| invite.received_at);
-    AccountFile {
-        handle: inner.handle.clone().unwrap_or_default(),
-        nostr_pub: inner
-            .identity
-            .as_ref()
-            .map(|identity| hex::encode(identity.nostr.pub_bytes))
-            .unwrap_or_default(),
-        relays: inner.relay_urls.clone(),
-        created_at: inner.created_at,
-        avatar: inner.avatar.clone(),
-        friends,
-        blocked,
-        groups,
-        group_invites,
-    }
-}
-
-/// Save the account, in one write: contacts, groups and invitations change
-/// together (design §4.1). With no session, nothing is written.
-pub(crate) fn persist_account(inner: &InnerState) -> Result<(), String> {
-    inner
-        .storage
-        .write_account(&account_of(inner))
-        .map_err(|e| e.to_string())
-}
-
 /// What the unlock screen gets. Before unlocking it reads nothing in clear
 /// but the vault's header, and says no name (H1, David's decision 1): the
 /// screen greets "Hola de nuevo".
@@ -1035,6 +998,8 @@ pub async fn legacy_files_remove(
 mod tests {
     use super::*;
     use crate::fsutil::scratch::ScratchDir;
+    use crate::group::MemberBundle;
+    use crate::state::{FriendRecord, GroupInvite};
     use crate::store::session::legacy_seal;
     use crate::store::session::testing::{reopen, store_cell};
 

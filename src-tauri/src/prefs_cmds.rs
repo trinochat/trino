@@ -341,6 +341,7 @@ mod tests {
     use super::*;
     use crate::fsutil::scratch::ScratchDir;
     use crate::group::GroupRoster;
+    use crate::state::FriendRecord;
     use crate::store::session::Storage;
 
     const NOW: i64 = 1_760_000_000;

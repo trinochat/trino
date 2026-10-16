@@ -231,3 +231,82 @@ impl ContactProfile {
         wipe(&mut self.photo);
     }
 }
+
+/// The format characters, general category Cf in Unicode 15.1. They show
+/// nothing, and the bidi controls among them (U+202A to U+202E, U+2066 to
+/// U+2069) reorder the text around them, so a name can pass for another.
+const FORMAT_CHARS: [(char, char); 21] = [
+    ('\u{00AD}', '\u{00AD}'),
+    ('\u{0600}', '\u{0605}'),
+    ('\u{061C}', '\u{061C}'),
+    ('\u{06DD}', '\u{06DD}'),
+    ('\u{070F}', '\u{070F}'),
+    ('\u{0890}', '\u{0891}'),
+    ('\u{08E2}', '\u{08E2}'),
+    ('\u{180E}', '\u{180E}'),
+    ('\u{200B}', '\u{200F}'),
+    ('\u{202A}', '\u{202E}'),
+    ('\u{2060}', '\u{2064}'),
+    ('\u{2066}', '\u{206F}'),
+    ('\u{FEFF}', '\u{FEFF}'),
+    ('\u{FFF9}', '\u{FFFB}'),
+    ('\u{110BD}', '\u{110BD}'),
+    ('\u{110CD}', '\u{110CD}'),
+    ('\u{13430}', '\u{1343F}'),
+    ('\u{1BCA0}', '\u{1BCA3}'),
+    ('\u{1D173}', '\u{1D17A}'),
+    ('\u{E0001}', '\u{E0001}'),
+    ('\u{E0020}', '\u{E007F}'),
+];
+
+pub fn is_format(c: char) -> bool {
+    FORMAT_CHARS
+        .iter()
+        .any(|&(first, last)| (first..=last).contains(&c))
+}
+
+/// Whether `c` may be part of a name, or of an "about" with `line_breaks`:
+/// no control character but the line break of an "about", no line or
+/// paragraph separator, and no format character but the two joiners
+/// (U+200C, U+200D), which emoji such as 👩‍💻 and scripts such as Persian
+/// need.
+pub fn allowed_char(c: char, line_breaks: bool) -> bool {
+    match c {
+        '\n' => line_breaks,
+        '\u{200C}' | '\u{200D}' => true,
+        '\u{2028}' | '\u{2029}' => false,
+        c => !c.is_control() && !is_format(c),
+    }
+}
+
+/// Whether `c` shows nothing by itself: white space, a control or format
+/// character, a variation selector, the grapheme joiner, the Hangul fillers,
+/// the inherent Khmer vowels, the Mongolian variation selectors and the
+/// blank Braille pattern.
+pub fn shows_nothing(c: char) -> bool {
+    c.is_whitespace()
+        || c.is_control()
+        || is_format(c)
+        || matches!(
+            c,
+            '\u{034F}'
+                | '\u{115F}'
+                | '\u{1160}'
+                | '\u{17B4}'
+                | '\u{17B5}'
+                | '\u{180B}'..='\u{180D}'
+                | '\u{180F}'
+                | '\u{2800}'
+                | '\u{3164}'
+                | '\u{FE00}'..='\u{FE0F}'
+                | '\u{FFA0}'
+                | '\u{E0100}'..='\u{E01EF}'
+        )
+}
+
+/// A name a profile can carry: only allowed characters, and at least one
+/// that shows. A contact's name here follows it too
+/// (`contacts::check_local_handle`).
+pub fn readable_name(name: &str) -> bool {
+    name.chars().all(|c| allowed_char(c, false)) && !name.chars().all(shows_nothing)
+}

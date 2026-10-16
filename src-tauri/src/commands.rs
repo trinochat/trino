@@ -5,10 +5,8 @@ use crate::connection::{ConnectionStatus, Debouncer, CONNECTION_CHANGED_EVENT, D
 use crate::envelope::{decode_envelope, encode_envelope, Envelope};
 use crate::events::EventSink;
 use crate::fsutil;
-use crate::group::{self, FileRef, GroupRoster, MemberBundle, RosterDecision};
-use crate::identity::{
-    create_identity, decode_array_32, public_bundle_for, verify_bundle_binding, Identity,
-};
+use crate::group::{self, FileRef, GroupRoster};
+use crate::identity::{create_identity, decode_array_32, public_bundle_for, Identity};
 use crate::nostr::{
     build_and_sign_event, inspector_connector, ready_gate, relay_connector, relay_deadline,
     CatchUp, ClientOptions, Connector, NostrClient, NostrEvent, NostrFilter, ReadyGate,
@@ -16,13 +14,12 @@ use crate::nostr::{
 };
 use crate::passphrase::validate_passphrase;
 use crate::ratchet::{
-    init_initiator, init_responder, ratchet_decrypt, ratchet_encrypt, EncryptedMessage,
-    MessageHeader, RatchetError, RatchetState,
+    init_initiator, ratchet_decrypt, ratchet_encrypt, EncryptedMessage, MessageHeader, RatchetError,
 };
 use crate::state::{
     config_path, default_relays, friends_path, group_invites_path, groups_path, history_path,
-    ratchets_path, trino_home, vault_path, AppState, ConfigFile, FriendRecord, FriendsFile,
-    GroupInvite, HandshakeMark, HistItem, InnerState,
+    ratchets_path, trino_home, vault_path, AppState, ConfigFile, FriendsFile, HandshakeMark,
+    HistItem, InnerState,
 };
 use crate::store::envelope::Slot;
 use crate::store::keys::{StoreKeys, VaultKeys};
@@ -33,21 +30,30 @@ use crate::turn::TurnGate;
 use crate::vault::{
     decode_vault, encode_vault, seal_vault, unseal_vault, vault_requires_totp, UnsealedVault,
 };
-use crate::x3dh::{initiate, respond, InitialMessage, X3dhError};
+use crate::x3dh::initiate;
 use base64::Engine;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use storage_cmds::{
-    apply_loaded, load_session, persist_account, totp_flag_disagrees, write_vault_noted,
-    LoadedSession,
+    apply_loaded, load_session, totp_flag_disagrees, write_vault_noted, LoadedSession,
 };
 use tauri::{AppHandle, State};
+use trino_engine::groups::{self, accept_incoming_roster, admit_event, judge_handshake};
+pub(crate) use trino_engine::groups::{
+    accept_invite, group_info, record_handshake, respond_to_handshake, Admission, GroupInfo,
+    GroupInviteInfo, HandshakeRejection,
+};
+pub(crate) use trino_engine::session::{
+    checked_inline_raster, dbg_log, fp, group_convo, sanitize_file_ref, sanitize_roster,
+    sanitized_inline_raster, zeroize_file_ref, WireHandshake, WireHeader, WirePayload,
+    CATCH_UP_WINDOW_SECS, CLOCK_SKEW_SECS,
+};
+pub(crate) use trino_engine::storage::persist_account;
 use trino_net::IsoKind;
 use zeroize::{Zeroize, Zeroizing};
 
-const MAX_INLINE_RASTER_BYTES: usize = 128 * 1024;
 const MAX_ATTACHMENT_BYTES: usize = 25 * 1024 * 1024;
 const MAX_STICKER_BYTES: usize = 5 * 1024 * 1024;
 const MAX_ICE_CONFIG_BYTES: usize = 16 * 1024;
@@ -57,22 +63,6 @@ const MAX_ICE_CONFIG_BYTES: usize = 16 * 1024;
 /// from. NOTE: if outgoing timestamps ever get jittered (NIP-17), this must be
 /// >= that jitter or legitimate desyncs will stop healing.
 const AUTO_HEAL_MAX_AGE_SECS: i64 = 600;
-/// How far back the messaging subscription reaches for events sent while this
-/// device was offline. Events older than this are lost (a known limitation).
-const CATCH_UP_WINDOW_SECS: i64 = 86_400;
-/// Clock skew between peers that we tolerate: how far in the future a
-/// handshake may claim to be, and how much a re-subscription overlaps the time
-/// the previous connection already covered.
-const CLOCK_SKEW_SECS: i64 = 600;
-/// Oldest handshake we accept. Equal to the catch-up window, because that is
-/// how far back our subscription legitimately delivers: a peer who started a
-/// session while we were offline must still get it accepted, or the messages
-/// that follow it are lost. Anything older can only be a replay (relays are
-/// free to ignore `since`). Replays inside the window are stopped by the
-/// per-contact `HandshakeMark` instead.
-const HANDSHAKE_MAX_AGE_SECS: i64 = CATCH_UP_WINDOW_SECS;
-/// Bound on `HandshakeMark::ek_pubs`.
-const MAX_SAME_SECOND_HANDSHAKES: usize = 8;
 
 #[derive(Serialize)]
 pub struct StatusResponse {
@@ -217,22 +207,6 @@ pub struct IncomingGroupMessageEvent {
 }
 
 #[derive(Serialize, Clone)]
-pub struct GroupUpdatedEvent {
-    pub gid: String,
-}
-
-/// A pending group invitation, as shown to the user (`group-invite` event and
-/// `list_group_invites`).
-#[derive(Serialize, Clone)]
-pub struct GroupInviteInfo {
-    pub gid: String,
-    pub name: String,
-    pub from_handle: String,
-    pub member_count: usize,
-    pub received_at: i64,
-}
-
-#[derive(Serialize, Clone)]
 pub struct FileMessageEvent {
     pub from_handle: String,
     pub gid: Option<String>,
@@ -244,131 +218,6 @@ pub struct FileMessageEvent {
 pub struct CallSignalEvent {
     pub from_handle: String,
     pub payload: String,
-}
-
-#[derive(Serialize)]
-pub struct GroupInfo {
-    pub gid: String,
-    pub name: String,
-    pub epoch: u64,
-    pub is_admin: bool,
-    pub member_count: usize,
-    pub members: Vec<String>,
-    /// The admin removed me, or deleted the group (K10): the newest roster
-    /// does not list me. The chat stays readable.
-    pub ended: bool,
-}
-
-#[derive(Serialize, Deserialize, Clone)]
-struct WirePayload {
-    header: WireHeader,
-    nonce: String,
-    ciphertext: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    handshake: Option<WireHandshake>,
-}
-
-#[derive(Serialize, Deserialize, Clone)]
-struct WireHeader {
-    #[serde(rename = "dhPub")]
-    dh_pub: String,
-    pn: u32,
-    n: u32,
-}
-
-#[derive(Serialize, Deserialize, Clone)]
-struct WireHandshake {
-    #[serde(rename = "ikDhPub")]
-    ik_dh_pub: String,
-    #[serde(rename = "ekPub")]
-    ek_pub: String,
-    #[serde(rename = "spkId")]
-    spk_id: u32,
-    #[serde(rename = "opkId")]
-    opk_id: Option<u32>,
-}
-
-/// Human-verifiable fingerprint bound to ALL three public keys (ik_sign, ik_dh,
-/// nostr), so comparing it out-of-band actually detects a swapped DH/Nostr key.
-fn fp(ik_sign: &[u8; 32], ik_dh: &[u8; 32], nostr: &[u8; 32]) -> String {
-    let mut input = Vec::with_capacity(96);
-    input.extend_from_slice(ik_sign);
-    input.extend_from_slice(ik_dh);
-    input.extend_from_slice(nostr);
-    let h = crate::crypto::sha256(&input);
-    let hex = hex::encode(&h[..8]);
-    hex.as_bytes()
-        .chunks(4)
-        .map(|c| std::str::from_utf8(c).unwrap())
-        .collect::<Vec<_>>()
-        .join(".")
-}
-
-/// A line for the diagnostic log, so silent failures in the receive path
-/// leave a trace after a live test. Fixed text only, and only debug builds
-/// keep the log: see diag.rs (T3).
-fn dbg_log(text: &'static str) {
-    crate::diag::note(text);
-}
-
-/// The notes of `merge_group_members` name members and prefixes of their
-/// keys: the log only gets how many there were.
-fn log_skipped_members(notes: &[String]) {
-    if !notes.is_empty() {
-        crate::diag::note_with("  group members skipped", &[("count", &notes.len())]);
-    }
-}
-
-fn checked_inline_raster(value: Option<String>) -> Result<Option<String>, String> {
-    let Some(value) = value else {
-        return Ok(None);
-    };
-    let Some((meta, payload)) = value.split_once(',') else {
-        return Err("inline image must be a base64 data URL".to_string());
-    };
-    if !matches!(
-        meta,
-        "data:image/jpeg;base64"
-            | "data:image/png;base64"
-            | "data:image/gif;base64"
-            | "data:image/webp;base64"
-    ) {
-        return Err("only inline jpeg/png/gif/webp images are allowed".to_string());
-    }
-    if payload.is_empty()
-        || payload.len() > MAX_INLINE_RASTER_BYTES.div_ceil(3) * 4 + 4
-        || payload.trim() != payload
-    {
-        return Err("inline image is empty or too large".to_string());
-    }
-    let decoded = base64::engine::general_purpose::STANDARD
-        .decode(payload)
-        .map_err(|_| "inline image has invalid base64".to_string())?;
-    if decoded.len() > MAX_INLINE_RASTER_BYTES {
-        return Err("inline image is too large".to_string());
-    }
-    Ok(Some(value))
-}
-
-fn sanitized_inline_raster(value: Option<String>) -> Option<String> {
-    checked_inline_raster(value).ok().flatten()
-}
-
-fn sanitize_file_ref(mut file: FileRef) -> FileRef {
-    file.thumb = sanitized_inline_raster(file.thumb);
-    file
-}
-
-fn sanitize_roster(mut roster: GroupRoster) -> GroupRoster {
-    roster.photo = roster.photo.map(sanitize_file_ref);
-    roster
-}
-
-fn zeroize_file_ref(file: &mut FileRef) {
-    file.key.zeroize();
-    if let Some(thumb) = file.thumb.as_mut() {
-        thumb.zeroize();
-    }
 }
 
 /// What `lock_vault` and `wipe` drop from memory: the relay connections,
@@ -1570,22 +1419,6 @@ pub async fn lock_vault(
     Ok(())
 }
 
-fn self_member_bundle(identity: &crate::identity::Identity, handle: &str) -> MemberBundle {
-    MemberBundle::from_public_bundle(handle, &public_bundle_for(identity))
-}
-
-fn group_info(roster: &GroupRoster, my_ik: &str) -> GroupInfo {
-    GroupInfo {
-        gid: roster.group_id.clone(),
-        name: roster.name.clone(),
-        epoch: roster.epoch,
-        is_admin: roster.admin_pub == my_ik,
-        member_count: roster.members.len(),
-        members: roster.members.iter().map(|m| m.handle.clone()).collect(),
-        ended: !group::is_member(roster, my_ik),
-    }
-}
-
 /// Establish a pairwise session with `handle` (initiate + send handshake) if none.
 async fn ensure_session(state: &AppState, handle: &str) -> Result<(), SendError> {
     let failed = |e: &dyn std::fmt::Display| SendError::Failed(e.to_string());
@@ -1627,32 +1460,12 @@ async fn ensure_session_inner(state: &AppState, handle: &str) -> Result<(), Stri
 
 #[tauri::command]
 pub async fn create_group(state: State<'_, AppState>, name: String) -> Result<GroupInfo, String> {
-    let mut inner = state.inner.lock().await;
-    let identity = inner.identity.as_ref().ok_or("vault sealed")?.clone();
-    let my_ik = hex::encode(identity.ik_sign.pub_bytes);
-    let handle = inner.handle.clone().unwrap_or_else(|| "me".to_string());
-    let me = self_member_bundle(&identity, &handle);
-    let roster = group::create_group(&identity, me, name.trim()).map_err(|e| e.to_string())?;
-    inner.groups.insert(roster.group_id.clone(), roster.clone());
-    persist_account(&inner)?;
-    Ok(group_info(&roster, &my_ik))
+    groups::create(&mut *state.inner.lock().await, &name)
 }
 
 #[tauri::command]
 pub async fn list_groups(state: State<'_, AppState>) -> Result<Vec<GroupInfo>, String> {
-    let inner = state.inner.lock().await;
-    let my_ik = inner
-        .identity
-        .as_ref()
-        .map(|i| hex::encode(i.ik_sign.pub_bytes))
-        .unwrap_or_default();
-    let mut out: Vec<GroupInfo> = inner
-        .groups
-        .values()
-        .map(|r| group_info(r, &my_ik))
-        .collect();
-    out.sort_by(|a, b| a.name.cmp(&b.name));
-    Ok(out)
+    Ok(groups::list(&*state.inner.lock().await))
 }
 
 /// Add a contact to a group I administer (groups_cmds::add_member).
@@ -2788,133 +2601,6 @@ fn group_receipt(
     }
 }
 
-/// What to do with a signature-verified event from a relay, decided before any
-/// of its content is looked at.
-#[derive(Debug)]
-enum Admission {
-    /// From a contact and not seen before: process it.
-    Process(Box<FriendRecord>),
-    /// From someone who is not a contact.
-    Stranger,
-    /// Ignore it; the reason is only for the log.
-    Drop(&'static str),
-}
-
-/// Checks run in this order, and the event id is remembered only at the very
-/// end:
-/// 1. kind and recipient (`my_pub`): a relay can feed us a contact's events
-///    addressed to someone else, such as group fan-out copies, which could
-///    never decrypt and would tear our session down;
-/// 2. blocked sender, then contact lookup: the dedup cache is bounded, so
-///    letting strangers' events in would let anyone flush it and replay a
-///    contact's old events past it.
-fn admit_event(inner: &mut InnerState, event: &NostrEvent, my_pub: &str) -> Admission {
-    if event.kind != TRINO_KIND {
-        return Admission::Drop("not a trino event");
-    }
-    if event.recipient() != Some(my_pub) {
-        return Admission::Drop("addressed to someone else");
-    }
-    if inner.blocked.contains(&event.pubkey) {
-        return Admission::Drop("sender is blocked");
-    }
-    let Some(friend) = inner
-        .friends
-        .values()
-        .find(|f| f.bundle.nostr_pub == event.pubkey)
-        .cloned()
-    else {
-        return Admission::Stranger;
-    };
-    if !inner.remember_event(event.id.clone()) {
-        return Admission::Drop("duplicate event (already seen from another relay)");
-    }
-    Admission::Process(Box::new(friend))
-}
-
-/// Why an incoming handshake was not allowed to (re)start a session.
-#[derive(Debug, PartialEq)]
-enum HandshakeRejection {
-    Stale { age: i64 },
-    FromTheFuture { ahead: i64 },
-    NotNewer { last: i64 },
-}
-
-/// Whether a contact's handshake (already signature-checked and pinned) may
-/// (re)start a session. `mark` is the newest handshake accepted from that
-/// contact. Accepted means: no older than `HANDSHAKE_MAX_AGE_SECS`, no more
-/// than `CLOCK_SKEW_SECS` in the future, and newer than `mark` (or from the
-/// same second with an ephemeral key not seen yet).
-fn judge_handshake(
-    mark: Option<&HandshakeMark>,
-    created_at: i64,
-    ek_pub: &str,
-    now: i64,
-) -> Result<(), HandshakeRejection> {
-    let age = now - created_at;
-    if age > HANDSHAKE_MAX_AGE_SECS {
-        return Err(HandshakeRejection::Stale { age });
-    }
-    if -age > CLOCK_SKEW_SECS {
-        return Err(HandshakeRejection::FromTheFuture { ahead: -age });
-    }
-    if let Some(mark) = mark {
-        let replayed_or_full = created_at == mark.at
-            && (mark.ek_pubs.iter().any(|ek| ek == ek_pub)
-                || mark.ek_pubs.len() >= MAX_SAME_SECOND_HANDSHAKES);
-        if created_at < mark.at || replayed_or_full {
-            return Err(HandshakeRejection::NotNewer { last: mark.at });
-        }
-    }
-    Ok(())
-}
-
-/// Remember a handshake that `judge_handshake` accepted from `peer`.
-fn record_handshake(
-    marks: &mut HashMap<String, HandshakeMark>,
-    peer: &str,
-    created_at: i64,
-    ek_pub: &str,
-) {
-    let mark = marks.entry(peer.to_string()).or_default();
-    if created_at > mark.at || mark.ek_pubs.is_empty() {
-        *mark = HandshakeMark {
-            at: created_at,
-            ek_pubs: vec![ek_pub.to_string()],
-        };
-    } else if created_at == mark.at
-        && mark.ek_pubs.len() < MAX_SAME_SECOND_HANDSHAKES
-        && !mark.ek_pubs.iter().any(|ek| ek == ek_pub)
-    {
-        mark.ek_pubs.push(ek_pub.to_string());
-    }
-}
-
-/// Answer a contact's handshake: run X3DH as responder and start our ratchet.
-/// Returns the identity after the exchange (it may have consumed a one-time
-/// prekey), the ratchet and the associated data.
-///
-/// The ratchet starts from the signed prekey the handshake actually used,
-/// which after a rotation is often a retired one: the peer's ratchet starts
-/// from the public half of the prekey in the bundle it cached.
-fn respond_to_handshake(
-    identity: &Identity,
-    hs: &WireHandshake,
-) -> Result<(Identity, RatchetState, Vec<u8>), X3dhError> {
-    let mut identity = identity.clone();
-    let resp = respond(
-        &mut identity,
-        &InitialMessage {
-            ik_dh_pub: hs.ik_dh_pub.clone(),
-            ek_pub: hs.ek_pub.clone(),
-            spk_id: hs.spk_id,
-            opk_id: hs.opk_id,
-        },
-    )?;
-    let ratchet = init_responder(resp.master_secret, resp.spk_keypair);
-    Ok((identity, ratchet, resp.associated_data))
-}
-
 /// What a relay of the session delivered: admitted, decrypted and kept, and
 /// told to the UI through `events`. A contact holding an older profile gets
 /// ours again through `resend_profile`.
@@ -3282,292 +2968,6 @@ async fn handle_incoming_event(
     }
 }
 
-/// Where an incoming roster ended up. Produced by the pure
-/// `ingest_incoming_roster`; the caller persists and notifies.
-#[derive(Debug, PartialEq)]
-enum RosterOutcome {
-    /// Update applied to a group we are in; `notes` explain skipped members.
-    Applied {
-        gid: String,
-        notes: Vec<String>,
-    },
-    /// Held as a pending invitation: nothing applied, no contacts created.
-    Invited {
-        gid: String,
-    },
-    /// The admin's newer roster for a group we are in does not list us: we
-    /// were removed, or the group was deleted (K10). Kept, so the chat stays
-    /// readable and the group reads as ended.
-    Ended {
-        gid: String,
-    },
-    Dropped(String),
-}
-
-/// How many invitations one contact may have waiting at once. Any contact can
-/// send us validly signed rosters for groups of their own making.
-const MAX_PENDING_INVITES_PER_CONTACT: usize = 5;
-
-/// First `n` bytes of `s`, for handle suffixes and notes. Never panics on
-/// short or non-ASCII (attacker-controlled) input.
-fn short_prefix(s: &str, n: usize) -> &str {
-    s.get(..n.min(s.len())).unwrap_or("?")
-}
-
-/// Pure part of handling a roster that `sender` sent us (see
-/// `group::evaluate_incoming_roster` for the rules). An update to a group we
-/// are in is applied; a roster for any other group is at most held as a
-/// pending invite, which creates no group and no contacts.
-fn ingest_incoming_roster(
-    inner: &mut InnerState,
-    roster: GroupRoster,
-    sender_handle: &str,
-    sender_ik: &str,
-    my_ik: &str,
-    now: i64,
-) -> RosterOutcome {
-    let gid = roster.group_id.clone();
-    if let Some(current) = inner.groups.get(&gid) {
-        return match group::evaluate_incoming_roster(Some(current), &roster, sender_ik, my_ik) {
-            RosterDecision::Accept => {
-                let roster = sanitize_roster(roster);
-                let notes = merge_group_members(&mut inner.friends, &roster, my_ik, now);
-                inner.groups.insert(gid.clone(), roster);
-                RosterOutcome::Applied { gid, notes }
-            }
-            RosterDecision::PendingInvite => {
-                RosterOutcome::Dropped("invite for a group we are already in".into())
-            }
-            // K10: the admin's next roster leaves us out: we were removed,
-            // or the group was deleted. Kept, so later rosters must be newer
-            // still and the chat stays readable; the group reads as ended.
-            RosterDecision::Reject(group::RosterRejection::NotAMember)
-                if group::accept_roster_update(current, &roster) =>
-            {
-                inner.groups.insert(gid.clone(), sanitize_roster(roster));
-                RosterOutcome::Ended { gid }
-            }
-            RosterDecision::Reject(why) => RosterOutcome::Dropped(why.to_string()),
-        };
-    }
-    let pending = inner.group_invites.get(&gid).map(|i| &i.roster);
-    let is_new = pending.is_none();
-    match group::evaluate_incoming_roster(pending, &roster, sender_ik, my_ik) {
-        RosterDecision::Reject(why) => RosterOutcome::Dropped(why.to_string()),
-        // PendingInvite: a new invitation. Accept: a newer roster for an
-        // invitation already waiting, which replaces it.
-        RosterDecision::PendingInvite | RosterDecision::Accept => {
-            let waiting = inner
-                .group_invites
-                .values()
-                .filter(|i| i.roster.admin_pub == roster.admin_pub)
-                .count();
-            if is_new && waiting >= MAX_PENDING_INVITES_PER_CONTACT {
-                return RosterOutcome::Dropped("too many pending invites from this contact".into());
-            }
-            inner.group_invites.insert(
-                gid.clone(),
-                GroupInvite {
-                    roster: sanitize_roster(roster),
-                    from_handle: sender_handle.to_string(),
-                    received_at: now,
-                },
-            );
-            RosterOutcome::Invited { gid }
-        }
-    }
-}
-
-/// Join the group of a pending invite: apply its roster and add its members as
-/// contacts. Pure. The invite is consumed whether or not joining succeeds.
-fn take_group_invite(
-    inner: &mut InnerState,
-    gid: &str,
-    my_ik: &str,
-    now: i64,
-) -> Result<(GroupRoster, Vec<String>), String> {
-    let invite = inner
-        .group_invites
-        .remove(gid)
-        .ok_or("unknown group invite")?;
-    if inner.groups.contains_key(gid) {
-        return Err("already a member of this group".into());
-    }
-    // Check again: group_invites.json on disk is not authenticated.
-    let roster = invite.roster;
-    match group::evaluate_incoming_roster(None, &roster, &roster.admin_pub, my_ik) {
-        RosterDecision::PendingInvite => {}
-        RosterDecision::Reject(why) => return Err(why.to_string()),
-        RosterDecision::Accept => return Err("unexpected roster state".into()),
-    }
-    let notes = merge_group_members(&mut inner.friends, &roster, my_ik, now);
-    inner.groups.insert(gid.to_string(), roster.clone());
-    Ok((roster, notes))
-}
-
-/// Fill in the `id_sig` of members that lack a valid one (rosters stored before
-/// roster v2 carry none) from bundles we hold ourselves: our own, or the stored
-/// bundle of the same contact when its DH and Nostr keys match exactly. A
-/// member we cannot vouch for is left as is, and the roster builder then
-/// refuses the roster rather than sending one every member would reject.
-fn refresh_member_bindings(
-    members: &mut [MemberBundle],
-    friends: &HashMap<String, FriendRecord>,
-    me: &MemberBundle,
-) {
-    let mine = me.to_public_bundle();
-    for m in members.iter_mut() {
-        if verify_bundle_binding(&m.to_public_bundle()) {
-            continue;
-        }
-        let held = std::iter::once(&mine)
-            .chain(friends.values().map(|f| &f.bundle))
-            .find(|b| {
-                b.ik_sign_pub == m.ik_sign_pub
-                    && b.ik_dh_pub == m.ik_dh_pub
-                    && b.nostr_pub == m.nostr_pub
-            });
-        if let Some(bundle) = held {
-            m.id_sig = bundle.id_sig.clone();
-        }
-    }
-}
-
-/// Handle a roster a contact sent us: apply it, hold it as an invite for the
-/// user, or drop it. Persists and notifies the UI; the rules live in
-/// `ingest_incoming_roster`.
-fn accept_incoming_roster(
-    events: &dyn EventSink,
-    inner: &mut InnerState,
-    identity: &crate::identity::Identity,
-    sender: &FriendRecord,
-    roster: GroupRoster,
-) {
-    let my_ik = hex::encode(identity.ik_sign.pub_bytes);
-    let now = chrono::Utc::now().timestamp();
-    match ingest_incoming_roster(
-        inner,
-        roster,
-        &sender.handle,
-        &sender.bundle.ik_sign_pub,
-        &my_ik,
-        now,
-    ) {
-        RosterOutcome::Applied { gid, notes } => {
-            log_skipped_members(&notes);
-            let _ = persist_account(inner);
-            dbg_log("  OK: roster stored");
-            events.emit("group-updated", &GroupUpdatedEvent { gid });
-        }
-        RosterOutcome::Invited { gid } => {
-            let _ = persist_account(inner);
-            dbg_log("  OK: group invite held");
-            if let Some(invite) = inner.group_invites.get(&gid) {
-                events.emit("group-invite", &invite_info(invite));
-            }
-        }
-        RosterOutcome::Ended { gid } => {
-            let _ = persist_account(inner);
-            dbg_log("  OK: group ended for us");
-            events.emit("group-removed", &groups_cmds::GroupRemovedEvent { gid });
-        }
-        RosterOutcome::Dropped(_) => dbg_log("  DROP: roster rejected"),
-    }
-}
-
-/// Add the members of a group we are in as contacts, so the pairwise fan-out
-/// can reach them. Pure; returns one note per member skipped, for the log.
-///
-/// Never replaces or edits an existing contact. A member is skipped when its
-/// own identity key did not sign its keys; when its identity key is already a
-/// contact with different DH/Nostr keys (the pinned ones win); when its DH or
-/// Nostr key already belongs to another contact (incoming events are matched
-/// to contacts by Nostr key); or when no free handle is left for it. A name
-/// that cannot name a contact here (`contacts_cmds::check_local_handle`) is
-/// left out of its handle.
-fn merge_group_members(
-    friends: &mut HashMap<String, FriendRecord>,
-    roster: &GroupRoster,
-    my_ik: &str,
-    now: i64,
-) -> Vec<String> {
-    let mut notes = Vec::new();
-    for m in &roster.members {
-        if m.ik_sign_pub == my_ik {
-            continue;
-        }
-        let who = short_prefix(&m.ik_sign_pub, 8);
-        let bundle = m.to_public_bundle();
-        if !verify_bundle_binding(&bundle) {
-            notes.push(format!("skip member {who}: keys not bound to its identity"));
-            continue;
-        }
-        if let Some(known) = friends
-            .values()
-            .find(|f| f.bundle.ik_sign_pub == m.ik_sign_pub)
-        {
-            if known.bundle.ik_dh_pub != m.ik_dh_pub || known.bundle.nostr_pub != m.nostr_pub {
-                notes.push(format!(
-                    "skip member {who}: keys differ from contact {:?}",
-                    known.handle
-                ));
-            }
-            continue;
-        }
-        if friends
-            .values()
-            .any(|f| f.bundle.ik_dh_pub == m.ik_dh_pub || f.bundle.nostr_pub == m.nostr_pub)
-        {
-            notes.push(format!(
-                "skip member {who}: its DH/Nostr key belongs to another contact"
-            ));
-            continue;
-        }
-        // The name the member gives itself, if it can name a contact here.
-        // One the chats would read as the channel or a group, or with
-        // control, format or bidi characters, or showing nothing, is left
-        // out as an empty one is: the key tells the member apart.
-        let name = match contacts_cmds::check_local_handle(&m.handle) {
-            Ok(()) => m.handle.as_str(),
-            Err(_) => "",
-        };
-        let handle = if name.is_empty() || friends.contains_key(name) {
-            format!("{}-{}", name, short_prefix(&m.ik_sign_pub, 4))
-        } else {
-            name.to_string()
-        };
-        if friends.contains_key(&handle) {
-            notes.push(format!("skip member {who}: handle {handle:?} is taken"));
-            continue;
-        }
-        friends.insert(
-            handle.clone(),
-            FriendRecord {
-                handle,
-                bundle,
-                added_at: now,
-                avatar: None,
-                previous_fingerprint: None,
-                key_changed_at: None,
-                // K9: the group panel tells these apart from contacts the
-                // user added with a code.
-                via_group: Some(roster.group_id.clone()),
-            },
-        );
-    }
-    notes
-}
-
-fn invite_info(invite: &GroupInvite) -> GroupInviteInfo {
-    GroupInviteInfo {
-        gid: invite.roster.group_id.clone(),
-        name: invite.roster.name.clone(),
-        from_handle: invite.from_handle.clone(),
-        member_count: invite.roster.members.len(),
-        received_at: invite.received_at,
-    }
-}
-
 /// Invitations waiting for the user, oldest first. The UI asks on start-up
 /// because invites can arrive (catch-up window) before it listens for
 /// `group-invite`.
@@ -3575,10 +2975,7 @@ fn invite_info(invite: &GroupInvite) -> GroupInviteInfo {
 pub async fn list_group_invites(
     state: State<'_, AppState>,
 ) -> Result<Vec<GroupInviteInfo>, String> {
-    let inner = state.inner.lock().await;
-    let mut out: Vec<GroupInviteInfo> = inner.group_invites.values().map(invite_info).collect();
-    out.sort_by_key(|i| i.received_at);
-    Ok(out)
+    Ok(groups::list_invites(&*state.inner.lock().await))
 }
 
 /// Join the group of a pending invite and add its members as contacts.
@@ -3591,32 +2988,10 @@ pub async fn accept_group_invite(
     accept_invite(&mut inner, &gid, chrono::Utc::now().timestamp())
 }
 
-/// `accept_group_invite` on the open session. The invite is consumed either
-/// way, and saved with the contacts and the group it brings in one write
-/// (design §4.1), so a cut never leaves them half done.
-fn accept_invite(inner: &mut InnerState, gid: &str, now: i64) -> Result<GroupInfo, String> {
-    let identity = inner.identity.as_ref().ok_or("vault sealed")?;
-    let my_ik = hex::encode(identity.ik_sign.pub_bytes);
-    let joined = take_group_invite(inner, gid, &my_ik, now);
-    persist_account(inner)?;
-    let (roster, notes) = joined?;
-    log_skipped_members(&notes);
-    dbg_log("GROUP INVITE accepted");
-    Ok(group_info(&roster, &my_ik))
-}
-
 /// Drop a pending invite. Nothing is sent to the inviter.
 #[tauri::command]
 pub async fn decline_group_invite(state: State<'_, AppState>, gid: String) -> Result<(), String> {
-    let mut inner = state.inner.lock().await;
-    if inner.identity.is_none() {
-        return Err("vault sealed".to_string());
-    }
-    inner
-        .group_invites
-        .remove(&gid)
-        .ok_or("unknown group invite")?;
-    persist_account(&inner)
+    groups::decline_invite(&mut *state.inner.lock().await, &gid)
 }
 
 // ---- encrypted chat history -------------------------------------------------
@@ -3827,10 +3202,6 @@ fn record_history(inner: &mut InnerState, convo: String, item: HistItem) {
     save_history(inner);
 }
 
-fn group_convo(gid: &str) -> String {
-    format!("grp:{}", gid)
-}
-
 #[tauri::command]
 pub async fn get_history(
     state: State<'_, AppState>,
@@ -3942,9 +3313,11 @@ fn build_filter_for_self(nostr_pub: &str) -> NostrFilter {
 mod tests {
     use super::*;
     use crate::fsutil::scratch::ScratchDir;
-    use crate::group::roster_signing_bytes;
-    use crate::identity::{ed25519_sign, generate_nostr_keypair, generate_x25519, Identity};
+    use crate::group::MemberBundle;
+    use crate::identity::Identity;
     use crate::passphrase::MIN_PASSPHRASE_CHARS;
+    use crate::ratchet::RatchetState;
+    use crate::state::FriendRecord;
     use crate::state::FriendsFile;
     use crate::totp::{generate_totp_secret, totp_now};
     use crate::vault::{SealedVault, UnsealedVault};
@@ -4009,328 +3382,6 @@ mod tests {
         roster
     }
 
-    /// A roster signed exactly as given, as a hostile admin's client can.
-    fn signed_raw(admin: &Identity, members: Vec<MemberBundle>) -> GroupRoster {
-        let group_id = hex::encode(crate::crypto::random_array::<32>());
-        let admin_pub = ik(admin);
-        let bytes = roster_signing_bytes(&group_id, "amigos", &None, &admin_pub, &members, 0);
-        GroupRoster {
-            group_id,
-            name: "amigos".into(),
-            photo: None,
-            admin_pub,
-            members,
-            epoch: 0,
-            signature: hex::encode(ed25519_sign(&admin.ik_sign, &bytes)),
-        }
-    }
-
-    /// Alice's identity key with new DH and Nostr keys, validly bound: what a
-    /// legitimate re-key would look like.
-    fn rekeyed(id: &Identity) -> Identity {
-        let mut other = id.clone();
-        other.ik_dh = generate_x25519();
-        other.nostr = generate_nostr_keypair();
-        other
-    }
-
-    #[test]
-    fn unknown_group_waits_as_an_invite_and_creates_no_contacts() {
-        let (admin, me, ana) = (create_identity(), create_identity(), create_identity());
-        let roster = roster_of(&admin, &[(&me, "me"), (&ana, "ana")]);
-        let gid = roster.group_id.clone();
-        let mut inner = state_with(&[friend(&admin, "admin")]);
-
-        let out = ingest_incoming_roster(&mut inner, roster, "admin", &ik(&admin), &ik(&me), NOW);
-
-        assert_eq!(out, RosterOutcome::Invited { gid: gid.clone() });
-        assert!(
-            inner.groups.is_empty(),
-            "nothing applied before the user accepts"
-        );
-        assert_eq!(
-            inner.friends.len(),
-            1,
-            "no contacts before the user accepts"
-        );
-        let invite = inner.group_invites.get(&gid).expect("invite stored");
-        assert_eq!(invite.from_handle, "admin");
-        assert_eq!(invite.received_at, NOW);
-    }
-
-    #[test]
-    fn accepting_an_invite_joins_and_adds_bound_members() {
-        let (admin, me, ana) = (create_identity(), create_identity(), create_identity());
-        let roster = roster_of(&admin, &[(&me, "me"), (&ana, "ana")]);
-        let gid = roster.group_id.clone();
-        let mut inner = state_with(&[friend(&admin, "admin")]);
-        ingest_incoming_roster(&mut inner, roster, "admin", &ik(&admin), &ik(&me), NOW);
-
-        let (joined, _notes) = take_group_invite(&mut inner, &gid, &ik(&me), NOW).unwrap();
-
-        assert_eq!(joined.group_id, gid);
-        assert!(inner.groups.contains_key(&gid));
-        assert!(inner.group_invites.is_empty());
-        let ana_contact = inner.friends.get("ana").expect("ana added on accept");
-        assert_eq!(ana_contact.bundle.ik_sign_pub, ik(&ana));
-        assert!(verify_bundle_binding(&ana_contact.bundle));
-        assert!(
-            take_group_invite(&mut inner, &gid, &ik(&me), NOW).is_err(),
-            "an invite is taken once"
-        );
-    }
-
-    #[test]
-    fn a_newer_roster_refreshes_a_pending_invite() {
-        let (admin, me, ana) = (create_identity(), create_identity(), create_identity());
-        let v1 = roster_of(&admin, &[(&me, "me")]);
-        let v2 = group::add_member(&v1, &admin, member(&ana, "ana")).unwrap();
-        let gid = v1.group_id.clone();
-        let mut inner = state_with(&[friend(&admin, "admin")]);
-        let admin_ik = ik(&admin);
-
-        let first =
-            ingest_incoming_roster(&mut inner, v1.clone(), "admin", &admin_ik, &ik(&me), NOW);
-        let second =
-            ingest_incoming_roster(&mut inner, v2.clone(), "admin", &admin_ik, &ik(&me), NOW);
-        let stale = ingest_incoming_roster(&mut inner, v1, "admin", &admin_ik, &ik(&me), NOW);
-
-        assert_eq!(first, RosterOutcome::Invited { gid: gid.clone() });
-        assert_eq!(second, RosterOutcome::Invited { gid: gid.clone() });
-        assert!(matches!(stale, RosterOutcome::Dropped(_)));
-        assert_eq!(inner.group_invites[&gid].roster.epoch, v2.epoch);
-        assert!(inner.groups.is_empty());
-        assert_eq!(inner.friends.len(), 1);
-    }
-
-    #[test]
-    fn roster_relayed_by_a_non_admin_is_dropped() {
-        let (admin, juan, me) = (create_identity(), create_identity(), create_identity());
-        let v1 = roster_of(&admin, &[(&juan, "juan"), (&me, "me")]);
-        let gid = v1.group_id.clone();
-        let mut inner = state_with(&[friend(&admin, "admin"), friend(&juan, "juan")]);
-
-        let out = ingest_incoming_roster(&mut inner, v1.clone(), "juan", &ik(&juan), &ik(&me), NOW);
-        assert!(matches!(out, RosterOutcome::Dropped(_)), "{out:?}");
-        assert!(inner.groups.is_empty() && inner.group_invites.is_empty());
-
-        // Same for an update to a group we are already in.
-        let v2 = group::add_member(&v1, &admin, member(&create_identity(), "ana")).unwrap();
-        inner.groups.insert(gid.clone(), v1.clone());
-        let out = ingest_incoming_roster(&mut inner, v2, "juan", &ik(&juan), &ik(&me), NOW);
-        assert!(matches!(out, RosterOutcome::Dropped(_)), "{out:?}");
-        assert_eq!(inner.groups[&gid].epoch, v1.epoch);
-        assert_eq!(inner.friends.len(), 2);
-    }
-
-    #[test]
-    fn update_from_the_admin_to_a_joined_group_is_applied() {
-        let (admin, me, ana) = (create_identity(), create_identity(), create_identity());
-        let v1 = roster_of(&admin, &[(&me, "me")]);
-        let v2 = group::add_member(&v1, &admin, member(&ana, "ana")).unwrap();
-        let gid = v1.group_id.clone();
-        let mut inner = state_with(&[friend(&admin, "admin")]);
-        inner.groups.insert(gid.clone(), v1);
-
-        let out =
-            ingest_incoming_roster(&mut inner, v2.clone(), "admin", &ik(&admin), &ik(&me), NOW);
-
-        assert_eq!(
-            out,
-            RosterOutcome::Applied {
-                gid: gid.clone(),
-                notes: vec![]
-            }
-        );
-        assert_eq!(inner.groups[&gid].epoch, v2.epoch);
-        assert!(inner.friends.contains_key("ana"));
-    }
-
-    #[test]
-    fn mallory_cannot_plant_a_fake_alice() {
-        // C1 at the app layer: Mallory's own group lists "alice" with Alice's
-        // real identity key and Mallory2's transport keys.
-        let (mallory, me, alice, mallory2) = (
-            create_identity(),
-            create_identity(),
-            create_identity(),
-            create_identity(),
-        );
-        let m2 = public_bundle_for(&mallory2);
-        let mut fake_alice = member(&alice, "alice");
-        fake_alice.ik_dh_pub = m2.ik_dh_pub;
-        fake_alice.nostr_pub = m2.nostr_pub;
-        let roster = signed_raw(
-            &mallory,
-            vec![member(&mallory, "mallory"), member(&me, "me"), fake_alice],
-        );
-        let mut inner = state_with(&[friend(&mallory, "mallory")]);
-
-        let out =
-            ingest_incoming_roster(&mut inner, roster, "mallory", &ik(&mallory), &ik(&me), NOW);
-
-        assert!(matches!(out, RosterOutcome::Dropped(_)), "{out:?}");
-        assert_eq!(inner.friends.len(), 1);
-        assert!(inner.groups.is_empty() && inner.group_invites.is_empty());
-    }
-
-    #[test]
-    fn merge_skips_members_whose_keys_are_not_bound() {
-        // Defense in depth below roster validation: merge is given a roster
-        // that never went through it.
-        let (alice, mallory2) = (create_identity(), create_identity());
-        let m2 = public_bundle_for(&mallory2);
-        let mut fake_alice = member(&alice, "alice");
-        fake_alice.ik_dh_pub = m2.ik_dh_pub;
-        fake_alice.nostr_pub = m2.nostr_pub;
-        let roster = signed_raw(&mallory2, vec![fake_alice]);
-        let mut friends = HashMap::new();
-
-        let notes = merge_group_members(&mut friends, &roster, "not-a-member", NOW);
-
-        assert!(friends.is_empty());
-        assert_eq!(notes.len(), 1, "{notes:?}");
-    }
-
-    #[test]
-    fn merge_never_replaces_a_contact_and_flags_changed_keys() {
-        let alice = create_identity();
-        let stored = friend(&alice, "alice");
-        let mut friends = HashMap::from([("alice".to_string(), stored.clone())]);
-
-        // Same identity, same keys: nothing to do, nothing to report.
-        let same = signed_raw(&alice, vec![member(&alice, "alice")]);
-        assert!(merge_group_members(&mut friends, &same, "me", NOW).is_empty());
-
-        // Same identity key, different transport keys: keep what we have.
-        let other_keys = signed_raw(&alice, vec![member(&rekeyed(&alice), "alice-new")]);
-        let notes = merge_group_members(&mut friends, &other_keys, "me", NOW);
-
-        assert_eq!(friends.len(), 1);
-        assert_eq!(friends["alice"].bundle.ik_dh_pub, stored.bundle.ik_dh_pub);
-        assert_eq!(friends["alice"].bundle.nostr_pub, stored.bundle.nostr_pub);
-        assert_eq!(notes.len(), 1, "{notes:?}");
-    }
-
-    #[test]
-    fn merge_skips_members_reusing_a_contacts_transport_keys() {
-        let alice = create_identity();
-        let mut shadow = create_identity();
-        shadow.ik_dh = alice.ik_dh.clone();
-        shadow.nostr = alice.nostr.clone();
-        let roster = signed_raw(&shadow, vec![member(&shadow, "alice2")]);
-        let mut friends = HashMap::from([("alice".to_string(), friend(&alice, "alice"))]);
-
-        let notes = merge_group_members(&mut friends, &roster, "me", NOW);
-
-        assert_eq!(friends.len(), 1);
-        assert_eq!(notes.len(), 1, "{notes:?}");
-    }
-
-    #[test]
-    fn merge_never_overwrites_on_a_handle_collision() {
-        let (bob, carol, dave) = (create_identity(), create_identity(), create_identity());
-        let taken = format!("bob-{}", &ik(&carol)[..4]);
-        let mut friends = HashMap::from([
-            ("bob".to_string(), friend(&bob, "bob")),
-            (taken.clone(), friend(&dave, &taken)),
-        ]);
-        let roster = signed_raw(&carol, vec![member(&carol, "bob")]);
-
-        let notes = merge_group_members(&mut friends, &roster, "me", NOW);
-
-        assert_eq!(friends.len(), 2);
-        assert_eq!(friends[&taken].bundle.ik_sign_pub, ik(&dave));
-        assert_eq!(notes.len(), 1, "{notes:?}");
-    }
-
-    #[test]
-    fn merge_never_names_a_member_as_the_channel_or_a_group() {
-        // The names members give themselves in a roster: here the chats
-        // would read them as the announcements channel or as a group, and a
-        // bidi control would reorder the list. The key tells them apart.
-        let (admin, me, a, b, c, d) = (
-            create_identity(),
-            create_identity(),
-            create_identity(),
-            create_identity(),
-            create_identity(),
-            create_identity(),
-        );
-        let roster = roster_of(
-            &admin,
-            &[
-                (&me, "me"),
-                (&a, "channel"),
-                (&b, "grp:4f1c"),
-                (&c, "Ana\u{202E}"),
-                (&d, "   "),
-            ],
-        );
-        let mut friends = HashMap::new();
-
-        let notes = merge_group_members(&mut friends, &roster, &ik(&me), NOW);
-
-        assert!(notes.is_empty(), "{notes:?}");
-        let handle_of = |id: &Identity| {
-            friends
-                .values()
-                .find(|f| f.bundle.ik_sign_pub == ik(id))
-                .map(|f| f.handle.clone())
-        };
-        for id in [&a, &b, &c, &d] {
-            assert_eq!(handle_of(id), Some(format!("-{}", &ik(id)[..4])));
-        }
-        assert_eq!(handle_of(&admin).as_deref(), Some("admin"));
-        assert!(friends
-            .keys()
-            .all(|handle| contacts_cmds::check_local_handle(handle).is_ok()));
-    }
-
-    #[test]
-    fn pending_invites_per_contact_are_capped() {
-        let (admin, me) = (create_identity(), create_identity());
-        let mut inner = state_with(&[friend(&admin, "admin")]);
-        for _ in 0..MAX_PENDING_INVITES_PER_CONTACT {
-            let roster = roster_of(&admin, &[(&me, "me")]);
-            let out =
-                ingest_incoming_roster(&mut inner, roster, "admin", &ik(&admin), &ik(&me), NOW);
-            assert!(matches!(out, RosterOutcome::Invited { .. }), "{out:?}");
-        }
-        let one_more = roster_of(&admin, &[(&me, "me")]);
-        let out = ingest_incoming_roster(&mut inner, one_more, "admin", &ik(&admin), &ik(&me), NOW);
-        assert!(matches!(out, RosterOutcome::Dropped(_)), "{out:?}");
-        assert_eq!(inner.group_invites.len(), MAX_PENDING_INVITES_PER_CONTACT);
-    }
-
-    #[test]
-    fn refresh_member_bindings_restores_id_sig_from_what_we_hold() {
-        // Rosters stored before roster v2 have no id_sig. When we rebuild one
-        // (as admin), fill them in from our identity and matching contacts.
-        let (admin, juan, ana) = (create_identity(), create_identity(), create_identity());
-        let me = member(&admin, "me");
-        let mut members = vec![me.clone(), member(&juan, "juan"), member(&ana, "ana")];
-        for m in &mut members {
-            m.id_sig.clear();
-        }
-        let friends = HashMap::from([
-            ("juan".to_string(), friend(&juan, "juan")),
-            // A contact whose keys no longer match the roster entry.
-            ("ana".to_string(), friend(&rekeyed(&ana), "ana")),
-        ]);
-
-        refresh_member_bindings(&mut members, &friends, &me);
-
-        assert_eq!(members[0].id_sig, me.id_sig);
-        assert_eq!(members[1].id_sig, public_bundle_for(&juan).id_sig);
-        assert!(
-            members[2].id_sig.is_empty(),
-            "never borrow a binding for other keys"
-        );
-    }
-
-    // ---- Admission of relay events (M1, H2 event cache) ----
-
     fn nostr_hex(id: &Identity) -> String {
         hex::encode(id.nostr.pub_bytes)
     }
@@ -4345,150 +3396,6 @@ mod tests {
             Some(created_at),
         )
         .unwrap()
-    }
-
-    #[test]
-    fn a_contacts_event_is_admitted_once() {
-        let (me, alice) = (create_identity(), create_identity());
-        let mut inner = state_with(&[friend(&alice, "alice")]);
-        let event = event_to(&alice, &nostr_hex(&me), TRINO_KIND, NOW);
-
-        let first = admit_event(&mut inner, &event, &nostr_hex(&me));
-        assert!(
-            matches!(&first, Admission::Process(f) if f.handle == "alice"),
-            "{first:?}"
-        );
-        let again = admit_event(&mut inner, &event, &nostr_hex(&me));
-        assert!(matches!(again, Admission::Drop(_)), "{again:?}");
-    }
-
-    #[test]
-    fn a_contacts_event_addressed_to_someone_else_is_dropped() {
-        // A group fan-out copy meant for another member, fed to us by a relay:
-        // trying to decrypt it would fail and tear our session down.
-        let (me, alice, carol) = (create_identity(), create_identity(), create_identity());
-        let mut inner = state_with(&[friend(&alice, "alice")]);
-        let event = event_to(&alice, &nostr_hex(&carol), TRINO_KIND, NOW);
-
-        let out = admit_event(&mut inner, &event, &nostr_hex(&me));
-        assert!(matches!(out, Admission::Drop(_)), "{out:?}");
-        assert!(inner.seen_events.is_empty());
-    }
-
-    #[test]
-    fn a_contacts_event_of_another_kind_is_dropped() {
-        let (me, alice) = (create_identity(), create_identity());
-        let mut inner = state_with(&[friend(&alice, "alice")]);
-        let event = event_to(&alice, &nostr_hex(&me), 1, NOW);
-
-        let out = admit_event(&mut inner, &event, &nostr_hex(&me));
-        assert!(matches!(out, Admission::Drop(_)), "{out:?}");
-        assert!(inner.seen_events.is_empty());
-    }
-
-    #[test]
-    fn strangers_events_never_enter_the_seen_cache() {
-        // Otherwise anyone can flush the bounded cache and replay our contacts'
-        // old events.
-        let (me, stranger) = (create_identity(), create_identity());
-        let mut inner = state_with(&[]);
-        for n in 0..3 {
-            let event = event_to(&stranger, &nostr_hex(&me), TRINO_KIND, NOW + n);
-            let out = admit_event(&mut inner, &event, &nostr_hex(&me));
-            assert!(matches!(out, Admission::Stranger), "{out:?}");
-        }
-        assert!(inner.seen_events.is_empty());
-        assert!(inner.seen_event_order.is_empty());
-    }
-
-    #[test]
-    fn blocked_contacts_events_never_enter_the_seen_cache() {
-        let (me, alice) = (create_identity(), create_identity());
-        let mut inner = state_with(&[friend(&alice, "alice")]);
-        inner.blocked.insert(nostr_hex(&alice));
-        let event = event_to(&alice, &nostr_hex(&me), TRINO_KIND, NOW);
-
-        let out = admit_event(&mut inner, &event, &nostr_hex(&me));
-        assert!(matches!(out, Admission::Drop(_)), "{out:?}");
-        assert!(inner.seen_events.is_empty());
-    }
-
-    // ---- Handshake replay gate (H2) ----
-
-    #[test]
-    fn a_stale_handshake_is_rejected() {
-        let created_at = NOW - HANDSHAKE_MAX_AGE_SECS - 1;
-        assert_eq!(
-            judge_handshake(None, created_at, "ek", NOW),
-            Err(HandshakeRejection::Stale {
-                age: HANDSHAKE_MAX_AGE_SECS + 1
-            })
-        );
-    }
-
-    #[test]
-    fn a_handshake_from_the_future_is_rejected() {
-        let created_at = NOW + CLOCK_SKEW_SECS + 1;
-        assert_eq!(
-            judge_handshake(None, created_at, "ek", NOW),
-            Err(HandshakeRejection::FromTheFuture {
-                ahead: CLOCK_SKEW_SECS + 1
-            })
-        );
-    }
-
-    #[test]
-    fn a_handshake_older_than_the_last_accepted_one_is_rejected() {
-        let mut marks = HashMap::new();
-        record_handshake(&mut marks, "alice", NOW - 100, "ek-new");
-        assert_eq!(
-            judge_handshake(marks.get("alice"), NOW - 200, "ek-old", NOW),
-            Err(HandshakeRejection::NotNewer { last: NOW - 100 })
-        );
-    }
-
-    #[test]
-    fn the_accepted_handshake_cannot_be_replayed() {
-        let mut marks = HashMap::new();
-        record_handshake(&mut marks, "alice", NOW - 100, "ek-1");
-        assert_eq!(
-            judge_handshake(marks.get("alice"), NOW - 100, "ek-1", NOW),
-            Err(HandshakeRejection::NotNewer { last: NOW - 100 })
-        );
-    }
-
-    #[test]
-    fn a_fresh_newer_handshake_is_accepted() {
-        assert_eq!(judge_handshake(None, NOW - 30, "ek-0", NOW), Ok(()));
-
-        let mut marks = HashMap::new();
-        record_handshake(&mut marks, "alice", NOW - 100, "ek-1");
-        assert_eq!(
-            judge_handshake(marks.get("alice"), NOW - 50, "ek-2", NOW),
-            Ok(())
-        );
-        // A second genuine handshake within the same second is not a replay.
-        assert_eq!(
-            judge_handshake(marks.get("alice"), NOW - 100, "ek-2", NOW),
-            Ok(())
-        );
-        // Marks are per contact.
-        assert_eq!(
-            judge_handshake(marks.get("bob"), NOW - 200, "ek-1", NOW),
-            Ok(())
-        );
-    }
-
-    #[test]
-    fn handshakes_in_one_second_are_bounded() {
-        let mut marks = HashMap::new();
-        for n in 0..MAX_SAME_SECOND_HANDSHAKES {
-            let ek = format!("ek-{n}");
-            assert_eq!(judge_handshake(marks.get("alice"), NOW, &ek, NOW), Ok(()));
-            record_handshake(&mut marks, "alice", NOW, &ek);
-        }
-        assert!(judge_handshake(marks.get("alice"), NOW, "ek-extra", NOW).is_err());
-        assert_eq!(marks["alice"].ek_pubs.len(), MAX_SAME_SECOND_HANDSHAKES);
     }
 
     #[test]
@@ -4517,42 +3424,6 @@ mod tests {
         assert!(inner.handshake_marks.is_empty());
         assert!(inner.seen_events.contains("e1"));
     }
-
-    // ---- Responder ratchet after a prekey rotation (H1) ----
-
-    #[test]
-    fn a_handshake_from_a_bundle_cached_before_rotation_decrypts() {
-        let alice = create_identity();
-        let mut bob = create_identity();
-        let cached = public_bundle_for(&bob);
-        let rotate_at = bob.signed_prekey.created_at + crate::identity::SPK_ROTATION_SECS;
-        assert!(crate::identity::rotate_signed_prekey_if_due(
-            &mut bob, rotate_at
-        ));
-
-        // Alice opens a session from the bundle she cached, as connect_node does.
-        let init = initiate(&alice, &cached).unwrap();
-        let spk_pub = decode_array_32(&cached.spk_pub).unwrap();
-        let mut alice_ratchet = init_initiator(init.master_secret, spk_pub).unwrap();
-        let first = ratchet_encrypt(
-            &mut alice_ratchet,
-            b"__trino_handshake__",
-            &init.associated_data,
-        )
-        .unwrap();
-        let hs = WireHandshake {
-            ik_dh_pub: init.message.ik_dh_pub,
-            ek_pub: init.message.ek_pub,
-            spk_id: init.message.spk_id,
-            opk_id: init.message.opk_id,
-        };
-
-        let (_bob, mut bob_ratchet, ad) = respond_to_handshake(&bob, &hs).unwrap();
-        let plain = ratchet_decrypt(&mut bob_ratchet, &first, &ad)
-            .expect("the first message of the new session must decrypt");
-        assert_eq!(plain, b"__trino_handshake__");
-    }
-
     fn stun(url: &str) -> CallIceServer {
         CallIceServer {
             urls: vec![url.to_string()],
