@@ -24,7 +24,9 @@
 use super::*;
 use crate::system_events::SystemEvent;
 use std::sync::atomic::{AtomicBool, Ordering};
-use tauri::Manager;
+// The lock and the tray tell the window itself: they are the desktop's,
+// not the engine's events (M4-0b).
+use tauri::{Emitter, Manager};
 
 /// The account preference of "Bloquear Trino al bloquear Windows": "0" is
 /// off, anything else (or nothing) is on.

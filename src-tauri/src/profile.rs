@@ -25,6 +25,7 @@
 
 use super::{dbg_log, ensure_session_inner, send_cipher_inner};
 use crate::command_error::{CommandError, ErrorCode};
+use crate::events::EventSink;
 use crate::identity::Identity;
 use crate::state::{AppState, InnerState};
 use crate::store::envelope::Slot;
@@ -32,6 +33,7 @@ use crate::store::session::{legacy_open, Found};
 use serde::Serialize;
 use serde_json::{Map, Value};
 use std::path::Path;
+use std::sync::Arc;
 use zeroize::{Zeroize, Zeroizing};
 
 // The profiles themselves, what profiles.bin keeps and how a received one
@@ -402,6 +404,16 @@ pub(crate) async fn send_profile(state: &AppState, targets: Vec<String>) {
     }
 }
 
+/// Sends the profile again to the contacts given, without waiting: what
+/// `on_message` does for a contact that asks for it. Through the app's
+/// `AppState`, which the receive path does not hold yet (M4-0c).
+pub(crate) type Resend = Arc<dyn Fn(Vec<String>) + Send + Sync>;
+
+/// `send_in_background` through `app`.
+pub(crate) fn resend_through(app: tauri::AppHandle) -> Resend {
+    Arc::new(move |targets| send_in_background(&app, targets))
+}
+
 /// `send_profile` without waiting for it.
 pub(crate) fn send_in_background(app: &tauri::AppHandle, targets: Vec<String>) {
     if targets.is_empty() {
@@ -630,29 +642,31 @@ pub(crate) fn save(inner: &InnerState) {
 }
 
 /// The hook in `handle_incoming_event`, just before the envelope is decoded.
-/// Returns whether the message ends here (a profile message).
+/// Returns whether the message ends here (a profile message). The UI hears
+/// of a profile that changed through `events`, and `resend` sends ours
+/// again to a contact holding an older one.
 pub(crate) fn on_message(
-    app: &tauri::AppHandle,
+    events: &dyn EventSink,
+    resend: &Resend,
     inner: &mut InnerState,
     handle: &str,
     plain: &[u8],
     created_at: i64,
 ) -> bool {
-    use tauri::Emitter;
     let received = receive(&mut inner.profiles, handle, plain, created_at);
     if received.save {
         save(inner);
     }
     if received.notify {
-        let _ = app.emit(
+        events.emit(
             "profile-updated",
-            ProfileUpdatedEvent {
+            &ProfileUpdatedEvent {
                 handle: handle.to_string(),
             },
         );
     }
     if received.resend {
-        send_in_background(app, vec![handle.to_string()]);
+        resend(vec![handle.to_string()]);
     }
     received.consumed
 }
@@ -2128,5 +2142,45 @@ mod tests {
                 "{line}"
             );
         }
+    }
+
+    // ---- M4-0b: what the hook tells, through the engine's sink ----
+
+    #[test]
+    fn the_hook_tells_the_ui_through_its_sink_and_resends_through_its_resend() {
+        let sink = trino_engine::events::RecordingSink::new();
+        let asked = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let resend: Resend = {
+            let asked = std::sync::Arc::clone(&asked);
+            std::sync::Arc::new(move |targets| asked.lock().unwrap().push(targets))
+        };
+        let mut inner = InnerState::default();
+        inner.profiles.rev = 10;
+
+        // A newer profile of ana's: kept, and the UI reads the contacts again.
+        let profile = msg(5, "Ana", "Hola", None);
+        assert!(on_message(
+            &*sink, &resend, &mut inner, "ana", &profile, NOW
+        ));
+        // A text from bob, who holds an older profile of ours: it goes again.
+        let behind = text_with(r#","prof":{"v":1,"have":3}"#);
+        assert!(!on_message(
+            &*sink, &resend, &mut inner, "bob", &behind, NOW
+        ));
+
+        assert_eq!(
+            sink.events(),
+            [
+                (
+                    "profile-updated".to_string(),
+                    r#"{"handle":"ana"}"#.to_string()
+                ),
+                (
+                    "profile-updated".to_string(),
+                    r#"{"handle":"bob"}"#.to_string()
+                ),
+            ]
+        );
+        assert_eq!(*asked.lock().unwrap(), [vec!["bob".to_string()]]);
     }
 }

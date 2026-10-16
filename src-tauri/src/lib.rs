@@ -11,6 +11,8 @@ use trino_engine::{command_error, fsutil, passphrase, store, totp_enrollment};
 mod a11y;
 mod autostart;
 mod commands;
+// -- M4-0b: the engine's events through Tauri --
+mod events;
 mod media_permission;
 mod navigation;
 mod net_cmds;
@@ -161,7 +163,7 @@ pub fn run() {
             {
                 use tauri::Manager;
                 let net = std::sync::Arc::clone(&_app.state::<AppState>().net);
-                net_cmds::forward_status(_app.handle().clone(), &net);
+                net_cmds::forward_status(events::sink(_app.handle().clone()), &net);
                 net_cmds::on_open(&net, &crate::state::trino_home());
             }
             // The updater (Tor design §6.3): once a day through Tor, at a

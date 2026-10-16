@@ -3,6 +3,7 @@ use crate::call_signal::validate_call_signal;
 use crate::command_error::{CommandError, ErrorCode};
 use crate::connection::{ConnectionStatus, Debouncer, CONNECTION_CHANGED_EVENT, DEBOUNCE};
 use crate::envelope::{decode_envelope, encode_envelope, Envelope};
+use crate::events::EventSink;
 use crate::fsutil;
 use crate::group::{self, FileRef, GroupRoster, MemberBundle, RosterDecision};
 use crate::identity::{
@@ -42,7 +43,7 @@ use storage_cmds::{
     apply_loaded, load_session, persist_account, totp_flag_disagrees, write_vault_noted,
     LoadedSession,
 };
-use tauri::{AppHandle, Emitter, State};
+use tauri::{AppHandle, State};
 use trino_net::IsoKind;
 use zeroize::{Zeroize, Zeroizing};
 
@@ -790,7 +791,13 @@ async fn open_session(
 }
 
 /// Starts the relay connections of a session `open_session` just opened.
-fn relay_starter(app: AppHandle, state: &AppState) -> impl FnOnce(RelayStart) {
+/// What they receive tells the UI through `events`, and sends the profile
+/// again through `resend_profile`.
+fn relay_starter(
+    events: Arc<dyn EventSink>,
+    resend_profile: profile::Resend,
+    state: &AppState,
+) -> impl FnOnce(RelayStart) {
     let inner = state.inner.clone();
     let net = Arc::clone(&state.net);
     move |start: RelayStart| {
@@ -810,7 +817,8 @@ fn relay_starter(app: AppHandle, state: &AppState) -> impl FnOnce(RelayStart) {
         // Tor circuit with the last one's (Tor design §2.6, §2.7).
         let connector = relay_connector(Arc::clone(&net), net.session(), IsoKind::RELAY);
         start_relay_connections(
-            app,
+            events,
+            resend_profile,
             inner,
             connector,
             ready_gate(Arc::clone(&net)),
@@ -894,12 +902,16 @@ pub async fn forge(
     } else {
         NewVaultTotp::Off
     };
-    forge_identity(app, &state, handle, passphrase, totp).await
+    let events = crate::events::sink(app.clone());
+    let resend_profile = profile::resend_through(app);
+    forge_identity(events, resend_profile, &state, handle, passphrase, totp).await
 }
 
 /// `forge`, once it knows whether the vault gets the confirmed TOTP secret.
+/// The session it opens tells the UI through `events` (`relay_starter`).
 async fn forge_identity(
-    app: AppHandle,
+    events: Arc<dyn EventSink>,
+    resend_profile: profile::Resend,
     state: &AppState,
     handle: String,
     passphrase: String,
@@ -948,7 +960,7 @@ async fn forge_identity(
     let bundle_json = own_bundle_json(&identity, &handle, None).map_err(CommandError::internal)?;
     // A new session never inherits TURN credentials (lock and wipe clear them too).
     state.turn.clear();
-    let starter = relay_starter(app, state);
+    let starter = relay_starter(events, resend_profile, state);
     let session = open_session(&state.inner, identity, totp_secret, Some(loaded), starter).await?;
     // Private bridges pasted before the account existed (the first run's
     // "Conexión" step) are sealed in it now (Tor design §2.5).
@@ -968,10 +980,12 @@ async fn forge_identity(
 /// unlock, and counts as down in `connection_status` meanwhile. Whenever a
 /// socket comes up or goes down, the UI gets a debounced
 /// `connection-changed`. Each relay is opened by `connector`, through the
-/// app's `Net`.
+/// app's `Net`. The events go to `events`, and what is received may send
+/// the profile again through `resend_profile` (`handle_incoming_event`).
 #[allow(clippy::too_many_arguments)]
 fn start_relay_connections(
-    app: AppHandle,
+    events: Arc<dyn EventSink>,
+    resend_profile: profile::Resend,
     state_inner: Arc<tokio::sync::Mutex<InnerState>>,
     connector: Connector,
     ready: ReadyGate,
@@ -981,14 +995,18 @@ fn start_relay_connections(
     expected_handle: String,
 ) {
     tauri::async_runtime::spawn(async move {
-        let changes = Arc::new(connection_changes(app.clone(), state_inner.clone()));
+        let changes = Arc::new(connection_changes(Arc::clone(&events), state_inner.clone()));
         let mut clients = Vec::new();
         let mut seen = std::collections::HashSet::new();
         for relay_url in relays {
             if !seen.insert(relay_url.clone()) {
                 continue;
             }
-            let on_event = incoming_events(app.clone(), state_inner.clone());
+            let on_event = incoming_events(
+                Arc::clone(&events),
+                Arc::clone(&resend_profile),
+                state_inner.clone(),
+            );
             let on_state: StateHandler = {
                 let changes = Arc::clone(&changes);
                 Arc::new(move |_up| changes.poke())
@@ -1081,14 +1099,16 @@ pub async fn net_connect_without_tor(
 
 /// What a relay of the session delivers goes to `handle_incoming_event`.
 fn incoming_events(
-    app: AppHandle,
+    events: Arc<dyn EventSink>,
+    resend_profile: profile::Resend,
     state_inner: Arc<tokio::sync::Mutex<InnerState>>,
 ) -> Arc<dyn Fn(NostrEvent) + Send + Sync> {
     Arc::new(move |event: NostrEvent| {
-        let app = app.clone();
+        let events = Arc::clone(&events);
+        let resend_profile = Arc::clone(&resend_profile);
         let inner = state_inner.clone();
         tokio::spawn(async move {
-            handle_incoming_event(app, inner, event).await;
+            handle_incoming_event(&*events, &resend_profile, inner, event).await;
         });
     })
 }
@@ -1096,15 +1116,15 @@ fn incoming_events(
 /// Emits `connection-changed` with the status of the session's relays at
 /// most once per `DEBOUNCE` (K3).
 fn connection_changes(
-    app: AppHandle,
+    events: Arc<dyn EventSink>,
     state_inner: Arc<tokio::sync::Mutex<InnerState>>,
 ) -> Debouncer {
     Debouncer::spawn(DEBOUNCE, move || {
-        let app = app.clone();
+        let events = Arc::clone(&events);
         let inner = state_inner.clone();
         async move {
             let status = ConnectionStatus::of(&inner.lock().await.relays);
-            let _ = app.emit(CONNECTION_CHANGED_EVENT, status);
+            events.emit(CONNECTION_CHANGED_EVENT, &status);
         }
     })
 }
@@ -1140,7 +1160,8 @@ pub async fn unseal(
         // A new session never inherits TURN credentials (lock and wipe clear them too).
         state.turn.clear();
     }
-    let starter = relay_starter(app, &state);
+    let events = crate::events::sink(app.clone());
+    let starter = relay_starter(events, profile::resend_through(app), &state);
     open_session(&state.inner, identity, totp_secret, loaded, starter).await
 }
 
@@ -1259,24 +1280,10 @@ pub async fn relay_inspect_start(
     // The inspector's own session and tokens: its connections never share a
     // Tor circuit with the messaging ones (Tor design §2.7, R2).
     let connector = inspector_connector(Arc::clone(&state.net), state.net.session());
+    let events = crate::events::sink(app);
     let mut connected = Vec::new();
     for url in urls {
-        let app_for_events = app.clone();
-        let relay_for_events = url.clone();
-        let on_event: Arc<dyn Fn(NostrEvent) + Send + Sync> = Arc::new(move |event: NostrEvent| {
-            let to = event.recipient().unwrap_or_default().to_string();
-            let _ = app_for_events.emit(
-                "relay-event",
-                RelayObservation {
-                    relay: relay_for_events.clone(),
-                    id: event.id.clone(),
-                    from: event.pubkey.clone(),
-                    to,
-                    size: event.content.len(),
-                    created_at: event.created_at,
-                },
-            );
-        });
+        let on_event = inspector_events(Arc::clone(&events), url.clone());
 
         let options = ClientOptions {
             route: Some(state.net.route()),
@@ -1302,6 +1309,28 @@ pub async fn relay_inspect_start(
         return Err("could not reach any relay".to_string());
     }
     Ok(connected)
+}
+
+/// What the inspector's connection to `relay` sees goes to the UI as
+/// `relay-event`, its metadata only (`RelayObservation`).
+fn inspector_events(
+    events: Arc<dyn EventSink>,
+    relay: String,
+) -> Arc<dyn Fn(NostrEvent) + Send + Sync> {
+    Arc::new(move |event: NostrEvent| {
+        let to = event.recipient().unwrap_or_default().to_string();
+        events.emit(
+            "relay-event",
+            &RelayObservation {
+                relay: relay.clone(),
+                id: event.id.clone(),
+                from: event.pubkey.clone(),
+                to,
+                size: event.content.len(),
+                created_at: event.created_at,
+            },
+        );
+    })
 }
 
 #[tauri::command]
@@ -2886,8 +2915,12 @@ fn respond_to_handshake(
     Ok((identity, ratchet, resp.associated_data))
 }
 
+/// What a relay of the session delivered: admitted, decrypted and kept, and
+/// told to the UI through `events`. A contact holding an older profile gets
+/// ours again through `resend_profile`.
 async fn handle_incoming_event(
-    app: AppHandle,
+    events: &dyn EventSink,
+    resend_profile: &profile::Resend,
     state_inner: Arc<tokio::sync::Mutex<crate::state::InnerState>>,
     event: NostrEvent,
 ) {
@@ -2905,9 +2938,9 @@ async fn handle_incoming_event(
         Admission::Process(friend) => *friend,
         Admission::Stranger => {
             dbg_log("  DROP: sender not a known friend -> emitting handshake-needed");
-            let _ = app.emit(
+            events.emit(
                 "handshake-needed",
-                HandshakeNeededEvent {
+                &HandshakeNeededEvent {
                     from_pubkey: event.pubkey.clone(),
                 },
             );
@@ -2951,9 +2984,9 @@ async fn handle_incoming_event(
                 &friend.handle,
                 now,
             ) {
-                let _ = app.emit(
+                events.emit(
                     "contact-key-mismatch",
-                    contacts_cmds::ContactKeyMismatchEvent {
+                    &contacts_cmds::ContactKeyMismatchEvent {
                         handle: friend.handle.clone(),
                     },
                 );
@@ -3021,7 +3054,7 @@ async fn handle_incoming_event(
             dbg_log("  responder ratchet established");
             // Fresh session: replay any buffered outgoing so messages the peer
             // lost during the desync get re-delivered (deduped by id).
-            let _ = app.emit("session-established", friend.handle.clone());
+            events.emit("session-established", &friend.handle);
         }
     }
 
@@ -3029,14 +3062,14 @@ async fn handle_incoming_event(
         Some(a) => a,
         None => {
             dbg_log("  DROP: no associated_data (no session) — auto-healing");
-            trigger_resync(&mut inner, &app, &friend.handle);
+            trigger_resync(&mut inner, events, &friend.handle);
             return;
         }
     };
     let has_ratchet = inner.ratchets.contains_key(&friend.handle);
     if !has_ratchet {
         dbg_log("  DROP: no ratchet for friend — auto-healing");
-        trigger_resync(&mut inner, &app, &friend.handle);
+        trigger_resync(&mut inner, events, &friend.handle);
         return;
     }
     let ratchet = inner.ratchets.get_mut(&friend.handle).unwrap();
@@ -3094,7 +3127,7 @@ async fn handle_incoming_event(
                 inner.associated_data.remove(&friend.handle);
                 save_ratchets(&inner);
                 dbg_log("  AUTO-HEAL: cleared a desynced session, requesting resync");
-                let _ = app.emit("resync-needed", friend.handle.clone());
+                events.emit("resync-needed", &friend.handle);
             }
             return;
         }
@@ -3106,7 +3139,14 @@ async fn handle_incoming_event(
     }
     // -- W8 (K12) -- A profile message ends here, never as text; text, group
     // and file messages say whether their sender reads profiles.
-    if profile::on_message(&app, &mut inner, &friend.handle, &plain, event.created_at) {
+    if profile::on_message(
+        events,
+        resend_profile,
+        &mut inner,
+        &friend.handle,
+        &plain,
+        event.created_at,
+    ) {
         return;
     }
 
@@ -3131,9 +3171,9 @@ async fn handle_incoming_event(
                     ts: event.created_at,
                 },
             );
-            let _ = app.emit(
+            events.emit(
                 "message-received",
-                IncomingMessageEvent {
+                &IncomingMessageEvent {
                     from_handle: friend.handle.clone(),
                     text: body,
                     timestamp: event.created_at,
@@ -3163,9 +3203,9 @@ async fn handle_incoming_event(
                     ts: event.created_at,
                 },
             );
-            let _ = app.emit(
+            events.emit(
                 "group-message",
-                IncomingGroupMessageEvent {
+                &IncomingGroupMessageEvent {
                     gid,
                     from_handle: friend.handle.clone(),
                     text: body,
@@ -3174,7 +3214,7 @@ async fn handle_incoming_event(
             );
         }
         Envelope::Roster { roster } => {
-            accept_incoming_roster(&app, &mut inner, &identity, &friend, roster);
+            accept_incoming_roster(events, &mut inner, &identity, &friend, roster);
         }
         Envelope::File { file, gid, body: _ } => {
             let file = sanitize_file_ref(file);
@@ -3207,9 +3247,9 @@ async fn handle_incoming_event(
                     ts: event.created_at,
                 },
             );
-            let _ = app.emit(
+            events.emit(
                 "file-message",
-                FileMessageEvent {
+                &FileMessageEvent {
                     from_handle: friend.handle.clone(),
                     gid,
                     file,
@@ -3230,9 +3270,9 @@ async fn handle_incoming_event(
                 dbg_log("  invalid call signal ignored");
             } else {
                 dbg_log("  call signal received");
-                let _ = app.emit(
+                events.emit(
                     "call-signal",
-                    CallSignalEvent {
+                    &CallSignalEvent {
                         from_handle: friend.handle.clone(),
                         payload: call,
                     },
@@ -3397,7 +3437,7 @@ fn refresh_member_bindings(
 /// user, or drop it. Persists and notifies the UI; the rules live in
 /// `ingest_incoming_roster`.
 fn accept_incoming_roster(
-    app: &AppHandle,
+    events: &dyn EventSink,
     inner: &mut InnerState,
     identity: &crate::identity::Identity,
     sender: &FriendRecord,
@@ -3417,19 +3457,19 @@ fn accept_incoming_roster(
             log_skipped_members(&notes);
             let _ = persist_account(inner);
             dbg_log("  OK: roster stored");
-            let _ = app.emit("group-updated", GroupUpdatedEvent { gid });
+            events.emit("group-updated", &GroupUpdatedEvent { gid });
         }
         RosterOutcome::Invited { gid } => {
             let _ = persist_account(inner);
             dbg_log("  OK: group invite held");
             if let Some(invite) = inner.group_invites.get(&gid) {
-                let _ = app.emit("group-invite", invite_info(invite));
+                events.emit("group-invite", &invite_info(invite));
             }
         }
         RosterOutcome::Ended { gid } => {
             let _ = persist_account(inner);
             dbg_log("  OK: group ended for us");
-            let _ = app.emit("group-removed", groups_cmds::GroupRemovedEvent { gid });
+            events.emit("group-removed", &groups_cmds::GroupRemovedEvent { gid });
         }
         RosterOutcome::Dropped(_) => dbg_log("  DROP: roster rejected"),
     }
@@ -3711,7 +3751,7 @@ fn load_ratchets(inner: &mut InnerState, found: Found) {
 /// (rate-limited per peer). Covers both decrypt failures (AEAD) and the
 /// "peer thinks we have a session but we don't" case. The tie-break reconverges
 /// and buffered messages get replayed, so nothing is lost.
-fn trigger_resync(inner: &mut InnerState, app: &AppHandle, handle: &str) {
+fn trigger_resync(inner: &mut InnerState, events: &dyn EventSink, handle: &str) {
     let now = chrono::Utc::now().timestamp();
     let last = *inner.resync_at.get(handle).unwrap_or(&0);
     if now - last <= 20 {
@@ -3722,7 +3762,7 @@ fn trigger_resync(inner: &mut InnerState, app: &AppHandle, handle: &str) {
     inner.associated_data.remove(handle);
     save_ratchets(inner);
     dbg_log("  AUTO-HEAL: requesting resync");
-    let _ = app.emit("resync-needed", handle.to_string());
+    events.emit("resync-needed", handle);
 }
 
 /// Unique-enough message id for dedup (ts + a process counter, hashed).
@@ -6362,6 +6402,335 @@ mod tests {
         assert_eq!(
             connect_without_tor(&net).unwrap(),
             trino_net::NetStatus::Direct
+        );
+    }
+
+    // ---- M4-0b: what the session hears goes to the UI through the sink ----
+    //
+    // Each event under the name and with the JSON the UI got from Tauri's
+    // `emit` before the sink: the payloads are written out here, field by
+    // field and in order, as the frontend reads them (src/lib/api.ts).
+
+    use trino_engine::events::RecordingSink;
+
+    /// A resend that only keeps whom it was asked to send the profile to.
+    fn recording_resend() -> (profile::Resend, Arc<std::sync::Mutex<Vec<Vec<String>>>>) {
+        let asked = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let resend: profile::Resend = {
+            let asked = Arc::clone(&asked);
+            Arc::new(move |targets| asked.lock().unwrap().push(targets))
+        };
+        (resend, asked)
+    }
+
+    /// The unlocked session of `me`, with `contact` as `handle` and no
+    /// session with them yet. No storage, so nothing is written to the real
+    /// data directory.
+    fn receiving(me: &Identity, contact: &Identity, handle: &str) -> InnerState {
+        let mut inner = state_with(&[friend(contact, handle)]);
+        inner.identity = Some(me.clone());
+        inner.handle = Some("me".to_string());
+        inner
+    }
+
+    /// `receiving`, holding the responder's side of a session `contact`
+    /// started; with the contact's side, to write to `me` with.
+    fn receiving_in_session(
+        me: &Identity,
+        contact: &Identity,
+        handle: &str,
+    ) -> (InnerState, RatchetState, Vec<u8>) {
+        let mut theirs = InnerState::default();
+        let (mine, ad) = add_session_read_by(&mut theirs, contact, me, "me");
+        let their_side = theirs.ratchets.remove("me").unwrap();
+        let mut inner = receiving(me, contact, handle);
+        inner.ratchets.insert(handle.to_string(), mine);
+        inner.associated_data.insert(handle.to_string(), ad.clone());
+        (inner, their_side, ad)
+    }
+
+    /// `plain` as `sender`'s Trino sends it to `to`: encrypted with
+    /// `ratchet` and `ad`, with `handshake`, signed and dated `created_at`.
+    fn sealed_event(
+        sender: &Identity,
+        to: &Identity,
+        ratchet: &mut RatchetState,
+        ad: &[u8],
+        plain: &[u8],
+        handshake: Option<WireHandshake>,
+        created_at: i64,
+    ) -> NostrEvent {
+        let ct = ratchet_encrypt(ratchet, plain, ad).unwrap();
+        let payload = WirePayload {
+            header: WireHeader {
+                dh_pub: ct.header.dh_pub,
+                pn: ct.header.pn,
+                n: ct.header.n,
+            },
+            nonce: ct.nonce,
+            ciphertext: ct.ciphertext,
+            handshake,
+        };
+        build_and_sign_event(
+            &sender.nostr.priv_bytes,
+            &sender.nostr.pub_bytes,
+            TRINO_KIND,
+            &serde_json::to_string(&payload).unwrap(),
+            vec![vec!["p".to_string(), nostr_hex(to)]],
+            Some(created_at),
+        )
+        .unwrap()
+    }
+
+    /// `handle_incoming_event` on `event`, for `inner`: what the UI heard,
+    /// and whom the profile was sent to again.
+    async fn heard(
+        inner: InnerState,
+        event: NostrEvent,
+    ) -> (Vec<(String, String)>, Vec<Vec<String>>, InnerState) {
+        let sink = RecordingSink::new();
+        let (resend, asked) = recording_resend();
+        let inner = Arc::new(tokio::sync::Mutex::new(inner));
+        handle_incoming_event(&*sink, &resend, Arc::clone(&inner), event).await;
+        let asked = asked.lock().unwrap().clone();
+        let inner = Arc::try_unwrap(inner).ok().unwrap().into_inner();
+        (sink.events(), asked, inner)
+    }
+
+    fn named(name: &str, json: &str) -> (String, String) {
+        (name.to_string(), json.to_string())
+    }
+
+    #[tokio::test]
+    async fn a_text_from_a_contact_goes_to_the_ui_as_message_received() {
+        let (me, bob) = (create_identity(), create_identity());
+        let (inner, mut bob_side, ad) = receiving_in_session(&me, &bob, "bob");
+        let plain = encode_envelope(&Envelope::Text {
+            body: "hola \"tú\"".to_string(),
+            id: "m1".to_string(),
+        });
+        let at = unix_now();
+        let sent = sealed_event(&bob, &me, &mut bob_side, &ad, &plain, None, at);
+
+        let (events, asked, inner) = heard(inner, sent).await;
+
+        assert_eq!(
+            events,
+            [named(
+                "message-received",
+                &format!(r#"{{"from_handle":"bob","text":"hola \"tú\"","timestamp":{at}}}"#)
+            )]
+        );
+        assert!(asked.is_empty(), "{asked:?}");
+        assert_eq!(inner.history["bob"].len(), 1);
+    }
+
+    #[tokio::test]
+    async fn a_contact_behind_on_this_profile_gets_it_through_the_resend() {
+        let (me, bob) = (create_identity(), create_identity());
+        let (mut inner, mut bob_side, ad) = receiving_in_session(&me, &bob, "bob");
+        inner.profiles.rev = 10;
+        let plain = br#"{"ty":"text","body":"hola","id":"m1","prof":{"v":1,"have":3}}"#;
+        let at = unix_now();
+        let sent = sealed_event(&bob, &me, &mut bob_side, &ad, plain, None, at);
+
+        let (events, asked, _) = heard(inner, sent).await;
+
+        assert_eq!(
+            events,
+            [
+                named("profile-updated", r#"{"handle":"bob"}"#),
+                named(
+                    "message-received",
+                    &format!(r#"{{"from_handle":"bob","text":"hola","timestamp":{at}}}"#)
+                ),
+            ]
+        );
+        assert_eq!(asked, [vec!["bob".to_string()]]);
+    }
+
+    #[tokio::test]
+    async fn a_strangers_event_goes_to_the_ui_as_handshake_needed() {
+        let (me, eve) = (create_identity(), create_identity());
+        let inner = InnerState {
+            identity: Some(me.clone()),
+            ..InnerState::default()
+        };
+
+        let (events, _, _) = heard(inner, event_to(&eve, &nostr_hex(&me), TRINO_KIND, NOW)).await;
+
+        assert_eq!(
+            events,
+            [named(
+                "handshake-needed",
+                &format!(r#"{{"from_pubkey":"{}"}}"#, nostr_hex(&eve))
+            )]
+        );
+    }
+
+    /// The handshake `contact` sends to start a session with `me`, and the
+    /// contact's side of that session.
+    fn handshake_to(me: &Identity, contact: &Identity) -> (WireHandshake, RatchetState, Vec<u8>) {
+        let bundle = public_bundle_for(me);
+        let init = initiate(contact, &bundle).unwrap();
+        let spk = decode_array_32(&bundle.spk_pub).unwrap();
+        let ratchet = init_initiator(init.master_secret, spk).unwrap();
+        let handshake = WireHandshake {
+            ik_dh_pub: init.message.ik_dh_pub,
+            ek_pub: init.message.ek_pub,
+            spk_id: init.message.spk_id,
+            opk_id: init.message.opk_id,
+        };
+        (handshake, ratchet, init.associated_data)
+    }
+
+    #[tokio::test]
+    async fn a_contacts_handshake_goes_to_the_ui_as_session_established() {
+        let (me, bob) = (create_identity(), create_identity());
+        let (handshake, mut bob_side, ad) = handshake_to(&me, &bob);
+        let plain = b"__trino_handshake__";
+        let sent = sealed_event(
+            &bob,
+            &me,
+            &mut bob_side,
+            &ad,
+            plain,
+            Some(handshake),
+            unix_now(),
+        );
+
+        let (events, _, inner) = heard(receiving(&me, &bob, "bob"), sent).await;
+
+        assert_eq!(events, [named("session-established", r#""bob""#)]);
+        assert!(inner.ratchets.contains_key("bob"));
+    }
+
+    #[tokio::test]
+    async fn a_handshake_with_another_key_goes_to_the_ui_as_contact_key_mismatch() {
+        let (me, bob) = (create_identity(), create_identity());
+        let (mut handshake, mut bob_side, ad) = handshake_to(&me, &bob);
+        handshake.ik_dh_pub = public_bundle_for(&create_identity()).ik_dh_pub;
+        let sent = sealed_event(
+            &bob,
+            &me,
+            &mut bob_side,
+            &ad,
+            b"__trino_handshake__",
+            Some(handshake),
+            unix_now(),
+        );
+
+        let (events, _, _) = heard(receiving(&me, &bob, "bob"), sent).await;
+
+        assert_eq!(
+            events,
+            [named("contact-key-mismatch", r#"{"handle":"bob"}"#)]
+        );
+    }
+
+    #[tokio::test]
+    async fn a_message_without_a_session_goes_to_the_ui_as_resync_needed() {
+        let (me, bob) = (create_identity(), create_identity());
+        let (_, mut bob_side, ad) = receiving_in_session(&me, &bob, "bob");
+        let plain = encode_envelope(&Envelope::Text {
+            body: "hola".to_string(),
+            id: "m1".to_string(),
+        });
+        let sent = sealed_event(&bob, &me, &mut bob_side, &ad, &plain, None, unix_now());
+
+        // No session with bob here (`trigger_resync`).
+        let (events, _, _) = heard(receiving(&me, &bob, "bob"), sent).await;
+
+        assert_eq!(events, [named("resync-needed", r#""bob""#)]);
+    }
+
+    #[tokio::test]
+    async fn a_message_that_does_not_decrypt_goes_to_the_ui_as_resync_needed() {
+        let (me, bob) = (create_identity(), create_identity());
+        let (inner, mut bob_side, _) = receiving_in_session(&me, &bob, "bob");
+        let plain = encode_envelope(&Envelope::Text {
+            body: "hola".to_string(),
+            id: "m1".to_string(),
+        });
+        // Sealed with associated data of another session: the AEAD fails.
+        let sent = sealed_event(&bob, &me, &mut bob_side, b"other", &plain, None, unix_now());
+
+        let (events, _, inner) = heard(inner, sent).await;
+
+        assert_eq!(events, [named("resync-needed", r#""bob""#)]);
+        assert!(!inner.ratchets.contains_key("bob"), "the session stayed");
+    }
+
+    #[tokio::test]
+    async fn a_contacts_group_roster_goes_to_the_ui_as_group_invite() {
+        let (me, bob, ana) = (create_identity(), create_identity(), create_identity());
+        let (inner, mut bob_side, ad) = receiving_in_session(&me, &bob, "bob");
+        let roster = roster_of(&bob, &[(&me, "me"), (&ana, "ana")]);
+        let gid = roster.group_id.clone();
+        let plain = encode_envelope(&Envelope::Roster { roster });
+        let sent = sealed_event(&bob, &me, &mut bob_side, &ad, &plain, None, unix_now());
+
+        let (events, _, inner) = heard(inner, sent).await;
+
+        let received_at = inner.group_invites[&gid].received_at;
+        assert_eq!(
+            events,
+            [named(
+                "group-invite",
+                &format!(
+                    r#"{{"gid":"{gid}","name":"amigos","from_handle":"bob","member_count":3,"received_at":{received_at}}}"#
+                )
+            )]
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn the_relays_state_goes_to_the_ui_as_connection_changed() {
+        let attempts = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let mut inner = InnerState::default();
+        let relay = crate::nostr::test_relay::unreachable_client(attempts);
+        let url = relay.url().to_string();
+        inner.relays.push(relay);
+        let inner = Arc::new(tokio::sync::Mutex::new(inner));
+        let sink = RecordingSink::new();
+
+        let changes = connection_changes(sink.clone(), Arc::clone(&inner));
+        changes.poke();
+        changes.poke();
+        tokio::time::sleep(DEBOUNCE * 2).await;
+
+        assert_eq!(
+            sink.events(),
+            [named(
+                "connection-changed",
+                &format!(r#"{{"up":0,"total":1,"relays":[{{"url":"{url}","connected":false}}]}}"#)
+            )]
+        );
+        for client in inner.lock().await.relays.drain(..) {
+            client.close();
+        }
+    }
+
+    #[test]
+    fn what_the_inspector_sees_goes_to_the_ui_as_relay_event() {
+        let (alice, bob) = (create_identity(), create_identity());
+        let seen = event_to(&alice, &nostr_hex(&bob), TRINO_KIND, NOW);
+        let sink = RecordingSink::new();
+
+        let on_event = inspector_events(sink.clone(), "wss://relay.example".to_string());
+        on_event(seen.clone());
+
+        assert_eq!(
+            sink.events(),
+            [named(
+                "relay-event",
+                &format!(
+                    r#"{{"relay":"wss://relay.example","id":"{}","from":"{}","to":"{}","size":2,"created_at":{NOW}}}"#,
+                    seen.id,
+                    nostr_hex(&alice),
+                    nostr_hex(&bob)
+                )
+            )]
         );
     }
 }

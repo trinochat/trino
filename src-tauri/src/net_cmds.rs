@@ -18,10 +18,11 @@
 //! each client follows `Net::route` (commands.rs, `relay_options`).
 
 use crate::command_error::CommandError;
+use crate::events::EventSink;
 use crate::state::AppState;
 use std::path::Path;
 use std::sync::Arc;
-use tauri::{AppHandle, Emitter, State};
+use tauri::State;
 use trino_net::{BridgeLine, Bridges, Net, NetStatus, StartWhen, TorSettings};
 
 /// What the frontend listens to: every change of `NetStatus`.
@@ -95,13 +96,14 @@ pub(crate) fn status_of(net: &Net) -> NetStatus {
     net.status_now()
 }
 
-/// Tell the UI every change of state, from the one there is now.
-pub(crate) fn forward_status(app: AppHandle, net: &Net) {
+/// Tell the UI every change of state, from the one there is now, through
+/// `events`.
+pub(crate) fn forward_status(events: Arc<dyn EventSink>, net: &Net) {
     let mut status = net.status();
     tauri::async_runtime::spawn(async move {
         loop {
             let now = *status.borrow_and_update();
-            let _ = app.emit(NET_CHANGED_EVENT, now);
+            events.emit(NET_CHANGED_EVENT, &now);
             if status.changed().await.is_err() {
                 return;
             }
@@ -386,5 +388,39 @@ pub(crate) mod tests {
                 "trinochat.org:443",
             ]
         );
+    }
+
+    // ---- M4-0b: `net-changed` goes through the engine's sink ----
+
+    #[tokio::test]
+    async fn every_state_of_the_network_goes_to_the_ui_as_net_changed() {
+        use crate::nostr::test_relay::wait_until;
+        let scratch = ScratchDir::new("tor-net-changed");
+        let tor_home = with_account(&scratch);
+        let (net, fake, _) = fake_tor(&tor_home);
+        let sink = trino_engine::events::RecordingSink::new();
+
+        forward_status(sink.clone(), &net);
+        wait_until("the state there is now", || !sink.events().is_empty()).await;
+        on_open(&net, scratch.path());
+        fake.ready();
+        let ready = NetStatus::Ready {
+            transport: TransportKind::None,
+        };
+        becomes(&net, ready).await;
+        let ready = r#"{"state":"ready","transport":"none"}"#;
+        assert_eq!(serde_json::to_string(&net.status_now()).unwrap(), ready);
+        wait_until("the ready state", || {
+            sink.events().last().is_some_and(|(_, json)| json == ready)
+        })
+        .await;
+
+        let events = sink.events();
+        assert_eq!(
+            events[0],
+            ("net-changed".to_string(), r#"{"state":"off"}"#.to_string())
+        );
+        assert!(events.iter().all(|(name, _)| name == "net-changed"));
+        net.stop();
     }
 }

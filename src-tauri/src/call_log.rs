@@ -9,10 +9,11 @@
 //! sent to the contact: each side keeps its own view.
 
 use crate::command_error::{CommandError, ErrorCode};
+use crate::events::{EventSink, TauriEvents};
 use crate::state::{AppState, HistItem, InnerState};
 use serde::Serialize;
 use std::collections::HashMap;
-use tauri::{AppHandle, Emitter, State};
+use tauri::{AppHandle, State};
 use thiserror::Error;
 
 // The calls themselves, as the chat history keeps them, are the engine's
@@ -217,10 +218,16 @@ pub async fn record_call(
 ) -> Result<CallLogEntry, CommandError> {
     let now = chrono::Utc::now().timestamp();
     let recorded = record(&mut *state.inner.lock().await, &peer, call, started_at, now)?;
-    if let Recorded::New(entry) = &recorded {
-        let _ = app.emit(CALL_LOGGED_EVENT, entry);
-    }
+    announce(&TauriEvents(app), &recorded);
     Ok(recorded.entry())
+}
+
+/// A new call goes to the UI as `call-logged`; one the chat had already
+/// does not.
+fn announce(events: &dyn EventSink, recorded: &Recorded) {
+    if let Recorded::New(entry) = recorded {
+        events.emit(CALL_LOGGED_EVENT, entry);
+    }
 }
 
 /// The calls of every chat, newest first; 200 when `limit` is left out, 500
@@ -734,5 +741,24 @@ mod tests {
             other.history,
             crate::store::session::Found::Absent
         ));
+    }
+
+    // ---- M4-0b: `call-logged` goes through the engine's sink ----
+
+    #[test]
+    fn a_new_call_goes_to_the_ui_as_call_logged_and_a_known_one_does_not() {
+        let sink = trino_engine::events::RecordingSink::new();
+        let mut inner = session_with(&["ana"]);
+        let first = record(&mut inner, "ana", missed(ID), NOW - 30, NOW).unwrap();
+        let again = record(&mut inner, "ana", missed(ID), NOW - 30, NOW).unwrap();
+
+        announce(&*sink, &first);
+        announce(&*sink, &again);
+
+        let expected = format!(
+            r#"{{"peer":"ana","ts":{},"call":{{"id":"{ID}","direction":"incoming","video":false,"outcome":"missed","duration_sec":0}}}}"#,
+            NOW - 30
+        );
+        assert_eq!(sink.events(), [("call-logged".to_string(), expected)]);
     }
 }
