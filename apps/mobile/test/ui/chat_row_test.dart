@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:trino_mobile/ui/chat_row.dart';
 import 'package:trino_mobile/ui/trust_badge.dart';
+import 'package:trino_mobile/ui/unread_badge.dart';
 
 import '../support/harness.dart';
 
@@ -64,6 +65,49 @@ void main() {
       await tester.tap(find.byType(ChatRow));
       expect(taps, 1);
       expect(tester.getSize(find.byType(ChatRow)).height, greaterThanOrEqualTo(64));
+    });
+
+    testWidgets('a pinned chat shows a small grey pin beside the time, read as its word', (tester) async {
+      await pumpThemed(
+        tester,
+        ChatRow(name: 'Lucía', preview: '¡Gracias!', time: 'Mar', pinnedLabel: 'Fijado', onTap: () {}),
+        center: false,
+      );
+      final t = tokensIn(tester);
+      final pin = find.byWidgetPredicate((w) => w is TrinoIcon && w.icon == TrinoIcons.pin);
+      final icon = tester.widget<TrinoIcon>(pin);
+      expect((icon.color, icon.size), (t.muted, 14));
+      // On the time's line, just before it.
+      expect(tester.getCenter(pin).dy, closeTo(tester.getCenter(find.text('Mar')).dy, 2));
+      expect(tester.getTopRight(pin).dx, lessThanOrEqualTo(tester.getTopLeft(find.text('Mar')).dx));
+      final label = tester.getSemantics(find.byType(ChatRow)).label;
+      expect(label, contains('Fijado'));
+      expect(label.indexOf('¡Gracias!'), lessThan(label.indexOf('Fijado')), reason: label);
+    });
+
+    testWidgets('no pin unless pinned', (tester) async {
+      await pumpThemed(tester, ana(), center: false);
+      expect(find.byWidgetPredicate((w) => w is TrinoIcon && w.icon == TrinoIcons.pin), findsNothing);
+    });
+
+    testWidgets('a chat marked unread shows the closed envelope where the count goes, with no number', (tester) async {
+      await pumpThemed(
+        tester,
+        ChatRow(
+          name: 'Lucía',
+          preview: '¡Gracias!',
+          time: 'Mar',
+          markedUnreadLabel: 'Marcado como no leído',
+          onTap: () {},
+        ),
+        center: false,
+      );
+      final t = tokensIn(tester);
+      final mail = find.byWidgetPredicate((w) => w is TrinoIcon && w.icon == TrinoIcons.mail);
+      expect(tester.widget<TrinoIcon>(mail).color, t.accentText);
+      expect(tester.getTopLeft(mail).dy, greaterThan(tester.getBottomLeft(find.text('Mar')).dy - 1));
+      expect(find.byType(UnreadBadge), findsNothing);
+      expect(tester.getSemantics(find.byType(ChatRow)).label, contains('Marcado como no leído'));
     });
 
     testWidgets('cuts long text to one line instead of overflowing, even at twice the text size', (tester) async {

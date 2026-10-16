@@ -1,7 +1,9 @@
 // A chat in the inbox, as one button: avatar, name, trust, a one-line preview
-// (with the draft prefix in the accent), time and unread count.
+// (with the draft prefix in the accent), time with the pin of a pinned chat,
+// and the unread count, or the closed envelope of a chat marked unread.
 import 'package:flutter/material.dart';
 
+import '../design/icons.dart';
 import '../design/theme.dart';
 import 'avatar.dart';
 import 'trust_badge.dart';
@@ -18,6 +20,8 @@ class ChatRow extends StatelessWidget {
     this.time,
     this.unread,
     this.trust,
+    this.pinnedLabel,
+    this.markedUnreadLabel,
   });
 
   final String name;
@@ -39,12 +43,24 @@ class ChatRow extends StatelessWidget {
   /// The compact badge after the name, such as verified.
   final ({TrustKind kind, String label})? trust;
 
+  /// A pinned chat: a small grey pin before the time, read as this word,
+  /// such as "Fijado".
+  final String? pinnedLabel;
+
+  /// Marked unread with nothing new: the closed envelope where the count
+  /// goes, read as this phrase, such as "Marcado como no leído". The count
+  /// wins when there is one.
+  final String? markedUnreadLabel;
+
   @override
   Widget build(BuildContext context) {
     final t = context.tokens;
     final text = context.text;
     final unread = this.unread;
     final trust = this.trust;
+    final pinnedLabel = this.pinnedLabel;
+    final hasCount = unread != null && unread.count > 0;
+    final markedUnreadLabel = hasCount ? null : this.markedUnreadLabel;
     return MergeSemantics(
       child: Semantics(
         button: true,
@@ -106,17 +122,36 @@ class ChatRow extends StatelessWidget {
                         ],
                       ),
                     ),
-                    if (time != null || (unread != null && unread.count > 0)) ...[
+                    if (time != null || pinnedLabel != null || hasCount || markedUnreadLabel != null) ...[
                       const SizedBox(width: 12),
                       Column(
                         mainAxisSize: MainAxisSize.min,
                         crossAxisAlignment: CrossAxisAlignment.end,
                         children: [
-                          if (time != null) Text(time!, style: text.mono),
-                          if (unread != null && unread.count > 0)
+                          Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              if (pinnedLabel != null) ...[
+                                TrinoIcon(TrinoIcons.pin, size: 14, color: t.muted, semanticLabel: pinnedLabel),
+                                const SizedBox(width: 4),
+                              ],
+                              if (time != null) Text(time!, style: text.mono),
+                            ],
+                          ),
+                          if (hasCount)
                             Padding(
                               padding: const EdgeInsets.only(top: 6),
                               child: UnreadBadge(count: unread.count, semanticLabel: unread.label),
+                            )
+                          else if (markedUnreadLabel != null)
+                            Padding(
+                              padding: const EdgeInsets.only(top: 4),
+                              child: TrinoIcon(
+                                TrinoIcons.mail,
+                                size: 20,
+                                color: t.accentText,
+                                semanticLabel: markedUnreadLabel,
+                              ),
                             ),
                         ],
                       ),

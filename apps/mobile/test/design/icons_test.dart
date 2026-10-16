@@ -61,6 +61,13 @@ void main() {
     }
   });
 
+  test('has the lucide pin, closed envelope and open envelope of the inbox mockup', () {
+    expectBounds(TrinoIcons.mail.path.getBounds(), const Rect.fromLTRB(2, 4, 22, 20));
+    expectBounds(TrinoIcons.mailOpen.path.getBounds(), const Rect.fromLTRB(2, 1.5, 22, 22));
+    final pin = TrinoIcons.pin.path.getBounds();
+    expect((pin.left, pin.top, pin.bottom), (5, 2, 22));
+  });
+
   testWidgets('an icon is decoration unless it is given a label', (tester) async {
     Widget row(List<Widget> children) => Directionality(
       textDirection: TextDirection.ltr,

@@ -457,5 +457,7 @@
   "leaveGroup": "Sair do grupo",
   "leaveGroupTitle": "Sair de {group}?",
   "leaveGroupBody": "As mensagens de {group} não vão mais chegar para você, e a conversa é apagada deste celular.",
-  "leftGroup": "Você saiu de {group}."
+  "leftGroup": "Você saiu de {group}.",
+  "chatPinned": "Fixada",
+  "chatMarkedUnread": "Marcada como não lida"
 }

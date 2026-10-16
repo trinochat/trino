@@ -203,6 +203,32 @@ void main() {
     expect((first.name, first.preview, first.unread?.count), ('Lucía', '¿Ya la tienes?', 1));
   });
 
+  testWidgets('a pinned chat goes first, with its pin', (tester) async {
+    final app = await pumpApp(tester);
+    await app.engine.setChatPinned('chat-lucia', true);
+    await tester.pumpAndSettle();
+    final rows = tester.widgetList<ChatRow>(find.byType(ChatRow)).toList();
+    expect(rows.map((row) => row.name), ['Lucía', 'Ana Torres', 'Familia', 'Carlos Méndez']);
+    expect(rows.map((row) => row.pinnedLabel), ['Fijado', null, null, null]);
+  });
+
+  testWidgets('a chat marked unread shows its mark and counts in "No leídos"; opening it clears it', (tester) async {
+    final app = await pumpApp(tester);
+    await app.engine.markUnread('chat-lucia');
+    await tester.pumpAndSettle();
+    final lucia = tester.widget<ChatRow>(rowOf('Lucía'));
+    expect((lucia.markedUnreadLabel, lucia.unread), ('Marcado como no leído', null));
+    await tester.tap(find.text('No leídos'));
+    await tester.pumpAndSettle();
+    expect(tester.widgetList<ChatRow>(find.byType(ChatRow)).map((row) => row.name), ['Ana Torres', 'Familia', 'Lucía']);
+
+    await tester.tap(rowOf('Lucía'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.bySemanticsLabel('Volver'));
+    await tester.pumpAndSettle();
+    expect(rowOf('Lucía'), findsNothing, reason: 'read now: out of "No leídos"');
+  });
+
   testWidgets('"Nuevo chat" lists the contacts and opens a chat with one', (tester) async {
     await pumpApp(tester);
     await tester.tap(find.bySemanticsLabel('Nuevo chat'));

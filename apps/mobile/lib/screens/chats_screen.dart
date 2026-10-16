@@ -58,7 +58,7 @@ class _ChatsScreenState extends State<ChatsScreen> {
       for (final chat in chats)
         if (switch (_filter) {
               ChatFilter.all => true,
-              ChatFilter.unread => chat.unread > 0,
+              ChatFilter.unread => chat.isUnread,
               ChatFilter.groups => chat.isGroup,
             } &&
             (query.isEmpty || foldForSearch(chat.title).contains(query)))
@@ -185,6 +185,8 @@ class _ChatsScreenState extends State<ChatsScreen> {
       preview: draft ?? previewOf(chat, l10n),
       time: activity == null ? null : formatChatTime(context, activity, context.now()),
       unread: chat.unread > 0 ? (count: chat.unread, label: l10n.unreadCount(chat.unread)) : null,
+      markedUnreadLabel: chat.markedUnread ? l10n.chatMarkedUnread : null,
+      pinnedLabel: chat.pinned ? l10n.chatPinned : null,
       onTap: () => Navigator.of(context).push(ChatScreen.route(chat)),
     );
   }

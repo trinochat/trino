@@ -457,5 +457,7 @@
   "leaveGroup": "Leave the group",
   "leaveGroupTitle": "Leave {group}?",
   "leaveGroupBody": "The messages of {group} will no longer reach you, and the chat is deleted from this phone.",
-  "leftGroup": "You left {group}."
+  "leftGroup": "You left {group}.",
+  "chatPinned": "Pinned",
+  "chatMarkedUnread": "Marked as unread"
 }

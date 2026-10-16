@@ -552,5 +552,9 @@
   "leaveGroupBody": "Ya no te van a llegar los mensajes de {group}, y el chat se borra de este celular.",
   "@leaveGroupBody": {"placeholders": {"group": {"type": "String"}}},
   "leftGroup": "Saliste de {group}.",
-  "@leftGroup": {"placeholders": {"group": {"type": "String"}}}
+  "@leftGroup": {"placeholders": {"group": {"type": "String"}}},
+  "chatPinned": "Fijado",
+  "@chatPinned": {"description": "Read by screen readers for the pin of a pinned chat."},
+  "chatMarkedUnread": "Marcado como no leído",
+  "@chatMarkedUnread": {"description": "Read for the closed envelope of a chat the user marked unread, which has no count."}
 }
