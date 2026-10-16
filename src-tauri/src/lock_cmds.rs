@@ -41,25 +41,9 @@ pub(crate) const VAULT_LOCKED_EVENT: &str = "vault-locked";
 #[cfg_attr(not(desktop), allow(dead_code))]
 pub(crate) const LOCK_REQUESTED_EVENT: &str = "lock-requested";
 
-/// What made the system lock Trino.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum SystemCause {
-    /// Windows was locked, the session switched or disconnected.
-    Session,
-    /// The computer went to sleep or hibernated.
-    Suspend,
-}
-
-/// Why Trino locked, as the unlock screen says it (`LockReason` of
-/// src/screens/types.ts, but for the cold start, which is the frontend's).
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "kind", rename_all = "lowercase")]
-pub enum LockReason {
-    Manual,
-    Idle { minutes: u32 },
-    System { cause: SystemCause },
-}
+// Why Trino locked is the engine's (M4-0): InnerState keeps it while
+// locked.
+pub use trino_engine::lock::{LockReason, SystemCause};
 
 /// Who asked to lock.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -533,7 +517,7 @@ mod tests {
             let state = unlocked_on(
                 scratch.path(),
                 AppState {
-                    net: Arc::clone(&net),
+                    engine: trino_engine::Engine::with_net(Arc::clone(&net)),
                     ..AppState::default()
                 },
             );

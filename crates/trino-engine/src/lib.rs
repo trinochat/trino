@@ -17,12 +17,17 @@ pub mod blossom;
 pub mod call_log;
 pub mod command_error;
 pub mod diag;
+mod engine;
 pub mod fsutil;
+pub mod lock;
 pub mod nostr;
 pub mod passphrase;
+pub mod profile;
 pub mod state;
 pub mod store;
 #[cfg(any(test, feature = "test-util"))]
 pub mod testing;
 pub mod totp_enrollment;
 pub mod turn;
+
+pub use engine::Engine;
