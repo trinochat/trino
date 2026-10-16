@@ -113,7 +113,7 @@ mod tests {
     use crate::commands::load_history;
     use crate::fsutil::scratch::ScratchDir;
     use crate::state::InnerState;
-    use crate::store::session::tests::{reopen, store_cell};
+    use crate::store::session::testing::{reopen, store_cell};
     use serde_json::json;
 
     const NOW: i64 = 1_760_000_000;

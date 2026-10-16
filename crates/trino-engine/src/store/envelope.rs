@@ -28,10 +28,10 @@ const MAGIC: &[u8; 6] = b"TRDAT\0";
 const FORMAT_VERSION: u8 = 1;
 /// Magic, version, kind, key_gen and id_vault: the part of the header in the
 /// associated data.
-pub(crate) const AAD_HEADER_LEN: usize = 6 + 1 + 1 + 4 + ID_VAULT_LEN;
+pub const AAD_HEADER_LEN: usize = 6 + 1 + 1 + 4 + ID_VAULT_LEN;
 /// The whole header, with the nonce.
-pub(crate) const HEADER_LEN: usize = AAD_HEADER_LEN + NONCE_SIZE;
-pub(crate) const TAG_LEN: usize = 16;
+pub const HEADER_LEN: usize = AAD_HEADER_LEN + NONCE_SIZE;
+pub const TAG_LEN: usize = 16;
 /// `seq` and the content's length, before the content.
 const PREFIX_LEN: usize = 8 + 4;
 const KIB: usize = 1024;
@@ -39,7 +39,7 @@ const PAD_STEPS: [usize; 5] = [4 * KIB, 8 * KIB, 16 * KIB, 32 * KIB, 64 * KIB];
 
 /// Which file: its kind, and for a sticker its name on disk.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub(crate) enum Slot {
+pub enum Slot {
     Account,
     Prefs,
     History,
@@ -56,7 +56,7 @@ pub(crate) enum Slot {
 
 impl Slot {
     /// The data files with a fixed name, in the order they are checked.
-    pub(crate) const FIXED: [Slot; 5] = [
+    pub const FIXED: [Slot; 5] = [
         Slot::Account,
         Slot::Prefs,
         Slot::History,
@@ -91,7 +91,7 @@ impl Slot {
     }
 
     /// The name the associated data and the index use.
-    pub(crate) fn logical_name(&self) -> String {
+    pub fn logical_name(&self) -> String {
         match self {
             Slot::Account => "account".into(),
             Slot::Prefs => "prefs".into(),
@@ -106,7 +106,7 @@ impl Slot {
 
     /// The slot a logical name stands for, if it is one of the index's: a
     /// file kept aside is not.
-    pub(crate) fn from_logical_name(name: &str) -> Option<Slot> {
+    pub fn from_logical_name(name: &str) -> Option<Slot> {
         match name {
             "account" => Some(Slot::Account),
             "prefs" => Some(Slot::Prefs),
@@ -122,7 +122,7 @@ impl Slot {
     }
 
     /// The kind, as the copies set aside are grouped (at most three each).
-    pub(crate) fn kind_name(&self) -> &'static str {
+    pub fn kind_name(&self) -> &'static str {
         match self {
             Slot::Account => "account",
             Slot::Prefs => "prefs",
@@ -136,7 +136,7 @@ impl Slot {
     }
 
     /// Where the file lives, relative to `store/`.
-    pub(crate) fn relative_path(&self) -> std::path::PathBuf {
+    pub fn relative_path(&self) -> std::path::PathBuf {
         match self {
             Slot::Sticker(name) => std::path::Path::new("stickers").join(format!("{name}.bin")),
             Slot::Legacy(name) => std::path::Path::new("aside").join(format!("legacy.{name}.bin")),
@@ -146,7 +146,7 @@ impl Slot {
 }
 
 /// A sticker's name on disk: 32 lowercase hex digits.
-pub(crate) fn is_sticker_disk_name(name: &str) -> bool {
+pub fn is_sticker_disk_name(name: &str) -> bool {
     name.len() == 32
         && name
             .bytes()
@@ -155,7 +155,7 @@ pub(crate) fn is_sticker_disk_name(name: &str) -> bool {
 
 /// Why a file was refused.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
-pub(crate) enum EnvelopeError {
+pub enum EnvelopeError {
     #[error("not a store file")]
     NotAStoreFile,
     #[error("unsupported store file version: {0}")]
@@ -180,15 +180,15 @@ pub(crate) enum EnvelopeError {
 impl EnvelopeError {
     /// Any refusal but `OtherVault` means the file was changed, damaged or
     /// planted.
-    pub(crate) fn is_other_vault(&self) -> bool {
+    pub fn is_other_vault(&self) -> bool {
         matches!(self, EnvelopeError::OtherVault)
     }
 }
 
 /// What an opened file holds.
-pub(crate) struct Opened {
-    pub(crate) seq: u64,
-    pub(crate) content: Zeroizing<Vec<u8>>,
+pub struct Opened {
+    pub seq: u64,
+    pub content: Zeroizing<Vec<u8>>,
 }
 
 /// Only the counter and the size: the content is never printed.
@@ -202,7 +202,7 @@ impl std::fmt::Debug for Opened {
 }
 
 /// The plaintext size for `content_len` bytes of content: the next step.
-pub(crate) fn padded_len(content_len: usize) -> usize {
+pub fn padded_len(content_len: usize) -> usize {
     let plain = PREFIX_LEN + content_len;
     match PAD_STEPS.iter().find(|&&step| plain <= step) {
         Some(&step) => step,
@@ -211,7 +211,7 @@ pub(crate) fn padded_len(content_len: usize) -> usize {
 }
 
 /// Seal `content` as the file in `slot`, written with counter `seq`.
-pub(crate) fn seal(
+pub fn seal(
     keys: &StoreKeys,
     slot: &Slot,
     seq: u64,
@@ -255,7 +255,7 @@ fn aad(header: &[u8; AAD_HEADER_LEN], slot: &Slot) -> Vec<u8> {
 }
 
 /// Open `bytes` as the file in `slot`.
-pub(crate) fn open(keys: &StoreKeys, slot: &Slot, bytes: &[u8]) -> Result<Opened, EnvelopeError> {
+pub fn open(keys: &StoreKeys, slot: &Slot, bytes: &[u8]) -> Result<Opened, EnvelopeError> {
     if bytes.len() < AAD_HEADER_LEN || &bytes[..6] != MAGIC {
         return Err(EnvelopeError::NotAStoreFile);
     }
@@ -318,7 +318,7 @@ fn unpad(plain: &[u8]) -> Result<Opened, EnvelopeError> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::store::keys::tests::keys;
+    use crate::store::keys::testing::keys;
 
     fn sticker(byte: u8) -> Slot {
         Slot::Sticker(hex::encode([byte; 16]))

@@ -6,7 +6,7 @@ pub use trino_core::{call_signal, crypto, envelope, group, identity, ratchet, to
 // What moved to the engine (M4-0), under the same paths as before, so
 // `crate::fsutil::…` and the rest keep resolving.
 pub use trino_engine::{blossom, nostr};
-use trino_engine::{command_error, fsutil, passphrase, totp_enrollment};
+use trino_engine::{command_error, fsutil, passphrase, store, totp_enrollment};
 
 mod a11y;
 mod autostart;
@@ -17,7 +17,6 @@ mod net_cmds;
 mod news_cmds;
 mod notifications;
 mod state;
-mod store;
 mod turn;
 mod updater;
 // -- W7 --

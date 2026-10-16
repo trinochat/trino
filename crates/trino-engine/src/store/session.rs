@@ -46,48 +46,48 @@ use std::sync::{Arc, Mutex, MutexGuard};
 use zeroize::Zeroizing;
 
 /// The store's folder in the data directory.
-pub(crate) const STORE_DIR: &str = "store";
+pub const STORE_DIR: &str = "store";
 /// A store that belongs to another account is moved next to `store/`, under
 /// this prefix, and never removed by itself (design §5.6).
-pub(crate) const OTHER_STORE_PREFIX: &str = "store-aside-";
+pub const OTHER_STORE_PREFIX: &str = "store-aside-";
 
 /// Why an account the migration has not moved yet keeps no preferences in
 /// the store.
-pub(crate) const NOT_MOVED: &str = "this account's data has not moved to the store yet";
+pub const NOT_MOVED: &str = "this account's data has not moved to the store yet";
 
 /// What `account.bin` holds.
 #[derive(Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub(crate) struct AccountFile {
-    pub(crate) handle: String,
-    pub(crate) nostr_pub: String,
-    pub(crate) relays: Vec<String>,
-    pub(crate) created_at: i64,
+pub struct AccountFile {
+    pub handle: String,
+    pub nostr_pub: String,
+    pub relays: Vec<String>,
+    pub created_at: i64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub(crate) avatar: Option<String>,
+    pub avatar: Option<String>,
     #[serde(default)]
-    pub(crate) friends: Vec<FriendRecord>,
+    pub friends: Vec<FriendRecord>,
     #[serde(default)]
-    pub(crate) blocked: Vec<String>,
+    pub blocked: Vec<String>,
     #[serde(default)]
-    pub(crate) groups: Vec<GroupRoster>,
+    pub groups: Vec<GroupRoster>,
     #[serde(default)]
-    pub(crate) group_invites: Vec<GroupInvite>,
+    pub group_invites: Vec<GroupInvite>,
 }
 
 /// What a sticker's file holds. Its id is the start of the image's SHA-256,
 /// as before: messages carry it (`sticker::<id>.<ext>`) and the recent
 /// stickers list it, so only its name on disk changes (design §3.1).
 #[derive(Clone, Serialize, Deserialize)]
-pub(crate) struct StickerFile {
-    pub(crate) id: String,
-    pub(crate) mime: String,
+pub struct StickerFile {
+    pub id: String,
+    pub mime: String,
     /// The image, in base64.
-    pub(crate) data: String,
+    pub data: String,
 }
 
 /// What the store gave one part of the session at unlock.
-pub(crate) enum Found {
+pub enum Found {
     /// Verified: the session starts with it.
     Ready(Zeroizing<Vec<u8>>),
     /// Not there: the session starts empty, and it is written when it
@@ -101,7 +101,7 @@ pub(crate) enum Found {
 /// Where the account's preferences stand this session (CL-2a, design §5.3).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "lowercase")]
-pub(crate) enum PrefsImport {
+pub enum PrefsImport {
     /// What this device kept for the account before the store (in the
     /// WebView's localStorage) was imported once already.
     Done,
@@ -113,16 +113,16 @@ pub(crate) enum PrefsImport {
 }
 
 /// The store, as `SessionStore::open` found it.
-pub(crate) struct OpenedStore {
-    pub(crate) session: SessionStore,
-    pub(crate) account: Found,
-    pub(crate) history: Found,
-    pub(crate) sessions: Found,
-    pub(crate) profiles: Found,
+pub struct OpenedStore {
+    pub session: SessionStore,
+    pub account: Found,
+    pub history: Found,
+    pub sessions: Found,
+    pub profiles: Found,
 }
 
 /// The store of the open session.
-pub(crate) struct SessionStore {
+pub struct SessionStore {
     store: Store<RealDisk>,
     /// What waits for the user's choice, by file, until `choose`.
     awaiting: BTreeMap<Slot, Zeroizing<Vec<u8>>>,
@@ -136,7 +136,7 @@ pub(crate) struct SessionStore {
 
 /// Whether the vault's header is the one the index noted (design §4.9).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum VaultCheck {
+pub enum VaultCheck {
     /// The one noted.
     Same,
     /// Another, for a reason that needs no word: a re-seal noted as pending
@@ -151,7 +151,7 @@ pub(crate) enum VaultCheck {
 
 /// The header of the vault in `bytes` as the index notes it, with `spk`,
 /// the id of the signed prekey it holds. `None` if it is not a vault.
-pub(crate) fn vault_header(bytes: &[u8], spk: u32) -> Option<VaultHeader> {
+pub fn vault_header(bytes: &[u8], spk: u32) -> Option<VaultHeader> {
     let sealed = crate::vault::decode_vault(bytes).ok()?;
     Some(VaultHeader {
         version: sealed.version,
@@ -170,7 +170,7 @@ pub(crate) fn vault_header(bytes: &[u8], spk: u32) -> Option<VaultHeader> {
 /// signed prekey under the same format and flags, which only this identity
 /// can sign: a rotation, taken in silence. Versions older than the store
 /// refuse a vault that carries the data key, so they no longer re-seal it.
-pub(crate) fn check_vault(
+pub fn check_vault(
     noted: Option<&VaultHeader>,
     pending: Option<&VaultHeader>,
     now: &VaultHeader,
@@ -206,7 +206,7 @@ fn is_empty_store(dir: &Path) -> io::Result<bool> {
 }
 
 /// A name for `store/` moved aside whole, unique in `home`.
-pub(crate) fn other_store_name() -> String {
+pub fn other_store_name() -> String {
     let nanos = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_or(0, |elapsed| elapsed.as_nanos());
@@ -217,7 +217,7 @@ impl SessionStore {
     /// Create the store of a new account in `home`, with its account file.
     /// A store already there has no vault to open it (the caller checked):
     /// an account whose wipe was cut short, so it goes, as design §5.6 says.
-    pub(crate) fn create(home: &Path, keys: StoreKeys, account: &[u8]) -> io::Result<()> {
+    pub fn create(home: &Path, keys: StoreKeys, account: &[u8]) -> io::Result<()> {
         let dir = home.join(STORE_DIR);
         match std::fs::remove_dir_all(&dir) {
             Err(error) if error.kind() != io::ErrorKind::NotFound => return Err(error),
@@ -236,11 +236,7 @@ impl SessionStore {
     /// data, and check the vault's header (`vault`) against the index. A
     /// store of another account is moved aside and a new one started; a
     /// store that is not there is reported.
-    pub(crate) fn open(
-        home: &Path,
-        record: &[u8],
-        vault: Option<VaultHeader>,
-    ) -> io::Result<OpenedStore> {
+    pub fn open(home: &Path, record: &[u8], vault: Option<VaultHeader>) -> io::Result<OpenedStore> {
         let keys = || StoreKeys::from_vault_app(record).map_err(io::Error::other);
         let dir = home.join(STORE_DIR);
         let mut report = IntegrityReport::default();
@@ -326,18 +322,18 @@ impl SessionStore {
     }
 
     /// What the store found at unlock, less the choices already made.
-    pub(crate) fn report(&self) -> IntegrityReport {
+    pub fn report(&self) -> IntegrityReport {
         self.report.clone()
     }
 
     /// The verified `prefs.bin`, if there is one.
-    pub(crate) fn prefs(&self) -> Option<&[u8]> {
+    pub fn prefs(&self) -> Option<&[u8]> {
         self.prefs.as_deref().map(Vec::as_slice)
     }
 
     /// Whether the preferences this device kept before the store were
     /// imported (`legacy.prefs_imported`).
-    pub(crate) fn prefs_imported(&self) -> bool {
+    pub fn prefs_imported(&self) -> bool {
         self.store.index().legacy.prefs_imported
     }
 
@@ -345,7 +341,7 @@ impl SessionStore {
     /// with the note that they were in the same index write. Whether the
     /// index on disk has both now: false while it cannot be written, and
     /// the note goes out with its next write.
-    pub(crate) fn import_prefs(&mut self, json: &[u8]) -> io::Result<bool> {
+    pub fn import_prefs(&mut self, json: &[u8]) -> io::Result<bool> {
         let mut legacy = self.store.index().legacy.clone();
         legacy.prefs_imported = true;
         self.store
@@ -358,7 +354,7 @@ impl SessionStore {
     /// The migration's cleanup (M4, `migrate::settle`) ran to its end: the
     /// index says so, and the next unlock does not run it again. Best
     /// effort: if the index cannot take it now, M4 runs again, in silence.
-    pub(crate) fn finish_cleanup(&mut self) {
+    pub fn finish_cleanup(&mut self) {
         let mut legacy = self.store.index().legacy.clone();
         if !legacy.cleanup_pending {
             return;
@@ -369,24 +365,24 @@ impl SessionStore {
 
     /// Findings of unlocking that are not the store's own (the migration's),
     /// for the one dialog.
-    pub(crate) fn note_findings(&mut self, findings: Vec<Finding>) {
+    pub fn note_findings(&mut self, findings: Vec<Finding>) {
         self.report.findings.extend(findings);
     }
 
     /// The finding about `file` is settled: the dialog no longer shows it.
-    pub(crate) fn forget_finding(&mut self, file: &str) {
+    pub fn forget_finding(&mut self, file: &str) {
         self.report.findings.retain(|finding| finding.file != file);
     }
 
     /// Keep a file of an earlier version that did not read in `aside/`,
     /// sealed if it was in clear (`migrate::keep_aside`).
-    pub(crate) fn keep_aside(&self, unreadable: &super::migrate::Unreadable) -> io::Result<()> {
+    pub fn keep_aside(&self, unreadable: &super::migrate::Unreadable) -> io::Result<()> {
         super::migrate::keep_aside(&self.store, unreadable).map_err(to_io)
     }
 
     /// Never write `slot` this session: what it holds did not read, so it
     /// stays as it is, and the dialog says so.
-    pub(crate) fn hold(&mut self, slot: &Slot) {
+    pub fn hold(&mut self, slot: &Slot) {
         self.store.hold(slot);
         self.awaiting.remove(slot);
         if *slot == Slot::Prefs {
@@ -399,11 +395,7 @@ impl SessionStore {
 
     /// The user's answer for a file that waits: with `use_it`, what it
     /// holds, for the session to take.
-    pub(crate) fn choose(
-        &mut self,
-        slot: &Slot,
-        use_it: bool,
-    ) -> io::Result<Option<Zeroizing<Vec<u8>>>> {
+    pub fn choose(&mut self, slot: &Slot, use_it: bool) -> io::Result<Option<Zeroizing<Vec<u8>>>> {
         self.store.choose(slot, use_it).map_err(to_io)?;
         let content = self.awaiting.remove(slot);
         let name = slot.logical_name();
@@ -418,7 +410,7 @@ impl SessionStore {
     }
 
     /// Keep a sticker, under a name that a keyed hash of `image` gives.
-    pub(crate) fn put_sticker(&mut self, id: &str, mime: &str, image: &[u8]) -> io::Result<()> {
+    pub fn put_sticker(&mut self, id: &str, mime: &str, image: &[u8]) -> io::Result<()> {
         let name = self.store.keys().sticker_disk_name(image);
         let sticker = StickerFile {
             id: id.to_string(),
@@ -431,12 +423,12 @@ impl SessionStore {
         Ok(())
     }
 
-    pub(crate) fn stickers(&self) -> Vec<StickerFile> {
+    pub fn stickers(&self) -> Vec<StickerFile> {
         self.stickers.values().cloned().collect()
     }
 
     /// Remove every sticker whose id is `id`.
-    pub(crate) fn remove_sticker(&mut self, id: &str) -> io::Result<()> {
+    pub fn remove_sticker(&mut self, id: &str) -> io::Result<()> {
         let names: Vec<String> = self
             .stickers
             .iter()
@@ -473,25 +465,25 @@ impl SessionStore {
 
 /// The files of an account whose vault carries no data key yet, and the
 /// keys earlier versions derived from the identity for them.
-pub(crate) struct LegacyFiles {
-    pub(crate) config: PathBuf,
-    pub(crate) friends: PathBuf,
-    pub(crate) groups: PathBuf,
-    pub(crate) group_invites: PathBuf,
-    pub(crate) history: PathBuf,
-    pub(crate) ratchets: PathBuf,
-    pub(crate) profiles: PathBuf,
-    pub(crate) stickers: PathBuf,
-    pub(crate) history_key: Zeroizing<[u8; 32]>,
-    pub(crate) profiles_key: Zeroizing<[u8; 32]>,
+pub struct LegacyFiles {
+    pub config: PathBuf,
+    pub friends: PathBuf,
+    pub groups: PathBuf,
+    pub group_invites: PathBuf,
+    pub history: PathBuf,
+    pub ratchets: PathBuf,
+    pub profiles: PathBuf,
+    pub stickers: PathBuf,
+    pub history_key: Zeroizing<[u8; 32]>,
+    pub profiles_key: Zeroizing<[u8; 32]>,
     /// Files that were there at unlock and did not open: never written this
     /// session, so a damaged history is never replaced by an empty one (H2).
-    pub(crate) held: BTreeSet<Slot>,
+    pub held: BTreeSet<Slot>,
 }
 
 /// `nonce ‖ ciphertext`, as earlier versions seal history.bin, ratchets.bin
 /// and profiles.bin.
-pub(crate) fn legacy_seal(key: &[u8; 32], plain: &[u8]) -> io::Result<Vec<u8>> {
+pub fn legacy_seal(key: &[u8; 32], plain: &[u8]) -> io::Result<Vec<u8>> {
     let (ciphertext, nonce) = crate::crypto::aes_gcm_encrypt(key, plain, None)
         .map_err(|error| io::Error::other(error.to_string()))?;
     let mut blob = Vec::with_capacity(nonce.len() + ciphertext.len());
@@ -501,7 +493,7 @@ pub(crate) fn legacy_seal(key: &[u8; 32], plain: &[u8]) -> io::Result<Vec<u8>> {
 }
 
 /// What `legacy_seal` sealed with `key`, if it opens.
-pub(crate) fn legacy_open(key: &[u8; 32], blob: &[u8]) -> Option<Zeroizing<Vec<u8>>> {
+pub fn legacy_open(key: &[u8; 32], blob: &[u8]) -> Option<Zeroizing<Vec<u8>>> {
     if blob.len() < crate::crypto::NONCE_SIZE {
         return None;
     }
@@ -557,7 +549,7 @@ fn pretty<T: Serialize + ?Sized>(value: &T) -> io::Result<Vec<u8>> {
 }
 
 /// Where the open session keeps its data.
-pub(crate) enum Storage {
+pub enum Storage {
     Store(Box<SessionStore>),
     Legacy(Box<LegacyFiles>),
 }
@@ -565,14 +557,14 @@ pub(crate) enum Storage {
 impl Storage {
     /// Before the vault is sealed again: note the header it will have, so a
     /// cut before it is written is not taken for someone else's vault.
-    pub(crate) fn note_vault_pending(&mut self, header: &VaultHeader) {
+    pub fn note_vault_pending(&mut self, header: &VaultHeader) {
         if let Storage::Store(store) = self {
             store.note_vault_pending(header);
         }
     }
 
     /// After the vault was written: its header is the one noted.
-    pub(crate) fn note_vault_written(&mut self, header: &VaultHeader) {
+    pub fn note_vault_written(&mut self, header: &VaultHeader) {
         if let Storage::Store(store) = self {
             store.note_vault_written(header);
         }
@@ -582,7 +574,7 @@ impl Storage {
 /// The session's `Storage`, or nothing while no session is open. Clones
 /// share it, so a worker that seals the vault can note it.
 #[derive(Clone, Default)]
-pub(crate) struct StorageCell(Arc<Mutex<Option<Storage>>>);
+pub struct StorageCell(Arc<Mutex<Option<Storage>>>);
 
 impl StorageCell {
     fn lock(&self) -> MutexGuard<'_, Option<Storage>> {
@@ -591,27 +583,27 @@ impl StorageCell {
             .unwrap_or_else(|poisoned| poisoned.into_inner())
     }
 
-    pub(crate) fn set(&self, storage: Storage) {
+    pub fn set(&self, storage: Storage) {
         *self.lock() = Some(storage);
     }
 
     /// Take it out, as a lock does: dropping it wipes the data key.
-    pub(crate) fn take(&self) -> Option<Storage> {
+    pub fn take(&self) -> Option<Storage> {
         self.lock().take()
     }
 
     #[cfg_attr(not(test), allow(dead_code))]
-    pub(crate) fn is_open(&self) -> bool {
+    pub fn is_open(&self) -> bool {
         self.lock().is_some()
     }
 
     /// Run `work` on the storage; `None` with no session.
-    pub(crate) fn with<R>(&self, work: impl FnOnce(&mut Storage) -> R) -> Option<R> {
+    pub fn with<R>(&self, work: impl FnOnce(&mut Storage) -> R) -> Option<R> {
         self.lock().as_mut().map(work)
     }
 
     /// Save the account. With no session, nothing is written.
-    pub(crate) fn write_account(&self, account: &AccountFile) -> io::Result<()> {
+    pub fn write_account(&self, account: &AccountFile) -> io::Result<()> {
         self.with(|storage| match storage {
             Storage::Store(store) => {
                 let json = Zeroizing::new(serde_json::to_vec(account).map_err(io::Error::other)?);
@@ -622,21 +614,21 @@ impl StorageCell {
         .unwrap_or(Ok(()))
     }
 
-    pub(crate) fn write_history(&self, json: &[u8]) -> io::Result<()> {
+    pub fn write_history(&self, json: &[u8]) -> io::Result<()> {
         self.write_part(Slot::History, json)
     }
 
-    pub(crate) fn write_sessions(&self, json: &[u8]) -> io::Result<()> {
+    pub fn write_sessions(&self, json: &[u8]) -> io::Result<()> {
         self.write_part(Slot::Sessions, json)
     }
 
-    pub(crate) fn write_profiles(&self, json: &[u8]) -> io::Result<()> {
+    pub fn write_profiles(&self, json: &[u8]) -> io::Result<()> {
         self.write_part(Slot::Profiles, json)
     }
 
     /// The account's preferences (CL-2a). An account the migration has not
     /// moved yet has nowhere sealed to keep them.
-    pub(crate) fn write_prefs(&self, json: &[u8]) -> io::Result<()> {
+    pub fn write_prefs(&self, json: &[u8]) -> io::Result<()> {
         self.with(|storage| match storage {
             Storage::Store(store) => store.write(&Slot::Prefs, json),
             Storage::Legacy(_) => Err(io::Error::other(NOT_MOVED)),
@@ -646,7 +638,7 @@ impl StorageCell {
 
     /// The account's preferences as the session has them now, and where
     /// their import stands; `None` with no session.
-    pub(crate) fn prefs_now(&self) -> Option<(Option<Zeroizing<Vec<u8>>>, PrefsImport)> {
+    pub fn prefs_now(&self) -> Option<(Option<Zeroizing<Vec<u8>>>, PrefsImport)> {
         self.with(|storage| match storage {
             Storage::Store(store) => {
                 let prefs = store.prefs().map(|json| Zeroizing::new(json.to_vec()));
@@ -664,7 +656,7 @@ impl StorageCell {
     /// The one import of the preferences this device kept before the store
     /// (`SessionStore::import_prefs`). An account not moved to the store
     /// yet has nowhere sealed to keep them.
-    pub(crate) fn import_prefs(&self, json: &[u8]) -> io::Result<bool> {
+    pub fn import_prefs(&self, json: &[u8]) -> io::Result<bool> {
         self.with(|storage| match storage {
             Storage::Store(store) => store.import_prefs(json),
             Storage::Legacy(_) => Err(io::Error::other(NOT_MOVED)),
@@ -681,7 +673,7 @@ impl StorageCell {
     }
 
     /// Never write `slot` this session: what it held did not read.
-    pub(crate) fn hold(&self, slot: &Slot) {
+    pub fn hold(&self, slot: &Slot) {
         self.with(|storage| match storage {
             Storage::Store(store) => store.hold(slot),
             Storage::Legacy(legacy) => {
@@ -691,8 +683,8 @@ impl StorageCell {
     }
 
     /// Write `bytes` as the file in `slot`, whatever they are.
-    #[cfg(test)]
-    pub(crate) fn write_raw(&self, slot: &Slot, bytes: &[u8]) -> io::Result<()> {
+    #[cfg(any(test, feature = "test-util"))]
+    pub fn write_raw(&self, slot: &Slot, bytes: &[u8]) -> io::Result<()> {
         self.with(|storage| match storage {
             Storage::Store(store) => store.write(slot, bytes),
             Storage::Legacy(_) => Err(io::Error::other("legacy")),
@@ -701,8 +693,8 @@ impl StorageCell {
     }
 
     /// The highest `seq` the store's index holds: how many writes it took.
-    #[cfg(test)]
-    pub(crate) fn index_seq(&self) -> Option<u64> {
+    #[cfg(any(test, feature = "test-util"))]
+    pub fn index_seq(&self) -> Option<u64> {
         self.with(|storage| match storage {
             Storage::Store(store) => Some(store.store.index().seq),
             Storage::Legacy(_) => None,
@@ -711,7 +703,7 @@ impl StorageCell {
     }
 
     /// At lock: write whatever waits for the index (design §4.6).
-    pub(crate) fn flush_for_lock(&self) {
+    pub fn flush_for_lock(&self) {
         self.with(|storage| {
             if let Storage::Store(store) = storage {
                 let _ = store.store.flush_for_lock();
@@ -722,30 +714,30 @@ impl StorageCell {
     /// Before the vault is sealed again: note the header it will have, so a
     /// cut before it is written is not taken for someone else's vault.
     #[cfg_attr(not(test), allow(dead_code))]
-    pub(crate) fn note_vault_pending(&self, header: &VaultHeader) {
+    pub fn note_vault_pending(&self, header: &VaultHeader) {
         self.with(|storage| storage.note_vault_pending(header));
     }
 
     /// After the vault was written: its header is the one noted.
     #[cfg_attr(not(test), allow(dead_code))]
-    pub(crate) fn note_vault_written(&self, header: &VaultHeader) {
+    pub fn note_vault_written(&self, header: &VaultHeader) {
         self.with(|storage| storage.note_vault_written(header));
     }
 }
 
-#[cfg(test)]
-pub(crate) mod tests {
+/// Stores for tests: the engine's, and the app's through `test-util`.
+#[cfg(any(test, feature = "test-util"))]
+pub mod testing {
     use super::*;
-    use crate::fsutil::scratch::ScratchDir;
-    use crate::store::keys::tests::keys;
+    use crate::store::keys::testing::keys;
 
     /// The vault's app data for the test keys `keys(byte)`.
-    pub(crate) fn record(byte: u8) -> Zeroizing<Vec<u8>> {
+    pub fn record(byte: u8) -> Zeroizing<Vec<u8>> {
         keys(byte).to_vault_app()
     }
 
     /// A storage cell over a new store in `home`, as a new account has it.
-    pub(crate) fn store_cell(home: &Path) -> StorageCell {
+    pub fn store_cell(home: &Path) -> StorageCell {
         SessionStore::create(home, keys(1), &account_json("ana")).unwrap();
         let opened = SessionStore::open(home, &record(1), None).unwrap();
         let cell = StorageCell::default();
@@ -754,11 +746,11 @@ pub(crate) mod tests {
     }
 
     /// The store in `home` opened again, as the next unlock does.
-    pub(crate) fn reopen(home: &Path) -> OpenedStore {
+    pub fn reopen(home: &Path) -> OpenedStore {
         SessionStore::open(home, &record(1), None).unwrap()
     }
 
-    pub(crate) fn ready(found: Found) -> Zeroizing<Vec<u8>> {
+    pub fn ready(found: Found) -> Zeroizing<Vec<u8>> {
         match found {
             Found::Ready(bytes) => bytes,
             Found::Absent => panic!("absent"),
@@ -766,7 +758,7 @@ pub(crate) mod tests {
         }
     }
 
-    fn account(handle: &str) -> AccountFile {
+    pub fn account(handle: &str) -> AccountFile {
         AccountFile {
             handle: handle.into(),
             nostr_pub: "ab".repeat(32),
@@ -776,9 +768,17 @@ pub(crate) mod tests {
         }
     }
 
-    fn account_json(handle: &str) -> Vec<u8> {
+    pub fn account_json(handle: &str) -> Vec<u8> {
         serde_json::to_vec(&account(handle)).unwrap()
     }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::testing::*;
+    use super::*;
+    use crate::fsutil::scratch::ScratchDir;
+    use crate::store::keys::testing::keys;
 
     fn header(salt: u8, spk: u32) -> VaultHeader {
         VaultHeader {

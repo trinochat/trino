@@ -56,26 +56,26 @@ use std::path::{Path, PathBuf};
 use zeroize::Zeroizing;
 
 /// Where the migration writes the new store until the vault holds its key.
-pub(crate) const NEW_STORE_DIR: &str = "store.new";
-pub(crate) const VAULT_FILE: &str = "vault.bin";
+pub const NEW_STORE_DIR: &str = "store.new";
+pub const VAULT_FILE: &str = "vault.bin";
 /// The files earlier versions keep in clear.
-pub(crate) const PLAIN_FILES: [&str; 4] = [
+pub const PLAIN_FILES: [&str; 4] = [
     "config.json",
     "friends.json",
     "groups.json",
     "group_invites.json",
 ];
 /// The files earlier versions seal with keys derived from the identity.
-pub(crate) const SEALED_FILES: [&str; 3] = ["history.bin", "ratchets.bin", "profiles.bin"];
+pub const SEALED_FILES: [&str; 3] = ["history.bin", "ratchets.bin", "profiles.bin"];
 /// Where earlier versions put a `profiles.bin` that did not open.
-pub(crate) const DAMAGED_PROFILES: &str = "profiles.bin.damaged";
+pub const DAMAGED_PROFILES: &str = "profiles.bin.damaged";
 const STICKERS_DIR: &str = "stickers";
 
 /// The keys earlier versions derived from the identity: `history.bin` and
 /// `ratchets.bin` under the first, `profiles.bin` under the second.
-pub(crate) struct LegacyKeys {
-    pub(crate) history: Zeroizing<[u8; 32]>,
-    pub(crate) profiles: Zeroizing<[u8; 32]>,
+pub struct LegacyKeys {
+    pub history: Zeroizing<[u8; 32]>,
+    pub profiles: Zeroizing<[u8; 32]>,
 }
 
 impl LegacyKeys {
@@ -89,74 +89,74 @@ impl LegacyKeys {
 }
 
 /// A file of an earlier version that did not read.
-pub(crate) struct Unreadable {
+pub struct Unreadable {
     /// Its name in `~/.trino`.
-    pub(crate) name: String,
-    pub(crate) bytes: Zeroizing<Vec<u8>>,
+    pub name: String,
+    pub bytes: Zeroizing<Vec<u8>>,
     /// In clear: it is sealed before it is kept.
-    pub(crate) in_clear: bool,
+    pub in_clear: bool,
 }
 
 /// A sticker as earlier versions keep it: `stickers/<id>.<ext>`.
-pub(crate) struct LegacySticker {
-    pub(crate) id: String,
-    pub(crate) mime: String,
-    pub(crate) image: Zeroizing<Vec<u8>>,
+pub struct LegacySticker {
+    pub id: String,
+    pub mime: String,
+    pub image: Zeroizing<Vec<u8>>,
 }
 
 /// What the files of an earlier version hold, read as that version read
 /// them.
 #[derive(Default)]
-pub(crate) struct LegacyRead {
+pub struct LegacyRead {
     /// The four files in clear, as one account; none if none was there.
-    pub(crate) account: Option<AccountFile>,
-    pub(crate) history: Option<Zeroizing<Vec<u8>>>,
-    pub(crate) sessions: Option<Zeroizing<Vec<u8>>>,
-    pub(crate) profiles: Option<Zeroizing<Vec<u8>>>,
-    pub(crate) stickers: Vec<LegacySticker>,
-    pub(crate) unreadable: Vec<Unreadable>,
+    pub account: Option<AccountFile>,
+    pub history: Option<Zeroizing<Vec<u8>>>,
+    pub sessions: Option<Zeroizing<Vec<u8>>>,
+    pub profiles: Option<Zeroizing<Vec<u8>>>,
+    pub stickers: Vec<LegacySticker>,
+    pub unreadable: Vec<Unreadable>,
 }
 
 /// The vault the migration commits: sealed with the new keys (`record`, its
 /// app data), and its header for the index (design §4.9).
-pub(crate) struct NewVault<'a> {
-    pub(crate) record: &'a [u8],
-    pub(crate) bytes: &'a [u8],
-    pub(crate) header: Option<VaultHeader>,
+pub struct NewVault<'a> {
+    pub record: &'a [u8],
+    pub bytes: &'a [u8],
+    pub header: Option<VaultHeader>,
 }
 
 /// A migration that committed: with proof that the files of before were
 /// this account's they moved, and without it the new store starts empty
 /// and they stay as they were.
-pub(crate) struct Migrated {
+pub struct Migrated {
     /// For the one dialog: files that did not read and were kept aside, a
     /// store this vault could not open, or no data at all.
-    pub(crate) findings: Vec<Finding>,
+    pub findings: Vec<Finding>,
 }
 
 /// A migration that did not commit: the vault and the files of before are
 /// as they were.
 #[derive(Debug)]
-pub(crate) struct MigrateError {
+pub struct MigrateError {
     /// Whether M0 found the proof, so the files of before may be used as
     /// earlier versions used them for this session.
-    pub(crate) proof: bool,
-    pub(crate) error: io::Error,
+    pub proof: bool,
+    pub error: io::Error,
 }
 
 /// What `settle` did before the store opened.
 #[derive(Default)]
-pub(crate) struct Settled {
+pub struct Settled {
     /// M4 ran to its end in this unlock: the session notes it in the index,
     /// and the user gets the one note about the migration.
-    pub(crate) cleaned: bool,
-    pub(crate) findings: Vec<Finding>,
+    pub cleaned: bool,
+    pub findings: Vec<Finding>,
 }
 
 /// M0: whether a file of before sealed with a key of this identity proves
 /// that the files of before are this account's. Reads only. An error if
 /// none proves it and one could not be read now.
-pub(crate) fn has_proof(disk: &impl Disk, home: &Path, keys: &LegacyKeys) -> io::Result<bool> {
+pub fn has_proof(disk: &impl Disk, home: &Path, keys: &LegacyKeys) -> io::Result<bool> {
     let mut held = None;
     for name in SEALED_FILES {
         match read_file(disk, &home.join(name)) {
@@ -176,7 +176,7 @@ pub(crate) fn has_proof(disk: &impl Disk, home: &Path, keys: &LegacyKeys) -> io:
 
 /// The files of before in `home`, read as earlier versions read them. An
 /// error if one is there and cannot be read now.
-pub(crate) fn read_legacy(
+pub fn read_legacy(
     disk: &impl Disk,
     home: &Path,
     keys: &LegacyKeys,
@@ -353,7 +353,7 @@ fn holds_files(dir: &Path) -> io::Result<bool> {
 
 /// The files of earlier versions in `home`, with the temporaries a cut save
 /// of them left and the stickers: what M4 destroys.
-pub(crate) fn legacy_paths(disk: &impl Disk, home: &Path) -> io::Result<Vec<PathBuf>> {
+pub fn legacy_paths(disk: &impl Disk, home: &Path) -> io::Result<Vec<PathBuf>> {
     let names: Vec<&str> = PLAIN_FILES
         .iter()
         .chain(SEALED_FILES.iter())
@@ -381,7 +381,7 @@ pub(crate) fn legacy_paths(disk: &impl Disk, home: &Path) -> io::Result<Vec<Path
 
 /// M4, and "Borrarlos": overwrite, sync and remove every file of earlier
 /// versions in `home`. Every one is tried; the first error is returned.
-pub(crate) fn destroy_legacy(disk: &impl Disk, home: &Path) -> io::Result<()> {
+pub fn destroy_legacy(disk: &impl Disk, home: &Path) -> io::Result<()> {
     let mut first = None;
     for path in legacy_paths(disk, home)? {
         if let Err(error) = disk.destroy(&path) {
@@ -398,7 +398,7 @@ pub(crate) fn destroy_legacy(disk: &impl Disk, home: &Path) -> io::Result<()> {
 /// M0 to the commit, for an account whose vault carries no data key: see
 /// the module's comment. `vault` is that vault sealed again with the new
 /// keys, which the caller made.
-pub(crate) fn migrate<D: Disk + Clone>(
+pub fn migrate<D: Disk + Clone>(
     disk: &D,
     home: &Path,
     legacy: &LegacyKeys,
@@ -545,10 +545,7 @@ fn json<T: serde::Serialize>(value: &T) -> io::Result<Zeroizing<Vec<u8>>> {
 
 /// Keep a file that did not read in `aside/`: as it was if it was sealed
 /// already, sealed under the data key if it was in clear.
-pub(crate) fn keep_aside<D: Disk>(
-    store: &Store<D>,
-    unreadable: &Unreadable,
-) -> Result<(), StoreError> {
+pub fn keep_aside<D: Disk>(store: &Store<D>, unreadable: &Unreadable) -> Result<(), StoreError> {
     if unreadable.in_clear {
         store.put_aside(&Slot::Legacy(unreadable.name.clone()), &unreadable.bytes)
     } else {
@@ -588,7 +585,7 @@ fn move_new_store(disk: &impl Disk, home: &Path) -> io::Result<()> {
 /// Before the store of a vault that carries its key (`record`) opens: finish
 /// what a cut left of the migration (the move of `store.new/`, M4), and tell
 /// of files of earlier versions that are there without being read.
-pub(crate) fn settle<D: Disk + Clone>(disk: &D, home: &Path, record: &[u8]) -> io::Result<Settled> {
+pub fn settle<D: Disk + Clone>(disk: &D, home: &Path, record: &[u8]) -> io::Result<Settled> {
     let keys = StoreKeys::from_vault_app(record).map_err(io::Error::other)?;
     let store = home.join(STORE_DIR);
     let new = home.join(NEW_STORE_DIR);
@@ -629,7 +626,7 @@ mod tests {
     use crate::store::disk::cut::{CutDisk, Step};
     use crate::store::disk::faulty::FaultyDisk;
     use crate::store::disk::RealDisk;
-    use crate::store::keys::tests::keys;
+    use crate::store::keys::testing::keys;
     use crate::store::session::{legacy_seal, Found, OpenedStore, SessionStore};
     use std::rc::Rc;
 

@@ -8,7 +8,7 @@ use serde::Serialize;
 /// What happened to a file.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub(crate) enum What {
+pub enum What {
     /// It is older than the last copy Trino wrote.
     OlderCopy,
     /// Nothing could tell whether it is the last copy Trino wrote: the index
@@ -44,7 +44,7 @@ pub(crate) enum What {
 /// What the store did, or asks.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub(crate) enum Action {
+pub enum Action {
     /// Waits for "Usar" or "Seguir sin": not used, not written until then.
     Ask,
     /// Sessions are never reused: set aside, and made again with each
@@ -70,41 +70,41 @@ pub(crate) enum Action {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub(crate) struct Finding {
+pub struct Finding {
     /// The logical name, or `index`.
-    pub(crate) file: String,
-    pub(crate) what: What,
-    pub(crate) action: Action,
+    pub file: String,
+    pub what: What,
+    pub action: Action,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub(crate) struct IntegrityReport {
-    pub(crate) findings: Vec<Finding>,
+pub struct IntegrityReport {
+    pub findings: Vec<Finding>,
 }
 
 impl IntegrityReport {
-    pub(crate) fn is_empty(&self) -> bool {
+    pub fn is_empty(&self) -> bool {
         self.findings.is_empty()
     }
 
     /// Whether the user has to choose: then the one dialog asks, once, for
     /// everything that waits.
     #[cfg_attr(not(test), allow(dead_code))] // the dialog, CL-2b
-    pub(crate) fn asks(&self) -> bool {
+    pub fn asks(&self) -> bool {
         self.findings
             .iter()
             .any(|finding| finding.action == Action::Ask)
     }
 
     #[cfg_attr(not(test), allow(dead_code))]
-    pub(crate) fn find(&self, file: &str) -> Option<&Finding> {
+    pub fn find(&self, file: &str) -> Option<&Finding> {
         self.findings.iter().find(|finding| finding.file == file)
     }
 
     /// A finding about something other than one file: the vault or the
     /// whole store.
-    pub(crate) fn note(&mut self, file: &str, what: What, action: Action) {
+    pub fn note(&mut self, file: &str, what: What, action: Action) {
         self.findings.push(Finding {
             file: file.to_string(),
             what,
@@ -112,7 +112,7 @@ impl IntegrityReport {
         });
     }
 
-    pub(crate) fn push(&mut self, slot: &Slot, what: What) {
+    pub fn push(&mut self, slot: &Slot, what: What) {
         self.findings.push(Finding {
             file: slot.logical_name(),
             what,
@@ -122,7 +122,7 @@ impl IntegrityReport {
 }
 
 /// Design §6.1: what each kind of file gets in each case.
-pub(crate) fn action_for(slot: &Slot, what: What) -> Action {
+pub fn action_for(slot: &Slot, what: What) -> Action {
     match (what, slot) {
         (What::Unreadable, _) => Action::KeepForLater,
         (What::VaultChanged | What::TotpFlag, _) => Action::Notice,

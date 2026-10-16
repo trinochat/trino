@@ -254,7 +254,7 @@ pub(crate) fn on_system_event(app: &AppHandle, event: SystemEvent) {
 mod tests {
     use super::*;
     use crate::fsutil::scratch::ScratchDir;
-    use crate::store::session::tests::store_cell;
+    use crate::store::session::testing::store_cell;
     use std::collections::BTreeMap;
     use std::path::Path;
     use std::sync::Mutex as StdMutex;

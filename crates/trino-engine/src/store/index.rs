@@ -12,51 +12,51 @@ use zeroize::Zeroizing;
 const INDEX_VERSION: u32 = 1;
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub(crate) struct Index {
-    pub(crate) v: u32,
+pub struct Index {
+    pub v: u32,
     /// The highest `seq` the index knows of.
-    pub(crate) seq: u64,
+    pub seq: u64,
     /// Each data file by its logical name, with the `seq` it was written
     /// with.
-    pub(crate) files: BTreeMap<String, u64>,
+    pub files: BTreeMap<String, u64>,
     /// Files being removed: noted before the removal and dropped after it,
     /// so a cut in between is finished in silence instead of reported.
     #[serde(default)]
-    pub(crate) deleting: Vec<String>,
+    pub deleting: Vec<String>,
     /// The vault header last seen, and one being written (design §4.9;
     /// CL-1b fills them).
     #[serde(default)]
-    pub(crate) vault: Option<VaultHeader>,
+    pub vault: Option<VaultHeader>,
     #[serde(default)]
-    pub(crate) vault_pending: Option<VaultHeader>,
+    pub vault_pending: Option<VaultHeader>,
     /// The migration from the legacy files (CL-1c, CL-2a).
     #[serde(default)]
-    pub(crate) legacy: Legacy,
+    pub legacy: Legacy,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub(crate) struct VaultHeader {
-    pub(crate) version: u8,
-    pub(crate) flags: u8,
+pub struct VaultHeader {
+    pub version: u8,
+    pub flags: u8,
     /// The salt, in hex.
-    pub(crate) salt: String,
+    pub salt: String,
     /// The id of the signed prekey the vault held.
-    pub(crate) spk: u32,
+    pub spk: u32,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub(crate) struct Legacy {
+pub struct Legacy {
     #[serde(default)]
-    pub(crate) migrated: bool,
+    pub migrated: bool,
     #[serde(default)]
-    pub(crate) cleanup_pending: bool,
+    pub cleanup_pending: bool,
     #[serde(default)]
-    pub(crate) prefs_imported: bool,
+    pub prefs_imported: bool,
 }
 
 impl Index {
     /// An empty index at `seq`.
-    pub(crate) fn new(seq: u64) -> Self {
+    pub fn new(seq: u64) -> Self {
         Index {
             v: INDEX_VERSION,
             seq,
@@ -64,12 +64,12 @@ impl Index {
         }
     }
 
-    pub(crate) fn to_json(&self) -> Zeroizing<Vec<u8>> {
+    pub fn to_json(&self) -> Zeroizing<Vec<u8>> {
         Zeroizing::new(serde_json::to_vec(self).expect("the index always serializes"))
     }
 
     /// The index in `json`, if it is one this version wrote.
-    pub(crate) fn from_json(json: &[u8]) -> Option<Index> {
+    pub fn from_json(json: &[u8]) -> Option<Index> {
         serde_json::from_slice::<Index>(json)
             .ok()
             .filter(|index| index.v == INDEX_VERSION)

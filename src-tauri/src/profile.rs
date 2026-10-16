@@ -1302,7 +1302,7 @@ mod tests {
 
     /// The profiles of the store in `home`, as the next unlock reads them.
     fn reloaded(home: &Path) -> Profiles {
-        match crate::store::session::tests::reopen(home).profiles {
+        match crate::store::session::testing::reopen(home).profiles {
             Found::Ready(json) => serde_json::from_slice(&json).unwrap(),
             _ => panic!("no profiles in the store"),
         }
@@ -1348,7 +1348,7 @@ mod tests {
         let scratch = ScratchDir::new("profiles-bin");
         let mut inner = InnerState {
             identity: Some(create_identity()),
-            storage: crate::store::session::tests::store_cell(scratch.path()),
+            storage: crate::store::session::testing::store_cell(scratch.path()),
             ..InnerState::default()
         };
         inner.profiles = Profiles {
@@ -1411,7 +1411,7 @@ mod tests {
         let me = create_identity();
         let mut inner = InnerState {
             identity: Some(me.clone()),
-            storage: crate::store::session::tests::store_cell(scratch.path()),
+            storage: crate::store::session::testing::store_cell(scratch.path()),
             ..InnerState::default()
         };
 
@@ -1425,7 +1425,7 @@ mod tests {
             identity: Some(me),
             ..InnerState::default()
         };
-        let found = crate::store::session::tests::reopen(scratch.path()).profiles;
+        let found = crate::store::session::testing::reopen(scratch.path()).profiles;
         load_found(&mut again, found, NOW + 999);
         assert_eq!(again.profiles.rev, NOW as u64);
     }
@@ -1435,7 +1435,7 @@ mod tests {
         let scratch = ScratchDir::new("profiles-held");
         let mut inner = InnerState {
             identity: Some(create_identity()),
-            storage: crate::store::session::tests::store_cell(scratch.path()),
+            storage: crate::store::session::testing::store_cell(scratch.path()),
             ..InnerState::default()
         };
 

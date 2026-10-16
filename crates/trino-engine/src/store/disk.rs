@@ -6,7 +6,7 @@ use crate::fsutil;
 use std::io;
 use std::path::Path;
 
-pub(crate) trait Disk {
+pub trait Disk {
     fn read(&self, path: &Path) -> io::Result<Vec<u8>>;
     /// Replace `path` atomically (fsutil.rs), creating its directory.
     fn write(&self, path: &Path, bytes: &[u8]) -> io::Result<()>;
@@ -31,7 +31,7 @@ pub(crate) trait Disk {
 
 /// The real disk.
 #[derive(Clone, Copy)]
-pub(crate) struct RealDisk;
+pub struct RealDisk;
 
 impl Disk for RealDisk {
     fn read(&self, path: &Path) -> io::Result<Vec<u8>> {
@@ -96,8 +96,8 @@ impl Disk for RealDisk {
 }
 
 /// A real disk on which reads, writes or removals of chosen file names fail.
-#[cfg(test)]
-pub(crate) mod faulty {
+#[cfg(any(test, feature = "test-util"))]
+pub mod faulty {
     use super::{Disk, RealDisk};
     use std::cell::RefCell;
     use std::collections::BTreeSet;
@@ -106,10 +106,10 @@ pub(crate) mod faulty {
     use std::rc::Rc;
 
     #[derive(Default)]
-    pub(crate) struct FaultyDisk {
-        pub(crate) fail_reads: RefCell<BTreeSet<String>>,
-        pub(crate) fail_writes: RefCell<BTreeSet<String>>,
-        pub(crate) fail_removes: RefCell<BTreeSet<String>>,
+    pub struct FaultyDisk {
+        pub fail_reads: RefCell<BTreeSet<String>>,
+        pub fail_writes: RefCell<BTreeSet<String>>,
+        pub fail_removes: RefCell<BTreeSet<String>>,
     }
 
     fn hit(set: &RefCell<BTreeSet<String>>, path: &Path) -> io::Result<()> {
@@ -180,8 +180,8 @@ pub(crate) mod faulty {
 /// back, and a destroyed file comes back with the random bytes it was
 /// overwritten with. NTFS writes its journal in order, so what it loses is
 /// always the newest changes.
-#[cfg(test)]
-pub(crate) mod cut {
+#[cfg(any(test, feature = "test-util"))]
+pub mod cut {
     use super::{Disk, RealDisk};
     use std::cell::{Cell, RefCell};
     use std::io;
@@ -190,7 +190,7 @@ pub(crate) mod cut {
 
     /// What a step did, for tests that check the order of the steps.
     #[derive(Clone, Debug, PartialEq, Eq)]
-    pub(crate) enum Step {
+    pub enum Step {
         Write(PathBuf),
         WriteDurable(PathBuf),
         Remove(PathBuf),
@@ -209,41 +209,41 @@ pub(crate) mod cut {
     }
 
     #[derive(Default)]
-    pub(crate) struct CutDisk {
+    pub struct CutDisk {
         /// Steps left before the cut; none, no cut.
         left: Cell<Option<usize>>,
         cut: Cell<bool>,
-        pub(crate) steps: RefCell<Vec<Step>>,
+        pub steps: RefCell<Vec<Step>>,
         unflushed: RefCell<Vec<Undo>>,
         trash: Cell<u64>,
     }
 
     impl CutDisk {
         /// A disk that is never cut.
-        pub(crate) fn whole() -> Rc<CutDisk> {
+        pub fn whole() -> Rc<CutDisk> {
             Rc::new(CutDisk::default())
         }
 
         /// A disk cut at its step number `steps`, counted from 0: that step
         /// and every one after it fail.
-        pub(crate) fn cut_at(steps: usize) -> Rc<CutDisk> {
+        pub fn cut_at(steps: usize) -> Rc<CutDisk> {
             let disk = CutDisk::default();
             disk.left.set(Some(steps));
             Rc::new(disk)
         }
 
-        pub(crate) fn is_cut(&self) -> bool {
+        pub fn is_cut(&self) -> bool {
             self.cut.get()
         }
 
         /// How many changes are not on the disk yet.
-        pub(crate) fn unflushed(&self) -> usize {
+        pub fn unflushed(&self) -> usize {
             self.unflushed.borrow().len()
         }
 
         /// The power cut: undo the newest `count` changes that are not on
         /// the disk yet.
-        pub(crate) fn lose_last(&self, count: usize) {
+        pub fn lose_last(&self, count: usize) {
             let mut unflushed = self.unflushed.borrow_mut();
             for _ in 0..count {
                 let Some(undo) = unflushed.pop() else { break };

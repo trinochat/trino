@@ -16,11 +16,11 @@
 //! - `migrate`: moving an account of an earlier version into the store, so
 //!   that a cut at any step loses nothing (design §5).
 
-pub(crate) mod disk;
-pub(crate) mod envelope;
-pub(crate) mod files;
-pub(crate) mod index;
-pub(crate) mod keys;
-pub(crate) mod migrate;
-pub(crate) mod report;
-pub(crate) mod session;
+pub mod disk;
+pub mod envelope;
+pub mod files;
+pub mod index;
+pub mod keys;
+pub mod migrate;
+pub mod report;
+pub mod session;

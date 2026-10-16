@@ -1036,7 +1036,7 @@ mod tests {
     use super::*;
     use crate::fsutil::scratch::ScratchDir;
     use crate::store::session::legacy_seal;
-    use crate::store::session::tests::{reopen, store_cell};
+    use crate::store::session::testing::{reopen, store_cell};
 
     const NOW: i64 = 1_760_000_000;
     const PASSPHRASE: &str = "correct horse battery staple";

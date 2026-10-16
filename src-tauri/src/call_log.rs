@@ -702,7 +702,7 @@ mod tests {
     #[test]
     fn a_recorded_call_travels_inside_the_encrypted_history() {
         use crate::fsutil::scratch::ScratchDir;
-        use crate::store::session::tests::{reopen, store_cell};
+        use crate::store::session::testing::{reopen, store_cell};
         // Recorded without a storage, so nothing reaches the real data
         // directory; then written as `save_history` writes the history, to
         // a store in a scratch directory.
@@ -726,7 +726,7 @@ mod tests {
         // account's, and opens empty.
         let other = crate::store::session::SessionStore::open(
             scratch.path(),
-            &crate::store::session::tests::record(2),
+            &crate::store::session::testing::record(2),
             None,
         )
         .unwrap();

@@ -13,7 +13,8 @@ publish = false
 
 [features]
 # What the app's tests take from the engine (`fsutil::scratch`, the test
-# relay in `nostr::test_relay`, `testing`), and no diagnostic log written
+# relay in `nostr::test_relay`, `testing`, the stores and disks of
+# `store::*::testing`, `faulty` and `cut`), and no diagnostic log written
 # from tests (diag.rs). Only the app's dev-dependencies turn it on, as
 # trino-net's `test-util`.
 test-util = ["trino-net/test-util"]
@@ -38,6 +39,10 @@ serde_json = "1"
 hex = "0.4"
 base64 = "0.22"
 chrono = { version = "0.4", features = ["serde"] }
+# The store's keys (store/keys.rs): HKDF and HMAC over SHA-256.
+hkdf = "0.12"
+hmac = "0.12"
+sha2 = "0.10"
 
 [dev-dependencies]
 # Tor as an in-memory pipe, and a direct transport that fails the test.

@@ -26,20 +26,20 @@ use sha2::Sha256;
 use zeroize::Zeroizing;
 
 /// The bytes of `id_vault`.
-pub(crate) const ID_VAULT_LEN: usize = 16;
+pub const ID_VAULT_LEN: usize = 16;
 /// The key generation of the store's first DK. Rotation (design §3.3) comes
 /// with the emergency key; until then every file carries this one.
-pub(crate) const FIRST_KEY_GEN: u32 = 1;
+pub const FIRST_KEY_GEN: u32 = 1;
 
 /// Start of the record the vault carries as its app data.
 const RECORD_MAGIC: &[u8; 6] = b"TRKEY\0";
 const RECORD_VERSION: u8 = 1;
 /// Magic, version, a reserved byte, `key_gen`, `id_vault` and the DK.
-pub(crate) const RECORD_LEN: usize = 6 + 1 + 1 + 4 + ID_VAULT_LEN + 32;
+pub const RECORD_LEN: usize = 6 + 1 + 1 + 4 + ID_VAULT_LEN + 32;
 
 /// What each kind of key is for: the `info` of its HKDF.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum KeyLabel {
+pub enum KeyLabel {
     Account,
     Prefs,
     History,
@@ -53,7 +53,7 @@ pub(crate) enum KeyLabel {
 
 impl KeyLabel {
     #[cfg_attr(not(test), allow(dead_code))]
-    pub(crate) const ALL: [KeyLabel; 9] = [
+    pub const ALL: [KeyLabel; 9] = [
         KeyLabel::Account,
         KeyLabel::Prefs,
         KeyLabel::History,
@@ -65,7 +65,7 @@ impl KeyLabel {
         KeyLabel::Legacy,
     ];
 
-    pub(crate) fn info(self) -> &'static [u8] {
+    pub fn info(self) -> &'static [u8] {
         match self {
             KeyLabel::Account => b"trino-store-v1/account",
             KeyLabel::Prefs => b"trino-store-v1/prefs",
@@ -82,7 +82,7 @@ impl KeyLabel {
 
 /// The record in the vault's app data is not one this version wrote.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
-pub(crate) enum KeysError {
+pub enum KeysError {
     #[error("the vault's app data is not a store key record")]
     NotAKeyRecord,
     #[error("unsupported store key record version: {0}")]
@@ -91,7 +91,7 @@ pub(crate) enum KeysError {
 
 /// The DK, its generation and the `id_vault`. The DK is wiped when dropped,
 /// and never printed.
-pub(crate) struct StoreKeys {
+pub struct StoreKeys {
     key_gen: u32,
     id_vault: [u8; ID_VAULT_LEN],
     dk: Zeroizing<[u8; 32]>,
@@ -109,7 +109,7 @@ impl std::fmt::Debug for StoreKeys {
 /// Where the keys of an opened vault come from: unlocking takes the vault's,
 /// or makes new ones for the migration (CL-1c, `commands::unlock_files`).
 #[derive(Debug)]
-pub(crate) enum VaultKeys {
+pub enum VaultKeys {
     /// The vault carries them: the account already has its store.
     InVault(StoreKeys),
     /// The vault carries no app data (version 1, or a version 2 vault sealed
@@ -126,7 +126,7 @@ impl VaultKeys {
     /// The keys of a vault whose app data is `app`, or new ones if it has
     /// none. App data that is not a key record is an error, never a reason
     /// to make new keys: that would orphan everything already in the store.
-    pub(crate) fn from_vault_app(app: Option<&[u8]>) -> Result<Self, KeysError> {
+    pub fn from_vault_app(app: Option<&[u8]>) -> Result<Self, KeysError> {
         match app {
             Some(record) => StoreKeys::from_vault_app(record).map(VaultKeys::InVault),
             None => Ok(VaultKeys::New(StoreKeys::generate())),
@@ -134,7 +134,7 @@ impl VaultKeys {
     }
 
     #[cfg_attr(not(test), allow(dead_code))]
-    pub(crate) fn keys(&self) -> &StoreKeys {
+    pub fn keys(&self) -> &StoreKeys {
         match self {
             VaultKeys::InVault(keys) | VaultKeys::New(keys) => keys,
         }
@@ -143,7 +143,7 @@ impl VaultKeys {
 
 impl StoreKeys {
     /// A new DK and `id_vault`, at the first key generation.
-    pub(crate) fn generate() -> Self {
+    pub fn generate() -> Self {
         StoreKeys {
             key_gen: FIRST_KEY_GEN,
             id_vault: random_array(),
@@ -151,8 +151,8 @@ impl StoreKeys {
         }
     }
 
-    #[cfg(test)]
-    pub(crate) fn from_parts(key_gen: u32, id_vault: [u8; ID_VAULT_LEN], dk: [u8; 32]) -> Self {
+    #[cfg(any(test, feature = "test-util"))]
+    pub fn from_parts(key_gen: u32, id_vault: [u8; ID_VAULT_LEN], dk: [u8; 32]) -> Self {
         StoreKeys {
             key_gen,
             id_vault,
@@ -160,17 +160,17 @@ impl StoreKeys {
         }
     }
 
-    pub(crate) fn key_gen(&self) -> u32 {
+    pub fn key_gen(&self) -> u32 {
         self.key_gen
     }
 
-    pub(crate) fn id_vault(&self) -> &[u8; ID_VAULT_LEN] {
+    pub fn id_vault(&self) -> &[u8; ID_VAULT_LEN] {
         &self.id_vault
     }
 
     /// The record the vault carries as its app data: `TRKEY\0`, version 1, a
     /// reserved zero, `key_gen` (u32 LE), `id_vault` and the DK.
-    pub(crate) fn to_vault_app(&self) -> Zeroizing<Vec<u8>> {
+    pub fn to_vault_app(&self) -> Zeroizing<Vec<u8>> {
         let mut record = Zeroizing::new(Vec::with_capacity(RECORD_LEN));
         record.extend_from_slice(RECORD_MAGIC);
         record.push(RECORD_VERSION);
@@ -182,7 +182,7 @@ impl StoreKeys {
     }
 
     /// The keys from a record written by `to_vault_app`.
-    pub(crate) fn from_vault_app(record: &[u8]) -> Result<Self, KeysError> {
+    pub fn from_vault_app(record: &[u8]) -> Result<Self, KeysError> {
         if record.len() < 8 || &record[..6] != RECORD_MAGIC {
             return Err(KeysError::NotAKeyRecord);
         }
@@ -204,7 +204,7 @@ impl StoreKeys {
     }
 
     /// The key for one kind of file.
-    pub(crate) fn kind_key(&self, label: KeyLabel) -> Zeroizing<[u8; 32]> {
+    pub fn kind_key(&self, label: KeyLabel) -> Zeroizing<[u8; 32]> {
         let mut key = Zeroizing::new([0u8; 32]);
         Hkdf::<Sha256>::new(Some(&self.id_vault), &*self.dk)
             .expand(label.info(), &mut *key)
@@ -216,7 +216,7 @@ impl StoreKeys {
     /// HMAC-SHA256 of the image under the sticker-name key, in hex. The same
     /// image gets the same name, so it is stored once, and nobody without
     /// the DK can tell from the name which image it is (design H4).
-    pub(crate) fn sticker_disk_name(&self, image: &[u8]) -> String {
+    pub fn sticker_disk_name(&self, image: &[u8]) -> String {
         let key = self.kind_key(KeyLabel::StickerName);
         let mut mac =
             <Hmac<Sha256> as Mac>::new_from_slice(&*key).expect("HMAC takes a key of any size");
@@ -225,13 +225,20 @@ impl StoreKeys {
     }
 }
 
-#[cfg(test)]
-pub(crate) mod tests {
+/// Keys for tests: the engine's, and the app's through `test-util`.
+#[cfg(any(test, feature = "test-util"))]
+pub mod testing {
     use super::*;
 
-    pub(crate) fn keys(byte: u8) -> StoreKeys {
+    pub fn keys(byte: u8) -> StoreKeys {
         StoreKeys::from_parts(FIRST_KEY_GEN, [byte; ID_VAULT_LEN], [byte ^ 0x5a; 32])
     }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::testing::keys;
+    use super::*;
 
     #[test]
     fn new_keys_are_random_and_at_the_first_generation() {

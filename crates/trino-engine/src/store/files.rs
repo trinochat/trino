@@ -35,13 +35,13 @@ use std::path::{Path, PathBuf};
 use zeroize::Zeroizing;
 
 /// The copies of each kind kept in `aside/`; older ones are removed.
-pub(crate) const ASIDE_PER_KIND: usize = 3;
+pub const ASIDE_PER_KIND: usize = 3;
 const INDEX_FILE: &str = "index.bin";
 const ASIDE_DIR: &str = "aside";
 const STICKERS_DIR: &str = "stickers";
 
 #[derive(Debug, thiserror::Error)]
-pub(crate) enum StoreError {
+pub enum StoreError {
     /// The index names another vault: this is another account's store.
     /// Nothing in it was touched.
     #[error("the store belongs to another account")]
@@ -67,17 +67,17 @@ pub(crate) enum StoreError {
 
 /// What `open` found, for the session.
 #[derive(Default)]
-pub(crate) struct Loaded {
+pub struct Loaded {
     /// Files to use: verified, and stickers that need no check.
-    pub(crate) ready: BTreeMap<Slot, Zeroizing<Vec<u8>>>,
+    pub ready: BTreeMap<Slot, Zeroizing<Vec<u8>>>,
     /// Files that wait for the user's choice (an older copy, or unverified):
     /// not to be used until `choose` says so.
-    pub(crate) awaiting_choice: BTreeMap<Slot, Zeroizing<Vec<u8>>>,
-    pub(crate) report: IntegrityReport,
+    pub awaiting_choice: BTreeMap<Slot, Zeroizing<Vec<u8>>>,
+    pub report: IntegrityReport,
 }
 
 /// The store of one account, open for the session.
-pub(crate) struct Store<D: Disk> {
+pub struct Store<D: Disk> {
     dir: PathBuf,
     keys: StoreKeys,
     disk: D,
@@ -111,7 +111,7 @@ enum IndexState {
 impl<D: Disk> Store<D> {
     /// A new, empty store in `dir`, its index written. Never replaces a store
     /// that is there.
-    pub(crate) fn create(dir: &Path, keys: StoreKeys, disk: D) -> Result<Self, StoreError> {
+    pub fn create(dir: &Path, keys: StoreKeys, disk: D) -> Result<Self, StoreError> {
         if !disk.list(dir)?.is_empty() || !disk.list(&dir.join(STICKERS_DIR))?.is_empty() {
             return Err(StoreError::Exists);
         }
@@ -134,7 +134,7 @@ impl<D: Disk> Store<D> {
 
     /// Open the store in `dir` at unlock, following the read rules. Refuses
     /// a store whose index belongs to another vault, touching nothing.
-    pub(crate) fn open(dir: &Path, keys: StoreKeys, disk: D) -> Result<(Self, Loaded), StoreError> {
+    pub fn open(dir: &Path, keys: StoreKeys, disk: D) -> Result<(Self, Loaded), StoreError> {
         remove_temporaries(&disk, dir);
         remove_temporaries(&disk, &dir.join(STICKERS_DIR));
         let state = read_index(&disk, dir, &keys)?;
@@ -338,7 +338,7 @@ impl<D: Disk> Store<D> {
     /// Write `content` as the file in `slot`. While the index cannot be
     /// written it waits in memory (`is_behind`), and the next write or
     /// `flush_for_lock` takes it.
-    pub(crate) fn write(&mut self, slot: &Slot, content: &[u8]) -> Result<(), StoreError> {
+    pub fn write(&mut self, slot: &Slot, content: &[u8]) -> Result<(), StoreError> {
         self.check_writable(slot)?;
         self.waiting
             .insert(slot.clone(), Zeroizing::new(content.to_vec()));
@@ -346,7 +346,7 @@ impl<D: Disk> Store<D> {
     }
 
     /// Remove the file in `slot`, noted in the index while it goes.
-    pub(crate) fn delete(&mut self, slot: &Slot) -> Result<(), StoreError> {
+    pub fn delete(&mut self, slot: &Slot) -> Result<(), StoreError> {
         self.check_writable(slot)?;
         self.waiting.remove(slot);
         let name = slot.logical_name();
@@ -371,7 +371,7 @@ impl<D: Disk> Store<D> {
 
     /// At lock: write whatever waits, even if the index still cannot be
     /// written. The next unlock will ask, but nothing is lost.
-    pub(crate) fn flush_for_lock(&mut self) -> Result<(), StoreError> {
+    pub fn flush_for_lock(&mut self) -> Result<(), StoreError> {
         if self.index_frozen {
             return Ok(());
         }
@@ -391,7 +391,7 @@ impl<D: Disk> Store<D> {
 
     /// The user's answer for a file that waits: use it, and it counts as
     /// verified from then on; or go on without it, and it is set aside.
-    pub(crate) fn choose(&mut self, slot: &Slot, use_it: bool) -> Result<(), StoreError> {
+    pub fn choose(&mut self, slot: &Slot, use_it: bool) -> Result<(), StoreError> {
         let Some(seq) = self.pending.remove(slot) else {
             return Err(StoreError::NotPending(slot.logical_name()));
         };
@@ -413,7 +413,7 @@ impl<D: Disk> Store<D> {
 
     /// Never write `slot` this session, as one that could not be read at
     /// unlock: what it holds did not read in this version, so it stays.
-    pub(crate) fn hold(&mut self, slot: &Slot) {
+    pub fn hold(&mut self, slot: &Slot) {
         self.waiting.remove(slot);
         self.frozen.insert(slot.clone());
     }
@@ -421,7 +421,7 @@ impl<D: Disk> Store<D> {
     /// Note the vault's header (design §4.9): the one it has, and one being
     /// written. Best effort, like every index write: while the index cannot
     /// be written, the next unlock checks against the older note.
-    pub(crate) fn note_vault(
+    pub fn note_vault(
         &mut self,
         vault: Option<VaultHeader>,
         pending: Option<VaultHeader>,
@@ -441,7 +441,7 @@ impl<D: Disk> Store<D> {
 
     /// Note how far the migration from the files of earlier versions got
     /// (design §5.2), like any change of the index's own.
-    pub(crate) fn set_legacy(&mut self, legacy: Legacy) -> Result<(), StoreError> {
+    pub fn set_legacy(&mut self, legacy: Legacy) -> Result<(), StoreError> {
         self.index.legacy = legacy;
         if self.index_frozen {
             return Err(StoreError::Frozen("the store".into()));
@@ -459,7 +459,7 @@ impl<D: Disk> Store<D> {
     /// leaves either both, or the file one step ahead under the old note,
     /// never the note without the file. Refused while the index cannot be
     /// written now, since an index saved first would carry the note alone.
-    pub(crate) fn write_noting_legacy(
+    pub fn write_noting_legacy(
         &mut self,
         slot: &Slot,
         content: &[u8],
@@ -488,7 +488,7 @@ impl<D: Disk> Store<D> {
     /// Keep `content` in `aside/`, sealed as `slot` (a `Slot::Legacy`), out
     /// of the index: nothing reads `aside/` back, so it is never taken for a
     /// file of the store.
-    pub(crate) fn put_aside(&self, slot: &Slot, content: &[u8]) -> Result<(), StoreError> {
+    pub fn put_aside(&self, slot: &Slot, content: &[u8]) -> Result<(), StoreError> {
         let sealed = envelope::seal(&self.keys, slot, 0, content)?;
         self.disk.write(&self.path_of(slot), &sealed)?;
         Ok(())
@@ -496,22 +496,22 @@ impl<D: Disk> Store<D> {
 
     /// Keep `bytes` in `aside/` as they are, under `name`: a file of an
     /// earlier version that was sealed already and did not open.
-    pub(crate) fn put_aside_raw(&self, name: &str, bytes: &[u8]) -> Result<(), StoreError> {
+    pub fn put_aside_raw(&self, name: &str, bytes: &[u8]) -> Result<(), StoreError> {
         self.disk
             .write(&self.dir.join(ASIDE_DIR).join(name), bytes)?;
         Ok(())
     }
 
     /// Whether data waits in memory or the index on disk is behind it.
-    pub(crate) fn is_behind(&self) -> bool {
+    pub fn is_behind(&self) -> bool {
         !self.waiting.is_empty() || !self.index_saved
     }
 
-    pub(crate) fn index(&self) -> &Index {
+    pub fn index(&self) -> &Index {
         &self.index
     }
 
-    pub(crate) fn keys(&self) -> &StoreKeys {
+    pub fn keys(&self) -> &StoreKeys {
         &self.keys
     }
 
@@ -634,7 +634,7 @@ fn read_index(disk: &impl Disk, dir: &Path, keys: &StoreKeys) -> Result<IndexSta
 
 /// The index of the store in `dir` if it opens under `keys`, read and
 /// nothing else: none if it is missing, does not open or cannot be read now.
-pub(crate) fn peek_index(disk: &impl Disk, dir: &Path, keys: &StoreKeys) -> Option<Index> {
+pub fn peek_index(disk: &impl Disk, dir: &Path, keys: &StoreKeys) -> Option<Index> {
     match read_index(disk, dir, keys) {
         Ok(IndexState::Opened(index)) => Some(index),
         _ => None,
@@ -716,7 +716,7 @@ mod tests {
     use crate::fsutil::scratch::ScratchDir;
     use crate::store::disk::faulty::FaultyDisk;
     use crate::store::disk::RealDisk;
-    use crate::store::keys::tests::keys;
+    use crate::store::keys::testing::keys;
 
     use std::rc::Rc;
 
