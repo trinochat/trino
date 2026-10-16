@@ -8016,10 +8016,19 @@ dependencies = [
 name = "trino-engine"
 version = "0.1.0"
 dependencies = [
+ "base64 0.22.1",
+ "chrono",
  "dirs 5.0.1",
+ "futures-util",
+ "hex",
+ "secp256k1",
  "serde",
+ "serde_json",
  "thiserror 1.0.69",
+ "tokio",
+ "tokio-tungstenite",
  "trino-core",
+ "trino-net",
  "zeroize",
 ]
 

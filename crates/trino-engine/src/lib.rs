@@ -13,7 +13,14 @@
 // does, so `crate::crypto::…` reads the same in the code moved here.
 pub use trino_core::{call_signal, crypto, envelope, group, identity, ratchet, totp, vault, x3dh};
 
+pub mod blossom;
 pub mod call_log;
+pub mod command_error;
+pub mod diag;
 pub mod fsutil;
+pub mod nostr;
 pub mod passphrase;
 pub mod state;
+#[cfg(any(test, feature = "test-util"))]
+pub mod testing;
+pub mod totp_enrollment;

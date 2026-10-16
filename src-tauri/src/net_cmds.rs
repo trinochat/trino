@@ -165,27 +165,14 @@ pub async fn net_retry(state: State<'_, AppState>) -> Result<NetStatus, CommandE
 pub(crate) mod tests {
     use super::*;
     use crate::fsutil::scratch::ScratchDir;
-    use std::path::Path;
     use std::sync::Arc;
     use std::time::Duration;
-    use trino_net::mock::{FakeTor, Forbidden, Mock};
-    use trino_net::{Net, NetConfig, NetStatus, StartWhen, TorBackend, TorSettings, TransportKind};
+    use trino_net::mock::{Forbidden, Mock};
+    use trino_net::{Net, NetStatus, StartWhen, TorSettings, TransportKind};
 
-    /// A `Net` whose Tor is a `FakeTor` with its folder at `tor_home`, and
-    /// whose direct transport fails the test if touched.
-    pub(crate) fn fake_tor(tor_home: &Path) -> (Arc<Net>, Arc<FakeTor>, Arc<Mock>) {
-        let mock = Mock::new();
-        let fake = FakeTor::new(Arc::clone(&mock));
-        let net = Net::with_backend(
-            NetConfig {
-                tor_home: tor_home.to_path_buf(),
-                pt: None,
-            },
-            Arc::clone(&fake) as Arc<dyn TorBackend>,
-            Arc::new(Forbidden),
-        );
-        (net, fake, mock)
-    }
+    /// A `Net` whose Tor is a `FakeTor`: the engine's, which its relay
+    /// tests use too (M4-0).
+    pub(crate) use trino_engine::testing::fake_tor;
 
     /// A data folder with an account in it (a vault), and its Tor folder.
     fn with_account(scratch: &ScratchDir) -> std::path::PathBuf {

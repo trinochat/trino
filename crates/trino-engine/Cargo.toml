@@ -12,16 +12,35 @@ publish = false
 # through FFI. tests/no_tauri.rs keeps Tauri out of its dependency tree.
 
 [features]
-# What the app's tests take from the engine (`fsutil::scratch`). Only the
-# app's dev-dependencies turn it on, as trino-net's `test-util`.
-test-util = []
+# What the app's tests take from the engine (`fsutil::scratch`, the test
+# relay in `nostr::test_relay`, `testing`), and no diagnostic log written
+# from tests (diag.rs). Only the app's dev-dependencies turn it on, as
+# trino-net's `test-util`.
+test-util = ["trino-net/test-util"]
 
 [dependencies]
 # Protocol and cryptography, at the same commit as the app's (Cargo.lock).
 trino-core = { git = "https://github.com/trinochat/trino-core", rev = "3421e168c94da92d21234e1a8c1587d552b0002b" }
+# Every connection: the relays (nostr.rs) and Blossom (blossom.rs).
+trino-net = { path = "../trino-net" }
 serde = { version = "1", features = ["derive"] }
 # The data folder, ~/.trino, unless TRINO_HOME or the mobile sandbox says
 # otherwise (state.rs).
 dirs = "5"
 thiserror = "1"
 zeroize = { version = "1", features = ["derive"] }
+# The relays (nostr.rs): Nostr events signed with Schnorr, over WebSockets.
+secp256k1 = { version = "0.29", features = ["rand-std", "global-context"] }
+tokio = { version = "1", features = ["macros", "rt", "sync", "time"] }
+tokio-tungstenite = { version = "0.24", features = ["rustls-tls-webpki-roots"] }
+futures-util = "0.3"
+serde_json = "1"
+hex = "0.4"
+base64 = "0.22"
+chrono = { version = "0.4", features = ["serde"] }
+
+[dev-dependencies]
+# Tor as an in-memory pipe, and a direct transport that fails the test.
+trino-net = { path = "../trino-net", features = ["test-util"] }
+# tokio's paused clock (`start_paused`) for the relay tests.
+tokio = { version = "1", features = ["test-util"] }

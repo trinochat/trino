@@ -1,6 +1,3 @@
-pub mod blossom;
-pub mod nostr;
-
 // The protocol and cryptography now live in the `trino-core` crate so they can
 // be audited on their own and shared with the mobile client. They are re-exported
 // here so `crate::identity::…`, `crate::ratchet::…` etc. keep resolving.
@@ -8,11 +5,11 @@ pub use trino_core::{call_signal, crypto, envelope, group, identity, ratchet, to
 
 // What moved to the engine (M4-0), under the same paths as before, so
 // `crate::fsutil::…` and the rest keep resolving.
-use trino_engine::{fsutil, passphrase};
+pub use trino_engine::{blossom, nostr};
+use trino_engine::{command_error, fsutil, passphrase, totp_enrollment};
 
 mod a11y;
 mod autostart;
-mod command_error;
 mod commands;
 mod media_permission;
 mod navigation;
@@ -21,7 +18,6 @@ mod news_cmds;
 mod notifications;
 mod state;
 mod store;
-mod totp_enrollment;
 mod turn;
 mod updater;
 // -- W7 --

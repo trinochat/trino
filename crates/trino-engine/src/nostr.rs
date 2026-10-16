@@ -525,8 +525,8 @@ impl NostrClient {
     }
 
     /// How many published events still wait for this relay's OK.
-    #[cfg(test)]
-    pub(crate) fn awaiting_ok(&self) -> usize {
+    #[cfg(any(test, feature = "test-util"))]
+    pub fn awaiting_ok(&self) -> usize {
         lock_pending(&self.pending_ok).len()
     }
 
@@ -925,12 +925,12 @@ fn handle_relay_message(text: &str, on_event: &EventHandler, pending: &PendingOk
 }
 
 /// A relay for tests: NIP-01 over a real WebSocket, enough for the clients
-/// here and the sends in commands.rs. It is reached the way a relay is in
+/// here and the sends in the app's commands.rs (through `test-util`). It is reached the way a relay is in
 /// the app, through trino-net's `Net` in Tor mode, where Tor is an
 /// in-memory pipe and the direct transport fails the test if anything
 /// uses it.
-#[cfg(test)]
-pub(crate) mod test_relay {
+#[cfg(any(test, feature = "test-util"))]
+pub mod test_relay {
     use super::*;
     use std::sync::atomic::AtomicUsize;
     use std::sync::{LazyLock, Mutex as StdMutex};
@@ -954,13 +954,13 @@ pub(crate) mod test_relay {
 
     /// Relay WebSockets the way the app opens them, through the tests'
     /// `Net`.
-    pub(crate) fn connector() -> Connector {
+    pub fn connector() -> Connector {
         relay_connector(Arc::clone(&TOR.1), TOR.1.session(), IsoKind::RELAY)
     }
 
     /// How the relay answers an EVENT.
     #[derive(Clone, Debug)]
-    pub(crate) enum Answer {
+    pub enum Answer {
         /// `["OK", id, true, ""]`.
         Accept,
         /// `["OK", id, false, "blocked: …"]`.
@@ -977,14 +977,14 @@ pub(crate) mod test_relay {
         AcceptWhenReleased(Arc<Notify>),
     }
 
-    pub(crate) struct TestRelay {
-        pub(crate) url: String,
+    pub struct TestRelay {
+        pub url: String,
         events: Arc<StdMutex<Vec<NostrEvent>>>,
         kicks: Arc<Notify>,
     }
 
     impl TestRelay {
-        pub(crate) async fn start(answer: Answer) -> Self {
+        pub async fn start(answer: Answer) -> Self {
             let host = format!(
                 "relay-{}.trino.invalid",
                 RELAYS.fetch_add(1, Ordering::SeqCst)
@@ -1004,17 +1004,17 @@ pub(crate) mod test_relay {
         }
 
         /// The events it received, in order.
-        pub(crate) fn events(&self) -> Vec<NostrEvent> {
+        pub fn events(&self) -> Vec<NostrEvent> {
             self.events.lock().unwrap().clone()
         }
 
         /// Close every connection it has, as a relay restarting would.
-        pub(crate) fn kick(&self) {
+        pub fn kick(&self) {
             self.kicks.notify_waiters();
         }
 
         /// A messaging client of this relay, once its socket is up.
-        pub(crate) async fn client(&self) -> Arc<NostrClient> {
+        pub async fn client(&self) -> Arc<NostrClient> {
             let client = NostrClient::start(&self.url, Arc::new(|_| {}), quick_options(None));
             wait_until("the client to connect", || client.is_connected()).await;
             client
@@ -1087,12 +1087,12 @@ pub(crate) mod test_relay {
     }
 
     /// Pauses short enough for retries to happen within a test.
-    pub(crate) const QUICK: Backoff = Backoff {
+    pub const QUICK: Backoff = Backoff {
         first: Duration::from_millis(10),
         max: Duration::from_millis(40),
     };
 
-    pub(crate) fn quick_options(on_state: Option<StateHandler>) -> ClientOptions {
+    pub fn quick_options(on_state: Option<StateHandler>) -> ClientOptions {
         ClientOptions {
             connector: connector(),
             first_connection: QUICK,
@@ -1107,7 +1107,7 @@ pub(crate) mod test_relay {
     }
 
     /// A connector that never connects, counting its attempts.
-    pub(crate) fn refusing_connector(attempts: Arc<AtomicUsize>) -> Connector {
+    pub fn refusing_connector(attempts: Arc<AtomicUsize>) -> Connector {
         Arc::new(move |_url| {
             attempts.fetch_add(1, Ordering::SeqCst);
             Box::pin(async { Err("refused".to_string()) })
@@ -1115,7 +1115,7 @@ pub(crate) mod test_relay {
     }
 
     /// A client that keeps failing to connect, with its attempts counted.
-    pub(crate) fn unreachable_client(attempts: Arc<AtomicUsize>) -> Arc<NostrClient> {
+    pub fn unreachable_client(attempts: Arc<AtomicUsize>) -> Arc<NostrClient> {
         let options = ClientOptions {
             connector: refusing_connector(attempts),
             ..quick_options(None)
@@ -1124,7 +1124,7 @@ pub(crate) mod test_relay {
     }
 
     /// Wait until `done`, or fail the test after 5 s.
-    pub(crate) async fn wait_until(what: &str, mut done: impl FnMut() -> bool) {
+    pub async fn wait_until(what: &str, mut done: impl FnMut() -> bool) {
         for _ in 0..500 {
             if done() {
                 return;
@@ -1541,7 +1541,7 @@ mod tests {
     #[tokio::test(start_paused = true)]
     async fn a_relay_deadline_starts_when_tor_is_ready() {
         use crate::fsutil::scratch::ScratchDir;
-        use crate::net_cmds::tests::fake_tor;
+        use crate::testing::fake_tor;
 
         let scratch = ScratchDir::new("relay-ready");
         let (net, fake, tor) = fake_tor(&scratch.path().join("tor"));
