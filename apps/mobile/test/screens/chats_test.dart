@@ -1,9 +1,14 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:trino_mobile/screens/chats_screen.dart';
 import 'package:trino_mobile/screens/common.dart';
 import 'package:trino_mobile/screens/connection/connection_failed_screen.dart';
+import 'package:trino_mobile/ui/avatar.dart';
+import 'package:trino_mobile/ui/button.dart';
 import 'package:trino_mobile/ui/chat_row.dart';
+import 'package:trino_mobile/ui/list_row.dart';
 import 'package:trino_mobile/ui/text_field.dart';
 import 'package:trino_mobile/ui/underline_tabs.dart';
 
@@ -227,6 +232,212 @@ void main() {
     await tester.tap(find.bySemanticsLabel('Volver'));
     await tester.pumpAndSettle();
     expect(rowOf('Lucía'), findsNothing, reason: 'read now: out of "No leídos"');
+  });
+
+  group('the actions of a chat, without any gesture', () {
+    Finder sheet() => find.byType(BottomSheet);
+    Finder inSheet(String text) => find.descendant(of: sheet(), matching: find.text(text));
+    Iterable<ListRow> sheetRows(WidgetTester tester) =>
+        tester.widgetList<ListRow>(find.descendant(of: sheet(), matching: find.byType(ListRow)));
+    List<String> sheetActions(WidgetTester tester) => [for (final row in sheetRows(tester)) row.title];
+    // The long-press hint is an overriding action, without a label of its own.
+    List<String> customActions(WidgetTester tester, String name) => [
+      for (final id in tester.getSemantics(rowOf(name)).getSemanticsData().customSemanticsActionIds ?? const <int>[])
+        ?CustomSemanticsAction.getAction(id)?.label,
+    ];
+
+    Future<void> longPress(WidgetTester tester, String name) async {
+      await tester.longPress(rowOf(name));
+      await tester.pumpAndSettle();
+    }
+
+    Future<void> choose(WidgetTester tester, String action) async {
+      await tester.tap(inSheet(action));
+      await tester.pumpAndSettle();
+    }
+
+    testWidgets('a long press opens a sheet with the avatar, the name, the kind and the actions of a group', (
+      tester,
+    ) async {
+      await pumpApp(tester);
+      await longPress(tester, 'Familia');
+      expect(sheet(), findsOneWidget);
+      expect(find.descendant(of: sheet(), matching: find.byType(TrinoAvatar)), findsOneWidget);
+      expect(inSheet('Familia'), findsOneWidget);
+      expect(tester.getSemantics(inSheet('Familia')), isSemantics(isHeader: true));
+      expect(inSheet('Grupo · 3 miembros'), findsOneWidget);
+      // Familia has an unread message.
+      expect(sheetActions(tester), ['Fijar arriba', 'Marcar como leído', 'Silenciar', 'Borrar el chat']);
+      final rows = sheetRows(tester);
+      expect(rows.map((row) => row.icon), [TrinoIcons.pin, TrinoIcons.mailOpen, TrinoIcons.bellOff, TrinoIcons.trash]);
+      expect(rows.map((row) => row.danger), [false, false, false, true]);
+      for (final action in sheetActions(tester)) {
+        expect(tester.getSemantics(inSheet(action)), isSemantics(isButton: true, hasTapAction: true), reason: action);
+      }
+      await expectLater(tester, meetsGuideline(androidTapTargetGuideline));
+    });
+
+    testWidgets('a contact cannot be muted yet: only pin, unread and delete', (tester) async {
+      await pumpApp(tester);
+      await longPress(tester, 'Lucía');
+      expect(inSheet('Contacto · Sin verificar'), findsOneWidget);
+      expect(sheetActions(tester), ['Fijar arriba', 'Marcar como no leído', 'Borrar el chat']);
+      expect(sheetRows(tester).elementAt(1).icon, TrinoIcons.mail);
+      await tester.tapAt(const Offset(195, 100));
+      await tester.pumpAndSettle();
+      await longPress(tester, 'Ana Torres');
+      expect(inSheet('Contacto verificado'), findsOneWidget);
+    });
+
+    testWidgets('"Fijar arriba" pins the chat, and then the sheet offers "Desfijar"', (tester) async {
+      final app = await pumpApp(tester);
+      await longPress(tester, 'Lucía');
+      await choose(tester, 'Fijar arriba');
+      expect(sheet(), findsNothing);
+      expect(tester.widgetList<ChatRow>(find.byType(ChatRow)).first.name, 'Lucía');
+      await longPress(tester, 'Lucía');
+      expect(sheetActions(tester).first, 'Desfijar');
+      await choose(tester, 'Desfijar');
+      expect((await app.engine.chats.first).firstWhere((c) => c.id == 'chat-lucia').pinned, isFalse);
+    });
+
+    testWidgets('the sixth pin says so, and pins nothing', (tester) async {
+      final engine = testEngine();
+      final trabajo = engine.addGroup(title: 'Trabajo', memberIds: const ['carlos']);
+      for (final id in ['chat-ana', 'chat-familia', 'chat-carlos', 'chat-lucia', trabajo]) {
+        await engine.setChatPinned(id, true);
+      }
+      engine.addGroup(title: 'Vecinos', memberIds: const ['lucia']);
+      await pumpApp(tester, engine: engine);
+      await longPress(tester, 'Vecinos');
+      await choose(tester, 'Fijar arriba');
+      expect(find.text('Puedes fijar hasta 5 chats. Desfija uno para fijar este.'), findsOneWidget);
+      expect(tester.widget<ChatRow>(rowOf('Vecinos')).pinnedLabel, isNull);
+    });
+
+    testWidgets('"Marcar como no leído" marks the chat; "Marcar como leído" clears it', (tester) async {
+      await pumpApp(tester);
+      await longPress(tester, 'Lucía');
+      await choose(tester, 'Marcar como no leído');
+      expect(tester.widget<ChatRow>(rowOf('Lucía')).markedUnreadLabel, 'Marcado como no leído');
+      await longPress(tester, 'Lucía');
+      await choose(tester, 'Marcar como leído');
+      expect(tester.widget<ChatRow>(rowOf('Lucía')).markedUnreadLabel, isNull);
+      // A chat with unread messages is read at once.
+      await longPress(tester, 'Ana Torres');
+      await choose(tester, 'Marcar como leído');
+      expect(tester.widget<ChatRow>(rowOf('Ana Torres')).unread, isNull);
+    });
+
+    testWidgets('"Silenciar" mutes a group and says so; then the sheet offers "Activar sonido"', (tester) async {
+      final app = await pumpApp(tester);
+      await longPress(tester, 'Familia');
+      await choose(tester, 'Silenciar');
+      expect(find.text('Silenciaste Familia.'), findsOneWidget);
+      expect((await app.engine.chats.first).firstWhere((c) => c.id == 'chat-familia').muted, isTrue);
+      await longPress(tester, 'Familia');
+      final unmute = sheetRows(tester).firstWhere((row) => row.title == 'Activar sonido');
+      expect(unmute.icon, TrinoIcons.bell);
+      await choose(tester, 'Activar sonido');
+      expect(find.text('Activaste el sonido de Familia.'), findsOneWidget);
+      expect((await app.engine.chats.first).firstWhere((c) => c.id == 'chat-familia').muted, isFalse);
+    });
+
+    testWidgets('"Borrar el chat" always asks first, with the honest copy', (tester) async {
+      await pumpApp(tester);
+      await longPress(tester, 'Lucía');
+      await choose(tester, 'Borrar el chat');
+      expect(find.text('¿Borrar el chat con Lucía?'), findsOneWidget);
+      expect(
+        find.text(
+          'Los mensajes se borran solo de este celular. Lucía conserva los suyos, y tus otros dispositivos también.',
+        ),
+        findsOneWidget,
+      );
+      await tester.tap(find.text('Cancelar'));
+      await tester.pumpAndSettle();
+      expect(rowOf('Lucía'), findsOneWidget);
+
+      await longPress(tester, 'Lucía');
+      await choose(tester, 'Borrar el chat');
+      await tester.tap(find.widgetWithText(TrinoButton, 'Borrar el chat'));
+      await tester.pumpAndSettle();
+      expect(rowOf('Lucía'), findsNothing);
+      expect(find.text('Se borró el chat.'), findsOneWidget);
+    });
+
+    testWidgets('deleting a group says the other members keep theirs', (tester) async {
+      await pumpApp(tester);
+      await longPress(tester, 'Familia');
+      await choose(tester, 'Borrar el chat');
+      expect(find.text('¿Borrar el chat con Familia?'), findsOneWidget);
+      expect(
+        find.text(
+          'Los mensajes se borran solo de este celular. Los demás miembros conservan los suyos, '
+          'y tus otros dispositivos también.',
+        ),
+        findsOneWidget,
+      );
+    });
+
+    testWidgets('screen readers get the same actions on the row, and its long press opens the sheet', (tester) async {
+      final handle = tester.ensureSemantics();
+      final app = await pumpApp(tester);
+      // Flutter orders them by when each label was first seen, not as given.
+      expect(
+        customActions(tester, 'Familia'),
+        unorderedEquals(['Fijar arriba', 'Marcar como leído', 'Silenciar', 'Borrar el chat']),
+      );
+      expect(
+        customActions(tester, 'Lucía'),
+        unorderedEquals(['Fijar arriba', 'Marcar como no leído', 'Borrar el chat']),
+      );
+      final node = tester.getSemantics(rowOf('Familia'));
+      expect(node, isSemantics(isButton: true, hasTapAction: true, hasLongPressAction: true));
+      final hint = node.getSemanticsData().customSemanticsActionIds!.map(CustomSemanticsAction.getAction);
+      expect(hint.where((action) => action!.action == SemanticsAction.longPress).single!.hint, 'Más opciones');
+
+      tester.semantics.customAction(
+        find.semantics.byLabel(RegExp('^Familia')),
+        const CustomSemanticsAction(label: 'Fijar arriba'),
+      );
+      await tester.pumpAndSettle();
+      expect((await app.engine.chats.first).first.id, 'chat-familia');
+      expect(customActions(tester, 'Familia'), contains('Desfijar'));
+
+      final lucia = find.semantics.byLabel(RegExp('^Lucía'));
+      tester.semantics.customAction(lucia, const CustomSemanticsAction(label: 'Borrar el chat'));
+      await tester.pumpAndSettle();
+      expect(find.text('¿Borrar el chat con Lucía?'), findsOneWidget, reason: 'it asks first here too');
+      await tester.tap(find.text('Cancelar'));
+      await tester.pumpAndSettle();
+
+      tester.semantics.longPress(lucia);
+      await tester.pumpAndSettle();
+      expect(inSheet('Lucía'), findsOneWidget);
+      handle.dispose();
+    });
+
+    testWidgets('with a keyboard: the menu key, or Shift+F10, on a focused row opens the sheet', (tester) async {
+      await pumpApp(tester);
+      final inkWell = find.descendant(of: rowOf('Lucía'), matching: find.byType(InkWell));
+      Focus.of(tester.element(find.descendant(of: inkWell, matching: find.byType(Row)).first)).requestFocus();
+      await tester.pumpAndSettle();
+      await tester.sendKeyEvent(LogicalKeyboardKey.contextMenu);
+      await tester.pumpAndSettle();
+      expect(inSheet('Lucía'), findsOneWidget);
+      await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+      await tester.pumpAndSettle();
+      expect(sheet(), findsNothing);
+
+      Focus.of(tester.element(find.descendant(of: inkWell, matching: find.byType(Row)).first)).requestFocus();
+      await tester.pumpAndSettle();
+      await tester.sendKeyDownEvent(LogicalKeyboardKey.shiftLeft);
+      await tester.sendKeyEvent(LogicalKeyboardKey.f10);
+      await tester.sendKeyUpEvent(LogicalKeyboardKey.shiftLeft);
+      await tester.pumpAndSettle();
+      expect(inSheet('Lucía'), findsOneWidget);
+    });
   });
 
   testWidgets('"Nuevo chat" lists the contacts and opens a chat with one', (tester) async {

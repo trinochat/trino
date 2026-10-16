@@ -459,5 +459,22 @@
   "leaveGroupBody": "The messages of {group} will no longer reach you, and the chat is deleted from this phone.",
   "leftGroup": "You left {group}.",
   "chatPinned": "Pinned",
-  "chatMarkedUnread": "Marked as unread"
+  "chatMarkedUnread": "Marked as unread",
+  "chatPin": "Pin",
+  "chatUnpin": "Unpin",
+  "chatPinTop": "Pin to the top",
+  "chatUnreadShort": "Unread",
+  "chatReadShort": "Read",
+  "chatMarkUnread": "Mark as unread",
+  "chatMarkRead": "Mark as read",
+  "chatMute": "Mute",
+  "chatUnmute": "Unmute",
+  "chatDeleteShort": "Delete",
+  "chatPinLimit": "You can pin up to {max} chats. Unpin one to pin this one.",
+  "chatMutedNotice": "You muted {name}.",
+  "chatUnmutedNotice": "You unmuted {name}.",
+  "chatKindGroup": "Group",
+  "chatKindContact": "Contact",
+  "chatMoreOptions": "More options",
+  "deleteGroupChatBody": "The messages are deleted from this phone only. The other members keep theirs, and so do your other devices."
 }

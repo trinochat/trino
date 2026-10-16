@@ -1,7 +1,10 @@
 // The inbox: a large title with search and new chat, one line of words with
 // the network state (nothing once connected), the text filters, the grey row
 // of message requests and the chats.
+import 'dart:async';
+
 import 'package:flutter/material.dart';
+import 'package:flutter/semantics.dart';
 
 import '../app/format.dart';
 import '../app/scope.dart';
@@ -15,8 +18,10 @@ import '../ui/icon_button.dart';
 import '../ui/text_field.dart';
 import '../ui/trust_badge.dart';
 import '../ui/underline_tabs.dart';
+import 'chat_actions.dart';
 import 'chat_screen.dart';
 import 'common.dart';
+import 'info/info_parts.dart';
 import 'new_chat_screen.dart';
 import 'requests_screen.dart';
 
@@ -188,7 +193,47 @@ class _ChatsScreenState extends State<ChatsScreen> {
       markedUnreadLabel: chat.markedUnread ? l10n.chatMarkedUnread : null,
       pinnedLabel: chat.pinned ? l10n.chatPinned : null,
       onTap: () => Navigator.of(context).push(ChatScreen.route(chat)),
+      onLongPress: () => unawaited(_openActions(chat)),
+      longPressHint: l10n.chatMoreOptions,
+      actions: {
+        for (final action in chatActionsOf(chat, l10n))
+          CustomSemanticsAction(label: action.label): () => unawaited(_perform(chat, action.kind)),
+      },
     );
+  }
+
+  Future<void> _openActions(ChatSummary chat) async {
+    final kind = await showChatActionsSheet(context, chat);
+    if (kind != null && mounted) await _perform(chat, kind);
+  }
+
+  /// Does [kind] to [chat], as the sheet, the swipe and screen readers ask.
+  Future<void> _perform(ChatSummary chat, ChatActionKind kind) async {
+    final l10n = context.l10n;
+    switch (kind) {
+      case ChatActionKind.pin:
+        try {
+          await _engine.setChatPinned(chat.id, !chat.pinned);
+        } on TooManyPinnedChats catch (limit) {
+          if (mounted) showNotice(context, l10n.chatPinLimit(limit.max));
+        }
+      case ChatActionKind.read:
+        await (chat.isUnread ? _engine.markRead(chat.id) : _engine.markUnread(chat.id));
+      case ChatActionKind.mute:
+        await _engine.setChatMuted(chat.id, !chat.muted);
+        if (!mounted) return;
+        showNotice(context, chat.muted ? l10n.chatUnmutedNotice(chat.title) : l10n.chatMutedNotice(chat.title));
+      case ChatActionKind.delete:
+        final confirmed = await confirmDanger(
+          context,
+          title: l10n.deleteChatTitle(chat.title),
+          body: chat.isGroup ? l10n.deleteGroupChatBody : l10n.deleteChatBody(chat.title),
+          confirm: l10n.deleteChat,
+        );
+        if (!confirmed || !mounted) return;
+        await _engine.deleteChat(chat.id);
+        if (mounted) showNotice(context, l10n.chatDeleted);
+    }
   }
 }
 

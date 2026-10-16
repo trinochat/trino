@@ -459,5 +459,22 @@
   "leaveGroupBody": "As mensagens de {group} não vão mais chegar para você, e a conversa é apagada deste celular.",
   "leftGroup": "Você saiu de {group}.",
   "chatPinned": "Fixada",
-  "chatMarkedUnread": "Marcada como não lida"
+  "chatMarkedUnread": "Marcada como não lida",
+  "chatPin": "Fixar",
+  "chatUnpin": "Desafixar",
+  "chatPinTop": "Fixar no topo",
+  "chatUnreadShort": "Não lida",
+  "chatReadShort": "Lida",
+  "chatMarkUnread": "Marcar como não lida",
+  "chatMarkRead": "Marcar como lida",
+  "chatMute": "Silenciar",
+  "chatUnmute": "Ativar som",
+  "chatDeleteShort": "Apagar",
+  "chatPinLimit": "Você pode fixar até {max} conversas. Desafixe uma para fixar esta.",
+  "chatMutedNotice": "Você silenciou {name}.",
+  "chatUnmutedNotice": "Você ativou o som de {name}.",
+  "chatKindGroup": "Grupo",
+  "chatKindContact": "Contato",
+  "chatMoreOptions": "Mais opções",
+  "deleteGroupChatBody": "As mensagens são apagadas só deste celular. Os outros membros mantêm as próprias, e seus outros dispositivos também."
 }
