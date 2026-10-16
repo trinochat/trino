@@ -1316,6 +1316,10 @@ pub(crate) mod tests {
 
     pub(crate) const NOW: i64 = 1_760_000_000;
 
+    pub(crate) fn ik(id: &Identity) -> String {
+        hex::encode(id.ik_sign.pub_bytes)
+    }
+
     pub(crate) fn member(id: &Identity, handle: &str) -> MemberBundle {
         MemberBundle::from_public_bundle(handle, &public_bundle_for(id))
     }

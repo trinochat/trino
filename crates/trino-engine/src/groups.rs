@@ -8,18 +8,20 @@
 
 use crate::command_error::{CommandError, ErrorCode};
 use crate::contacts::{check_local_handle, not_found, sealed};
+use crate::envelope::{encode_envelope, Envelope};
 use crate::events::EventSink;
 use crate::group::{self, GroupError, GroupRoster, MemberBundle, RosterDecision};
 use crate::identity::{decode_array_32, public_bundle_for, verify_bundle_binding, Identity};
 use crate::nostr::{NostrEvent, TRINO_KIND};
 use crate::ratchet::{init_responder, RatchetState};
 use crate::session::{
-    dbg_log, fp, group_convo, sanitize_roster, zeroize_file_ref, WireHandshake,
-    CATCH_UP_WINDOW_SECS, CLOCK_SKEW_SECS,
+    dbg_log, ensure_session_inner, fp, group_convo, sanitize_roster, save_history,
+    send_cipher_inner, zeroize_file_ref, WireHandshake, CATCH_UP_WINDOW_SECS, CLOCK_SKEW_SECS,
 };
 use crate::state::{FriendRecord, GroupInvite, HandshakeMark, InnerState};
 use crate::storage::persist_account;
 use crate::x3dh::{respond, InitialMessage, X3dhError};
+use crate::Engine;
 use serde::Serialize;
 use std::collections::HashMap;
 
@@ -850,6 +852,109 @@ pub fn plan_addition(
     };
     let targets = contacts_of(inner, &roster.members, &my_ik(identity));
     Ok(RosterChange { roster, targets })
+}
+
+/// Send `roster` to each of `targets` over its pairwise session, going on
+/// past a failure, which is only logged.
+pub async fn send_roster(state: &Engine, roster: &GroupRoster, targets: &[String]) {
+    let envelope = encode_envelope(&Envelope::Roster {
+        roster: roster.clone(),
+    });
+    for handle in targets {
+        let sent: Result<(), String> = async {
+            ensure_session_inner(state, handle).await?;
+            send_cipher_inner(state, handle, &envelope, None).await
+        }
+        .await;
+        if sent.is_err() {
+            dbg_log("  roster not sent to a member");
+        }
+    }
+}
+
+/// Plan a change to `gid` with the state locked, store it here and save the
+/// groups with `persist`, then send it to its members with the state
+/// unlocked (sending locks it per message).
+pub async fn apply_and_send(
+    state: &Engine,
+    gid: &str,
+    plan: impl FnOnce(&InnerState, &Identity) -> Result<RosterChange, CommandError>,
+    persist: impl FnOnce(&InnerState) -> Result<(), String>,
+) -> Result<GroupInfo, CommandError> {
+    let (change, my_ik) = {
+        let mut inner = state.inner.lock().await;
+        let identity = open_identity(&inner)?;
+        let change = plan(&inner, &identity)?;
+        check_online(&inner, &change)?;
+        inner.groups.insert(gid.to_string(), change.roster.clone());
+        persist(&inner).map_err(|e| CommandError::new(ErrorCode::Io, e))?;
+        (change, hex::encode(identity.ik_sign.pub_bytes))
+    };
+    send_roster(state, &change.roster, &change.targets).await;
+    Ok(group_info(&change.roster, &my_ik))
+}
+
+/// `add_group_member`, saving the groups with `persist`. As K10's changes:
+/// with no relay up it is `offline` and nothing changes here; otherwise the
+/// roster is stored, then sent to every member, past any that fails. A
+/// refused add means the contact was not added.
+pub async fn add_member(
+    state: &Engine,
+    gid: &str,
+    friend_handle: &str,
+    persist: impl FnOnce(&InnerState) -> Result<(), String>,
+) -> Result<GroupInfo, CommandError> {
+    let plan = |inner: &InnerState, identity: &Identity| {
+        plan_addition(inner, identity, gid, friend_handle)
+    };
+    apply_and_send(state, gid, plan, persist).await
+}
+
+/// `remove_group_member` (K10, admin only): the roster without them goes to
+/// every member, the removed one included.
+pub async fn remove_member(
+    state: &Engine,
+    gid: String,
+    ik_sign_pub: String,
+) -> Result<GroupInfo, CommandError> {
+    let plan =
+        |inner: &InnerState, identity: &Identity| plan_removal(inner, identity, &gid, &ik_sign_pub);
+    apply_and_send(state, &gid, plan, persist_account).await
+}
+
+/// `rename_group` (K10, admin only).
+pub async fn rename(state: &Engine, gid: String, name: String) -> Result<GroupInfo, CommandError> {
+    let plan = |inner: &InnerState, identity: &Identity| plan_rename(inner, identity, &gid, &name);
+    apply_and_send(state, &gid, plan, persist_account).await
+}
+
+/// `leave_group` (K10): forget the group here, without telling anyone.
+pub async fn leave(state: &Engine, gid: String) -> Result<(), CommandError> {
+    let mut inner = state.inner.lock().await;
+    open_identity(&inner)?;
+    forget_group(&mut inner, &gid)?;
+    persist_account(&inner).map_err(|e| CommandError::new(ErrorCode::Io, e))?;
+    save_history(&inner);
+    Ok(())
+}
+
+/// `delete_group` (K10, admin only): tell every member, then forget it here.
+pub async fn delete(state: &Engine, gid: String) -> Result<(), CommandError> {
+    let change = {
+        let inner = state.inner.lock().await;
+        let identity = open_identity(&inner)?;
+        let change = plan_deletion(&inner, &identity, &gid)?;
+        check_online(&inner, &change)?;
+        change
+    };
+    send_roster(state, &change.roster, &change.targets).await;
+    let mut inner = state.inner.lock().await;
+    // Gone already if a second delete raced this one: nothing left to do.
+    if forget_group(&mut inner, &gid).is_ok() {
+        persist_account(&inner).map_err(|e| CommandError::new(ErrorCode::Io, e))?;
+        save_history(&inner);
+    }
+    Ok(())
 }
 
 #[cfg(test)]
