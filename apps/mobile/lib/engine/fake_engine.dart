@@ -414,6 +414,7 @@ class FakeTrinoEngine implements TrinoEngine {
     );
     room.messages.add(message);
     room.draft = null;
+    room.draftAt = null;
     _publish(room);
     _later(() => _setStatus(room, message.id, MessageStatus.sent));
   }
@@ -430,7 +431,10 @@ class FakeTrinoEngine implements TrinoEngine {
   Future<void> saveDraft(String chatId, String draft) async {
     final room = _rooms[chatId];
     if (room == null) return;
-    room.draft = draft.trim().isEmpty ? null : draft;
+    final words = draft.trim().isEmpty ? null : draft;
+    if (words == room.draft) return;
+    room.draft = words;
+    room.draftAt = words == null ? null : _clock();
     _publish(room);
   }
 
@@ -1037,7 +1041,7 @@ class FakeTrinoEngine implements TrinoEngine {
             lastMessage: last?.text,
             lastSender: last?.sender,
             lastIsMine: last?.outgoing ?? false,
-            lastActivity: last?.sentAt ?? room.createdAt,
+            lastActivity: _latest(last?.sentAt ?? room.createdAt, room.draftAt),
             unread: room.unread,
             draft: room.draft,
             muted: room.muted,
@@ -1045,6 +1049,8 @@ class FakeTrinoEngine implements TrinoEngine {
     ]..sort((a, b) => b.lastActivity!.compareTo(a.lastActivity!));
     _chats.value = List.unmodifiable(summaries);
   }
+
+  static DateTime _latest(DateTime a, DateTime? b) => b != null && b.isAfter(a) ? b : a;
 
   Profile _demoProfile(String name) => Profile(
     name: name,
@@ -1220,6 +1226,10 @@ class _Room {
   final messages = <ChatMessage>[];
   int unread;
   String? draft;
+
+  /// When the draft got its current words: a draft counts as activity, so
+  /// the chat moves up, as in WhatsApp.
+  DateTime? draftAt;
   bool muted = false;
 }
 

@@ -100,6 +100,25 @@ void main() {
       expect((await engine.messages(carlos.id).first).last.status, MessageStatus.sent);
     });
 
+    test('leaving a draft moves the chat to the top; clearing it puts it back', () async {
+      final before = await engine.chats.first;
+      final lucia = before.last;
+      expect(before.first.id, isNot(lucia.id));
+      await engine.saveDraft(lucia.id, 'Te llamo al rato');
+      final drafted = await engine.chats.first;
+      expect(drafted.first.id, lucia.id, reason: 'a draft counts as activity, as in WhatsApp');
+      expect(drafted.first.draft, 'Te llamo al rato');
+      expect(drafted.first.lastActivity!.isAfter(before.first.lastActivity!), isTrue);
+
+      // Opening the chat again saves the same words: that is not new activity.
+      final at = drafted.first.lastActivity;
+      await engine.saveDraft(lucia.id, 'Te llamo al rato');
+      expect((await engine.chats.first).first.lastActivity, at);
+
+      await engine.saveDraft(lucia.id, '');
+      expect((await engine.chats.first).map((c) => c.id), before.map((c) => c.id));
+    });
+
     test('keeps a draft per chat, and markRead clears the unread count', () async {
       final ana = (await engine.chats.first).first;
       await engine.saveDraft(ana.id, 'Llevo el');
