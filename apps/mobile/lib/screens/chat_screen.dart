@@ -15,10 +15,10 @@ import '../engine/engine.dart';
 import '../ui/avatar.dart';
 import '../ui/button.dart';
 import '../ui/call_event_line.dart';
+import '../ui/composer_field.dart';
 import '../ui/day_separator.dart';
 import '../ui/icon_button.dart';
 import '../ui/message_bubble.dart';
-import '../ui/text_field.dart';
 import '../ui/trust_badge.dart';
 import 'call_screen.dart';
 import 'chats_screen.dart';
@@ -348,15 +348,7 @@ class _Composer extends StatelessWidget {
               onPressed: notYet,
             ),
             Expanded(
-              child: TrinoTextField(
-                controller: controller,
-                semanticLabel: l10n.messageLabel,
-                hint: l10n.composerHint,
-                maxLines: 5,
-                keyboardType: TextInputType.multiline,
-                textInputAction: TextInputAction.newline,
-                textCapitalization: TextCapitalization.sentences,
-              ),
+              child: ComposerField(controller: controller, semanticLabel: l10n.messageLabel, hint: l10n.composerHint),
             ),
             TrinoIconButton(
               icon: TrinoIcons.smile,
@@ -366,15 +358,22 @@ class _Composer extends StatelessWidget {
             ),
             ValueListenableBuilder<TextEditingValue>(
               valueListenable: controller,
-              builder: (context, value, _) {
-                final ready = value.text.trim().isNotEmpty;
-                return TrinoIconButton(
-                  icon: TrinoIcons.send,
-                  label: l10n.send,
-                  variant: ready ? IconButtonVariant.primary : IconButtonVariant.muted,
-                  onPressed: ready ? onSend : null,
-                );
-              },
+              // As in WhatsApp and Signal: a voice message while the field is
+              // empty, and send once there is something to send. Voice
+              // messages do not exist yet, so the microphone says so.
+              builder: (context, value, _) => value.text.trim().isNotEmpty
+                  ? TrinoIconButton(
+                      icon: TrinoIcons.send,
+                      label: l10n.send,
+                      variant: IconButtonVariant.primary,
+                      onPressed: onSend,
+                    )
+                  : TrinoIconButton(
+                      icon: TrinoIcons.mic,
+                      label: l10n.voiceMessage,
+                      variant: IconButtonVariant.muted,
+                      onPressed: notYet,
+                    ),
             ),
           ],
         ),

@@ -81,6 +81,7 @@
   "composerHint": "Mensagem",
   "attach": "Anexar",
   "emojiAndStickers": "Emojis e figurinhas",
+  "voiceMessage": "Mensagem de voz",
   "send": "Enviar",
   "statusSending": "Enviando",
   "statusSent": "Enviada",

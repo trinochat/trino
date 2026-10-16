@@ -81,6 +81,7 @@
   "composerHint": "Message",
   "attach": "Attach",
   "emojiAndStickers": "Emoji and stickers",
+  "voiceMessage": "Voice message",
   "send": "Send",
   "statusSending": "Sending",
   "statusSent": "Sent",

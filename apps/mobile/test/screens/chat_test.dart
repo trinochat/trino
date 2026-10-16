@@ -7,6 +7,7 @@ import 'package:trino_mobile/screens/info/group_info_screen.dart';
 import 'package:trino_mobile/ui/avatar.dart';
 import 'package:trino_mobile/ui/call_event_line.dart';
 import 'package:trino_mobile/ui/chat_row.dart';
+import 'package:trino_mobile/ui/composer_field.dart';
 import 'package:trino_mobile/ui/day_separator.dart';
 import 'package:trino_mobile/ui/icon_button.dart';
 import 'package:trino_mobile/ui/message_bubble.dart';
@@ -119,17 +120,44 @@ void main() {
     expect(find.widgetWithText(CallEventLine, 'Llamada entrante · 12 min · 17:05'), findsOneWidget);
   });
 
-  testWidgets('the composer: attach, "Mensaje", emoji and send', (tester) async {
+  testWidgets('the composer: attach, the "Mensaje" pill, emoji and the voice message button', (tester) async {
     await pumpApp(tester);
     await openChat(tester, 'Lucía');
     expect(find.text('Mensaje'), findsOneWidget, reason: 'the hint of the field');
+    expect(find.byType(ComposerField), findsOneWidget, reason: 'the 40 dp pill, not a tall box');
     final xs = [
       tester.getCenter(find.bySemanticsLabel('Adjuntar')).dx,
       tester.getCenter(find.byType(TextField)).dx,
       tester.getCenter(find.bySemanticsLabel('Emojis y stickers')).dx,
-      tester.getCenter(find.bySemanticsLabel('Enviar')).dx,
+      tester.getCenter(find.bySemanticsLabel('Mensaje de voz')).dx,
     ];
     expect(xs, orderedEquals([...xs]..sort()), reason: 'in this order, left to right');
+  });
+
+  testWidgets('empty, the last button records a voice message; with text it sends, as in WhatsApp and Signal', (
+    tester,
+  ) async {
+    await pumpApp(tester);
+    await openChat(tester, 'Lucía');
+    expect(find.bySemanticsLabel('Mensaje de voz'), findsOneWidget);
+    expect(find.bySemanticsLabel('Enviar'), findsNothing);
+    await tester.tap(find.bySemanticsLabel('Mensaje de voz'));
+    await tester.pump();
+    expect(
+      find.text('Aún no está disponible en esta versión.'),
+      findsOneWidget,
+      reason: 'voice messages do not exist yet',
+    );
+    await tester.pumpAndSettle(const Duration(seconds: 5));
+
+    await tester.enterText(find.byType(TextField), '   ');
+    await tester.pump();
+    expect(find.bySemanticsLabel('Enviar'), findsNothing, reason: 'spaces are not a message');
+
+    await tester.enterText(find.byType(TextField), 'Hola');
+    await tester.pump();
+    expect(find.bySemanticsLabel('Enviar'), findsOneWidget);
+    expect(find.bySemanticsLabel('Mensaje de voz'), findsNothing);
   });
 
   testWidgets('a group shows who wrote each message', (tester) async {
@@ -168,16 +196,9 @@ void main() {
     expect(find.byType(GroupInfoScreen), findsOneWidget);
   });
 
-  testWidgets('the send button turns active with text, and sending adds the message', (tester) async {
+  testWidgets('with text, the send button is the main action, and sending adds the message', (tester) async {
     await pumpApp(tester);
     await openChat(tester, 'Lucía');
-    expect(sendButton(tester).onPressed, isNull);
-    expect(sendButton(tester).variant, IconButtonVariant.muted);
-
-    await tester.enterText(find.byType(TextField), '   ');
-    await tester.pump();
-    expect(sendButton(tester).onPressed, isNull, reason: 'spaces are not a message');
-
     await tester.enterText(find.byType(TextField), 'Te la mando ya');
     await tester.pump();
     expect(sendButton(tester).onPressed, isNotNull);

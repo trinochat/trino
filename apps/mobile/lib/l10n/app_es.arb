@@ -106,6 +106,8 @@
   "composerHint": "Mensaje",
   "attach": "Adjuntar",
   "emojiAndStickers": "Emojis y stickers",
+  "voiceMessage": "Mensaje de voz",
+  "@voiceMessage": {"description": "The composer's last button while the field is empty."},
   "send": "Enviar",
   "statusSending": "Enviando",
   "statusSent": "Enviado",
