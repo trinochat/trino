@@ -18,6 +18,7 @@ pub mod call_log;
 pub mod command_error;
 pub mod diag;
 mod engine;
+pub mod events;
 pub mod fsutil;
 pub mod lock;
 pub mod nostr;
