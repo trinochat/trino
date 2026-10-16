@@ -10,42 +10,14 @@
 
 use crate::command_error::{CommandError, ErrorCode};
 use crate::state::{AppState, HistItem, InnerState};
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use std::collections::HashMap;
 use tauri::{AppHandle, Emitter, State};
 use thiserror::Error;
 
-/// Who placed the call.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum CallDirection {
-    Outgoing,
-    Incoming,
-}
-
-/// How the call ended (W6, `call-outcome.ts`).
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum CallOutcome {
-    Answered,
-    Missed,
-    Declined,
-    Unanswered,
-    Cancelled,
-    Failed,
-}
-
-/// One call, as the chat history keeps it.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct CallEvent {
-    pub id: String,
-    pub direction: CallDirection,
-    pub video: bool,
-    pub outcome: CallOutcome,
-    pub duration_sec: u32,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub ttl: Option<i64>,
-}
+// The calls themselves, as the chat history keeps them, are the engine's
+// (M4-0): `HistItem` holds them.
+pub use trino_engine::call_log::{CallDirection, CallEvent, CallOutcome};
 
 /// One call of the log: the contact, and when the call started.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
@@ -271,6 +243,7 @@ mod tests {
     use crate::command_error::ErrorCode;
     use crate::identity::{create_identity, public_bundle_for};
     use crate::state::{FriendRecord, HistItem, InnerState};
+    use serde::Deserialize;
     use serde_json::json;
 
     const NOW: i64 = 1_760_000_000;

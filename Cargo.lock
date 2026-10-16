@@ -8016,6 +8016,8 @@ dependencies = [
 name = "trino-engine"
 version = "0.1.0"
 dependencies = [
+ "dirs 5.0.1",
+ "serde",
  "thiserror 1.0.69",
  "trino-core",
  "zeroize",

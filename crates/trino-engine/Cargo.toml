@@ -19,5 +19,9 @@ test-util = []
 [dependencies]
 # Protocol and cryptography, at the same commit as the app's (Cargo.lock).
 trino-core = { git = "https://github.com/trinochat/trino-core", rev = "3421e168c94da92d21234e1a8c1587d552b0002b" }
+serde = { version = "1", features = ["derive"] }
+# The data folder, ~/.trino, unless TRINO_HOME or the mobile sandbox says
+# otherwise (state.rs).
+dirs = "5"
 thiserror = "1"
 zeroize = { version = "1", features = ["derive"] }
