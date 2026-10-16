@@ -15,6 +15,7 @@ import '../l10n/app_localizations.dart';
 import '../ui/avatar.dart';
 import '../ui/chat_row.dart';
 import '../ui/icon_button.dart';
+import '../ui/swipe_actions.dart';
 import '../ui/text_field.dart';
 import '../ui/trust_badge.dart';
 import '../ui/underline_tabs.dart';
@@ -143,30 +144,32 @@ class _ChatsScreenState extends State<ChatsScreen> {
                   final chats = _visible(all);
                   final requestCount = requests.data?.length ?? 0;
                   final showRequests = requestCount > 0 && _filter == ChatFilter.all && _query.isEmpty;
-                  return ListView(
-                    padding: const EdgeInsets.only(top: 4),
-                    children: [
-                      if (showRequests)
-                        _RequestsRow(
-                          key: ChatsScreen.requestsRowKey,
-                          label: l10n.requestsRow(requestCount),
-                          onTap: _openRequests,
-                        ),
-                      if (chats.isEmpty)
-                        Padding(
-                          padding: const EdgeInsets.all(24),
-                          child: Text(
-                            all.isEmpty
-                                ? l10n.noChats
-                                : _query.isNotEmpty
-                                ? l10n.searchEmpty
-                                : l10n.filterEmpty,
-                            textAlign: TextAlign.center,
-                            style: context.text.secondary,
+                  return SwipeGroup(
+                    child: ListView(
+                      padding: const EdgeInsets.only(top: 4),
+                      children: [
+                        if (showRequests)
+                          _RequestsRow(
+                            key: ChatsScreen.requestsRowKey,
+                            label: l10n.requestsRow(requestCount),
+                            onTap: _openRequests,
                           ),
-                        ),
-                      for (final chat in chats) _row(context, chat),
-                    ],
+                        if (chats.isEmpty)
+                          Padding(
+                            padding: const EdgeInsets.all(24),
+                            child: Text(
+                              all.isEmpty
+                                  ? l10n.noChats
+                                  : _query.isNotEmpty
+                                  ? l10n.searchEmpty
+                                  : l10n.filterEmpty,
+                              textAlign: TextAlign.center,
+                              style: context.text.secondary,
+                            ),
+                          ),
+                        for (final chat in chats) _row(context, chat),
+                      ],
+                    ),
                   );
                 },
               ),
@@ -181,24 +184,48 @@ class _ChatsScreenState extends State<ChatsScreen> {
     final l10n = context.l10n;
     final draft = chat.draft;
     final activity = chat.lastActivity;
-    return ChatRow(
+    final actions = chatActionsOf(chat, l10n);
+    SwipeAction swipe(ChatActionKind kind) {
+      final action = actions.firstWhere((action) => action.kind == kind);
+      final t = context.tokens;
+      final (background, foreground) = switch (action.tone) {
+        ChatActionTone.accent => (t.accentSoft, t.accentText),
+        ChatActionTone.neutral => (t.raised, t.ink),
+        ChatActionTone.danger => (t.dangerBg, t.danger),
+      };
+      return SwipeAction(
+        icon: action.icon,
+        label: action.shortLabel,
+        background: background,
+        foreground: foreground,
+        onPressed: () => unawaited(_perform(chat, kind)),
+      );
+    }
+
+    // From each edge inwards: a long swipe does the first, "No leído" or
+    // "Borrar" (which still asks).
+    return SwipeActions(
       key: ValueKey(chat.id),
-      name: chat.title,
-      avatarKind: chat.isGroup ? AvatarKind.group : AvatarKind.person,
-      trust: trustOf(chat, l10n),
-      draftPrefix: draft == null ? null : l10n.draftPrefix,
-      preview: draft ?? previewOf(chat, l10n),
-      time: activity == null ? null : formatChatTime(context, activity, context.now()),
-      unread: chat.unread > 0 ? (count: chat.unread, label: l10n.unreadCount(chat.unread)) : null,
-      markedUnreadLabel: chat.markedUnread ? l10n.chatMarkedUnread : null,
-      pinnedLabel: chat.pinned ? l10n.chatPinned : null,
-      onTap: () => Navigator.of(context).push(ChatScreen.route(chat)),
-      onLongPress: () => unawaited(_openActions(chat)),
-      longPressHint: l10n.chatMoreOptions,
-      actions: {
-        for (final action in chatActionsOf(chat, l10n))
-          CustomSemanticsAction(label: action.label): () => unawaited(_perform(chat, action.kind)),
-      },
+      startActions: [swipe(ChatActionKind.read), swipe(ChatActionKind.pin)],
+      endActions: [swipe(ChatActionKind.delete), if (chat.isGroup) swipe(ChatActionKind.mute)],
+      child: ChatRow(
+        name: chat.title,
+        avatarKind: chat.isGroup ? AvatarKind.group : AvatarKind.person,
+        trust: trustOf(chat, l10n),
+        draftPrefix: draft == null ? null : l10n.draftPrefix,
+        preview: draft ?? previewOf(chat, l10n),
+        time: activity == null ? null : formatChatTime(context, activity, context.now()),
+        unread: chat.unread > 0 ? (count: chat.unread, label: l10n.unreadCount(chat.unread)) : null,
+        markedUnreadLabel: chat.markedUnread ? l10n.chatMarkedUnread : null,
+        pinnedLabel: chat.pinned ? l10n.chatPinned : null,
+        onTap: () => Navigator.of(context).push(ChatScreen.route(chat)),
+        onLongPress: () => unawaited(_openActions(chat)),
+        longPressHint: l10n.chatMoreOptions,
+        actions: {
+          for (final action in actions)
+            CustomSemanticsAction(label: action.label): () => unawaited(_perform(chat, action.kind)),
+        },
+      ),
     );
   }
 

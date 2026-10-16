@@ -9,6 +9,7 @@ import 'package:trino_mobile/ui/avatar.dart';
 import 'package:trino_mobile/ui/button.dart';
 import 'package:trino_mobile/ui/chat_row.dart';
 import 'package:trino_mobile/ui/list_row.dart';
+import 'package:trino_mobile/ui/swipe_actions.dart';
 import 'package:trino_mobile/ui/text_field.dart';
 import 'package:trino_mobile/ui/underline_tabs.dart';
 
@@ -437,6 +438,101 @@ void main() {
       await tester.sendKeyUpEvent(LogicalKeyboardKey.shiftLeft);
       await tester.pumpAndSettle();
       expect(inSheet('Lucía'), findsOneWidget);
+    });
+  });
+
+  group('swiping a chat', () {
+    Finder action(String label) => find.bySemanticsLabel(label);
+    Material materialOf(WidgetTester tester, String label) =>
+        tester.widget<Material>(find.ancestor(of: find.text(label), matching: find.byType(Material)).first);
+
+    Future<void> swipe(WidgetTester tester, String name, double dx) async {
+      await tester.drag(rowOf(name), Offset(dx, 0));
+      await tester.pumpAndSettle();
+    }
+
+    testWidgets('to the right: "No leído" in the soft accent and "Fijar" in grey', (tester) async {
+      await pumpApp(tester);
+      final t = tokensIn(tester);
+      await swipe(tester, 'Lucía', 120);
+      expect(tester.getSemantics(action('No leído')), isSemantics(isButton: true, hasTapAction: true));
+      expect(tester.getSemantics(action('Fijar')), isSemantics(isButton: true, hasTapAction: true));
+      expect(materialOf(tester, 'No leído').color, t.accentSoft);
+      expect(colorOfText(tester, 'No leído'), t.accentText);
+      expect(materialOf(tester, 'Fijar').color, t.raised);
+      expect(colorOfText(tester, 'Fijar'), t.ink);
+      expect(tester.getCenter(find.text('No leído')).dx, lessThan(tester.getCenter(find.text('Fijar')).dx));
+      await tester.tap(find.text('Fijar'));
+      await tester.pumpAndSettle();
+      expect(tester.widgetList<ChatRow>(find.byType(ChatRow)).first.name, 'Lucía');
+    });
+
+    testWidgets('an unread chat says "Leído" with the open envelope, and a pinned one "Desfijar"', (tester) async {
+      final app = await pumpApp(tester);
+      await app.engine.setChatPinned('chat-ana', true);
+      await tester.pumpAndSettle();
+      await swipe(tester, 'Ana Torres', 120);
+      expect(action('Leído'), findsOneWidget);
+      expect(action('Desfijar'), findsOneWidget);
+      expect(
+        find.ancestor(
+          of: find.byWidgetPredicate((w) => w is TrinoIcon && w.icon == TrinoIcons.mailOpen),
+          matching: find.byType(SwipeActions),
+        ),
+        findsOneWidget,
+      );
+      await tester.tap(find.text('Leído'));
+      await tester.pumpAndSettle();
+      expect(tester.widget<ChatRow>(rowOf('Ana Torres')).unread, isNull);
+    });
+
+    testWidgets('to the left on a group: "Silenciar" in grey and "Borrar" in red, at the edge', (tester) async {
+      final app = await pumpApp(tester);
+      final t = tokensIn(tester);
+      await swipe(tester, 'Familia', -120);
+      expect(materialOf(tester, 'Silenciar').color, t.raised);
+      expect(materialOf(tester, 'Borrar').color, t.dangerBg);
+      expect(colorOfText(tester, 'Borrar'), t.danger);
+      expect(tester.getCenter(find.text('Borrar')).dx, greaterThan(tester.getCenter(find.text('Silenciar')).dx));
+      await tester.tap(find.text('Silenciar'));
+      await tester.pumpAndSettle();
+      expect((await app.engine.chats.first).firstWhere((c) => c.id == 'chat-familia').muted, isTrue);
+      await swipe(tester, 'Familia', -120);
+      expect(action('Activar sonido'), findsOneWidget);
+    });
+
+    testWidgets('to the left on a contact: only "Borrar", and it asks first', (tester) async {
+      await pumpApp(tester);
+      await swipe(tester, 'Lucía', -120);
+      expect(find.text('Silenciar'), findsNothing);
+      await tester.tap(find.text('Borrar'));
+      await tester.pumpAndSettle();
+      expect(find.text('¿Borrar el chat con Lucía?'), findsOneWidget);
+      await tester.tap(find.text('Cancelar'));
+      await tester.pumpAndSettle();
+      expect(rowOf('Lucía'), findsOneWidget);
+    });
+
+    testWidgets('a long swipe right marks unread; a long swipe left asks to delete', (tester) async {
+      await pumpApp(tester);
+      await swipe(tester, 'Lucía', 300);
+      expect(tester.widget<ChatRow>(rowOf('Lucía')).markedUnreadLabel, 'Marcado como no leído');
+      await swipe(tester, 'Lucía', -300);
+      expect(find.text('¿Borrar el chat con Lucía?'), findsOneWidget);
+    });
+
+    testWidgets('one row open at a time, and a tap on the open row closes it without opening the chat', (tester) async {
+      await pumpApp(tester);
+      await swipe(tester, 'Lucía', 120);
+      await swipe(tester, 'Familia', -120);
+      expect(find.text('No leído'), findsNothing);
+      expect(find.text('Borrar'), findsOneWidget);
+      // The name slid off the screen; the rest of the row is still there.
+      await tester.tap(rowOf('Familia'));
+      await tester.pumpAndSettle();
+      expect(find.text('Borrar'), findsNothing);
+      expect(find.byType(ChatsScreen), findsOneWidget);
+      expect(find.text('Mensaje'), findsNothing, reason: 'the chat did not open');
     });
   });
 
