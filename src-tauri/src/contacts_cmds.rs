@@ -15,9 +15,6 @@ use std::collections::HashMap;
 use tauri::State;
 pub(crate) use trino_engine::contacts::{check_local_handle, not_found, sealed};
 
-/// How long `contact-key-mismatch` stays quiet for a contact once it fired.
-pub(crate) const KEY_MISMATCH_QUIET_SECS: i64 = 600;
-
 /// A contact code whose keys its identity key signed (K8).
 #[derive(Clone, Debug)]
 pub(crate) struct ContactCode {
@@ -45,12 +42,6 @@ pub struct ExistingContact {
     /// It has exactly the code's keys. Otherwise it has the code's name, or
     /// shares only some of its keys.
     pub same_keys: bool,
-}
-
-/// A handshake from a contact came with other keys than the pinned ones.
-#[derive(Serialize, Clone)]
-pub struct ContactKeyMismatchEvent {
-    pub handle: String,
 }
 
 /// What `add_contact` did.
@@ -367,23 +358,6 @@ pub(crate) fn acknowledge(inner: &mut InnerState, handle: &str) -> Result<bool, 
     friend.previous_fingerprint = None;
     friend.key_changed_at = None;
     Ok(had_change)
-}
-
-/// Whether a handshake with other keys from `handle` raises
-/// `contact-key-mismatch` now: at most once every `KEY_MISMATCH_QUIET_SECS`
-/// per contact. A clock that went back counts as time passed.
-pub(crate) fn should_report_key_mismatch(
-    last: &mut HashMap<String, i64>,
-    handle: &str,
-    now: i64,
-) -> bool {
-    if let Some(&at) = last.get(handle) {
-        if (at..at + KEY_MISMATCH_QUIET_SECS).contains(&now) {
-            return false;
-        }
-    }
-    last.insert(handle.to_string(), now);
-    true
 }
 
 /// Check a pasted contact code without saving anything (K8).
@@ -1111,27 +1085,6 @@ mod tests {
 
         assert_eq!(file.friends[0].previous_fingerprint, None);
         assert_eq!(file.friends[0].key_changed_at, None);
-    }
-
-    #[test]
-    fn a_key_mismatch_is_reported_at_most_once_every_ten_minutes_per_contact() {
-        let mut last = HashMap::new();
-        assert!(should_report_key_mismatch(&mut last, "ana", NOW));
-        assert!(!should_report_key_mismatch(&mut last, "ana", NOW + 1));
-        assert!(!should_report_key_mismatch(
-            &mut last,
-            "ana",
-            NOW + KEY_MISMATCH_QUIET_SECS - 1
-        ));
-        assert!(
-            should_report_key_mismatch(&mut last, "bob", NOW + 1),
-            "per contact"
-        );
-        assert!(should_report_key_mismatch(
-            &mut last,
-            "ana",
-            NOW + KEY_MISMATCH_QUIET_SECS
-        ));
     }
 
     // ---- K12: what a contact shares ----

@@ -61,6 +61,14 @@ mod tests {
                 "engine/session.rs",
                 include_str!("../../crates/trino-engine/src/session.rs"),
             ),
+            (
+                "engine/profile.rs",
+                include_str!("../../crates/trino-engine/src/profile.rs"),
+            ),
+            (
+                "engine/contacts.rs",
+                include_str!("../../crates/trino-engine/src/contacts.rs"),
+            ),
         ] {
             assert!(
                 emits_only_through_the_sink(source),

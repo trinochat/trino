@@ -376,34 +376,6 @@ pub(super) fn status_of(inner: &InnerState, home: &Path, vault: &Path) -> Status
     }
 }
 
-/// Wipe the names in memory where it is cheap: this identity's, its
-/// contacts' and its groups' (design §7.2). The maps are left empty.
-pub(super) fn zeroize_names(inner: &mut InnerState) {
-    fn zeroize_roster(roster: &mut GroupRoster) {
-        roster.name.zeroize();
-        for member in &mut roster.members {
-            member.handle.zeroize();
-        }
-    }
-    if let Some(handle) = inner.handle.as_mut() {
-        handle.zeroize();
-    }
-    for (mut name, mut friend) in inner.friends.drain() {
-        name.zeroize();
-        friend.handle.zeroize();
-    }
-    for (_, mut roster) in inner.groups.drain() {
-        zeroize_roster(&mut roster);
-    }
-    for (_, mut invite) in inner.group_invites.drain() {
-        zeroize_roster(&mut invite.roster);
-        invite.from_handle.zeroize();
-    }
-    for mut key in inner.blocked.drain() {
-        key.zeroize();
-    }
-}
-
 /// Whether the TOTP flag of a version 1 vault, which nothing authenticates,
 /// says otherwise than what the vault holds (design §4.9). A version 2
 /// vault authenticates it.
@@ -998,10 +970,12 @@ pub async fn legacy_files_remove(
 mod tests {
     use super::*;
     use crate::fsutil::scratch::ScratchDir;
+    use crate::group;
     use crate::group::MemberBundle;
     use crate::state::{FriendRecord, GroupInvite};
     use crate::store::session::legacy_seal;
     use crate::store::session::testing::{reopen, store_cell};
+    use trino_engine::storage::zeroize_names;
 
     const NOW: i64 = 1_760_000_000;
     const PASSPHRASE: &str = "correct horse battery staple";

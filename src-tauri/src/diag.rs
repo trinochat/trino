@@ -98,7 +98,7 @@ mod tests {
     /// The files that log: the commands module with its child modules (the
     /// contacts, groups, history and profile commands), what moved from them
     /// into the engine, and the relay client.
-    const LOGGING_SOURCES: [(&str, &str); 8] = [
+    const LOGGING_SOURCES: [(&str, &str); 9] = [
         ("commands.rs", include_str!("commands.rs")),
         ("contacts_cmds.rs", include_str!("contacts_cmds.rs")),
         ("groups_cmds.rs", include_str!("groups_cmds.rs")),
@@ -112,6 +112,10 @@ mod tests {
         (
             "engine/session.rs",
             include_str!("../../crates/trino-engine/src/session.rs"),
+        ),
+        (
+            "engine/profile.rs",
+            include_str!("../../crates/trino-engine/src/profile.rs"),
         ),
         (
             "nostr.rs",
