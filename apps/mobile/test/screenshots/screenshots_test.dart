@@ -13,6 +13,7 @@ import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:trino_mobile/design/appearance.dart';
+import 'package:trino_mobile/ui/swipe_actions.dart';
 
 import '../support/app_harness.dart';
 
@@ -324,6 +325,23 @@ void main() {
       await shot(tester, '$name-51-notif-calls');
       await tapText('Tono de llamada');
       await shot(tester, '$name-52-notif-ringtone');
+    }, skip: skip != false);
+
+    testWidgets('pinning, swiping and the actions of a chat in $name', (tester) async {
+      final engine = testEngine();
+      await engine.setChatPinned('chat-lucia', true);
+      await engine.markUnread('chat-carlos');
+      await pumpApp(tester, engine: engine, appearance: appearance);
+      await shot(tester, '$name-53-chats-pinned');
+      Finder row(String name) => find.ancestor(of: find.text(name), matching: find.byType(SwipeActions));
+      await tester.drag(row('Ana Torres'), const Offset(120, 0));
+      await shot(tester, '$name-54-chat-swiped-right');
+      await tester.drag(row('Familia'), const Offset(-120, 0));
+      await shot(tester, '$name-55-chat-swiped-left');
+      await tester.tapAt(const Offset(195, 700));
+      await tester.pumpAndSettle();
+      await tester.longPress(row('Familia'));
+      await shot(tester, '$name-56-chat-actions-sheet');
     }, skip: skip != false);
 
     testWidgets('the unlock screen with the fingerprint in $name', (tester) async {
