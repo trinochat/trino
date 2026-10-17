@@ -31,6 +31,24 @@ describe('splitLinks', () => {
     expect(splitLinks(`Lee ${url}, es corto`)[1]).toEqual({ text: url, url });
   });
 
+  // TRN-APP-01: trimming used to recount every parenthesis for each character
+  // it removed, so one message of closing parentheses froze the chat for seconds.
+  it('TRN-APP-01: trims a long run of closing parentheses in linear time', () => {
+    const text = 'https://a.co/' + ')'.repeat(30_000);
+    const start = performance.now();
+    const parts = splitLinks(text);
+    expect(performance.now() - start).toBeLessThan(200);
+    expect(parts[0]).toEqual({ text: 'https://a.co/', url: 'https://a.co/' });
+    expect(parts.map(part => part.text).join('')).toBe(text);
+  });
+
+  it('TRN-APP-01: leaves an address longer than the backend accepts as plain text', () => {
+    const text = `Mira https://example.org/${'a'.repeat(4_096)} hoy`;
+    expect(splitLinks(text)).toEqual([{ text }]);
+    const fits = `https://example.org/${'a'.repeat(4_096 - 'https://example.org/'.length)}`;
+    expect(splitLinks(fits)).toEqual([{ text: fits, url: fits }]);
+  });
+
   it('makes links of the web only: no other scheme', () => {
     for (const text of ['javascript:alert(1)', 'ftp://example.com/a', 'file:///C:/x', 'mailto:ana@example.com']) {
       expect(splitLinks(text), text).toEqual([{ text }]);
