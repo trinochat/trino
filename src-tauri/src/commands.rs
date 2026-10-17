@@ -1252,4 +1252,85 @@ mod tests {
             trino_net::NetStatus::Direct
         );
     }
+
+    // ---- M4-0c: the engine's logic lives in the engine ----
+
+    /// The functions of the four clusters M4-0c moved into trino-engine
+    /// (the session and its receive loop, sending, groups and handshakes,
+    /// opening the account) are defined there and nowhere in the app: a
+    /// copy here would be a second engine, which the phones would not get.
+    /// The app's commands call them, under the same names.
+    #[test]
+    fn the_engines_logic_is_not_defined_in_the_app() {
+        const MOVED: [&str; 24] = [
+            "handle_incoming_event",
+            "connect_relays",
+            "start_relay_connections",
+            "seal_for",
+            "publish_sealed",
+            "ensure_session",
+            "save_ratchets",
+            "record_history",
+            "send_text",
+            "send_group_text",
+            "fan_out",
+            "announce_file",
+            "forward_to",
+            "admit_event",
+            "judge_handshake",
+            "respond_to_handshake",
+            "ingest_incoming_roster",
+            "merge_group_members",
+            "apply_and_send",
+            "open_session",
+            "create_account",
+            "unlock_files",
+            "forge_identity",
+            "load_session",
+        ];
+        fn sources(dir: &std::path::Path, found: &mut Vec<std::path::PathBuf>) {
+            for entry in std::fs::read_dir(dir).unwrap() {
+                let path = entry.unwrap().path();
+                if path.is_dir() {
+                    sources(&path, found);
+                } else if path.extension().is_some_and(|e| e == "rs") {
+                    found.push(path);
+                }
+            }
+        }
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let mut files = Vec::new();
+        sources(&root.join("src"), &mut files);
+        assert!(files.len() > 20, "the sources were not found");
+        for file in files {
+            let source = std::fs::read_to_string(&file).unwrap();
+            let code: String = source.split_whitespace().collect();
+            for name in MOVED {
+                assert!(
+                    !code.contains(&format!("fn{name}(")),
+                    "{} defines {name}, the engine's",
+                    file.display()
+                );
+            }
+        }
+        // And the engine does define each of them.
+        let engine = root.join("../crates/trino-engine/src");
+        let mut engine_files = Vec::new();
+        sources(&engine, &mut engine_files);
+        let engine: String = engine_files
+            .iter()
+            .map(|file| std::fs::read_to_string(file).unwrap())
+            .collect::<String>()
+            .split_whitespace()
+            .collect();
+        for name in MOVED
+            .into_iter()
+            .filter(|name| *name != "start_relay_connections")
+        {
+            assert!(
+                engine.contains(&format!("fn{name}(")),
+                "the engine lost {name}"
+            );
+        }
+    }
 }
