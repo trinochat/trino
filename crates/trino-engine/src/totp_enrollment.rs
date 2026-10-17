@@ -18,10 +18,17 @@ use zeroize::Zeroizing;
 pub const TOTP_ISSUER: &str = "trino";
 
 /// What the user adds to their authenticator app: as a QR code, or typed in.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[derive(Clone, PartialEq, Eq, Serialize)]
 pub struct TotpBeginResponse {
     pub otpauth_uri: String,
     pub secret_base32: String,
+}
+
+/// Debug without the secret, which the otpauth URI carries too (TRN-CORE-05).
+impl std::fmt::Debug for TotpBeginResponse {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("TotpBeginResponse").finish_non_exhaustive()
+    }
 }
 
 /// The TOTP secret being set up, if any.
@@ -88,6 +95,16 @@ impl TotpEnrollment {
 mod tests {
     use super::*;
     use crate::totp::{totp_code, totp_now};
+
+    /// TRN-CORE-05: the TOTP secret, and the otpauth URI that carries it,
+    /// never show in Debug.
+    #[test]
+    fn trn_core_05_the_totp_secret_does_not_print() {
+        let begun = TotpEnrollment::default().begin("ana");
+        let shown = format!("{begun:?} {begun:#?}");
+        assert!(!shown.contains(&begun.secret_base32), "{shown}");
+        assert!(!shown.contains("otpauth"), "{shown}");
+    }
 
     fn pending_secret(enrollment: &TotpEnrollment) -> Vec<u8> {
         enrollment

@@ -85,7 +85,7 @@ pub(crate) fn lyrebird() -> Option<PtLauncher> {
 }
 
 /// What the person chose (TOR-8's screens).
-#[derive(Debug, Deserialize)]
+#[derive(Deserialize)]
 #[serde(tag = "kind", rename_all = "camelCase")]
 pub enum BridgeChoice {
     /// Straight to Tor.
@@ -94,6 +94,21 @@ pub enum BridgeChoice {
     Builtin { transport: TransportKind },
     /// Pasted lines, the person's private bridges.
     Private { text: String },
+}
+
+/// Debug without the private bridges' lines (TRN-CORE-05): their addresses
+/// and certificates are what keeps them unblocked.
+impl std::fmt::Debug for BridgeChoice {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            BridgeChoice::None => f.write_str("None"),
+            BridgeChoice::Builtin { transport } => f
+                .debug_struct("Builtin")
+                .field("transport", transport)
+                .finish(),
+            BridgeChoice::Private { .. } => f.debug_struct("Private").finish_non_exhaustive(),
+        }
+    }
 }
 
 /// A pasted line that is not a bridge, by its number (from 1; 0 for the
@@ -392,6 +407,18 @@ pub(crate) mod tests {
     use crate::fsutil::scratch::ScratchDir;
     use crate::net_cmds::tests::{becomes, fake_tor};
     use std::collections::BTreeMap;
+
+    /// TRN-CORE-05: a person's private bridges never show in Debug.
+    #[test]
+    fn trn_core_05_private_bridges_do_not_print() {
+        let choice = BridgeChoice::Private {
+            text: "obfs4 192.0.2.7:443 0123456789ABCDEF0123456789ABCDEF01234567 cert=SeCrEtCeRt iat-mode=0".into(),
+        };
+        let shown = format!("{choice:?} {choice:#?}");
+        assert!(!shown.contains("192.0.2.7"), "{shown}");
+        assert!(!shown.contains("SeCrEtCeRt"), "{shown}");
+        assert!(shown.contains("Private"), "{shown}");
+    }
     use trino_engine::bridges::keep_first_run_lines;
     use trino_engine::storage::{apply_loaded, load_session};
     use trino_net::{BridgeError, NetStatus, PtLauncher, StartWhen, TorSettings, TransportKind};

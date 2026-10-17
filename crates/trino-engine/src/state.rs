@@ -149,7 +149,7 @@ pub struct HandshakeMark {
     pub ek_pubs: Vec<String>,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct HistItem {
     pub side: String, // "me" | "them"
     #[serde(skip_serializing_if = "Option::is_none", default)]
@@ -184,6 +184,23 @@ pub struct FriendRecord {
     /// with its code.
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub via_group: Option<String>,
+}
+
+/// Debug without the message's text or its file (TRN-CORE-05): the file's
+/// key and thumbnail are the attachment's secrets, and the text is the
+/// message. What shows is that they are there.
+impl std::fmt::Debug for HistItem {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let hidden = |there: bool| there.then_some("<redacted>");
+        f.debug_struct("HistItem")
+            .field("side", &self.side)
+            .field("from", &self.from)
+            .field("text", &hidden(self.text.is_some()))
+            .field("file", &hidden(self.file.is_some()))
+            .field("call", &self.call)
+            .field("ts", &self.ts)
+            .finish()
+    }
 }
 
 /// A signed roster for a group we are not in yet, held until the user accepts
@@ -314,6 +331,37 @@ pub fn relays_to_use(account: &[String]) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// TRN-CORE-05: a derived Debug printed a message's text and its file's
+    /// key, so one log line or panic would have written them to disk.
+    #[test]
+    fn trn_core_05_a_history_item_does_not_print_its_text_or_file_key() {
+        let key = "ab".repeat(32);
+        let item = HistItem {
+            side: "them".into(),
+            from: Some("ana".into()),
+            text: Some("la clave es girasol".into()),
+            file: Some(FileRef {
+                url: "https://blossom.example/abc".into(),
+                key: key.clone(),
+                sha256: "0".repeat(64),
+                mime: "image/png".into(),
+                name: "foto.png".into(),
+                size: 1,
+                thumb: Some("data:image/png;base64,iVBORw0KGgo=".into()),
+            }),
+            call: None,
+            ts: 1_760_000_000,
+        };
+        let shown = format!("{item:?} {item:#?}");
+        assert!(!shown.contains("girasol"), "{shown}");
+        assert!(!shown.contains(&key), "{shown}");
+        assert!(!shown.contains("iVBORw0KGgo"), "{shown}");
+        assert!(
+            shown.contains("1760000000"),
+            "the rest still shows: {shown}"
+        );
+    }
 
     /// Tor design decision 13, as updated on 14 Oct 2026 (spike S6).
     #[test]
