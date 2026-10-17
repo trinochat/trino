@@ -144,13 +144,52 @@ pub fn sanitized_inline_raster(value: Option<String>) -> Option<String> {
     checked_inline_raster(value).ok().flatten()
 }
 
+/// The longest file name kept, in Unicode scalar values: what most file
+/// systems take.
+pub const FILE_NAME_MAX_CHARS: usize = 255;
+/// The name of a file whose own name shows nothing.
+pub const FILE_NAME_FALLBACK: &str = "archivo";
+/// The longest extension kept whole when a long file name is cut.
+const EXTENSION_MAX_CHARS: usize = 16;
+
+/// A file name a peer sent, as it can be shown and saved (TRN-APP-03): no
+/// control or format character, so a right-to-left override cannot make
+/// "factura\u{202E}fdp.exe" read as a PDF, and at most `FILE_NAME_MAX_CHARS`
+/// long. A long name is cut before its extension, so the extension shown is
+/// the real one.
+pub fn shown_file_name(name: &str) -> String {
+    let clean = profile::shown_name(name, usize::MAX, FILE_NAME_FALLBACK);
+    if clean.chars().count() <= FILE_NAME_MAX_CHARS {
+        return clean;
+    }
+    let extension = clean
+        .rsplit_once('.')
+        .map(|(_, extension)| extension)
+        .filter(|extension| (1..=EXTENSION_MAX_CHARS).contains(&extension.chars().count()));
+    match extension {
+        Some(extension) => {
+            let stem = FILE_NAME_MAX_CHARS - 1 - extension.chars().count();
+            let head: String = clean.chars().take(stem).collect();
+            format!("{head}.{extension}")
+        }
+        None => clean.chars().take(FILE_NAME_MAX_CHARS).collect(),
+    }
+}
+
 pub fn sanitize_file_ref(mut file: FileRef) -> FileRef {
     file.thumb = sanitized_inline_raster(file.thumb);
+    file.name = shown_file_name(&file.name);
     file
 }
 
+/// A roster as it can be kept: only its photo's thumbnail is cleaned. Its
+/// name and its photo's name are signed by the admin and stay as signed, so
+/// the roster still verifies when it is sent on; they are cleaned where they
+/// are shown (`groups::group_info`, TRN-APP-03).
 pub fn sanitize_roster(mut roster: GroupRoster) -> GroupRoster {
-    roster.photo = roster.photo.map(sanitize_file_ref);
+    if let Some(photo) = roster.photo.as_mut() {
+        photo.thumb = sanitized_inline_raster(photo.thumb.take());
+    }
     roster
 }
 
@@ -1955,6 +1994,49 @@ pub(crate) mod tests {
             !code.contains("unwrap_or_else(|_| vec!"),
             "a derivation failure is swallowed"
         );
+    }
+
+    fn file_named(name: &str) -> FileRef {
+        FileRef {
+            url: String::new(),
+            key: String::new(),
+            sha256: "0".repeat(64),
+            mime: "application/octet-stream".into(),
+            name: name.into(),
+            size: 1,
+            thumb: None,
+        }
+    }
+
+    /// TRN-APP-03: a right-to-left override made "factura\u{202E}fdp.exe"
+    /// read as a PDF. A peer's file name loses control and format characters,
+    /// as a contact's name is held to them, so the extension shown is the
+    /// real one.
+    #[test]
+    fn trn_app_03_incoming_file_names_lose_bidi_controls() {
+        let file = sanitize_file_ref(file_named("factura\u{202E}fdp.exe"));
+        assert!(!file.name.contains('\u{202E}'));
+        assert_eq!(file.name, "facturafdp.exe");
+        let mixed = sanitize_file_ref(file_named("a\u{2066}b\u{0}c\nd\u{2069}.txt"));
+        assert_eq!(mixed.name, "abcd.txt");
+        // The two joiners stay: emoji such as 👩‍💻 need them.
+        let emoji = sanitize_file_ref(file_named("👩\u{200D}💻.png"));
+        assert_eq!(emoji.name, "👩\u{200D}💻.png");
+        // A name that shows nothing is still a name to save under.
+        assert_eq!(
+            sanitize_file_ref(file_named("\u{202E}\u{200B}")).name,
+            "archivo"
+        );
+        assert_eq!(sanitize_file_ref(file_named("")).name, "archivo");
+    }
+
+    #[test]
+    fn trn_app_03_a_long_file_name_is_capped_and_keeps_its_extension() {
+        let name = sanitize_file_ref(file_named(&format!("{}.exe", "a".repeat(1000)))).name;
+        assert_eq!(name.chars().count(), 255);
+        assert!(name.ends_with("a.exe"), "{name}");
+        let plain = sanitize_file_ref(file_named(&"b".repeat(1000))).name;
+        assert_eq!(plain, "b".repeat(255));
     }
 
     #[test]

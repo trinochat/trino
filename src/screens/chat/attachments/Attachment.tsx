@@ -16,6 +16,7 @@ import { CircleAlert, Download, FileText, Play } from 'lucide-react';
 import { useEffect, useImperativeHandle, useLayoutEffect, useRef, useState, type Ref } from 'react';
 import type { FileRef } from '../../../lib/api';
 import { pngOf } from '../../../lib/clipboard-image';
+import { fileExtension, shownFileName } from '../../../lib/file-name';
 import type { Lang } from '../../../lib/i18n';
 import { useT } from '../../../lib/i18n';
 import { useLang } from '../../../lib/i18n-context';
@@ -157,6 +158,10 @@ function FileCard({ file, kind, mine, fetchFile, ref }: AttachmentProps & { kind
   const full = useRef<Promise<string> | null>(null);
   const preview = kind === 'file' ? undefined : safeInlineRasterSrc(file.thumb);
   const muted = mine ? 'text-ui-bubble-me-muted' : 'text-ui-muted';
+  // Shown and saved without bidi or control characters, with the real
+  // extension on its own beside the size (TRN-APP-03).
+  const name = shownFileName(file.name);
+  const extension = preview ? undefined : fileExtension(name);
 
   /** The whole file, fetched once; a failure lets the next try fetch again. */
   const getFull = () => {
@@ -185,7 +190,7 @@ function FileCard({ file, kind, mine, fetchFile, ref }: AttachmentProps & { kind
       if (safe) setViewing(safe);
       else setProblem('unsafe');
     });
-  const download = () => run(url => saveAs(url, file.name));
+  const download = () => run(url => saveAs(url, name));
   /** The whole picture, never more than the viewer would show, drawn as a PNG. */
   const copyImage = () =>
     getFull().then(url => {
@@ -195,7 +200,7 @@ function FileCard({ file, kind, mine, fetchFile, ref }: AttachmentProps & { kind
     });
   useImperativeHandle(ref, () => ({
     kind,
-    name: file.name,
+    name,
     download,
     ...(preview ? { view } : {}),
     ...(preview && kind === 'image' ? { copyImage } : {}),
@@ -208,7 +213,7 @@ function FileCard({ file, kind, mine, fetchFile, ref }: AttachmentProps & { kind
         <button
           type="button"
           onClick={view}
-          aria-label={t('media.view', { name: file.name })}
+          aria-label={t('media.view', { name })}
           className={cx('relative block self-start overflow-hidden rounded-ui', BUBBLE_RING)}
         >
           <img src={preview} alt="" className="block max-h-52 max-w-[13.75rem] object-contain" />
@@ -224,16 +229,19 @@ function FileCard({ file, kind, mine, fetchFile, ref }: AttachmentProps & { kind
       <div className="flex min-w-0 flex-wrap items-center gap-x-2">
         {!preview && <FileText {...iconSize('lg', 'shrink-0')} aria-hidden="true" />}
         <span className="flex min-w-0 flex-1 flex-col">
-          {!preview && <span className="font-semibold [overflow-wrap:anywhere]">{file.name}</span>}
-          <span className={cx('text-ui-sm', muted)}>
-            {busy ? `${sizeText(file.size, lang)} · ${t('media.downloading')}` : sizeText(file.size, lang)}
+          {!preview && <span className="font-semibold [overflow-wrap:anywhere]">{name}</span>}
+          <span className="flex flex-wrap gap-x-1.5">
+            <span className={cx('text-ui-sm', muted)}>
+              {busy ? `${sizeText(file.size, lang)} · ${t('media.downloading')}` : sizeText(file.size, lang)}
+            </span>
+            {extension && <span className={cx('text-ui-sm font-semibold', muted)}>{extension}</span>}
           </span>
         </span>
         <button
           type="button"
           onClick={download}
           disabled={busy}
-          aria-label={t('media.downloadName', { name: file.name })}
+          aria-label={t('media.downloadName', { name })}
           className={action}
         >
           <Download {...iconSize('md')} aria-hidden="true" />
@@ -249,11 +257,11 @@ function FileCard({ file, kind, mine, fetchFile, ref }: AttachmentProps & { kind
       {viewing && (
         <MediaViewer
           open
-          name={file.name}
+          name={name}
           url={viewing}
           video={kind === 'video'}
           onClose={() => setViewing(null)}
-          onDownload={() => saveAs(viewing, file.name)}
+          onDownload={() => saveAs(viewing, name)}
         />
       )}
     </div>

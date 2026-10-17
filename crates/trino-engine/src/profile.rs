@@ -342,6 +342,23 @@ pub fn readable_name(name: &str) -> bool {
     name.chars().all(|c| allowed_char(c, false)) && !name.chars().all(shows_nothing)
 }
 
+/// `name`, which a peer chose, as it can be shown: without the characters a
+/// readable name may not hold (control and format ones, the bidi overrides
+/// and isolates among them), at most `max_chars` long, and `fallback` when
+/// nothing in it shows (TRN-APP-03).
+pub fn shown_name(name: &str, max_chars: usize, fallback: &str) -> String {
+    let clean: String = name
+        .chars()
+        .filter(|&c| allowed_char(c, false))
+        .take(max_chars)
+        .collect();
+    if clean.chars().all(shows_nothing) {
+        fallback.to_string()
+    } else {
+        clean
+    }
+}
+
 /// Limits of a profile, in Unicode scalar values and decoded bytes.
 pub const NAME_MAX_CHARS: usize = 64;
 pub const ABOUT_MAX_CHARS: usize = 140;

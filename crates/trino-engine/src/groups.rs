@@ -76,10 +76,22 @@ pub fn self_member_bundle(identity: &Identity, handle: &str) -> MemberBundle {
     MemberBundle::from_public_bundle(handle, &public_bundle_for(identity))
 }
 
+/// The longest group name shown, in Unicode scalar values.
+pub const GROUP_NAME_MAX_CHARS: usize = 128;
+/// The name of a group whose own name shows nothing.
+pub const GROUP_NAME_FALLBACK: &str = "grupo";
+
+/// A group's name as it is shown (TRN-APP-03): the admin chose it and signed
+/// it, so the roster keeps it as it came; what reaches the inbox, the header
+/// and the notifications has no control or format character to reorder it.
+pub fn shown_group_name(name: &str) -> String {
+    crate::profile::shown_name(name, GROUP_NAME_MAX_CHARS, GROUP_NAME_FALLBACK)
+}
+
 pub fn group_info(roster: &GroupRoster, my_ik: &str) -> GroupInfo {
     GroupInfo {
         gid: roster.group_id.clone(),
-        name: roster.name.clone(),
+        name: shown_group_name(&roster.name),
         epoch: roster.epoch,
         is_admin: roster.admin_pub == my_ik,
         member_count: roster.members.len(),
@@ -494,7 +506,7 @@ pub fn merge_group_members(
 pub fn invite_info(invite: &GroupInvite) -> GroupInviteInfo {
     GroupInviteInfo {
         gid: invite.roster.group_id.clone(),
-        name: invite.roster.name.clone(),
+        name: shown_group_name(&invite.roster.name),
         from_handle: invite.from_handle.clone(),
         member_count: invite.roster.members.len(),
         received_at: invite.received_at,
@@ -993,6 +1005,41 @@ mod tests {
             roster = group::add_member(&roster, admin, member(id, handle)).unwrap();
         }
         roster
+    }
+
+    /// TRN-APP-03: a group name with bidi or control characters shows
+    /// without them, in the group and in its invitation. The roster is kept
+    /// as the admin signed it, so it still verifies when it is sent on.
+    #[test]
+    fn trn_app_03_a_group_name_shows_without_bidi_or_control_characters() {
+        let admin = create_identity();
+        let name = "amigos\u{202E}lmth.exe\u{7}";
+        let roster = group::create_group(&admin, member(&admin, "admin"), name).unwrap();
+        let photo = crate::group::FileRef {
+            url: "https://blossom.example/abc".into(),
+            key: "00".repeat(32),
+            sha256: "0".repeat(64),
+            mime: "image/png".into(),
+            name: "foto\u{202E}gnp.exe".into(),
+            size: 1,
+            thumb: None,
+        };
+        let roster = group::set_group_photo(&roster, &admin, Some(photo)).unwrap();
+        let kept = sanitize_roster(roster.clone());
+        assert!(
+            group::verify_roster(&kept),
+            "the roster stays as it was signed"
+        );
+        assert_eq!(group_info(&kept, &ik(&admin)).name, "amigoslmth.exe");
+        let invite = GroupInvite {
+            roster: kept,
+            from_handle: "ana".into(),
+            received_at: NOW,
+        };
+        assert_eq!(invite_info(&invite).name, "amigoslmth.exe");
+        let blank =
+            group::create_group(&admin, member(&admin, "admin"), "\u{202E}\u{2066}").unwrap();
+        assert_eq!(group_info(&blank, &ik(&admin)).name, "grupo");
     }
 
     #[test]

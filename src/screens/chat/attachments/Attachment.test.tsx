@@ -65,6 +65,24 @@ describe('Attachment', () => {
     expect(fetchFile).toHaveBeenCalledTimes(1);
   });
 
+  // TRN-APP-03: a right-to-left override made "factura\u202Efdp.exe" read as
+  // "facturaexe.pdf". The card shows and saves the name without it, and shows
+  // the real extension on its own.
+  it('TRN-APP-03: shows a file name without bidi controls, with its real extension', async () => {
+    show(fileRef({ mime: 'application/octet-stream', name: 'factura\u202Efdp.exe', thumb: null }), vi.fn(async () => 'data:application/octet-stream;base64,TVo='));
+    const card = document.querySelector('[data-attachment]');
+    expect(card?.textContent).not.toMatch(/[\u202A-\u202E\u2066-\u2069]/);
+    expect(screen.getByText('facturafdp.exe')).toBeTruthy();
+    expect(screen.getByText('EXE')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Descargar facturafdp.exe' }));
+    await waitFor(() => expect(downloads.map(saved => saved.download)).toEqual(['facturafdp.exe']));
+  });
+
+  it('TRN-APP-03: gives a file whose name shows nothing a name to show and save', () => {
+    show(fileRef({ mime: 'application/pdf', name: '\u202E\u2066', thumb: null }));
+    expect(screen.getByRole('button', { name: 'Descargar archivo' })).toBeTruthy();
+  });
+
   it('fetches a file once, however often it is opened or saved', async () => {
     const fetchFile = show(fileRef());
     fireEvent.click(screen.getByRole('button', { name: 'Descargar foto.jpg' }));
