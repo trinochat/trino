@@ -118,6 +118,29 @@ describe('Attachment', () => {
     expect(fetchFile).toHaveBeenCalledTimes(1);
   });
 
+  // TRN-APP-02: a sticker without a picture of its own was fetched as soon as
+  // it showed, whatever its size: many announcements of one 25 MiB blob
+  // filled the renderer's memory. Only a small one is fetched by itself, with
+  // that cap on the real bytes too; a larger one waits for a tap.
+  it('TRN-APP-02: does not fetch a sticker declared larger than the automatic limit until it is tapped', async () => {
+    const fetchFile = vi.fn(async (_f: FileRef, _maxBytes?: number) => WEBP);
+    const big = fileRef({ mime: 'image/webp', name: 'sticker::big', size: 25 * 1024 * 1024, thumb: null });
+    show(big, fetchFile);
+    await new Promise(resolve => setTimeout(resolve, 0));
+    expect(fetchFile).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('button', { name: 'Ver sticker' }));
+    expect((await screen.findByRole('img', { name: 'Sticker' })).getAttribute('src')).toBe(WEBP);
+    expect(fetchFile).toHaveBeenCalledExactlyOnceWith(big, 5 * 1024 * 1024);
+  });
+
+  it('TRN-APP-02: fetches a small sticker by itself, capping the bytes it takes', async () => {
+    const fetchFile = vi.fn(async (_f: FileRef, _maxBytes?: number) => WEBP);
+    const small = fileRef({ mime: 'image/webp', name: 'sticker::abc.webp', size: 512 * 1024, thumb: null });
+    show(small, fetchFile);
+    await screen.findByRole('img', { name: 'Sticker' });
+    expect(fetchFile).toHaveBeenCalledExactlyOnceWith(small, 512 * 1024);
+  });
+
   it('says it when a sticker cannot be shown', async () => {
     show(fileRef({ mime: 'image/webp', name: 'sticker::abc.webp', thumb: null }), vi.fn(async () => Promise.reject(new Error('gone'))));
     expect(await screen.findByText('No se pudo mostrar el sticker.')).toBeTruthy();

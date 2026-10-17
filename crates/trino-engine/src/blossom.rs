@@ -75,6 +75,17 @@ const DOWNLOAD_IDLE: Duration = Duration::from_secs(30);
 /// (`MAX_ATTACHMENT_BYTES` in commands.rs), its 12-byte nonce and its
 /// 16-byte tag. A download past it is refused.
 pub const MAX_BLOB_BYTES: usize = 25 * 1024 * 1024 + 12 + 16;
+/// What sealing adds to a file: its 12-byte nonce and its 16-byte tag.
+const SEAL_OVERHEAD: usize = 12 + 16;
+
+/// The most a download may take for a file of at most `file_bytes`, sealed:
+/// a sticker fetched by itself is capped on its real bytes, whatever size
+/// its sender declared (TRN-APP-02). Never past `MAX_BLOB_BYTES`.
+pub fn blob_cap(file_bytes: Option<usize>) -> usize {
+    file_bytes.map_or(MAX_BLOB_BYTES, |bytes| {
+        bytes.saturating_add(SEAL_OVERHEAD).min(MAX_BLOB_BYTES)
+    })
+}
 /// The descriptor a server answers an upload with is small JSON.
 const MAX_DESCRIPTOR_BYTES: usize = 16 * 1024;
 /// The longest URL a file can have once uploaded. The announcement of a
@@ -346,8 +357,18 @@ fn is_sha256_hex(value: &str) -> bool {
 /// past a redirect only that server's own CDN (`download_redirects`).
 pub async fn download(
     net: &Arc<Net>,
+    url: &str,
+    sha256_hex: &str,
+) -> Result<Vec<u8>, BlossomError> {
+    download_at_most(net, url, sha256_hex, MAX_BLOB_BYTES).await
+}
+
+/// `download`, refused past `max` bytes (`blob_cap`).
+pub async fn download_at_most(
+    net: &Arc<Net>,
     _url: &str,
     sha256_hex: &str,
+    max: usize,
 ) -> Result<Vec<u8>, BlossomError> {
     let http = HttpClient::new(Arc::clone(net));
     let servers: Vec<(&str, RedirectPolicy)> = DEFAULT_BLOSSOM
@@ -360,7 +381,7 @@ pub async fn download(
         &net.session(),
         &servers,
         deadlines,
-        MAX_BLOB_BYTES,
+        max.min(MAX_BLOB_BYTES),
         sha256_hex,
     )
     .await
@@ -1093,5 +1114,16 @@ mod tests {
     fn the_largest_blob_is_the_largest_attachment_sealed() {
         // 25 MB of file, its 12-byte nonce and its 16-byte tag.
         assert_eq!(MAX_BLOB_BYTES, 25 * 1024 * 1024 + 12 + 16);
+    }
+
+    /// TRN-APP-02: a sticker fetched by itself takes at most its cap of
+    /// real bytes, sealed; never more than the largest blob.
+    #[test]
+    fn a_capped_download_takes_at_most_the_file_sealed() {
+        assert_eq!(blob_cap(Some(512 * 1024)), 512 * 1024 + 12 + 16);
+        assert_eq!(blob_cap(Some(0)), 12 + 16);
+        assert_eq!(blob_cap(None), MAX_BLOB_BYTES);
+        assert_eq!(blob_cap(Some(usize::MAX)), MAX_BLOB_BYTES);
+        assert_eq!(blob_cap(Some(100 * 1024 * 1024)), MAX_BLOB_BYTES);
     }
 }

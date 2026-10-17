@@ -36,6 +36,14 @@ export type FileKind = 'sticker' | 'image' | 'video' | 'file';
 
 /** A sticker travels as a picture whose name starts with this mark. */
 const STICKER_MARK = 'sticker::';
+/**
+ * The largest sticker fetched as soon as it shows, by the size its sender
+ * declared and by the bytes the download may take (TRN-APP-02). A larger one
+ * waits for a tap.
+ */
+export const STICKER_AUTO_MAX_BYTES = 512 * 1024;
+/** The largest sticker there is (`MAX_STICKER_BYTES` in the engine): the cap of one fetched on a tap. */
+export const STICKER_MAX_BYTES = 5 * 1024 * 1024;
 
 /** What a file is to the chat: a sticker, a picture, a video or any other file. */
 export function fileKind(file: Pick<FileRef, 'mime' | 'name'>): FileKind {
@@ -91,8 +99,8 @@ export interface AttachmentProps {
   file: FileRef;
   /** In your own bubble: everything takes its ink. */
   mine: boolean;
-  /** The whole file as a data URL (the shell decrypts it). */
-  fetchFile(f: FileRef): Promise<string>;
+  /** The whole file as a data URL (the shell decrypts it), refused past `maxBytes` when given. */
+  fetchFile(f: FileRef, maxBytes?: number): Promise<string>;
   /** The card's actions, for the message's menu; a sticker leaves it empty. */
   ref?: Ref<AttachmentHandle | null>;
 }
@@ -106,19 +114,24 @@ export function Attachment({ file, mine, fetchFile, ref }: AttachmentProps) {
   );
 }
 
-/** A sticker: its inline picture, or the file, downloaded as soon as it shows. */
+/**
+ * A sticker: its inline picture, or the file, downloaded as soon as it shows
+ * when it is small; a larger one on a tap (TRN-APP-02).
+ */
 function StickerPicture({ file, fetchFile }: Omit<AttachmentProps, 'mine' | 'ref'>) {
   const t = useT();
   const inline = safeInlineRasterSrc(file.thumb);
   const [fetched, setFetched] = useState<string>();
   const [failed, setFailed] = useState(false);
+  const automatic = file.size <= STICKER_AUTO_MAX_BYTES;
+  const [asked, setAsked] = useState(false);
   const latest = useLatest({ file, fetchFile });
 
   useEffect(() => {
-    if (inline) return;
+    if (inline || !(automatic || asked)) return;
     let live = true;
     const { file: current, fetchFile: fetch } = latest.current;
-    fetch(current).then(
+    fetch(current, automatic ? STICKER_AUTO_MAX_BYTES : STICKER_MAX_BYTES).then(
       url => {
         if (!live) return;
         const safe = safeInlineRasterSrc(url, INLINE_STICKER_MAX_CHARS);
@@ -130,10 +143,22 @@ function StickerPicture({ file, fetchFile }: Omit<AttachmentProps, 'mine' | 'ref
     return () => {
       live = false;
     };
-  }, [inline, file.url, file.sha256, latest]);
+  }, [inline, automatic, asked, file.url, file.sha256, latest]);
 
   const src = inline ?? fetched;
   if (src) return <img src={src} alt={t('media.sticker')} className="max-h-[9.375rem] max-w-[9.375rem] object-contain" />;
+  if (!automatic && !asked) {
+    return (
+      <button
+        type="button"
+        onClick={() => setAsked(true)}
+        className={cx('inline-flex min-h-11 items-center gap-1.5 rounded-ui px-2 text-ui-md font-semibold underline', BUBBLE_RING)}
+      >
+        <Download {...iconSize('md')} aria-hidden="true" />
+        {t('media.showSticker')}
+      </button>
+    );
+  }
   return (
     <span className="inline-flex items-center gap-1.5 text-ui-sm">
       {failed && <CircleAlert {...iconSize('sm', 'shrink-0')} aria-hidden="true" />}

@@ -410,7 +410,9 @@ pub async fn send_group_file(
 }
 
 /// Download + verify + decrypt a file, returning a `data:` URL for the frontend.
-/// The download goes through the app's `Net` (Tor design §3 B2).
+/// The download goes through the app's `Net` (Tor design §3 B2). With
+/// `max_bytes`, a file larger than that is refused while it downloads: a
+/// sticker fetched by itself (TRN-APP-02).
 #[tauri::command]
 pub async fn fetch_file(
     state: State<'_, AppState>,
@@ -418,8 +420,9 @@ pub async fn fetch_file(
     key: String,
     sha256: String,
     mime: String,
+    max_bytes: Option<usize>,
 ) -> Result<String, String> {
-    send::fetch_file(&state, &url, &key, &sha256, &mime).await
+    send::fetch_file(&state, &url, &key, &sha256, &mime, max_bytes).await
 }
 
 /// Forward an already-uploaded file (its FileRef) to another chat or group,

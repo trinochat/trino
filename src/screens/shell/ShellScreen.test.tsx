@@ -194,6 +194,9 @@ describe('ShellScreen: the chat of each conversation', () => {
     expect(ana.onDeleteForMe).toBeTypeOf('function');
     await ana.fetchFile({ url: 'u', key: 'k', sha256: 's', mime: 'image/png', name: 'a.png', size: 1 });
     expect(api.fetchFile).toHaveBeenCalledWith('u', 'k', 's', 'image/png');
+    // A sticker's cap on the bytes reaches the backend (TRN-APP-02).
+    await ana.fetchFile({ url: 'u', key: 'k', sha256: 's', mime: 'image/png', name: 'sticker::a', size: 1 }, 1024);
+    expect(api.fetchFile).toHaveBeenLastCalledWith('u', 'k', 's', 'image/png', 1024);
 
     // No call buttons for a blocked contact.
     fireEvent.click(await row('Bea'));

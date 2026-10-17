@@ -185,7 +185,8 @@ export interface ChatPaneProps {
   onVerify?(): void;
   onAcknowledgeKeyChange?(): void;
   onBack?(): void;
-  fetchFile(f: FileRef): Promise<string>;
+  /** The whole file as a data URL, refused past `maxBytes` when given (TRN-APP-02). */
+  fetchFile(f: FileRef, maxBytes?: number): Promise<string>;
   stickers: StickerApi;
 }
 export interface ChannelViewProps {

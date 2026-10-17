@@ -541,8 +541,9 @@ export const api = {
       'send_group_file',
       only === undefined ? { gid, name, mime, dataB64, thumb } : { gid, name, mime, dataB64, thumb, only },
     ),
-  fetchFile: (url: string, key: string, sha256: string, mime: string): Promise<string> =>
-    invoke('fetch_file', { url, key, sha256, mime }),
+  // `maxBytes`: the backend refuses a larger file while it downloads (TRN-APP-02).
+  fetchFile: (url: string, key: string, sha256: string, mime: string, maxBytes?: number): Promise<string> =>
+    invoke('fetch_file', maxBytes === undefined ? { url, key, sha256, mime } : { url, key, sha256, mime, maxBytes }),
   getHistory: (): Promise<Record<string, HistItem[]>> => invoke('get_history'),
   getProfile: (): Promise<ProfileResponse> => invoke('get_profile'),
   // `about` (K12) is the "about me" the contacts get, and '' clears it; left

@@ -146,6 +146,7 @@ const KEYS: string[] = [
   'media.unsafe',
   'media.sticker',
   'media.stickerFailed',
+  'media.showSticker',
   'media.loading',
   // The right-click menu of a photo, a video or a file (MC-2).
   'media.menu',

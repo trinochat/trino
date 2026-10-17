@@ -608,7 +608,10 @@ export function ShellScreen(props: ShellScreenProps) {
         header.kind === 'contact' &&
         header.trust === 'keyChanged' && { onAcknowledgeKeyChange: () => void conv.acknowledgeKeyChange(ref.handle) }),
       ...(single && { onBack: back }),
-      fetchFile: file => api.fetchFile(file.url, file.key, file.sha256, file.mime),
+      fetchFile: (file, maxBytes) =>
+        maxBytes === undefined
+          ? api.fetchFile(file.url, file.key, file.sha256, file.mime)
+          : api.fetchFile(file.url, file.key, file.sha256, file.mime, maxBytes),
       stickers,
     };
     chat = <Fragment key={key}>{slots.chat(chatProps)}</Fragment>;

@@ -56,7 +56,7 @@ export interface MessageActions {
   /** Without it (no K11) there is no "Borrar para mí". */
   onDeleteForMe?(msgKey: string): void;
   onOpenLink(url: string): void;
-  fetchFile(f: FileRef): Promise<string>;
+  fetchFile(f: FileRef, maxBytes?: number): Promise<string>;
 }
 
 export interface MessageItemProps {

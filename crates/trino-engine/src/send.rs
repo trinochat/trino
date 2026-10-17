@@ -699,15 +699,18 @@ pub async fn resend_buffered(state: &Engine, handle: &str) -> usize {
 
 /// `fetch_file`: download, verify and decrypt a file, as a `data:` URL for
 /// the frontend. The download goes through the engine's `Net` (Tor design
-/// §3 B2).
+/// §3 B2). With `max_file_bytes` it takes no more than a file of that size,
+/// sealed: a sticker fetched by itself (TRN-APP-02).
 pub async fn fetch_file(
     state: &Engine,
     url: &str,
     key: &str,
     sha256: &str,
     mime: &str,
+    max_file_bytes: Option<usize>,
 ) -> Result<String, String> {
-    let blob = blossom::download(&state.net, url, sha256)
+    let max = blossom::blob_cap(max_file_bytes);
+    let blob = blossom::download_at_most(&state.net, url, sha256, max)
         .await
         .map_err(|e| e.to_string())?;
     let mut plain = blossom::decrypt_file(&blob, key).map_err(|e| e.to_string())?;
