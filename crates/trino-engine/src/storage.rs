@@ -215,7 +215,7 @@ pub fn migrate_account(
     match migrate(
         &RealDisk,
         &files.home,
-        &legacy_keys(identity),
+        &legacy_keys(identity)?,
         &vault,
         &nostr_pub,
         now,
@@ -232,13 +232,14 @@ pub fn migrate_account(
     }
 }
 
-/// The keys earlier versions derived from `identity` for their files.
-pub fn legacy_keys(identity: &Identity) -> LegacyKeys {
-    LegacyKeys {
-        history: Zeroizing::new(derive_history_key(identity)),
-        profiles: crate::profile::profiles_key(identity)
-            .expect("HKDF-SHA256 always gives 32 bytes"),
-    }
+/// The keys earlier versions derived from `identity` for their files. One
+/// that does not derive is an error, never a fallback key (TRN-ENG-09).
+pub fn legacy_keys(identity: &Identity) -> Result<LegacyKeys, CommandError> {
+    let io = |error: std::io::Error| CommandError::io(&error);
+    Ok(LegacyKeys {
+        history: derive_history_key(identity).map_err(io)?,
+        profiles: crate::profile::profiles_key(identity).map_err(io)?,
+    })
 }
 
 /// Add `findings` to what unlocking found, in the session's report too, so
@@ -359,7 +360,7 @@ pub fn load_legacy(files: &DataFiles, identity: &Identity) -> Result<LoadedSessi
         group_invites: read_list(&files.group_invites),
     };
 
-    let mut legacy = legacy_files(files, identity);
+    let mut legacy = legacy_files(files, identity)?;
     let mut report = IntegrityReport::default();
     // A history that does not open is never replaced by an empty one (H2).
     let history = legacy_sealed(&files.history, &legacy.history_key);
@@ -410,9 +411,10 @@ pub fn legacy_sealed(path: &Path, key: &[u8; 32]) -> Found {
 }
 
 /// The legacy files of `files`, with the keys earlier versions derived from
-/// `identity` for them.
-pub fn legacy_files(files: &DataFiles, identity: &Identity) -> LegacyFiles {
-    LegacyFiles {
+/// `identity` for them. A key that does not derive is an error (TRN-ENG-09).
+pub fn legacy_files(files: &DataFiles, identity: &Identity) -> Result<LegacyFiles, CommandError> {
+    let keys = legacy_keys(identity)?;
+    Ok(LegacyFiles {
         config: files.config.clone(),
         friends: files.friends.clone(),
         groups: files.groups.clone(),
@@ -421,11 +423,10 @@ pub fn legacy_files(files: &DataFiles, identity: &Identity) -> LegacyFiles {
         ratchets: files.ratchets.clone(),
         profiles: files.profiles.clone(),
         stickers: files.stickers.clone(),
-        history_key: Zeroizing::new(derive_history_key(identity)),
-        profiles_key: crate::profile::profiles_key(identity)
-            .expect("HKDF-SHA256 always gives 32 bytes"),
+        history_key: keys.history,
+        profiles_key: keys.profiles,
         held: BTreeSet::new(),
-    }
+    })
 }
 
 /// Fill the session that `open_session` is opening with what was loaded;
@@ -915,7 +916,7 @@ pub fn read_files_of_before(
     now: i64,
 ) -> Result<crate::store::migrate::LegacyRead, CommandError> {
     let nostr_pub = hex::encode(identity.nostr.pub_bytes);
-    read_legacy(&RealDisk, home, &legacy_keys(identity), &nostr_pub, now)
+    read_legacy(&RealDisk, home, &legacy_keys(identity)?, &nostr_pub, now)
         .map_err(|e| CommandError::io(&e))
 }
 
@@ -1432,7 +1433,9 @@ mod tests {
         let files = data_files_in(scratch.path().to_path_buf());
         let me = create_identity();
         let cell = StorageCell::default();
-        cell.set(Storage::Legacy(Box::new(legacy_files(&files, &me))));
+        cell.set(Storage::Legacy(Box::new(
+            legacy_files(&files, &me).unwrap(),
+        )));
         let image = b"GIF89a a sticker";
         let id = hex::encode(&crate::crypto::sha256(image)[..8]);
 
@@ -1884,7 +1887,7 @@ mod tests {
         std::fs::write(&files.groups, b"[]").unwrap();
         std::fs::write(&files.group_invites, b"[]").unwrap();
         let history = legacy_seal(
-            &derive_history_key(me),
+            &derive_history_key(me).unwrap(),
             &history_with(contact, &format!("hola {contact}")),
         )
         .unwrap();

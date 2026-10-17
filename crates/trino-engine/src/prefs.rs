@@ -483,9 +483,9 @@ mod tests {
             identity: Some(me.clone()),
             ..InnerState::default()
         };
-        inner
-            .storage
-            .set(Storage::Legacy(Box::new(legacy_files(&files, &me))));
+        inner.storage.set(Storage::Legacy(Box::new(
+            legacy_files(&files, &me).unwrap(),
+        )));
 
         let saved = save_in(&inner, &map(&[("autolock", "1")])).unwrap_err();
         let imported = import_in(&inner, map(&[("autolock", "1")])).unwrap_err();

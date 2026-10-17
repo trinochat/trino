@@ -1140,18 +1140,33 @@ pub async fn handle_incoming_event(
 pub const HISTORY_CAP: usize = 500; // keep last N per conversation (bounds the file)
 
 /// The key earlier versions seal history.bin and ratchets.bin with, which an
-/// account not moved to the store yet still uses.
-pub fn derive_history_key(identity: &Identity) -> [u8; 32] {
-    let okm = crate::crypto::hkdf_expand(
+/// account not moved to the store yet still uses. A derivation that fails is
+/// an error, never a key anyone could seal with (TRN-ENG-09).
+pub fn derive_history_key(identity: &Identity) -> std::io::Result<Zeroizing<[u8; 32]>> {
+    legacy_key(crate::crypto::hkdf_expand(
         &identity.ik_sign.priv_bytes,
         &[0u8; 32],
         b"trino-history-key-v1",
         32,
-    )
-    .unwrap_or_else(|_| vec![0u8; 32]);
-    let mut k = [0u8; 32];
-    k.copy_from_slice(&okm[..32]);
-    k
+    ))
+}
+
+/// A legacy key from what HKDF gave: 32 bytes, not all zero. A failed
+/// derivation, another length or all zeros are an error, so no path turns
+/// them into a key (TRN-ENG-09).
+pub(crate) fn legacy_key<E: std::fmt::Display>(
+    okm: Result<Vec<u8>, E>,
+) -> std::io::Result<Zeroizing<[u8; 32]>> {
+    let okm = Zeroizing::new(okm.map_err(|error| std::io::Error::other(error.to_string()))?);
+    let mut key = Zeroizing::new([0u8; 32]);
+    if okm.len() != key.len() {
+        return Err(std::io::Error::other("a legacy key is 32 bytes"));
+    }
+    key.copy_from_slice(&okm);
+    if key.iter().all(|byte| *byte == 0) {
+        return Err(std::io::Error::other("an all-zero legacy key"));
+    }
+    Ok(key)
 }
 
 pub fn save_history(inner: &InnerState) {
@@ -1924,5 +1939,39 @@ pub(crate) mod tests {
             "ana".to_string(),
         ));
         drop(task);
+    }
+
+    /// TRN-ENG-09: the legacy history key had an all-zero fallback; were it
+    /// ever reached, anyone could seal a history.bin that passes M0.
+    #[test]
+    fn the_legacy_history_key_never_falls_back_to_zeros() {
+        let source = include_str!("session.rs");
+        let code = source.split("#[cfg(test)]").next().unwrap();
+        assert!(
+            !code.contains("vec![0u8; 32]"),
+            "a zero-key fallback exists"
+        );
+        assert!(
+            !code.contains("unwrap_or_else(|_| vec!"),
+            "a derivation failure is swallowed"
+        );
+    }
+
+    #[test]
+    fn a_failed_derivation_is_an_error_not_a_zero_key() {
+        assert!(legacy_key::<&str>(Err("HKDF failed")).is_err());
+        assert!(legacy_key::<&str>(Ok(vec![0u8; 32])).is_err(), "all zeros");
+        assert!(legacy_key::<&str>(Ok(vec![1u8; 16])).is_err(), "short");
+        assert!(legacy_key::<&str>(Ok(vec![1u8; 64])).is_err(), "long");
+        assert_eq!(*legacy_key::<&str>(Ok(vec![1u8; 32])).unwrap(), [1u8; 32]);
+    }
+
+    #[test]
+    fn the_legacy_history_key_is_the_identitys_and_never_zero() {
+        let me = create_identity();
+        let key = derive_history_key(&me).unwrap();
+        assert_ne!(*key, [0u8; 32]);
+        assert_eq!(*key, *derive_history_key(&me).unwrap(), "stable");
+        assert_ne!(*key, *derive_history_key(&create_identity()).unwrap());
     }
 }

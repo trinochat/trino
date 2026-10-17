@@ -720,18 +720,12 @@ pub fn receive(profiles: &mut Profiles, handle: &str, plain: &[u8], created_at: 
 /// apart from the history key. An account not moved to the store yet still
 /// uses it.
 pub fn profiles_key(identity: &Identity) -> std::io::Result<Zeroizing<[u8; 32]>> {
-    let okm = Zeroizing::new(
-        crate::crypto::hkdf_expand(
-            &identity.ik_sign.priv_bytes,
-            &[0u8; 32],
-            PROFILES_KEY_INFO,
-            32,
-        )
-        .map_err(|error| std::io::Error::other(error.to_string()))?,
-    );
-    let mut key = Zeroizing::new([0u8; 32]);
-    key.copy_from_slice(&okm);
-    Ok(key)
+    crate::session::legacy_key(crate::crypto::hkdf_expand(
+        &identity.ik_sign.priv_bytes,
+        &[0u8; 32],
+        PROFILES_KEY_INFO,
+        32,
+    ))
 }
 
 /// Move the profiles.bin at `path` aside, to `DAMAGED_PROFILES_FILE` next to
@@ -1382,7 +1376,7 @@ mod tests {
     fn the_profiles_key_is_not_the_history_key() {
         let me = create_identity();
         let key = profiles_key(&me).unwrap();
-        assert_ne!(*key, crate::session::derive_history_key(&me));
+        assert_ne!(*key, *crate::session::derive_history_key(&me).unwrap());
         assert_ne!(*key, [0u8; 32]);
         assert_eq!(*key, *profiles_key(&me).unwrap(), "stable");
         assert_ne!(*key, *profiles_key(&create_identity()).unwrap());
@@ -2341,7 +2335,7 @@ mod tests {
         let files = crate::account::DataFiles::in_home(home.to_path_buf());
         let cell = crate::store::session::StorageCell::default();
         cell.set(crate::store::session::Storage::Legacy(Box::new(
-            crate::storage::legacy_files(&files, me),
+            crate::storage::legacy_files(&files, me).unwrap(),
         )));
         cell
     }
