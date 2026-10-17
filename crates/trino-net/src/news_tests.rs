@@ -702,6 +702,44 @@ fn news_saying_newer_than_the_mirrors_warns_of_a_freeze() {
 
 // ---- Design test 57 (R-06): per device, and locked ----
 
+/// TRN-NET-06: the WebView's old `minSeq` was raised into seen.json as any
+/// number, so u64::MAX made every later feed a replay, for good. A `seq` is
+/// the time its feed was signed, so the old one is taken at most as now.
+#[tokio::test]
+async fn trn_net_06_an_old_min_seq_never_rises_past_now() {
+    let scratch = Scratch::new("trn-net-06");
+    Seen::take_old_seq(scratch.path(), u64::MAX, NOW).unwrap();
+    assert_eq!(Seen::load(scratch.path()).seq, NOW);
+    // A real one, below now, is taken as it is, and still only raises.
+    Seen::take_old_seq(scratch.path(), NOW - DAY, NOW).unwrap();
+    assert_eq!(Seen::load(scratch.path()).seq, NOW);
+
+    // A feed signed after that is verified, not a replay.
+    let tor = Mock::new();
+    mock_http::serve(
+        &tor,
+        "https://trinochat.org",
+        vec![ok(&KEY.envelope(&payload(
+            NOW + DAY,
+            None,
+            Some(NOW + 7 * DAY),
+        )))],
+    );
+    let news = check_on(
+        &tor,
+        &KEY.signer(),
+        &[FEED_URL],
+        Some(scratch.path()),
+        NOW + DAY,
+    )
+    .await;
+    assert_eq!(news.status, NewsStatus::Verified);
+
+    let fresh = Scratch::new("trn-net-06-real");
+    Seen::take_old_seq(fresh.path(), NOW - DAY, NOW).unwrap();
+    assert_eq!(Seen::load(fresh.path()).seq, NOW - DAY);
+}
+
 #[test]
 fn the_highest_seen_is_kept_per_device_and_the_old_min_seq_only_raises_it() {
     let scratch = Scratch::new("seen");

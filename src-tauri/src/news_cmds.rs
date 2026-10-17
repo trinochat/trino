@@ -10,7 +10,8 @@
 //!   WebView kept in the preferences, is taken once into seen.json: at the
 //!   unlock from the store, and at the one import of what the WebView kept
 //!   before the store. The frontend never gets it again, and the next save
-//!   of the preferences drops it (prefs_cmds.rs, `RETIRED_PREFS`).
+//!   of the preferences drops it (prefs_cmds.rs, `RETIRED_PREFS`). Nothing
+//!   signed it, so it is taken at most as now (TRN-NET-06).
 
 use crate::command_error::CommandError;
 use crate::state::AppState;
@@ -52,10 +53,17 @@ pub(crate) fn old_min_seq_in(entries: &BTreeMap<String, String>) -> Option<u64> 
 }
 
 /// Raise what this device has seen to the old `minSeq`, never lowering it.
+/// It comes from the WebView or its preferences, unsigned, so it is taken at
+/// most as now (TRN-NET-06).
 pub(crate) fn take_old_min_seq(net: &Net, seq: Option<u64>) {
+    take_old_min_seq_at(net, seq, now());
+}
+
+/// `take_old_min_seq` at `now`.
+pub(crate) fn take_old_min_seq_at(net: &Net, seq: Option<u64>, now: u64) {
     if let (Some(seq), Some(tor_home)) = (seq, net.tor_home()) {
         // Not kept now (a full disk), taken again at the next unlock.
-        let _ = Seen::raise_seq(tor_home, seq);
+        let _ = Seen::take_old_seq(tor_home, seq, now);
     }
 }
 
@@ -163,6 +171,20 @@ mod tests {
         // Never lowered.
         take_old_min_seq(client.net(), Some(1));
         assert_eq!(Seen::load(&tor_home).seq, JULY_SEQ + 1);
+        client.net().stop();
+    }
+
+    /// TRN-NET-06: an old minSeq past now (a seq is the time its feed was
+    /// signed) is taken as now, so it cannot silence the news for good.
+    #[tokio::test]
+    async fn trn_net_06_an_old_min_seq_from_the_webview_is_taken_at_most_as_now() {
+        let scratch = ScratchDir::new("news-seen-clamp");
+        let (client, _mock) = ready(&scratch).await;
+        let tor_home = scratch.path().join(crate::state::TOR_DIR);
+        take_old_min_seq_at(client.net(), Some(u64::MAX), NOW);
+        assert_eq!(Seen::load(&tor_home).seq, NOW);
+        take_old_min_seq(client.net(), Some(u64::MAX));
+        assert!(Seen::load(&tor_home).seq <= now());
         client.net().stop();
     }
 

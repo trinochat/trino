@@ -83,6 +83,14 @@ impl Seen {
         seen.save(tor_home)
     }
 
+    /// Take the account's old `minSeq`, which the WebView kept and nothing
+    /// signed (TRN-NET-06): never above `now`, since a `seq` is the time its
+    /// feed was signed, nor above what a feed may carry. A made-up value so
+    /// cannot make every later feed a replay; a real one is below now.
+    pub fn take_old_seq(tor_home: &Path, seq: u64, now: u64) -> io::Result<()> {
+        Seen::raise_seq(tor_home, seq.min(now).min(super::feed::MAX_SAFE_INTEGER))
+    }
+
     /// Whether `feed` is not below what was seen: its `seq`, and its
     /// `latest` if both have one.
     pub fn admits(&self, feed: &Feed) -> bool {

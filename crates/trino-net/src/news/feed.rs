@@ -13,7 +13,7 @@ pub const MAX_ANNOUNCEMENTS: usize = 50;
 
 /// The largest whole number JavaScript keeps exactly (2^53 - 1): `seq` is
 /// one, and the script writes it from JavaScript.
-const MAX_SAFE_INTEGER: u64 = (1 << 53) - 1;
+pub(super) const MAX_SAFE_INTEGER: u64 = (1 << 53) - 1;
 
 /// A version of Trino, `major.minor.patch`: three numbers and nothing
 /// else, as the script signs it and the installers are named.
