@@ -4,8 +4,10 @@
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 
+import 'motion.dart';
 import 'tokens.dart';
 
+export 'motion.dart';
 export 'tokens.dart';
 
 /// Emoji fonts by their usual names, for text made of emoji such as the call's
@@ -175,7 +177,8 @@ class TrinoLabel extends StatelessWidget {
 /// Pages slide in and out whole from the edge, as in Telegram and on the
 /// iPhone: no fade, the page below moves a little, and a page can be closed by
 /// dragging it from the edge. Full-screen dialogs, such as a call, rise from
-/// the bottom. None when the system asks for less motion.
+/// the bottom. With Reduce Motion (iPhone) a short fade in place, and none
+/// with Remove animations (Android).
 class TrinoPageTransitionsBuilder extends PageTransitionsBuilder {
   const TrinoPageTransitionsBuilder();
 
@@ -192,8 +195,14 @@ class TrinoPageTransitionsBuilder extends PageTransitionsBuilder {
     Animation<double> secondaryAnimation,
     Widget child,
   ) {
-    if (MediaQuery.disableAnimationsOf(context)) return child;
-    return _slide.buildTransitions(route, context, animation, secondaryAnimation, child);
+    return switch (motionOf(context)) {
+      MotionLevel.none => child,
+      MotionLevel.reduced => FadeTransition(
+        opacity: CurvedAnimation(parent: animation, curve: Curves.easeOut, reverseCurve: Curves.easeIn),
+        child: child,
+      ),
+      MotionLevel.full => _slide.buildTransitions(route, context, animation, secondaryAnimation, child),
+    };
   }
 }
 

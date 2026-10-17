@@ -20,7 +20,7 @@ class TrinoSwitch extends StatelessWidget {
   Widget build(BuildContext context) {
     final t = context.tokens;
     final onChanged = this.onChanged;
-    final duration = MediaQuery.disableAnimationsOf(context) ? Duration.zero : const Duration(milliseconds: 150);
+    final duration = reduceMotionOf(context) ? Duration.zero : const Duration(milliseconds: 150);
     return Semantics(
       container: semanticLabel != null,
       label: semanticLabel,

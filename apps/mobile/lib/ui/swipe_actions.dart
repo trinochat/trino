@@ -133,7 +133,7 @@ class _SwipeActionsState extends State<SwipeActions> with SingleTickerProviderSt
   double _extent(List<SwipeAction> actions) => actions.length * SwipeActions.actionWidth;
   double get _longSwipeAt => _width * SwipeActions.longSwipe;
 
-  Duration get _duration => MediaQuery.disableAnimationsOf(context) ? Duration.zero : const Duration(milliseconds: 200);
+  Duration get _duration => reduceMotionOf(context) ? Duration.zero : const Duration(milliseconds: 200);
 
   void _animateTo(double target) {
     if (_duration == Duration.zero) {

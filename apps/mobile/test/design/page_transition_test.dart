@@ -65,6 +65,25 @@ void main() {
     );
   });
 
+  testWidgets('with Reduce Motion on the iPhone, the page fades in place instead of sliding', (tester) async {
+    // iOS reports Reduce Motion apart from Android's "Remove animations"
+    // (MediaQuery.disableAnimations stays false), so it is read on its own.
+    tester.platformDispatcher.accessibilityFeaturesTestValue = const FakeAccessibilityFeatures(reduceMotion: true);
+    addTearDown(tester.platformDispatcher.clearAccessibilityFeaturesTestValue);
+    await pumpTwoPages(tester);
+    await tester.pump(const Duration(milliseconds: 100));
+    final second = find.text('Second');
+    expect(find.ancestor(of: second, matching: find.byType(CupertinoPageTransition)), findsNothing);
+    expect(
+      tester.getTopLeft(find.ancestor(of: second, matching: find.byType(Scaffold)).first).dx,
+      0,
+      reason: 'no sliding',
+    );
+    expect(opacityOf(tester, second), lessThan(1.0), reason: 'a short fade');
+    await tester.pumpAndSettle();
+    expect(opacityOf(tester, second), 1.0);
+  });
+
   testWidgets('with less motion, the page just appears', (tester) async {
     await pumpTwoPages(tester, reduceMotion: true);
     await tester.pump(const Duration(milliseconds: 16));
