@@ -1892,4 +1892,37 @@ pub(crate) mod tests {
             )]
         );
     }
+
+    // ---- M4-0c: the boundary with the host ----
+
+    /// The host spawns the relays' task on its own runtime (the desktop
+    /// app on Tauri's, a phone's on its own): it must be a future that can
+    /// go to any thread and outlives the call that made it. Made here and
+    /// dropped unpolled, so nothing connects.
+    #[test]
+    fn the_relays_task_can_go_to_any_hosts_runtime() {
+        fn spawnable<F: std::future::Future<Output = ()> + Send + 'static>(task: F) -> F {
+            task
+        }
+        let net = Arc::new(trino_net::Net::default());
+        let events: Arc<dyn EventSink> = RecordingSink::new();
+        let resend: profile::Resend = Arc::new(|_| {});
+        let connector = crate::nostr::relay_connector(
+            Arc::clone(&net),
+            net.session(),
+            trino_net::IsoKind::RELAY,
+        );
+        let task = spawnable(connect_relays(
+            events,
+            resend,
+            Arc::default(),
+            connector,
+            crate::nostr::ready_gate(Arc::clone(&net)),
+            net,
+            vec!["wss://relay.example".to_string()],
+            "ab".repeat(32),
+            "ana".to_string(),
+        ));
+        drop(task);
+    }
 }
