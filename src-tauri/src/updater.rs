@@ -74,7 +74,8 @@ const CALL_POLL: Duration = Duration::from_millis(500);
 const LOOK_AGAIN: Duration = Duration::from_secs(10 * 60);
 
 /// The folder of its own where Windows keeps a downloaded installer, under
-/// the user's temporary folder (§6.1).
+/// the user's temporary folder (§6.1). Linux without Downloads keeps one of
+/// the same name, private, in Trino's local data folder (TRN-NET-03).
 const OWN_FOLDER: &str = "TrinoChat-update";
 
 /// Where the updater is.
@@ -235,13 +236,86 @@ pub(crate) fn installed() -> Version {
         .expect("the crate's version is major.minor.patch")
 }
 
+/// Where a downloaded release goes (TRN-NET-03).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum ReleaseDir {
+    /// A folder only the user reaches already: Downloads on Linux, the
+    /// user's own temporary folder on Windows.
+    Users(PathBuf),
+    /// Linux without Downloads: a folder of Trino's own in its local data
+    /// folder, made and checked private (0700, a real folder, not a link)
+    /// before each download.
+    Private(PathBuf),
+    /// Linux with neither: nothing is saved, rather than in the shared
+    /// temporary folder, where another local user could take the name first.
+    Nowhere,
+}
+
+/// Where a Linux release is saved: Downloads when the system names one, else
+/// a private folder in Trino's local data folder; never the shared /tmp. A
+/// relative folder would land wherever Trino was started, so it is none.
+pub(crate) fn linux_release_dir(
+    downloads: Option<PathBuf>,
+    app_data: Option<PathBuf>,
+) -> ReleaseDir {
+    let absolute = |dir: &PathBuf| dir.is_absolute();
+    match (downloads.filter(absolute), app_data.filter(absolute)) {
+        (Some(downloads), _) => ReleaseDir::Users(downloads),
+        (None, Some(data)) => ReleaseDir::Private(data.join(OWN_FOLDER)),
+        (None, None) => ReleaseDir::Nowhere,
+    }
+}
+
+/// Where releases go before Trino has looked for Downloads: on Windows the
+/// folder of its own in the user's temporary folder (§6.1); on Linux nowhere
+/// yet, since its temporary folder is shared.
+pub(crate) fn default_release_dir(linux: bool, temp: &Path) -> ReleaseDir {
+    if linux {
+        ReleaseDir::Nowhere
+    } else {
+        ReleaseDir::Users(temp.join(OWN_FOLDER))
+    }
+}
+
+/// Make `dir` a folder of the user's alone: created with mode 0700, a real
+/// folder and not a link, owned by whoever owns its parent (Trino's data
+/// folder) and closed to everyone else (TRN-NET-03).
+#[cfg(unix)]
+pub(crate) fn private_dir(dir: &Path) -> std::io::Result<()> {
+    use std::os::unix::fs::{DirBuilderExt, MetadataExt, PermissionsExt};
+    let refused = |why: &str| std::io::Error::other(why.to_string());
+    let parent = dir.parent().ok_or_else(|| refused("no parent folder"))?;
+    std::fs::create_dir_all(parent)?;
+    match std::fs::DirBuilder::new().mode(0o700).create(dir) {
+        Err(error) if error.kind() != std::io::ErrorKind::AlreadyExists => return Err(error),
+        _ => {}
+    }
+    let found = std::fs::symlink_metadata(dir)?;
+    if !found.file_type().is_dir() {
+        return Err(refused("not a folder of its own"));
+    }
+    if found.uid() != std::fs::metadata(parent)?.uid() {
+        return Err(refused("a folder of someone else"));
+    }
+    if found.permissions().mode() & 0o077 != 0 {
+        std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700))?;
+    }
+    Ok(())
+}
+
+/// Elsewhere the folder is under the user's own data folder already.
+#[cfg(not(unix))]
+pub(crate) fn private_dir(dir: &Path) -> std::io::Result<()> {
+    std::fs::create_dir_all(dir)
+}
+
 /// The app's updater.
 pub struct Updater {
     platform: Option<Platform>,
     installed: Version,
     mirrors: Mirrors<'static>,
     /// Where a downloaded release goes.
-    dir: Mutex<PathBuf>,
+    dir: Mutex<ReleaseDir>,
     /// Linux: the AppImage Trino runs from, which a release replaces.
     appimage: Mutex<Option<PathBuf>>,
     state: Mutex<UpdateState>,
@@ -265,6 +339,10 @@ impl Default for Updater {
             Mirrors::trino(),
             std::env::temp_dir().join(OWN_FOLDER),
         )
+        .with_release_dir(default_release_dir(
+            cfg!(target_os = "linux"),
+            &std::env::temp_dir(),
+        ))
     }
 }
 
@@ -284,7 +362,7 @@ impl Updater {
             platform,
             installed,
             mirrors,
-            dir: Mutex::new(dir),
+            dir: Mutex::new(ReleaseDir::Users(dir)),
             appimage: Mutex::new(None),
             state: Mutex::new(state),
             freeze: Mutex::new(None),
@@ -296,9 +374,27 @@ impl Updater {
         }
     }
 
-    /// Download releases into `dir` instead (Linux: Downloads).
-    pub(crate) fn set_dir(&self, dir: PathBuf) {
+    fn with_release_dir(self, dir: ReleaseDir) -> Self {
+        self.set_release_dir(dir);
+        self
+    }
+
+    /// Download releases into `dir` instead (Linux: Downloads, or a
+    /// private folder of Trino's own).
+    pub(crate) fn set_release_dir(&self, dir: ReleaseDir) {
         *lock(&self.dir) = dir;
+    }
+
+    /// The folder to download into now: a private one is made and checked
+    /// first, and with nowhere to save nothing is downloaded (TRN-NET-03).
+    pub(crate) fn release_path(&self) -> Result<PathBuf, UpdateError> {
+        match lock(&self.dir).clone() {
+            ReleaseDir::Users(dir) => Ok(dir),
+            ReleaseDir::Private(dir) => {
+                private_dir(&dir).map(|()| dir).map_err(|_| UpdateError::Io)
+            }
+            ReleaseDir::Nowhere => Err(UpdateError::Io),
+        }
     }
 
     /// Linux, running as an AppImage: releases replace `appimage`.
@@ -309,7 +405,9 @@ impl Updater {
     /// When Trino opens on Windows: the installers an earlier update left
     /// in the folder of its own go. Never anything else.
     pub(crate) fn remove_leftovers(&self) {
-        let dir = lock(&self.dir).clone();
+        let ReleaseDir::Users(dir) = lock(&self.dir).clone() else {
+            return;
+        };
         if dir.file_name().is_some_and(|name| name == OWN_FOLDER) {
             let _ = std::fs::remove_dir_all(dir);
         }
@@ -423,7 +521,14 @@ impl Updater {
         let (source, key) = (self.mirrors.source, self.mirrors.key);
         let reason = match platform {
             Platform::WindowsX64 => {
-                let dir = lock(&self.dir).clone();
+                let dir = match self.release_path() {
+                    Ok(dir) => dir,
+                    Err(error) => {
+                        return self.kept_or(UpdateState::Failed {
+                            reason: error.into(),
+                        })
+                    }
+                };
                 return match update::download(client, &session, source, key, offer, &dir).await {
                     Ok(installer) => self.ready(Prepared::Installer(installer)),
                     Err(error) => self.kept_or(UpdateState::Failed {
@@ -454,7 +559,14 @@ impl Updater {
             }
         };
         // Saved in Downloads: Trino installs nothing itself.
-        let dir = lock(&self.dir).clone();
+        let dir = match self.release_path() {
+            Ok(dir) => dir,
+            Err(error) => {
+                return self.kept_or(UpdateState::Failed {
+                    reason: error.into(),
+                })
+            }
+        };
         match update::download(client, &session, source, key, offer, &dir).await {
             Ok(installer) => {
                 let file = installer.path().display().to_string();
@@ -666,9 +778,12 @@ pub(crate) fn on_open(app: &tauri::AppHandle) {
     let state = app.state::<AppState>();
     let updater = Arc::clone(&state.updater);
     if cfg!(target_os = "linux") {
-        if let Ok(downloads) = app.path().download_dir() {
-            updater.set_dir(downloads);
-        }
+        // Downloads, or a private folder of Trino's own; never /tmp.
+        let path = app.path();
+        updater.set_release_dir(linux_release_dir(
+            path.download_dir().ok(),
+            path.app_local_data_dir().ok(),
+        ));
         // Running as an AppImage: releases replace it, and what an earlier
         // run left staged beside it goes.
         if let Some(appimage) = update::running_appimage(
@@ -1432,5 +1547,77 @@ mod tests {
         assert!(hooks.contains("!macro NSIS_HOOK_PREINSTALL"), "{hooks}");
         assert!(hooks.contains("lyrebird.exe"), "{hooks}");
         assert_eq!(conf["version"], installed().to_string());
+    }
+
+    /// TRN-NET-03: without a Downloads folder, Linux saved releases in
+    /// /tmp/TrinoChat-update, a name any local user could take first.
+    #[test]
+    fn trn_net_03_a_linux_release_never_goes_to_the_shared_temporary_folder() {
+        let downloads = std::env::temp_dir().join("home").join("Descargas");
+        let data = std::env::temp_dir()
+            .join("home")
+            .join(".local/share/org.trino.chat");
+        assert_eq!(
+            linux_release_dir(Some(downloads.clone()), Some(data.clone())),
+            ReleaseDir::Users(downloads.clone())
+        );
+        assert_eq!(
+            linux_release_dir(None, Some(data.clone())),
+            ReleaseDir::Private(data.join(OWN_FOLDER))
+        );
+        assert_eq!(linux_release_dir(None, None), ReleaseDir::Nowhere);
+        // A relative folder would land wherever Trino was started.
+        assert_eq!(
+            linux_release_dir(Some("Descargas".into()), Some(".local".into())),
+            ReleaseDir::Nowhere
+        );
+        // Before Trino looks for Downloads, Linux has nowhere to save;
+        // Windows keeps the user's own temporary folder.
+        let temp = std::env::temp_dir();
+        assert_eq!(default_release_dir(true, &temp), ReleaseDir::Nowhere);
+        assert_eq!(
+            default_release_dir(false, &temp),
+            ReleaseDir::Users(temp.join(OWN_FOLDER))
+        );
+    }
+
+    #[test]
+    fn trn_net_03_a_linux_updater_with_nowhere_to_save_downloads_nothing() {
+        let updater = linux_updater(PathBuf::new());
+        updater.set_release_dir(ReleaseDir::Nowhere);
+        assert!(updater.release_path().is_err());
+        let scratch = ScratchDir::new("update-private");
+        let private = scratch.path().join("data").join(OWN_FOLDER);
+        updater.set_release_dir(ReleaseDir::Private(private.clone()));
+        assert_eq!(updater.release_path().unwrap(), private);
+        assert!(private.is_dir());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn trn_net_03_the_private_folder_is_the_users_alone_and_never_a_link() {
+        use std::os::unix::fs::PermissionsExt;
+        let scratch = ScratchDir::new("update-private-unix");
+        let private = scratch.path().join("data").join(OWN_FOLDER);
+        private_dir(&private).unwrap();
+        let mode = std::fs::symlink_metadata(&private)
+            .unwrap()
+            .permissions()
+            .mode();
+        assert_eq!(mode & 0o777, 0o700);
+        // One made open before is closed again.
+        std::fs::set_permissions(&private, std::fs::Permissions::from_mode(0o777)).unwrap();
+        private_dir(&private).unwrap();
+        let mode = std::fs::symlink_metadata(&private)
+            .unwrap()
+            .permissions()
+            .mode();
+        assert_eq!(mode & 0o777, 0o700);
+        // A link planted in its place is refused, not followed.
+        let elsewhere = scratch.path().join("elsewhere");
+        std::fs::create_dir_all(&elsewhere).unwrap();
+        let planted = scratch.path().join("data").join("planted");
+        std::os::unix::fs::symlink(&elsewhere, &planted).unwrap();
+        assert!(private_dir(&planted).is_err());
     }
 }
