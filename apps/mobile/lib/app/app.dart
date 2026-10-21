@@ -18,6 +18,7 @@ import '../screens/unlock_screen.dart';
 import '../sound/call_alerts.dart';
 import 'language.dart';
 import 'scope.dart';
+import 'system_bars.dart';
 
 class TrinoApp extends StatefulWidget {
   const TrinoApp({
@@ -71,6 +72,7 @@ class _TrinoAppState extends State<TrinoApp> {
   @override
   void initState() {
     super.initState();
+    unawaited(drawEdgeToEdge());
     _callAlerts.start();
   }
 
@@ -107,10 +109,9 @@ class _TrinoAppState extends State<TrinoApp> {
         supportedLocales: AppLocalizations.supportedLocales,
         localizationsDelegates: AppLocalizations.localizationsDelegates,
         builder: (context, child) => AnnotatedRegion<SystemUiOverlayStyle>(
-          // Status bar icons that stay visible on the theme's background.
-          value: Theme.of(context).brightness == Brightness.dark
-              ? SystemUiOverlayStyle.light
-              : SystemUiOverlayStyle.dark,
+          // Clear bars, the app behind them, with icons that stay visible on
+          // the theme's background.
+          value: systemBarsFor(Theme.of(context).brightness),
           child: child!,
         ),
         home: const AppGate(),
