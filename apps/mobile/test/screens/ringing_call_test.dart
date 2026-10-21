@@ -170,7 +170,6 @@ void main() {
         findsOneWidget,
       );
       expect(find.text('00:00'), findsNothing);
-      expect(find.text('Por el servidor de llamadas'), findsNothing);
       expect(find.byKey(CallScreen.keyPillKey), findsNothing);
       expect(find.bySemanticsLabel('Colgar'), findsOneWidget);
       expect(app.sounds.log, ['ringback 60']);
@@ -180,6 +179,60 @@ void main() {
       expect(find.text('Llamando…'), findsNothing);
       expect(find.text('00:00'), findsOneWidget);
       expect(find.byKey(CallScreen.keyPillKey), findsOneWidget);
+    });
+
+    testWidgets('"Por el servidor de llamadas" waits at the bottom and does not change when they answer', (
+      tester,
+    ) async {
+      final app = await callOut(tester);
+      final path = find.text('Por el servidor de llamadas');
+      expect(path, findsOneWidget);
+      final before = tester.getRect(path);
+      app.engine.answerOutgoing();
+      await tester.pumpAndSettle();
+      expect(path, findsOneWidget);
+      expect(tester.getRect(path), before, reason: 'it stays where it was');
+    });
+
+    testWidgets('under the name, "Llamando…" fades into the time, and only one of them is read', (tester) async {
+      final app = await callOut(tester);
+      final calling = tester.getRect(find.text('Llamando…'));
+      app.engine.answerOutgoing();
+      await tester.pump();
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 60));
+      double opacityOf(String text) => tester
+          .widget<FadeTransition>(find.ancestor(of: find.text(text), matching: find.byType(FadeTransition)).first)
+          .opacity
+          .value;
+      expect(find.text('Llamando…'), findsOneWidget, reason: 'fading out');
+      expect(find.text('00:00'), findsOneWidget, reason: 'fading in');
+      expect(opacityOf('00:00'), inExclusiveRange(0, 1));
+      expect(opacityOf('Llamando…'), inExclusiveRange(0, 1));
+      expect(tester.getCenter(find.text('00:00')).dy, closeTo(calling.center.dy, 1), reason: 'in the same place');
+      expect(
+        find.ancestor(of: find.text('Llamando…'), matching: find.byType(ExcludeSemantics)),
+        findsWidgets,
+        reason: 'the leaving words are not read again',
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('Llamando…'), findsNothing);
+      expect(opacityOf('00:00'), 1);
+    });
+
+    testWidgets('with Remove animations the time replaces "Llamando…" at once', (tester) async {
+      tester.platformDispatcher.accessibilityFeaturesTestValue = const FakeAccessibilityFeatures(
+        disableAnimations: true,
+      );
+      addTearDown(tester.platformDispatcher.clearAccessibilityFeaturesTestValue);
+      final app = await callOut(tester);
+      app.engine.answerOutgoing();
+      // The engine's news reaches the screen within a frame or two, with no
+      // time passing.
+      await tester.pump();
+      await tester.pump();
+      expect(find.text('Llamando…'), findsNothing);
+      expect(find.text('00:00'), findsOneWidget);
     });
 
     testWidgets('Colgar while it rings goes back to the chat, with the end tone', (tester) async {

@@ -61,6 +61,23 @@ void main() {
     expect(find.text('03:22'), findsOneWidget);
   });
 
+  testWidgets('under the name only the time; "Por el servidor de llamadas" at the bottom, centred, above the buttons', (
+    tester,
+  ) async {
+    await pumpCall(tester);
+    final name = tester.getRect(find.text('Ana Torres'));
+    final time = tester.getRect(find.text('03:21'));
+    final path = tester.getRect(find.text('Por el servidor de llamadas'));
+    final controls = tester.getRect(find.bySemanticsLabel('Silenciar'));
+    expect(time.top, inInclusiveRange(name.bottom, name.bottom + 12), reason: 'the time right under the name');
+    expect(time.center.dx, closeTo(name.center.dx, 1));
+    expect(path.center.dx, closeTo(phoneSize.width / 2, 1), reason: 'centred');
+    expect(path.top, greaterThan(time.bottom + 80), reason: 'not beside the time any more');
+    expect(path.bottom, lessThanOrEqualTo(controls.top), reason: 'above the buttons');
+    expect(controls.top - path.bottom, lessThan(32), reason: 'just above them');
+    expect(find.text('  ·  '), findsNothing, reason: 'no separator: they are apart');
+  });
+
   testWidgets('the key opens "Comparen la clave" with the 7 symbols and their words', (tester) async {
     await pumpCall(tester);
     await tester.tap(keyPill());
@@ -124,6 +141,10 @@ void main() {
   testWidgets('a direct call says so, and only then explains that the other person sees your IP', (tester) async {
     await pumpCall(tester, engine: testEngine(callPath: CallPath.direct));
     expect(find.text('Por el servidor de llamadas'), findsNothing);
+    final controls = tester.getRect(find.bySemanticsLabel('Silenciar'));
+    final direct = tester.getRect(find.text('Conexión directa'));
+    expect(direct.center.dx, closeTo(phoneSize.width / 2, 1), reason: 'in the same place, at the bottom');
+    expect(controls.top - direct.bottom, inInclusiveRange(0, 40));
     const note = 'Ana Torres puede ver tu IP mientras dure la llamada.';
     final link = find.ancestor(of: find.text('Conexión directa'), matching: find.byKey(CallScreen.connectionKey));
     expect(tester.getSemantics(link), isSemantics(isButton: true, isExpanded: false));

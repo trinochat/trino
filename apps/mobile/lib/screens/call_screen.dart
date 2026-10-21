@@ -1,15 +1,18 @@
 // A call, full screen. At the top, the key, small: "Clave" and the first
 // symbols of the call's SAS v2 as outline icons. Tapping it opens "Comparen la
 // clave" with the 7 symbols and their words, "Coinciden" and "No coinciden";
-// once matched, the key reads "Verificada". Under the name, the time and how
-// the call travels in words: "Por el servidor de llamadas", which needs no
-// note, or, if a direct path ever shows up, "Conexión directa", which explains
-// on a tap that the other person sees your IP. At the bottom, the controls.
+// once matched, the key reads "Verificada". Under the name, only the state:
+// the time once connected. At the bottom, centred just above the controls and
+// the same from the first ring to the end, how the call travels in words:
+// "Por el servidor de llamadas", which needs no note, or, if a direct path
+// ever shows up, "Conexión directa", which explains on a tap that the other
+// person sees your IP.
 //
 // Before it connects there is no key yet (it comes from the connection) and no
 // time: a call you make says "Llamando…" with the controls, and one that rings
 // in says "te está llamando por Trino" with Rechazar (the danger edge, as
-// Colgar) and Contestar (filled with the accent).
+// Colgar) and Contestar (filled with the accent). When it connects, those
+// words fade into the time, with the theme's motion.
 //
 // During an audio call (connected or ringing out) with the speaker and the
 // camera off, the proximity sensor turns the screen off next to the face. The
@@ -30,6 +33,7 @@ import '../ui/avatar.dart';
 import '../ui/banner.dart';
 import '../ui/button.dart';
 import '../ui/icon_button.dart';
+import '../ui/motion_switcher.dart';
 import '../ui/sas_symbol.dart';
 
 class CallScreen extends StatefulWidget {
@@ -181,21 +185,26 @@ class _CallScreenState extends State<CallScreen> {
                               const SizedBox(height: 20),
                               Text(call.peerName, textAlign: TextAlign.center, style: context.text.headline),
                               const SizedBox(height: 4),
-                              if (connected)
-                                _PathLine(
-                                  call: call,
-                                  open: _noteOpen,
-                                  onTap: () => setState(() => _noteOpen = !_noteOpen),
-                                )
-                              else
-                                _RingingLine(call: call),
-                              if (connected && _noteOpen && call.path == CallPath.direct)
-                                _DirectNote(peerName: call.peerName),
+                              MotionSwitcher(
+                                child: connected
+                                    ? Text(
+                                        formatDuration(call.elapsed),
+                                        key: const ValueKey('call-time'),
+                                        textAlign: TextAlign.center,
+                                        style: context.text.mono.copyWith(fontSize: 15),
+                                      )
+                                    : _RingingLine(key: ValueKey(call.phase), call: call),
+                              ),
                             ],
                           ),
                         ),
                       ),
                     ),
+                  ),
+                  if (_noteOpen && call.path == CallPath.direct) _DirectNote(peerName: call.peerName),
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(20, 0, 20, 12),
+                    child: _PathLine(call: call, open: _noteOpen, onTap: () => setState(() => _noteOpen = !_noteOpen)),
                   ),
                   if (call.phase == CallPhase.incoming)
                     _AnswerControls(engine: _engine)
@@ -365,9 +374,8 @@ class _KeyDialog extends StatelessWidget {
   }
 }
 
-/// "04:12 · Por el servidor de llamadas": the time and how the call travels,
-/// as plain text. Only a direct path, which shows your IP, can be tapped for
-/// its note.
+/// "Por el servidor de llamadas": how the call travels, as plain text. Only a
+/// direct path, which shows your IP, can be tapped for its note.
 class _PathLine extends StatelessWidget {
   const _PathLine({required this.call, required this.open, required this.onTap});
 
@@ -380,38 +388,32 @@ class _PathLine extends StatelessWidget {
     final t = context.tokens;
     final text = context.text;
     final l10n = context.l10n;
-    final style = text.secondary.copyWith(fontSize: 15);
-    return Wrap(
-      alignment: WrapAlignment.center,
-      crossAxisAlignment: WrapCrossAlignment.center,
-      children: [
-        Text(formatDuration(call.elapsed), style: text.mono.copyWith(fontSize: 15)),
-        ExcludeSemantics(child: Text('  ·  ', style: text.secondary)),
-        switch (call.path) {
-          CallPath.relay => Text(l10n.callRelay, textAlign: TextAlign.center, style: style),
-          CallPath.direct => Semantics(
-            key: CallScreen.connectionKey,
-            container: true,
-            button: true,
-            expanded: open,
-            child: Material(
-              type: MaterialType.transparency,
-              child: InkWell(
-                onTap: onTap,
-                borderRadius: BorderRadius.circular(t.radius),
-                child: ConstrainedBox(
-                  constraints: const BoxConstraints(minHeight: 48, minWidth: 48),
-                  child: Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 4),
-                    child: Center(
-                      widthFactor: 1,
-                      child: Text(
-                        l10n.callDirect,
-                        style: style.copyWith(
-                          decoration: TextDecoration.underline,
-                          decorationStyle: TextDecorationStyle.dotted,
-                          decorationColor: t.muted,
-                        ),
+    final style = text.caption;
+    return Center(
+      child: switch (call.path) {
+        CallPath.relay => Text(l10n.callRelay, textAlign: TextAlign.center, style: style),
+        CallPath.direct => Semantics(
+          key: CallScreen.connectionKey,
+          container: true,
+          button: true,
+          expanded: open,
+          child: Material(
+            type: MaterialType.transparency,
+            child: InkWell(
+              onTap: onTap,
+              borderRadius: BorderRadius.circular(t.radius),
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(minHeight: 48, minWidth: 48),
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 4),
+                  child: Center(
+                    widthFactor: 1,
+                    child: Text(
+                      l10n.callDirect,
+                      style: style.copyWith(
+                        decoration: TextDecoration.underline,
+                        decorationStyle: TextDecorationStyle.dotted,
+                        decorationColor: t.muted,
                       ),
                     ),
                   ),
@@ -419,8 +421,8 @@ class _PathLine extends StatelessWidget {
               ),
             ),
           ),
-        },
-      ],
+        ),
+      },
     );
   }
 }
@@ -428,7 +430,7 @@ class _PathLine extends StatelessWidget {
 /// "Llamando…", or "te está llamando por Trino" after the name, read out as
 /// it changes.
 class _RingingLine extends StatelessWidget {
-  const _RingingLine({required this.call});
+  const _RingingLine({super.key, required this.call});
 
   final CallSession call;
 
@@ -460,7 +462,7 @@ class _DirectNote extends StatelessWidget {
   Widget build(BuildContext context) {
     final t = context.tokens;
     return Padding(
-      padding: const EdgeInsets.only(top: 8),
+      padding: const EdgeInsets.fromLTRB(20, 0, 20, 8),
       child: Semantics(
         container: true,
         liveRegion: true,
