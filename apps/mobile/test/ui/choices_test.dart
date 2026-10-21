@@ -146,6 +146,81 @@ void main() {
       expect(find.text('0'), findsNothing);
     });
 
+    Future<void> pumpSwitching(
+      WidgetTester tester, {
+      TrinoStyle style = TrinoStyle.calma,
+      bool reduceMotion = false,
+      bool removeAnimations = false,
+    }) async {
+      if (reduceMotion || removeAnimations) {
+        tester.platformDispatcher.accessibilityFeaturesTestValue = FakeAccessibilityFeatures(
+          reduceMotion: reduceMotion,
+          disableAnimations: removeAnimations,
+        );
+        addTearDown(tester.platformDispatcher.clearAccessibilityFeaturesTestValue);
+      }
+      var selected = 0;
+      await pumpThemed(
+        tester,
+        StatefulBuilder(
+          builder: (context, setState) =>
+              BottomTabs(items: items, selected: selected, onSelected: (index) => setState(() => selected = index)),
+        ),
+        style: style,
+        center: false,
+      );
+    }
+
+    double indicatorX(WidgetTester tester) => tester.getCenter(find.byKey(BottomTabs.indicatorKey)).dx;
+    double tabX(WidgetTester tester, String label) => tester.getCenter(find.text(label)).dx;
+
+    testWidgets("on a change only the bar slides to the new tab, with Calma's soft motion", (tester) async {
+      await pumpSwitching(tester);
+      expect(indicatorX(tester), closeTo(tabX(tester, 'Chats'), 0.5));
+      await tester.tap(find.text('Ajustes'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 60));
+      expect(find.byKey(BottomTabs.indicatorKey), findsOneWidget, reason: 'one bar that moves, not two');
+      expect(indicatorX(tester), greaterThan(tabX(tester, 'Chats') + 1), reason: 'on its way');
+      expect(indicatorX(tester), lessThan(tabX(tester, 'Ajustes') - 1), reason: 'not there yet');
+      await tester.pump(const Duration(milliseconds: 400));
+      expect(indicatorX(tester), closeTo(tabX(tester, 'Ajustes'), 0.5));
+      expect(colorOfText(tester, 'Ajustes'), tokensIn(tester).accentText, reason: 'the words change at once');
+    });
+
+    testWidgets('in Terminal the bar gets there in 160 ms', (tester) async {
+      await pumpSwitching(tester, style: TrinoStyle.terminal);
+      await tester.tap(find.text('Ajustes'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 60));
+      expect(indicatorX(tester), lessThan(tabX(tester, 'Ajustes') - 1));
+      await tester.pump(const Duration(milliseconds: 105));
+      expect(indicatorX(tester), closeTo(tabX(tester, 'Ajustes'), 0.5));
+    });
+
+    for (final (name, reduce, remove) in [('Reduce Motion', true, false), ('Remove animations', false, true)]) {
+      testWidgets('with $name the bar does not slide: it is at the new tab at once', (tester) async {
+        await pumpSwitching(tester, reduceMotion: reduce, removeAnimations: remove);
+        await tester.tap(find.text('Ajustes'));
+        await tester.pump();
+        expect(indicatorX(tester), closeTo(tabX(tester, 'Ajustes'), 0.5));
+        await tester.pump(const Duration(milliseconds: 50));
+        expect(indicatorX(tester), closeTo(tabX(tester, 'Ajustes'), 0.5), reason: 'and stays there');
+      });
+    }
+
+    testWidgets('right to left, the bar sits over the selected tab', (tester) async {
+      await pumpThemed(
+        tester,
+        Directionality(
+          textDirection: TextDirection.rtl,
+          child: BottomTabs(items: items, selected: 2, onSelected: (_) {}),
+        ),
+        center: false,
+      );
+      expect(indicatorX(tester), closeTo(tabX(tester, 'Ajustes'), 0.5));
+    });
+
     testWidgets('fits its labels at twice the text size', (tester) async {
       await pumpThemed(tester, BottomTabs(items: items, selected: 0, onSelected: (_) {}), textScale: 2, center: false);
       expect(tester.takeException(), isNull);

@@ -44,6 +44,20 @@ void main() {
     expect(find.text('Ana Torres'), findsOneWidget);
   });
 
+  testWidgets('changing tabs moves only the bar: the screen switches in place, without sliding', (tester) async {
+    await pumpApp(tester);
+    final tabs = find.byKey(const ValueKey('bottom-tabs'));
+    await tester.tap(find.descendant(of: tabs, matching: find.text('Llamadas')));
+    await tester.pump();
+    final title = find.descendant(of: find.byType(LargeTitleBar), matching: find.text('Llamadas'));
+    final first = tester.getRect(title);
+    expect(first.left, lessThan(40), reason: 'already where it belongs on the first frame');
+    await tester.pump(const Duration(milliseconds: 100));
+    expect(tester.getRect(title), first, reason: 'and it does not move');
+    await tester.pumpAndSettle();
+    expect(tester.getRect(title), first);
+  });
+
   testWidgets('every tab meets the 48 dp target and labeling guidelines', (tester) async {
     await pumpApp(tester);
     for (final label in ['Chats', 'Llamadas', 'Contactos', 'Ajustes']) {
