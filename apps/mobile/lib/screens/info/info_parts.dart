@@ -2,9 +2,12 @@
 // "Editar" for who administers), the large avatar with the name and a line in
 // words under it, the row of actions, and the question before something that
 // cannot be undone from here.
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../../app/scope.dart';
+import '../../design/haptics.dart';
 import '../../design/icons.dart';
 import '../../design/theme.dart';
 import '../../ui/avatar.dart';
@@ -218,5 +221,6 @@ Future<bool> confirmDanger(
       ),
     ),
   );
+  if (confirmed == true) unawaited(TrinoHaptics.destructiveConfirmed());
   return confirmed == true;
 }

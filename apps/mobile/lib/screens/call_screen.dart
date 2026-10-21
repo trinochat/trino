@@ -21,6 +21,7 @@ import 'package:flutter/material.dart';
 
 import '../app/format.dart';
 import '../app/scope.dart';
+import '../design/haptics.dart';
 import '../design/icons.dart';
 import '../design/theme.dart';
 import '../engine/engine.dart';
@@ -515,7 +516,10 @@ class _Controls extends StatelessWidget {
             icon: TrinoIcons.hangUp,
             label: l10n.callHangUp,
             variant: IconButtonVariant.dangerSoft,
-            onPressed: engine.hangUp,
+            onPressed: () {
+              unawaited(TrinoHaptics.callEnded());
+              unawaited(engine.hangUp());
+            },
           ),
         ],
       ),
@@ -541,13 +545,19 @@ class _AnswerControls extends StatelessWidget {
             icon: TrinoIcons.hangUp,
             label: l10n.callReject,
             variant: IconButtonVariant.dangerSoft,
-            onPressed: engine.rejectCall,
+            onPressed: () {
+              unawaited(TrinoHaptics.callEnded());
+              unawaited(engine.rejectCall());
+            },
           ),
           _Control(
             icon: TrinoIcons.phone,
             label: l10n.callAnswer,
             variant: IconButtonVariant.primary,
-            onPressed: engine.answerCall,
+            onPressed: () {
+              unawaited(TrinoHaptics.callAnswered());
+              unawaited(engine.answerCall());
+            },
           ),
         ],
       ),

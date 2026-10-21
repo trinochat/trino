@@ -12,8 +12,8 @@
 // the long-press sheet and as screen reader actions. Once shown, each action
 // is a real button with its name.
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 
+import '../design/haptics.dart';
 import '../design/icons.dart';
 import '../design/theme.dart';
 
@@ -168,7 +168,7 @@ class _SwipeActionsState extends State<SwipeActions> with SingleTickerProviderSt
     final past = _offset.value.abs() >= _longSwipeAt;
     if (past != _pastLongSwipe) {
       // A tick as the first action takes the whole width, and back.
-      HapticFeedback.selectionClick();
+      TrinoHaptics.threshold();
       setState(() => _pastLongSwipe = past);
     }
   }

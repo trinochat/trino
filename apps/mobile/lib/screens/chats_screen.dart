@@ -8,6 +8,7 @@ import 'package:flutter/semantics.dart';
 
 import '../app/format.dart';
 import '../app/scope.dart';
+import '../design/haptics.dart';
 import '../design/icons.dart';
 import '../design/theme.dart';
 import '../engine/engine.dart';
@@ -241,6 +242,7 @@ class _ChatsScreenState extends State<ChatsScreen> {
       case ChatActionKind.pin:
         try {
           await _engine.setChatPinned(chat.id, !chat.pinned);
+          unawaited(TrinoHaptics.toggled());
         } on TooManyPinnedChats catch (limit) {
           if (mounted) showNotice(context, l10n.chatPinLimit(limit.max));
         }
