@@ -224,6 +224,13 @@ async fn fetch(
     response.read_capped(max).await
 }
 
+/// The manifest parser, for the fuzz targets in fuzz/ (AP-5). cargo-fuzz
+/// builds with `--cfg fuzzing`; no other build has this.
+#[cfg(fuzzing)]
+pub fn fuzz_manifest(bytes: &[u8], platform: Platform) -> Option<(Version, String, String)> {
+    manifest::parse(bytes, platform).map(|entry| (entry.version, entry.url, entry.signature))
+}
+
 async fn ask(
     client: &HttpClient,
     session: &Session,

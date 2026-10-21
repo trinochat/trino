@@ -85,3 +85,8 @@ tokio = { version = "1", features = ["io-util", "macros", "net", "rt-multi-threa
 # Windows loop the workspace patches, the same ones Arti builds with.
 saturating-time = "0.5"
 tor-netdoc = { version = "0.47", default-features = false }
+
+# `cfg(fuzzing)`: the hooks the fuzz targets reach private parsers through
+# (fuzz/, AP-5). cargo-fuzz sets it; no other build does.
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ["cfg(fuzzing)"] }

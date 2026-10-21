@@ -1,0 +1,6 @@
+# Whole payloads, so the arbitrary strings can hold one.
+payload_hs="{\"header\":{\"dhPub\":\"00\",\"pn\":0,\"n\":0},\"nonce\":\"00\",\"ciphertext\":\"00\",\"handshake\":{\"ikDhPub\":\"00\",\"ekPub\":\"00\",\"spkId\":1,\"opkId\":null}}"
+payload="{\"header\":{\"dhPub\":\"00\",\"pn\":0,\"n\":0},\"nonce\":\"00\",\"ciphertext\":\"00\"}"
+event="[\"EVENT\",\"s\",{\"id\":\"00\",\"pubkey\":\"00\",\"created_at\":0,\"kind\":4848,\"tags\":[[\"p\",\"00\"]],\"content\":\"\",\"sig\":\"00\"}]"
+min="\x00\x00\x00\x00\x00\x00\x00\x80"
+max="\xff\xff\xff\xff\xff\xff\xff\x7f"

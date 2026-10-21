@@ -1,0 +1,7 @@
+manifest="{\"version\":\"v0.2.0\",\"platforms\":{\"windows-x86_64\":{\"url\":\"https://github.com/a\",\"signature\":\"x\"},\"linux-x86_64\":{\"url\":\"https://trinochat.org/a\",\"signature\":\"x\"}}}"
+comment="timestamp:1792065600\x09file:Trino Chat_1.2.3_x64-setup.exe\x09version:1.2.3"
+win="Trino Chat_1.2.3_x64-setup.exe"
+lin="TrinoChat_1.2.3_amd64.AppImage"
+f="file:"
+t="timestamp:"
+v="version:"

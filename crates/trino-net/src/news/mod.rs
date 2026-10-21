@@ -127,6 +127,13 @@ struct Envelope {
     signature: String,
 }
 
+/// The feed's parser past the signature, for the fuzz targets in fuzz/
+/// (AP-5). cargo-fuzz builds with `--cfg fuzzing`; no other build has this.
+#[cfg(fuzzing)]
+pub fn fuzz_feed(payload: &str) -> Result<Feed, NewsError> {
+    feed::parse(payload)
+}
+
 /// The feed in `envelope`, if `signer` signed its payload, exactly those
 /// bytes, and its fields are within their limits.
 pub fn verify(signer: &Signer, envelope: &[u8]) -> Result<Feed, NewsError> {

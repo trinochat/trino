@@ -1,0 +1,115 @@
+# Fuzz targets for the parsers that take untrusted input (AP-5 of the
+# internal audit). A workspace of its own, so the app's builds, tests and
+# lints never see it; cargo-fuzz builds it with nightly:
+#
+#   cargo +nightly fuzz run <target> -- -max_total_time=600
+#
+# Each target says at its top what it feeds and what it checks. The
+# parsers private to trino-net are reached through hooks that only exist
+# under `--cfg fuzzing`, which cargo-fuzz sets and no other build does.
+
+[package]
+name = "trino-fuzz"
+version = "0.0.0"
+authors = ["davidalmeidac"]
+edition = "2021"
+license = "AGPL-3.0-only"
+publish = false
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+arbitrary = { version = "1", features = ["derive"] }
+trino-engine = { path = "../crates/trino-engine" }
+trino-net = { path = "../crates/trino-net" }
+serde_json = "1"
+hex = "0.4"
+base64 = "0.22"
+# The test keys the targets sign with: a minisign key for the updater's
+# trusted comment, and an OpenPGP key for the news feed.
+ed25519-dalek = { version = "2", features = ["rand_core"] }
+pgp = { version = "0.21", default-features = false }
+rand = "0.8"
+rand_chacha = "0.3"
+
+# The same patched copy the app builds with (../Cargo.toml).
+[patch.crates-io]
+saturating-time = { path = "../vendor/saturating-time" }
+
+[workspace]
+members = ["."]
+
+[profile.release]
+debug = 1
+
+[[bin]]
+name = "store_envelope"
+path = "fuzz_targets/store_envelope.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "vault_decode"
+path = "fuzz_targets/vault_decode.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "relay_event"
+path = "fuzz_targets/relay_event.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "plain_envelope"
+path = "fuzz_targets/plain_envelope.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "ratchet_delivery"
+path = "fuzz_targets/ratchet_delivery.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "bridge_lines"
+path = "fuzz_targets/bridge_lines.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "update_manifest"
+path = "fuzz_targets/update_manifest.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "update_comment"
+path = "fuzz_targets/update_comment.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "news_verify"
+path = "fuzz_targets/news_verify.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "news_feed"
+path = "fuzz_targets/news_feed.rs"
+test = false
+doc = false
+bench = false

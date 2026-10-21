@@ -1,0 +1,8 @@
+text="{\"ty\":\"text\",\"body\":\"a\",\"id\":\"1\"}"
+grp="{\"ty\":\"grp\",\"gid\":\"g\",\"ep\":1,\"body\":\"a\"}"
+file="{\"ty\":\"file\",\"file\":{\"url\":\"https://a\",\"key\":\"00\",\"sha256\":\"00\",\"mime\":\"image/png\",\"name\":\"a.png\",\"size\":1,\"thumb\":\"data:image/png;base64,AA==\"},\"gid\":\"g\"}"
+call="{\"ty\":\"call\",\"call\":\"{\\\"t\\\":\\\"ice\\\",\\\"callId\\\":\\\"0123456789abcdef\\\",\\\"candidate\\\":{\\\"candidate\\\":\\\"c\\\"}}\"}"
+profile="{\"ty\":\"profile\",\"rev\":1,\"name\":\"a\",\"about\":\"b\",\"photo\":null}"
+roster="{\"ty\":\"roster\",\"roster\":{\"groupId\":\"00\",\"name\":\"n\",\"photo\":null,\"adminPub\":\"00\",\"members\":[],\"epoch\":1,\"signature\":\"00\"}}"
+rlo="\xe2\x80\xae"
+zwj="\xe2\x80\x8d"
