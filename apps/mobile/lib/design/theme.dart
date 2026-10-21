@@ -5,6 +5,7 @@ import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 
 import 'motion.dart';
+import 'predictive_back.dart';
 import 'tokens.dart';
 
 export 'motion.dart';
@@ -179,8 +180,17 @@ class TrinoLabel extends StatelessWidget {
 /// dragging it from the edge. Full-screen dialogs, such as a call, rise from
 /// the bottom. With Reduce Motion (iPhone) a short fade in place, and none
 /// with Remove animations (Android).
+///
+/// With [predictiveBack] (Android), while the system back gesture is being
+/// dragged (Android 14+), the page shrinks to preview the one below it, as
+/// Android does, and closes or returns with the gesture; opening and closing
+/// otherwise keep the slide. With Reduce Motion the page fades with the finger
+/// instead, and with Remove animations nothing previews: the gesture just goes
+/// back. Full-screen dialogs keep their own way out.
 class TrinoPageTransitionsBuilder extends PageTransitionsBuilder {
-  const TrinoPageTransitionsBuilder();
+  const TrinoPageTransitionsBuilder({this.predictiveBack = false});
+
+  final bool predictiveBack;
 
   static const _slide = CupertinoPageTransitionsBuilder();
 
@@ -195,14 +205,23 @@ class TrinoPageTransitionsBuilder extends PageTransitionsBuilder {
     Animation<double> secondaryAnimation,
     Widget child,
   ) {
-    return switch (motionOf(context)) {
+    final motion = motionOf(context);
+    Widget transition(BuildContext context, PredictiveBackGesture? gesture) => switch (motion) {
       MotionLevel.none => child,
       MotionLevel.reduced => FadeTransition(
         opacity: CurvedAnimation(parent: animation, curve: Curves.easeOut, reverseCurve: Curves.easeIn),
         child: child,
       ),
+      MotionLevel.full when gesture != null => PredictiveBackPreview(
+        animation: animation,
+        gesture: gesture,
+        transitionDuration: route.transitionDuration,
+        child: child,
+      ),
       MotionLevel.full => _slide.buildTransitions(route, context, animation, secondaryAnimation, child),
     };
+    if (!predictiveBack || route.fullscreenDialog || motion == MotionLevel.none) return transition(context, null);
+    return PredictiveBackGestureDetector(route: route, builder: transition);
   }
 }
 
@@ -348,7 +367,10 @@ ThemeData buildTrinoTheme(TrinoStyle style, Brightness brightness, TrinoAccent a
     progressIndicatorTheme: ProgressIndicatorThemeData(color: t.accentText, linearTrackColor: t.raised),
     scrollbarTheme: ScrollbarThemeData(thumbColor: WidgetStatePropertyAll(t.muted.withValues(alpha: 0.5))),
     pageTransitionsTheme: PageTransitionsTheme(
-      builders: {for (final platform in TargetPlatform.values) platform: const TrinoPageTransitionsBuilder()},
+      builders: {
+        for (final platform in TargetPlatform.values)
+          platform: TrinoPageTransitionsBuilder(predictiveBack: platform == TargetPlatform.android),
+      },
     ),
     extensions: [TrinoTheme(tokens: t, style: style, brightness: brightness, text: text)],
   );
