@@ -4,7 +4,7 @@ publish_to: 'none'
 
 # Its own version train in App Store Connect (0.0.1), apart from the demo's
 # 0.1.0, under the same app id. The workflow sets the build number.
-version: 0.0.1+1
+version: 0.1.1+1
 
 environment:
   sdk: ^3.13.4

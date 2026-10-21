@@ -20,10 +20,10 @@ Es desechable: no es el diseño del motor del celular. Cuando tengamos la respue
 
 TestFlight sube cada build a una app de App Store Connect, y esa app se identifica por el bundle id. Un id aparte (`org.trinochat.app.torspike`) exigiría registrar otro App ID y crear otra app en App Store Connect, con otro nombre, y eso es tocar la cuenta de Apple. Por eso el spike usa **`org.trinochat.app`**, con los mismos secretos y el mismo `ExportOptions.plist`. Para no chocar con la demo:
 
-- tiene su propia versión, **0.0.1**, aparte de la 0.1.0 de la demo;
+- tiene su propia versión, **0.1.1**, mayor que la 0.1.0 de la demo. Con la 0.0.1, TestFlight mostraba la build pero no la dejaba instalar («La app solicitada no está disponible o no existe»); la sospecha es que fuera por ser una versión menor que la de la demo;
 - sus builds van de **1001** en adelante (1000 + el número de corrida).
 
-**Consecuencia:** en el iPhone, instalar el spike **reemplaza la demo**, porque es la misma app. Para volver a la demo, en TestFlight se instala otra vez una build 0.1.0. En la pantalla de inicio el spike se llama «Trino Tor».
+**Consecuencia:** en el iPhone, instalar el spike **reemplaza la demo**, porque es la misma app. Para volver a la demo, borra el spike del iPhone y luego instala una build 0.1.0 desde TestFlight; como es una versión menor, puede fallar igual que la 0.0.1, y en ese caso hay que subir otra build de la demo. En la pantalla de inicio el spike se llama «Trino Tor».
 
 ## Lo que tienes que hacer tú
 
@@ -34,7 +34,7 @@ TestFlight sube cada build a una app de App Store Connect, y esa app se identifi
 2. **Que el workflow aparezca en GitHub.** GitHub solo muestra «Run workflow» si el archivo está también en la rama por defecto. Es lo mismo que pasó con `ios-testflight.yml` (el commit `4f02490` en `main`). Hace falta otro commit en `main` que agregue solo `.github/workflows/ios-tor-spike.yml`, y eso es otro push que autorizas aparte.
 3. En GitHub: **Actions › iOS Tor spike › Run workflow**. En «Use workflow from» eliges **`spike/ios-tor`**; si eliges `main`, falla en el primer paso y te lo dice.
 4. **En App Store Connect, la pregunta de cifrado.** El spike no declara `ITSAppUsesNonExemptEncryption`, a propósito: usa Tor y TLS, así que el «no» de la demo no sería cierto. App Store Connect te va a preguntar por el cifrado antes de dejar probar la build. La respuesta la decides tú.
-5. Instalas la build 0.0.1 (1001 o la que toque) desde TestFlight y mides lo de abajo.
+5. Instalas la build 0.1.1 (la de número más alto) desde TestFlight y mides lo de abajo.
 
 ## Qué medir en el iPhone
 

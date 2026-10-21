@@ -9,8 +9,9 @@ name: iOS Tor spike
 # Signing and upload are those of ios-testflight.yml (feat/movil): an
 # unsigned archive, then `xcodebuild -exportArchive` signs it in Apple's
 # cloud with the App Store Connect API key and uploads it. Same app id
-# (org.trinochat.app) and secrets; its own version train, 0.0.1, with build
-# numbers from 1001 up, so it never collides with the demo's 0.1.0 builds.
+# (org.trinochat.app) and secrets; its own version, 0.1.1, above the demo's
+# 0.1.0 (TestFlight listed a 0.0.1 build but would not install it), with
+# build numbers from 1001 up, so it never collides with the demo's builds.
 
 on:
   workflow_dispatch:
@@ -130,7 +131,7 @@ jobs:
         working-directory: ${{ env.SPIKE }}/app
         run: flutter test
 
-      # Writes ios/Flutter/Generated.xcconfig (release mode, version 0.0.1
+      # Writes ios/Flutter/Generated.xcconfig (release mode, version 0.1.1
       # from pubspec.yaml, build 1000 + this workflow's run number) without
       # building; the archive below compiles the Dart code itself.
       - name: Configure the iOS build
@@ -163,7 +164,7 @@ jobs:
           {
             echo "### App"
             echo "- \`Runner\` binary: $(du -h "$app/Runner" | cut -f1); Runner.app: $(du -sh "$app" | cut -f1)"
-            echo "- Build $(( 1000 + ${{ github.run_number }} )), version 0.0.1"
+            echo "- Build $(( 1000 + ${{ github.run_number }} )), version 0.1.1"
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Write the App Store Connect API key
@@ -191,7 +192,7 @@ jobs:
             -authenticationKeyID "$ASC_KEY_ID" \
             -authenticationKeyIssuerID "$ASC_ISSUER_ID"
           {
-            echo "### Uploaded the spike, build $(( 1000 + ${{ github.run_number }} )) (0.0.1)"
+            echo "### Uploaded the spike, build $(( 1000 + ${{ github.run_number }} )) (0.1.1)"
             echo "App Store Connect processes it for a few minutes; then it shows in TestFlight."
             echo "It asks about encryption first: the spike uses Tor and TLS (see $SPIKE/README.md)."
           } >> "$GITHUB_STEP_SUMMARY"
