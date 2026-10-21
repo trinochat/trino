@@ -133,13 +133,14 @@ class _SwipeActionsState extends State<SwipeActions> with SingleTickerProviderSt
   double _extent(List<SwipeAction> actions) => actions.length * SwipeActions.actionWidth;
   double get _longSwipeAt => _width * SwipeActions.longSwipe;
 
-  Duration get _duration => reduceMotionOf(context) ? Duration.zero : const Duration(milliseconds: 200);
-
   void _animateTo(double target) {
-    if (_duration == Duration.zero) {
+    // The row settles with the theme's motion; with Reduce Motion or Remove
+    // animations it snaps.
+    final motion = context.motion;
+    if (!motion.travels) {
       _offset.value = target;
     } else {
-      _offset.animateTo(target, duration: _duration, curve: Curves.easeOutCubic);
+      _offset.animateTo(target, duration: motion.short, curve: motion.curve);
     }
     setState(() {});
   }

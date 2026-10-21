@@ -45,6 +45,9 @@ extension TrinoThemeContext on BuildContext {
   TrinoTheme get trino => Theme.of(this).extension<TrinoTheme>()!;
   ThemeTokens get tokens => trino.tokens;
   TrinoTextStyles get text => trino.text;
+
+  /// How things move in this theme, as the system allows.
+  TrinoMotion get motion => TrinoMotion.of(trino.style, motionOf(this));
 }
 
 /// The type scale. Sizes are logical pixels before the system text scale;

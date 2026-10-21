@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:trino_mobile/design/motion.dart';
+import 'package:trino_mobile/design/theme.dart';
 
 Future<MotionLevel> levelIn(WidgetTester tester, {bool disableAnimations = false}) async {
   late MotionLevel level;
@@ -33,5 +33,117 @@ void main() {
     tester.platformDispatcher.accessibilityFeaturesTestValue = const FakeAccessibilityFeatures(reduceMotion: true);
     addTearDown(tester.platformDispatcher.clearAccessibilityFeaturesTestValue);
     expect(await levelIn(tester, disableAnimations: true), MotionLevel.none);
+  });
+
+  motionTokens();
+}
+
+/// The highest value [curve] reaches between 0 and 1.
+double peakOf(Curve curve) {
+  var peak = 0.0;
+  for (var i = 0; i <= 200; i++) {
+    final value = curve.transform(i / 200);
+    if (value > peak) peak = value;
+  }
+  return peak;
+}
+
+bool risesOnly(Curve curve) {
+  var last = 0.0;
+  for (var i = 0; i <= 200; i++) {
+    final value = curve.transform(i / 200);
+    if (value < last - 1e-9) return false;
+    last = value;
+  }
+  return true;
+}
+
+Future<TrinoMotion> motionIn(
+  WidgetTester tester,
+  TrinoStyle style, {
+  bool disableAnimations = false,
+  bool reduceMotion = false,
+}) async {
+  if (reduceMotion) {
+    tester.platformDispatcher.accessibilityFeaturesTestValue = const FakeAccessibilityFeatures(reduceMotion: true);
+    addTearDown(tester.platformDispatcher.clearAccessibilityFeaturesTestValue);
+  }
+  late TrinoMotion motion;
+  await tester.pumpWidget(
+    MediaQuery(
+      data: MediaQueryData(disableAnimations: disableAnimations),
+      child: Theme(
+        data: buildTrinoTheme(style, Brightness.light, TrinoAccent.verde),
+        child: Builder(
+          builder: (context) {
+            motion = context.motion;
+            return const SizedBox();
+          },
+        ),
+      ),
+    ),
+  );
+  return motion;
+}
+
+void motionTokens() {
+  group('motion by theme', () {
+    test('Calma: soft, with a hint of spring that settles without a visible bounce', () {
+      const calma = TrinoMotion.calma;
+      expect(calma.medium, const Duration(milliseconds: 450));
+      expect(calma.short, const Duration(milliseconds: 220));
+      expect(calma.curve, isA<SpringCurve>());
+      final spring = calma.curve as SpringCurve;
+      expect(spring.bounce, inInclusiveRange(0.05, 0.15));
+      expect(peakOf(spring), greaterThan(1), reason: 'a hint of spring past the end');
+      expect(peakOf(spring), lessThan(1.02), reason: 'too small to read as a bounce');
+      expect(spring.transform(0), 0);
+      expect(spring.transform(1), 1);
+      expect(spring.transform(0.5), greaterThan(0.8), reason: 'most of the way by half the time');
+      expect(calma.travels, isTrue);
+      expect(calma.swapScale, lessThan(1));
+    });
+
+    test('Terminal: short and crisp, never past the end', () {
+      const terminal = TrinoMotion.terminal;
+      expect(terminal.short, const Duration(milliseconds: 120));
+      expect(terminal.medium, const Duration(milliseconds: 160));
+      expect(peakOf(terminal.curve), 1);
+      expect(risesOnly(terminal.curve), isTrue);
+      expect(risesOnly(terminal.fadeCurve), isTrue);
+      expect(terminal.travels, isTrue);
+    });
+
+    test('reduced: plain short fades in both themes, nothing travels or grows', () {
+      for (final style in TrinoStyle.values) {
+        final motion = TrinoMotion.of(style, MotionLevel.reduced);
+        expect(motion.travels, isFalse, reason: '$style');
+        expect(motion.swapScale, 1, reason: '$style');
+        expect(motion.short, const Duration(milliseconds: 150), reason: '$style');
+        expect(motion.medium, const Duration(milliseconds: 150), reason: '$style');
+        expect(peakOf(motion.curve), 1, reason: '$style');
+        expect(peakOf(motion.fadeCurve), 1, reason: '$style');
+      }
+    });
+
+    test('none: everything at once', () {
+      for (final style in TrinoStyle.values) {
+        final motion = TrinoMotion.of(style, MotionLevel.none);
+        expect(motion.short, Duration.zero, reason: '$style');
+        expect(motion.medium, Duration.zero, reason: '$style');
+        expect(motion.travels, isFalse, reason: '$style');
+        expect(motion.swapScale, 1, reason: '$style');
+      }
+    });
+
+    testWidgets("context.motion follows the theme and the system's settings", (tester) async {
+      expect(await motionIn(tester, TrinoStyle.calma), TrinoMotion.calma);
+      expect(await motionIn(tester, TrinoStyle.terminal), TrinoMotion.terminal);
+      expect(await motionIn(tester, TrinoStyle.calma, disableAnimations: true), TrinoMotion.none);
+    });
+
+    testWidgets('context.motion with Reduce Motion is the short fade', (tester) async {
+      expect(await motionIn(tester, TrinoStyle.calma, reduceMotion: true), TrinoMotion.reduced);
+    });
   });
 }

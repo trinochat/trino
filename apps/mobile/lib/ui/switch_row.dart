@@ -20,7 +20,10 @@ class TrinoSwitch extends StatelessWidget {
   Widget build(BuildContext context) {
     final t = context.tokens;
     final onChanged = this.onChanged;
-    final duration = reduceMotionOf(context) ? Duration.zero : const Duration(milliseconds: 150);
+    // The knob moves with the theme; with Reduce Motion or Remove animations
+    // it changes side at once.
+    final motion = context.motion;
+    final duration = motion.travels ? motion.short : Duration.zero;
     return Semantics(
       container: semanticLabel != null,
       label: semanticLabel,
@@ -39,7 +42,7 @@ class TrinoSwitch extends StatelessWidget {
               child: TweenAnimationBuilder<double>(
                 tween: Tween(end: value ? 1 : 0),
                 duration: duration,
-                curve: Curves.easeOut,
+                curve: motion.curve,
                 builder: (context, position, _) => CustomPaint(
                   painter: SwitchPainter(
                     track: value ? t.accent : t.muted,

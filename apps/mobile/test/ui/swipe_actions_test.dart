@@ -38,9 +38,11 @@ void main() {
       List<Widget>? rows,
       TextDirection direction = TextDirection.ltr,
       bool reduceMotion = false,
+      TrinoStyle style = TrinoStyle.calma,
     }) async {
       await pumpThemed(
         tester,
+        style: style,
         Builder(
           builder: (context) => MediaQuery(
             data: MediaQuery.of(context).copyWith(disableAnimations: reduceMotion),
@@ -183,6 +185,22 @@ void main() {
       await tester.pump();
       expect(tester.hasRunningAnimations, isFalse);
       expect(shift(tester, 'Ana'), before);
+    });
+
+    testWidgets("it settles with the theme's motion: crisp in Terminal, softer in Calma", (tester) async {
+      await pumpRows(tester, style: TrinoStyle.terminal);
+      await tester.drag(find.text('Ana'), const Offset(120, 0));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 125));
+      expect(tester.hasRunningAnimations, isFalse, reason: 'Terminal settles in 120 ms');
+
+      await pumpRows(tester, rows: [row('Lucía')]);
+      await tester.drag(find.text('Lucía'), const Offset(120, 0));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 125));
+      expect(tester.hasRunningAnimations, isTrue, reason: 'Calma is still settling');
+      await tester.pump(const Duration(milliseconds: 100));
+      expect(tester.hasRunningAnimations, isFalse, reason: 'and done in 220 ms');
     });
 
     testWidgets('right to left, swiping left shows the start actions', (tester) async {
