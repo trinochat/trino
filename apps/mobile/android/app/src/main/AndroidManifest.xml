@@ -3,10 +3,13 @@
     <uses-permission android:name="android.permission.VIBRATE" />
     <!-- The screen turns off next to the face during an audio call (lib/platform/proximity.dart). -->
     <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <!-- The back gesture reaches Flutter as it is dragged (Android 14+), for the
+         predictive back preview in lib/design/predictive_back.dart. -->
     <application
         android:label="Trino"
         android:name="${applicationName}"
-        android:icon="@mipmap/ic_launcher">
+        android:icon="@mipmap/ic_launcher"
+        android:enableOnBackInvokedCallback="true">
         <activity
             android:name=".MainActivity"
             android:exported="true"
