@@ -19,6 +19,7 @@ import '../ui/composer_field.dart';
 import '../ui/day_separator.dart';
 import '../ui/icon_button.dart';
 import '../ui/message_bubble.dart';
+import '../ui/motion_switcher.dart';
 import '../ui/trust_badge.dart';
 import 'call_screen.dart';
 import 'chats_screen.dart';
@@ -360,20 +361,26 @@ class _Composer extends StatelessWidget {
               valueListenable: controller,
               // As in WhatsApp and Signal: a voice message while the field is
               // empty, and send once there is something to send. Voice
-              // messages do not exist yet, so the microphone says so.
-              builder: (context, value, _) => value.text.trim().isNotEmpty
-                  ? TrinoIconButton(
-                      icon: TrinoIcons.send,
-                      label: l10n.send,
-                      variant: IconButtonVariant.primary,
-                      onPressed: onSend,
-                    )
-                  : TrinoIconButton(
-                      icon: TrinoIcons.mic,
-                      label: l10n.voiceMessage,
-                      variant: IconButtonVariant.muted,
-                      onPressed: notYet,
-                    ),
+              // messages do not exist yet, so the microphone says so. They
+              // swap with a short grow and fade (the theme's motion).
+              builder: (context, value, _) => MotionSwitcher(
+                grow: true,
+                child: value.text.trim().isNotEmpty
+                    ? TrinoIconButton(
+                        key: const ValueKey('composer-send'),
+                        icon: TrinoIcons.send,
+                        label: l10n.send,
+                        variant: IconButtonVariant.primary,
+                        onPressed: onSend,
+                      )
+                    : TrinoIconButton(
+                        key: const ValueKey('composer-mic'),
+                        icon: TrinoIcons.mic,
+                        label: l10n.voiceMessage,
+                        variant: IconButtonVariant.muted,
+                        onPressed: notYet,
+                      ),
+              ),
             ),
           ],
         ),

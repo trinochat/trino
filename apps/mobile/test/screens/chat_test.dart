@@ -160,6 +160,69 @@ void main() {
     expect(find.bySemanticsLabel('Mensaje de voz'), findsNothing);
   });
 
+  group('the microphone and Enviar swap', () {
+    Finder iconButton(TrinoIcons icon) => find.byWidgetPredicate((w) => w is TrinoIconButton && w.icon == icon);
+    double? scaleOf(WidgetTester tester, Finder finder) {
+      final scale = find.ancestor(of: finder, matching: find.byType(ScaleTransition));
+      return scale.evaluate().isEmpty ? null : tester.widget<ScaleTransition>(scale.first).scale.value;
+    }
+
+    double opacityOf(WidgetTester tester, Finder finder) => tester
+        .widget<FadeTransition>(find.ancestor(of: finder, matching: find.byType(FadeTransition)).first)
+        .opacity
+        .value;
+
+    Future<void> typeHello(WidgetTester tester) async {
+      await pumpApp(tester);
+      await openChat(tester, 'Lucía');
+      await tester.enterText(find.byType(TextField), 'Hola');
+      await tester.pump();
+    }
+
+    void useAccessibility(WidgetTester tester, FakeAccessibilityFeatures features) {
+      tester.platformDispatcher.accessibilityFeaturesTestValue = features;
+      addTearDown(tester.platformDispatcher.clearAccessibilityFeaturesTestValue);
+    }
+
+    testWidgets('with a short grow and fade, and only one of them for screen readers', (tester) async {
+      await typeHello(tester);
+      await tester.pump(const Duration(milliseconds: 50));
+      expect(iconButton(TrinoIcons.mic), findsOneWidget, reason: 'the microphone is on its way out');
+      expect(scaleOf(tester, iconButton(TrinoIcons.send)), inExclusiveRange(0.8, 1));
+      expect(opacityOf(tester, iconButton(TrinoIcons.send)), inExclusiveRange(0, 1));
+      expect(find.bySemanticsLabel('Enviar'), findsOneWidget);
+      expect(find.bySemanticsLabel('Mensaje de voz'), findsNothing, reason: 'the leaving one is not read');
+      expect(
+        find.ancestor(
+          of: iconButton(TrinoIcons.mic),
+          matching: find.byWidgetPredicate((w) => w is IgnorePointer && w.ignoring),
+        ),
+        findsWidgets,
+        reason: 'nor can it be tapped',
+      );
+      await tester.pumpAndSettle();
+      expect(iconButton(TrinoIcons.mic), findsNothing);
+      expect(scaleOf(tester, iconButton(TrinoIcons.send)), anyOf(isNull, 1));
+    });
+
+    testWidgets('with Reduce Motion it only fades', (tester) async {
+      useAccessibility(tester, const FakeAccessibilityFeatures(reduceMotion: true));
+      await typeHello(tester);
+      await tester.pump(const Duration(milliseconds: 50));
+      expect(scaleOf(tester, iconButton(TrinoIcons.send)), anyOf(isNull, 1), reason: 'nothing grows');
+      expect(opacityOf(tester, iconButton(TrinoIcons.send)), inExclusiveRange(0, 1));
+      await tester.pumpAndSettle();
+      expect(iconButton(TrinoIcons.mic), findsNothing);
+    });
+
+    testWidgets('with Remove animations it changes at once', (tester) async {
+      useAccessibility(tester, const FakeAccessibilityFeatures(disableAnimations: true));
+      await typeHello(tester);
+      expect(iconButton(TrinoIcons.mic), findsNothing);
+      expect(iconButton(TrinoIcons.send), findsOneWidget);
+    });
+  });
+
   testWidgets('a group shows who wrote each message', (tester) async {
     await pumpApp(tester);
     await openChat(tester, 'Familia');
