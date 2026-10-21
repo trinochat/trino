@@ -1,0 +1,15 @@
+// Links the spike's Rust library (spikes/ios-tor/spike-ios) into Runner.
+// .github/workflows/ios-tor-spike.yml builds it for aarch64-apple-ios and
+// leaves in ios/rust/ (not committed) the library, libspike_ios.a, and
+// Rust.xcconfig with the system libraries rustc says it needs
+// (SPIKE_NATIVE_LIBS, from --print native-static-libs).
+//
+// Device builds only: there is no simulator library, so a simulator build
+// links without it and fails on the spike_* symbols.
+
+#include? "../rust/Rust.xcconfig"
+
+// The C functions, for Runner-Bridging-Header.h.
+HEADER_SEARCH_PATHS = $(inherited) $(PROJECT_DIR)/../../spike-ios/include
+LIBRARY_SEARCH_PATHS[sdk=iphoneos*] = $(inherited) $(PROJECT_DIR)/rust
+OTHER_LDFLAGS[sdk=iphoneos*] = $(inherited) -lspike_ios $(SPIKE_NATIVE_LIBS)

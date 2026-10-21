@@ -1,0 +1,201 @@
+name: iOS Tor spike
+
+# Builds the Tor spike (spikes/ios-tor: trino-net and Arti as an iOS static
+# library, inside a one-screen Flutter app) and uploads it to App Store
+# Connect, where it appears in TestFlight. Manual only: Actions > iOS Tor
+# spike > Run workflow, with "Use workflow from" on spike/ios-tor.
+# spikes/ios-tor/README.md says what to measure on the iPhone.
+#
+# Signing and upload are those of ios-testflight.yml (feat/movil): an
+# unsigned archive, then `xcodebuild -exportArchive` signs it in Apple's
+# cloud with the App Store Connect API key and uploads it. Same app id
+# (org.trinochat.app) and secrets; its own version train, 0.0.1, with build
+# numbers from 1001 up, so it never collides with the demo's 0.1.0 builds.
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ios-tor-spike
+  # Never cancel an upload half way; a second run waits for the first.
+  cancel-in-progress: false
+
+env:
+  # The Rust the desktop builds with (rustc 1.99.0, 2026-09-28).
+  RUST_TOOLCHAIN: 1.99.0
+  # The app's deployment target (ios/Runner.xcodeproj), so the Rust and C
+  # objects are built for the same iOS as the app.
+  IPHONEOS_DEPLOYMENT_TARGET: "13.0"
+  SPIKE: spikes/ios-tor
+
+jobs:
+  spike:
+    name: Build the spike and upload it to TestFlight
+    # macOS 26 on Apple silicon; its default Xcode is 26.6.
+    runs-on: macos-26
+    timeout-minutes: 90
+    defaults:
+      run:
+        # bash -eo pipefail: any failing command stops the step.
+        shell: bash
+    steps:
+      - name: Check out
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Check the branch
+        run: |
+          if [ ! -f "$SPIKE/app/ios/ExportOptions.plist" ]; then
+            echo "::error::$SPIKE is not on this branch. Run the workflow from spike/ios-tor (Use workflow from)."
+            exit 1
+          fi
+
+      - name: Check the App Store Connect secrets
+        env:
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          ASC_KEY_P8: ${{ secrets.ASC_KEY_P8 }}
+        run: |
+          missing=""
+          for name in ASC_KEY_ID ASC_ISSUER_ID ASC_KEY_P8; do
+            if [ -z "${!name}" ]; then missing="$missing $name"; fi
+          done
+          if [ -n "$missing" ]; then
+            echo "::error::Missing repository secrets:$missing (see apps/mobile/README.md on feat/movil)."
+            exit 1
+          fi
+          case "$ASC_KEY_P8" in
+            *"-----BEGIN PRIVATE KEY-----"*) ;;
+            *)
+              echo "::error::ASC_KEY_P8 must hold the whole AuthKey_<key id>.p8 file, BEGIN and END lines included."
+              exit 1
+              ;;
+          esac
+
+      - name: Select Xcode 26.6
+        run: |
+          sudo xcode-select --switch /Applications/Xcode_26.6.app
+          xcodebuild -version
+
+      # rustup comes with the runner; no third-party action.
+      - name: Install Rust ${{ env.RUST_TOOLCHAIN }} for aarch64-apple-ios
+        run: |
+          rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal --target aarch64-apple-ios
+          rustup default "$RUST_TOOLCHAIN"
+          rustc --version
+          cargo --version
+
+      # The static library, and the system libraries it needs from the
+      # app's link (rustc's --print native-static-libs), into ios/rust/,
+      # where ios/Flutter/Spike.xcconfig looks.
+      - name: Build the Rust library (cargo build --release --target aarch64-apple-ios)
+        working-directory: ${{ env.SPIKE }}/spike-ios
+        env:
+          RUSTFLAGS: --print=native-static-libs
+          CARGO_TERM_COLOR: never
+        run: |
+          started=$(date +%s)
+          cargo build --locked --release --target aarch64-apple-ios 2>&1 | tee "$RUNNER_TEMP/cargo.log"
+          libs=$(grep -o 'native-static-libs: .*' "$RUNNER_TEMP/cargo.log" | tail -n 1 | sed 's/^native-static-libs: //')
+          if [ -z "$libs" ]; then
+            echo "::error::rustc did not print the native static libraries."
+            exit 1
+          fi
+          lib=target/aarch64-apple-ios/release/libspike_ios.a
+          mkdir -p ../app/ios/rust
+          cp "$lib" ../app/ios/rust/
+          printf 'SPIKE_NATIVE_LIBS = %s\n' "$libs" > ../app/ios/rust/Rust.xcconfig
+          {
+            echo "### Rust library"
+            echo "- Built in $(( $(date +%s) - started )) s with $(rustc --version)"
+            echo "- \`libspike_ios.a\`: $(du -h "$lib" | cut -f1)"
+            echo "- Native libraries: \`$libs\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Set up Flutter 3.47.5
+        uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2.23.0
+        with:
+          channel: stable
+          flutter-version: 3.47.5
+
+      - name: Resolve dependencies
+        working-directory: ${{ env.SPIKE }}/app
+        run: flutter pub get
+
+      - name: Tests
+        working-directory: ${{ env.SPIKE }}/app
+        run: flutter test
+
+      # Writes ios/Flutter/Generated.xcconfig (release mode, version 0.0.1
+      # from pubspec.yaml, build 1000 + this workflow's run number) without
+      # building; the archive below compiles the Dart code itself.
+      - name: Configure the iOS build
+        working-directory: ${{ env.SPIKE }}/app
+        run: flutter build ios --release --config-only --no-codesign --build-number $(( 1000 + ${{ github.run_number }} ))
+
+      - name: Archive, unsigned
+        working-directory: ${{ env.SPIKE }}/app/ios
+        run: |
+          xcodebuild archive \
+            -workspace Runner.xcworkspace \
+            -scheme Runner \
+            -configuration Release \
+            -sdk iphoneos \
+            -destination 'generic/platform=iOS' \
+            -archivePath "$RUNNER_TEMP/Runner.xcarchive" \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY=""
+
+      # The Rust code made it into the app's binary (the archive strips its
+      # symbols, so look for one of the library's strings), and its size.
+      - name: Check the linked library
+        run: |
+          app="$RUNNER_TEMP/Runner.xcarchive/Products/Applications/Runner.app"
+          if ! grep -a -q 'trino-ios-tor' "$app/Runner"; then
+            echo "::error::The Rust library is not in Runner."
+            exit 1
+          fi
+          {
+            echo "### App"
+            echo "- \`Runner\` binary: $(du -h "$app/Runner" | cut -f1); Runner.app: $(du -sh "$app" | cut -f1)"
+            echo "- Build $(( 1000 + ${{ github.run_number }} )), version 0.0.1"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Write the App Store Connect API key
+        env:
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_KEY_P8: ${{ secrets.ASC_KEY_P8 }}
+        run: |
+          umask 077
+          key_path="$RUNNER_TEMP/AuthKey_${ASC_KEY_ID}.p8"
+          printf '%s\n' "$ASC_KEY_P8" > "$key_path"
+          echo "ASC_KEY_PATH=$key_path" >> "$GITHUB_ENV"
+
+      - name: Sign in the cloud and upload to App Store Connect
+        working-directory: ${{ env.SPIKE }}/app/ios
+        env:
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+        run: |
+          xcodebuild -exportArchive \
+            -archivePath "$RUNNER_TEMP/Runner.xcarchive" \
+            -exportOptionsPlist ExportOptions.plist \
+            -exportPath "$RUNNER_TEMP/export" \
+            -allowProvisioningUpdates \
+            -authenticationKeyPath "$ASC_KEY_PATH" \
+            -authenticationKeyID "$ASC_KEY_ID" \
+            -authenticationKeyIssuerID "$ASC_ISSUER_ID"
+          {
+            echo "### Uploaded the spike, build $(( 1000 + ${{ github.run_number }} )) (0.0.1)"
+            echo "App Store Connect processes it for a few minutes; then it shows in TestFlight."
+            echo "It asks about encryption first: the spike uses Tor and TLS (see $SPIKE/README.md)."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Delete the API key
+        if: always()
+        run: rm -f "$RUNNER_TEMP"/AuthKey_*.p8

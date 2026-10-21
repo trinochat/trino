@@ -1,0 +1,2 @@
+# The build of the spike crate (its own workspace).
+/target

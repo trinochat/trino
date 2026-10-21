@@ -1,0 +1,52 @@
+# Throwaway spike (spikes/ios-tor/README.md): does trino-net, with Arti,
+# build as an iOS static library and run inside an iPhone app?
+#
+# A workspace of its own, so it does not touch the root Cargo.toml or its
+# lock. Its Cargo.lock started as a copy of the root one, so Arti and the
+# rest resolve to the same versions the desktop builds with.
+
+[package]
+name = "spike-ios"
+version = "0.0.0"
+description = "Trino iOS spike: Tor (Arti, through trino-net) inside an iPhone app"
+authors = ["davidalmeidac"]
+edition = "2021"
+license = "AGPL-3.0-only"
+publish = false
+
+[lib]
+# staticlib for the iPhone app; rlib so the host can check and test it.
+crate-type = ["staticlib", "rlib"]
+
+[dependencies]
+# The engine's network crate, as it is: Arti on its own runtime, the
+# NetStatus states, and ws_connect over Tor.
+trino-net = { path = "../../../crates/trino-net" }
+# Only for the diagnosis when a start fails: trino-net reduces Arti's error
+# to "arti", and the spike needs the whole text (a refused folder, say).
+# Same version and features as trino-net, so nothing new gets built.
+arti-client = { version = "0.47", default-features = false, features = [
+  "tokio", "rustls", "compression", "static-sqlite",
+  "onion-service-client", "vanguards",
+  "bridge-client", "pt-client",
+] }
+tor-rtcompat = { version = "0.47", default-features = false, features = ["tokio", "rustls"] }
+futures-util = "0.3"
+libc = "0.2"
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
+serde_json = "1"
+tokio = { version = "1", features = ["rt-multi-thread", "sync", "time"] }
+# Only for the Message type of trino-net's WsStream (the same 0.24).
+tokio-tungstenite = { version = "0.24", default-features = false }
+
+[workspace]
+
+# The same fix the root workspace applies (vendor/README.md). iOS keeps
+# SystemTime in nanoseconds, so the Windows loop should not happen there;
+# the spike keeps the patch anyway to build exactly what the desktop builds.
+[patch.crates-io]
+saturating-time = { path = "../../../vendor/saturating-time" }
+
+[profile.release]
+# Symbols stay for the crash reports TestFlight collects.
+debug = "line-tables-only"

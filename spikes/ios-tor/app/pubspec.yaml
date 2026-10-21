@@ -1,0 +1,24 @@
+name: tor_spike
+description: "Trino iOS spike: Tor (Arti) inside an iPhone app. Throwaway."
+publish_to: 'none'
+
+# Its own version train in App Store Connect (0.0.1), apart from the demo's
+# 0.1.0, under the same app id. The workflow sets the build number.
+version: 0.0.1+1
+
+environment:
+  sdk: ^3.13.4
+
+# Nothing but Flutter: the screen talks to Rust through one method channel
+# (ios/Runner/AppDelegate.swift).
+dependencies:
+  flutter:
+    sdk: flutter
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0
+
+flutter:
+  uses-material-design: true
