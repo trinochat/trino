@@ -61,6 +61,18 @@ yanked = "deny"
 # that matters — one of OUR direct dependencies going unmaintained still fails.
 unmaintained = "workspace"
 
+# Each ignore names an advisory that cannot reach Trino, and why. Re-check the
+# reason whenever the crate that pulls it in changes.
+ignore = [
+    # Marvin attack: timing side channel in RSA *decryption* with a private
+    # key; no fixed rsa release exists. rsa comes in through pgp (trino-net's
+    # news feed, which only verifies detached signatures against a pinned
+    # public key) and ssh-key-fork-arti (Arti client, which only verifies relay
+    # RSA identities; no relay or onion-service features). Trino holds no RSA
+    # private key and never decrypts or signs with RSA.
+    { id = "RUSTSEC-2023-0071", reason = "rsa only verifies (pgp news, Arti client): no RSA private key, no decryption or signing" },
+]
+
 [sources]
 unknown-registry = "deny"
 unknown-git = "deny"

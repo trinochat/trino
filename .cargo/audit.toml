@@ -1,0 +1,9 @@
+# cargo-audit configuration. The CI gate is cargo-deny (src-tauri/deny.toml);
+# keep this list in step with its [advisories] ignore, and with its reasons.
+
+[advisories]
+ignore = [
+    # Marvin attack (rsa, no fix): Trino only verifies RSA signatures (pgp
+    # news feed, Arti client) and holds no RSA private key. See deny.toml.
+    "RUSTSEC-2023-0071",
+]
