@@ -37,7 +37,8 @@ use crate::store::disk::{Disk, RealDisk};
 use crate::store::session::StorageCell;
 use crate::vault::{decode_vault, unseal_vault, vault_requires_totp, UnsealedVault, VaultError};
 use crate::vault_v3::{
-    unseal_vault_v3, vault_v3_requires_totp, vault_version, OpenVault, Unlocked, MAX_SHARED_APP_LEN,
+    unseal_vault_v3, vault_v3_requires_totp, vault_version, EmergencyVault, OpenVault, Unlocked,
+    MAX_SHARED_APP_LEN,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -245,27 +246,58 @@ impl OpenedVault {
     }
 }
 
+/// What the passphrase typed at the unlock screen opened: the account's
+/// vault, or, with the emergency key, a version 3 vault's emergency slot
+/// (design §5 and §6).
+pub enum Unsealed {
+    Vault(OpenedVault),
+    Emergency(Box<EmergencyVault>),
+}
+
 /// Open the vault in `bytes`, of any version, with `passphrase` and
-/// `code`.
-///
-/// The emergency key (CE-4) is not handled yet: nothing in this version
-/// can set one, and a vault that answers to one answers as a wrong
-/// passphrase, with its very error.
+/// `code`, as the unlock screen does. Both keys answer the same: the same
+/// errors, in the same order, from the same checks (design §5.3).
+pub fn unseal_bytes(
+    bytes: &[u8],
+    passphrase: &str,
+    code: Option<&str>,
+) -> Result<Unsealed, CommandError> {
+    if vault_version(bytes).ok() == Some(3) {
+        return Ok(match unseal_vault_v3(bytes, passphrase, code)? {
+            Unlocked::Real(vault) => Unsealed::Vault(OpenedVault::V3(vault)),
+            Unlocked::Emergency(vault) => Unsealed::Emergency(vault),
+        });
+    }
+    let sealed = decode_vault(bytes)?;
+    Ok(Unsealed::Vault(OpenedVault::Old(Box::new(unseal_vault(
+        &sealed, passphrase, code,
+    )?))))
+}
+
+/// Open the vault in `bytes`, of any version, with `passphrase` and
+/// `code`, for the settings. The emergency key works only at the unlock
+/// screen (design §10): here it is a wrong passphrase, with its very error.
 pub fn open_bytes(
     bytes: &[u8],
     passphrase: &str,
     code: Option<&str>,
 ) -> Result<OpenedVault, CommandError> {
-    if vault_version(bytes).ok() == Some(3) {
-        return match unseal_vault_v3(bytes, passphrase, code)? {
-            Unlocked::Real(vault) => Ok(OpenedVault::V3(vault)),
-            Unlocked::Emergency(_) => Err(VaultError::DecryptionFailed.into()),
-        };
+    match unseal_bytes(bytes, passphrase, code)? {
+        Unsealed::Vault(vault) => Ok(vault),
+        Unsealed::Emergency(_) => Err(VaultError::DecryptionFailed.into()),
     }
-    let sealed = decode_vault(bytes)?;
-    Ok(OpenedVault::Old(Box::new(unseal_vault(
-        &sealed, passphrase, code,
-    )?)))
+}
+
+/// Open the vault at `vault` on the real disk as the unlock screen does
+/// (`unseal_bytes`, `open_with`).
+pub fn open_for_unlock(
+    vault: &Path,
+    passphrase: &str,
+    code: Option<&str>,
+) -> Result<Unsealed, CommandError> {
+    open_with(&RealDisk, vault, |bytes| {
+        unseal_bytes(bytes, passphrase, code)
+    })
 }
 
 /// Open the vault at `vault` on the real disk (`open_with`).

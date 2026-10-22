@@ -60,6 +60,7 @@ pub fn note(text: &'static str) {
 
 /// Log `text` followed by `name=value` for each field.
 pub fn note_with(text: &'static str, fields: &[(&'static str, &dyn Plain)]) {
+    capture::note(text, fields);
     // Tests never write to the real data directory: the engine's own, and
     // the app's, which build the engine with `test-util`.
     if cfg!(any(test, feature = "test-util")) {
@@ -103,6 +104,45 @@ pub fn remove_stale_log(home: &Path, build: Build) {
     let _ = std::fs::remove_file(home.join(LEGACY_LOG_FILE));
     if !build.keeps_the_log() {
         let _ = std::fs::remove_file(home.join(LOG_FILE));
+    }
+}
+
+/// What the engine's tests see of the log: the lines this thread would
+/// write while `capture::lines` runs, without their time (clave de
+/// emergencia RC-03: both unlock paths leave the same ones). Outside the
+/// engine's tests it keeps nothing.
+pub mod capture {
+    use super::Plain;
+    #[cfg(test)]
+    use std::cell::RefCell;
+
+    #[cfg(test)]
+    thread_local! {
+        static LINES: RefCell<Option<Vec<String>>> = const { RefCell::new(None) };
+    }
+
+    pub(super) fn note(text: &str, fields: &[(&str, &dyn Plain)]) {
+        #[cfg(test)]
+        LINES.with(|lines| {
+            if let Some(lines) = lines.borrow_mut().as_mut() {
+                let mut line = text.to_string();
+                for (name, value) in fields {
+                    line.push_str(&format!(" {name}={value}"));
+                }
+                lines.push(line);
+            }
+        });
+        #[cfg(not(test))]
+        let _ = (text, fields);
+    }
+
+    /// What `work` returns, and the lines it logged on this thread.
+    #[cfg(test)]
+    pub fn lines<R>(work: impl FnOnce() -> R) -> (R, Vec<String>) {
+        LINES.with(|lines| *lines.borrow_mut() = Some(Vec::new()));
+        let done = work();
+        let lines = LINES.with(|lines| lines.borrow_mut().take().unwrap_or_default());
+        (done, lines)
     }
 }
 

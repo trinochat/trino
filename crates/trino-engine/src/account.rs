@@ -24,8 +24,10 @@ use crate::store::keys::{StoreKeys, VaultKeys};
 use crate::store::report::{Action, Finding, IntegrityReport, What};
 use crate::store::session::{AccountFile, PrefsImport, SessionStore, STORE_DIR};
 use crate::vault::{encode_vault, seal_vault, UnsealedVault};
-use crate::vault_file::{OpenedVault, SessionVault, SharedApp};
-use crate::vault_v3::{create_vault_v3, vault_v3_requires_totp, NewAccount, OpenVault};
+use crate::vault_file::{OpenedVault, SessionVault, SharedApp, Unsealed};
+use crate::vault_v3::{
+    create_vault_v3, vault_v3_requires_totp, EmergencyVault, NewAccount, OpenVault,
+};
 use crate::Engine;
 use serde::Serialize;
 use std::path::{Path, PathBuf};
@@ -544,14 +546,54 @@ pub async fn forge_identity(
 /// and what was loaded for its session (nothing if it is open already).
 pub type Unlocked = (Identity, Option<Zeroizing<Vec<u8>>>, Option<LoadedSession>);
 
-/// What `unseal` does on disk, off the async runtime: open the vault in
-/// `files` with `passphrase` and `code`, of any version, finishing a write a
-/// cut stopped (`vault_file::open_with`); load what the session needs; and
-/// seal the vault again where it has to (`unlock_v3`). A vault of version 1
-/// or 2 moves to version 3 (clave de emergencia, design §3.7): one that
-/// carries no data key moves into the store with it (CL-1c). With
-/// `session_open` it only checks the passphrase and the code, and loads
-/// nothing.
+/// What the passphrase typed at the unlock screen opened (`unlock_or_emergency`).
+pub enum Unlocking {
+    /// The account's own: what `unlock_files` gives `open_session`.
+    Real(Box<Unlocked>),
+    /// The emergency key, with its code: the emergency path follows
+    /// (`emergency::run`), once any open session is dropped (step E1).
+    Emergency(Box<EmergencyVault>),
+}
+
+/// What `unseal` does on disk, off the async runtime, up to the emergency
+/// path: open the vault in `files` with `passphrase` and `code`, of any
+/// version, finishing a write a cut stopped (`vault_file::open_with`). With
+/// the account's passphrase, load what the session needs and seal the vault
+/// again where it has to (`unlock_v3`): a vault of version 1 or 2 moves to
+/// version 3 (clave de emergencia, design §3.7), and one that carries no
+/// data key moves into the store with it (CL-1c). With `session_open` it
+/// only checks the passphrase and the code, and loads nothing. With the
+/// emergency key and its code, nothing is written here (step E0, design
+/// §6.1): the caller runs the path.
+pub fn unlock_or_emergency(
+    files: &DataFiles,
+    passphrase: &str,
+    code: Option<&str>,
+    session_open: bool,
+    now: i64,
+) -> Result<Unlocking, CommandError> {
+    let opened = match crate::vault_file::open_for_unlock(&files.vault, passphrase, code)? {
+        Unsealed::Vault(opened) => opened,
+        Unsealed::Emergency(vault) => return Ok(Unlocking::Emergency(vault)),
+    };
+    if session_open {
+        let totp_secret = opened
+            .totp_secret()
+            .map(|secret| Zeroizing::new(secret.to_vec()));
+        let unlocked = (opened.identity().clone(), totp_secret, None);
+        return Ok(Unlocking::Real(Box::new(unlocked)));
+    }
+    let unlocked = match opened {
+        OpenedVault::V3(vault) => unlock_v3(files, *vault, Vec::new(), now),
+        OpenedVault::Old(old) => unlock_old(files, *old, passphrase, now),
+    }?;
+    Ok(Unlocking::Real(Box::new(unlocked)))
+}
+
+/// `unlock_or_emergency`, and the emergency path when the emergency key
+/// opened (design §6.1, E2 to E6): what `open_session` takes either way.
+/// With a session open, the emergency path needs it dropped first (E1),
+/// which `unseal` does; here it is the caller's to do.
 pub fn unlock_files(
     files: &DataFiles,
     passphrase: &str,
@@ -559,16 +601,11 @@ pub fn unlock_files(
     session_open: bool,
     now: i64,
 ) -> Result<Unlocked, CommandError> {
-    let opened = crate::vault_file::open(&files.vault, passphrase, code)?;
-    if session_open {
-        let totp_secret = opened
-            .totp_secret()
-            .map(|secret| Zeroizing::new(secret.to_vec()));
-        return Ok((opened.identity().clone(), totp_secret, None));
-    }
-    match opened {
-        OpenedVault::V3(vault) => unlock_v3(files, *vault, Vec::new(), now),
-        OpenedVault::Old(old) => unlock_old(files, *old, passphrase, now),
+    match unlock_or_emergency(files, passphrase, code, session_open, now)? {
+        Unlocking::Real(unlocked) => Ok(*unlocked),
+        Unlocking::Emergency(vault) => {
+            crate::emergency::run(&crate::store::disk::RealDisk, files, *vault, now)
+        }
     }
 }
 
@@ -578,7 +615,7 @@ pub fn unlock_files(
 /// §4.9), or if its shared block does not carry the account's name, date
 /// and security preferences as the store has them (design §3.5). The
 /// session keeps the vault. `findings` are the migration's, for the dialog.
-fn unlock_v3(
+pub(crate) fn unlock_v3(
     files: &DataFiles,
     mut vault: OpenVault,
     findings: Vec<Finding>,
@@ -726,8 +763,31 @@ pub fn status(inner: &InnerState) -> StatusResponse {
 /// whose relays start through `start_relays`. If that session is open
 /// already, this only checks the passphrase and the code again: no prekey
 /// rotation, nothing loaded twice and no second set of relay connections.
+///
+/// With the emergency key and its code, the emergency path runs instead
+/// (design §6.1): any open session is dropped (E1), the empty account
+/// takes the place of the account on this device (E2 to E5), and its
+/// session opens here as any other (E6). The answer has the same form.
 pub async fn unseal(
     state: &Engine,
+    start_relays: impl FnOnce(RelayStart),
+    passphrase: String,
+    totp_code: Option<String>,
+) -> Result<UnsealResponse, CommandError> {
+    unseal_in(
+        state,
+        DataFiles::in_trino_home(),
+        start_relays,
+        passphrase,
+        totp_code,
+    )
+    .await
+}
+
+/// `unseal` on the data files in `files`.
+pub async fn unseal_in(
+    state: &Engine,
+    files: DataFiles,
     start_relays: impl FnOnce(RelayStart),
     passphrase: String,
     totp_code: Option<String>,
@@ -737,18 +797,35 @@ pub async fn unseal(
     let totp_code = totp_code.map(Zeroizing::new);
     let _gate = state.session_gate.lock().await;
     let session_open = state.inner.lock().await.identity.is_some();
-    let files = DataFiles::in_trino_home();
     crate::diag::remove_stale_log(&files.home, crate::diag::Build::CURRENT);
+    let now = chrono::Utc::now().timestamp();
 
-    let (identity, totp_secret, loaded) = tokio::task::spawn_blocking(move || {
-        let code = submitted_code(totp_code.as_deref().map(String::as_str));
-        let now = chrono::Utc::now().timestamp();
-        unlock_files(&files, &passphrase, code, session_open, now)
+    let outcome = tokio::task::spawn_blocking({
+        let files = files.clone();
+        move || {
+            let code = submitted_code(totp_code.as_deref().map(String::as_str));
+            unlock_or_emergency(&files, &passphrase, code, session_open, now)
+        }
     })
     .await
     .map_err(|_| CommandError::internal("vault unlock worker failed"))??;
+    let (identity, totp_secret, loaded) = match outcome {
+        Unlocking::Real(unlocked) => *unlocked,
+        Unlocking::Emergency(vault) => {
+            if session_open {
+                // E1: nothing of the session that was open stays in memory,
+                // nor writes to store/ while the path moves it.
+                forget_session(&mut *state.inner.lock().await, &state.turn);
+            }
+            tokio::task::spawn_blocking(move || {
+                crate::emergency::run(&crate::store::disk::RealDisk, &files, *vault, now)
+            })
+            .await
+            .map_err(|_| CommandError::internal("vault unlock worker failed"))??
+        }
+    };
 
-    if !session_open {
+    if loaded.is_some() {
         // A new session never inherits TURN credentials (lock and wipe clear them too).
         state.turn.clear();
     }

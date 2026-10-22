@@ -648,7 +648,7 @@ pub fn settle<D: Disk + Clone>(disk: &D, home: &Path, record: &[u8]) -> io::Resu
         // of (step E5): that store goes aside under the name, in silence,
         // to be removed. A store.new/ of another vault is one the
         // emergency path left when a cut stopped it before the vault step;
-        // nothing opens it, and it goes.
+        // nothing opens it, and it goes. So does one with no file in it.
         //
         // Anything else there is not this vault's store, and is never
         // removed by itself.
@@ -667,7 +667,8 @@ pub fn settle<D: Disk + Clone>(disk: &D, home: &Path, record: &[u8]) -> io::Resu
             move_new_store(disk, home)?;
         } else if !opens
             && (generation_in(disk, &new, &keys) == Some(Generation::Newer)
-                || of_another_vault(disk, &new, &keys))
+                || of_another_vault(disk, &new, &keys)
+                || !holds_files(&new).unwrap_or(true))
         {
             disk.remove_dir_all(&new)?;
         } else {
@@ -1746,17 +1747,24 @@ mod tests {
     /// only ever in memory.
     #[test]
     fn a_store_new_of_another_vault_goes_in_silence() {
-        let scratch = ScratchDir::new("settle-other-new");
-        let home = scratch.path();
-        drop(store_of(&home.join(STORE_DIR), 1));
-        drop(store_of(&home.join(NEW_STORE_DIR), 2));
+        for empty in [false, true] {
+            let scratch = ScratchDir::new("settle-other-new");
+            let home = scratch.path();
+            drop(store_of(&home.join(STORE_DIR), 1));
+            if empty {
+                // A cut before its first file reached the disk.
+                std::fs::create_dir_all(home.join(NEW_STORE_DIR).join("stickers")).unwrap();
+            } else {
+                drop(store_of(&home.join(NEW_STORE_DIR), 2));
+            }
 
-        let settled = settle(&RealDisk, home, &keys(1).to_vault_app()).unwrap();
+            let settled = settle(&RealDisk, home, &keys(1).to_vault_app()).unwrap();
 
-        assert!(settled.findings.is_empty(), "{:?}", settled.findings);
-        assert!(!home.join(NEW_STORE_DIR).exists());
-        assert!(peek_index(&RealDisk, &home.join(STORE_DIR), &keys(1)).is_some());
-        assert!(aside_dirs(home).is_empty());
+            assert!(settled.findings.is_empty(), "{:?}", settled.findings);
+            assert!(!home.join(NEW_STORE_DIR).exists());
+            assert!(peek_index(&RealDisk, &home.join(STORE_DIR), &keys(1)).is_some());
+            assert!(aside_dirs(home).is_empty());
+        }
     }
 
     /// Design §6.4, fourth row (step E5 a cut stopped): the `store.new/`

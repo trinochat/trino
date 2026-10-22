@@ -23,6 +23,7 @@ pub mod command_error;
 pub mod connection;
 pub mod contacts;
 pub mod diag;
+pub mod emergency;
 mod engine;
 pub mod events;
 pub mod fsutil;
