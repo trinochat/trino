@@ -8,10 +8,13 @@
 // From 600 dp wide (a tablet, or a phone lying down) the tabs become a rail on
 // the left and the screen splits in two: the list, and beside it the chat
 // opened from it, or words saying none is. Calls still open full screen.
+// From 1200 dp the chat's info can open as a third pane, from its header or
+// the toggle at its end; Escape closes it.
 import 'dart:async';
 import 'dart:ui' show SemanticsRole;
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import '../app/scope.dart';
 import '../design/icons.dart';
@@ -29,6 +32,8 @@ import 'chat_screen.dart';
 import 'chats_screen.dart';
 import 'connection/connection_failed_screen.dart';
 import 'contacts_screen.dart';
+import 'info/contact_info_screen.dart';
+import 'info/group_info_screen.dart';
 import 'settings_screen.dart';
 
 class HomeShell extends StatefulWidget {
@@ -37,6 +42,7 @@ class HomeShell extends StatefulWidget {
   static const railKey = ValueKey('nav-rail');
   static const listPaneKey = ValueKey('list-pane');
   static const detailPaneKey = ValueKey('detail-pane');
+  static const infoPaneKey = ValueKey('info-pane');
 
   /// Opens "Agregar contacto" on top, as the end of the first run asks.
   final bool openAddContact;
@@ -67,6 +73,12 @@ class _HomeShellState extends State<HomeShell> {
   /// The chat open beside the list, on a tablet.
   ChatSummary? _open;
 
+  /// Whether its info shows beside it, from 1200 dp.
+  var _infoOpen = false;
+
+  /// Whether the info pane fits, as of the last build.
+  var _threePanes = false;
+
   /// The call ringing in that the call screen was opened for.
   String? _ringingCallId;
   var _unseenMissed = 0;
@@ -75,6 +87,7 @@ class _HomeShellState extends State<HomeShell> {
   @override
   void initState() {
     super.initState();
+    HardwareKeyboard.instance.addHandler(_onKey);
     if (widget.openAddContact) {
       _tab = _contactsTab;
       WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -116,7 +129,23 @@ class _HomeShellState extends State<HomeShell> {
     _latestChats = chats;
     final open = _open;
     if (!mounted || open == null) return;
-    setState(() => _open = chats.where((chat) => chat.id == open.id).firstOrNull);
+    setState(() {
+      _open = chats.where((chat) => chat.id == open.id).firstOrNull;
+      if (_open == null) _infoOpen = false;
+    });
+  }
+
+  void _toggleInfo() => setState(() => _infoOpen = !_infoOpen);
+
+  void _closeInfo() => setState(() => _infoOpen = false);
+
+  /// Escape closes the info pane, while nothing is open over the home.
+  bool _onKey(KeyEvent event) {
+    if (event is! KeyDownEvent || event.logicalKey != LogicalKeyboardKey.escape) return false;
+    if (!mounted || !_threePanes || !_infoOpen || _open == null) return false;
+    if (!(ModalRoute.of(context)?.isCurrent ?? true)) return false;
+    _closeInfo();
+    return true;
   }
 
   /// Opens [chat] beside the list, on Chats, where its row stands out.
@@ -136,6 +165,7 @@ class _HomeShellState extends State<HomeShell> {
 
   @override
   void dispose() {
+    HardwareKeyboard.instance.removeHandler(_onKey);
     unawaited(_missed?.cancel());
     unawaited(_calls?.cancel());
     unawaited(_chats?.cancel());
@@ -157,7 +187,9 @@ class _HomeShellState extends State<HomeShell> {
   Widget build(BuildContext context) {
     final l10n = context.l10n;
     final width = MediaQuery.sizeOf(context).width;
-    final panes = HomeLayout.forWidth(width) != HomeLayout.phone;
+    final layout = HomeLayout.forWidth(width);
+    final panes = layout != HomeLayout.phone;
+    _threePanes = layout == HomeLayout.threePanes;
     // Chats open beside the list only while there is one.
     _panes?.inPane = panes ? _openInPane : null;
     final screens = [
@@ -227,15 +259,20 @@ class _HomeShellState extends State<HomeShell> {
                     ),
                   ),
                   Expanded(
-                    child: Semantics(
-                      key: HomeShell.detailPaneKey,
-                      role: SemanticsRole.region,
-                      label: l10n.paneConversation,
-                      container: true,
-                      explicitChildNodes: true,
-                      child: FocusTraversalGroup(child: _chatPane(context)),
+                    child: MediaQuery.removePadding(
+                      context: context,
+                      removeRight: _threePanes && _infoOpen && _open != null,
+                      child: Semantics(
+                        key: HomeShell.detailPaneKey,
+                        role: SemanticsRole.region,
+                        label: l10n.paneConversation,
+                        container: true,
+                        explicitChildNodes: true,
+                        child: FocusTraversalGroup(child: _chatPane(context)),
+                      ),
                     ),
                   ),
+                  if (_threePanes) _infoPane(context),
                 ],
               ),
             ),
@@ -252,7 +289,59 @@ class _HomeShellState extends State<HomeShell> {
     return MotionSwitcher(
       child: chat == null
           ? _NoChat(key: const ValueKey('no-chat'), text: context.l10n.chatPickOne)
-          : ChatScreen(key: ValueKey('chat-${chat.id}'), chat: chat, inPane: true),
+          : ChatScreen(
+              key: ValueKey('chat-${chat.id}'),
+              chat: chat,
+              inPane: true,
+              onInfo: _threePanes ? _toggleInfo : null,
+              infoOpen: _threePanes ? _infoOpen : null,
+            ),
+    );
+  }
+
+  /// The info of the open chat, beside it: it slides open with the theme's
+  /// motion, and with less motion it only fades.
+  Widget _infoPane(BuildContext context) {
+    final chat = _open;
+    final open = _infoOpen && chat != null;
+    final motion = context.motion;
+    final t = context.tokens;
+    return TweenAnimationBuilder<double>(
+      tween: Tween(end: open ? 1 : 0),
+      duration: motion.travels ? motion.medium : motion.short,
+      curve: motion.travels ? motion.curve : motion.fadeCurve,
+      builder: (context, shown, child) {
+        if (shown <= 0 || child == null) return const SizedBox.shrink();
+        return ClipRect(
+          child: Align(
+            alignment: AlignmentDirectional.centerStart,
+            widthFactor: motion.travels ? shown.clamp(0, 1) : 1,
+            child: Opacity(opacity: motion.travels ? 1 : shown.clamp(0, 1), child: child),
+          ),
+        );
+      },
+      child: chat == null
+          ? null
+          : Semantics(
+              key: HomeShell.infoPaneKey,
+              role: SemanticsRole.complementary,
+              label: context.l10n.chatInfoPane,
+              container: true,
+              explicitChildNodes: true,
+              child: DecoratedBox(
+                decoration: BoxDecoration(
+                  border: Border(left: BorderSide(color: t.line)),
+                ),
+                child: SizedBox(
+                  width: infoPaneWidth,
+                  child: FocusTraversalGroup(
+                    child: chat.isGroup
+                        ? GroupInfoScreen(key: ValueKey('info-${chat.id}'), chat: chat, onClose: _closeInfo)
+                        : ContactInfoScreen(key: ValueKey('info-${chat.id}'), chat: chat, onClose: _closeInfo),
+                  ),
+                ),
+              ),
+            ),
     );
   }
 }

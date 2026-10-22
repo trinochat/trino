@@ -15,11 +15,15 @@ import '../../ui/button.dart';
 import '../../ui/icon_button.dart';
 import '../../ui/trust_badge.dart';
 
-/// Back, and on the right [actions] such as "Editar".
+/// Back, and on the right [actions] such as "Editar". Beside the chat, on a
+/// wide screen, close takes the place of back.
 class InfoBar extends StatelessWidget {
-  const InfoBar({super.key, this.actions = const []});
+  const InfoBar({super.key, this.actions = const [], this.onClose});
 
   final List<Widget> actions;
+
+  /// Closes the info shown beside the chat.
+  final VoidCallback? onClose;
 
   @override
   Widget build(BuildContext context) => DecoratedBox(
@@ -30,11 +34,14 @@ class InfoBar extends StatelessWidget {
       padding: const EdgeInsets.fromLTRB(4, 4, 8, 4),
       child: Row(
         children: [
-          TrinoIconButton(
-            icon: TrinoIcons.back,
-            label: context.l10n.back,
-            onPressed: () => Navigator.maybePop(context),
-          ),
+          if (onClose case final close?)
+            TrinoIconButton(icon: TrinoIcons.close, label: context.l10n.infoPaneClose, onPressed: close)
+          else
+            TrinoIconButton(
+              icon: TrinoIcons.back,
+              label: context.l10n.back,
+              onPressed: () => Navigator.maybePop(context),
+            ),
           const Spacer(),
           ...actions,
         ],

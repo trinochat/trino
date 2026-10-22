@@ -5,10 +5,13 @@
 import 'dart:ui' show SemanticsRole;
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:trino_mobile/screens/call_screen.dart';
 import 'package:trino_mobile/screens/chat_screen.dart';
 import 'package:trino_mobile/screens/common.dart';
+import 'package:trino_mobile/screens/info/contact_info_screen.dart';
+import 'package:trino_mobile/screens/info/group_info_screen.dart';
 import 'package:trino_mobile/ui/chat_row.dart';
 
 import '../support/app_harness.dart';
@@ -16,10 +19,25 @@ import '../support/app_harness.dart';
 const rail = ValueKey('nav-rail');
 const listPane = ValueKey('list-pane');
 const detailPane = ValueKey('detail-pane');
+const infoPane = ValueKey('info-pane');
 
 Finder inRail(String label) => find.descendant(of: find.byKey(rail), matching: find.text(label));
 Finder inList(Finder finder) => find.descendant(of: find.byKey(listPane), matching: finder);
 Finder rowOf(String name) => find.ancestor(of: inList(find.text(name)), matching: find.byType(ChatRow));
+
+Finder inDetail(Finder finder) => find.descendant(of: find.byKey(detailPane), matching: finder);
+Finder inInfo(Finder finder) => find.descendant(of: find.byKey(infoPane), matching: finder);
+
+Future<void> openInPane(WidgetTester tester, String name) async {
+  await tester.tap(inList(find.text(name)));
+  await tester.pumpAndSettle();
+}
+
+/// The chat header's avatar and name: one button.
+Future<void> tapHeader(WidgetTester tester, String name) async {
+  await tester.tap(inDetail(find.text(name)).first);
+  await tester.pumpAndSettle();
+}
 
 Future<void> tapRail(WidgetTester tester, String label) async {
   await tester.tap(inRail(label));
@@ -143,6 +161,95 @@ void main() {
       expect(Navigator.of(tester.element(find.byType(ChatScreen))).canPop(), isFalse);
       expect(tester.getSemantics(inRail('Chats')), isSemantics(isSelected: true));
       expect(tester.getSemantics(inList(find.text('Carlos Méndez'))), isSemantics(isSelected: true));
+    });
+  });
+
+  group('from 1200 dp, the info as a third pane', () {
+    testWidgets('the header opens it beside the chat, and the toggle shows it and hides it', (tester) async {
+      await pumpApp(tester, size: tabletWide);
+      await openInPane(tester, 'Ana Torres');
+      final toggle = find.byKey(ChatScreen.infoToggleKey);
+      expect(
+        tester.getSemantics(toggle),
+        isSemantics(label: 'Info', isButton: true, hasToggledState: true, isToggled: false),
+      );
+      expect(find.byKey(infoPane), findsNothing);
+
+      await tapHeader(tester, 'Ana Torres');
+      expect(find.byKey(infoPane), findsOneWidget);
+      expect(inInfo(find.byType(ContactInfoScreen)), findsOneWidget);
+      expect(tester.getSize(find.byKey(infoPane)).width, 320);
+      expect(tester.getTopRight(find.byKey(infoPane)).dx, tabletWide.width);
+      expect(Navigator.of(tester.element(find.byType(ContactInfoScreen))).canPop(), isFalse, reason: 'not a page');
+      expect(tester.getSemantics(toggle), isSemantics(isToggled: true, hasToggledState: true));
+      expect(tester.getSemantics(find.byKey(infoPane)), isSemantics(role: SemanticsRole.complementary, label: 'Info'));
+      // Beside the chat there is nothing to go back to: it closes instead.
+      expect(inInfo(find.bySemanticsLabel('Volver')), findsNothing);
+      expect(inInfo(find.bySemanticsLabel('Cerrar la info')), findsOneWidget);
+      // The chat is still there, narrower.
+      expect(inDetail(find.text('Perfecto, nos vemos el jueves')), findsOneWidget);
+
+      await tester.tap(toggle);
+      await tester.pumpAndSettle();
+      expect(find.byKey(infoPane), findsNothing);
+      await tester.tap(toggle);
+      await tester.pumpAndSettle();
+      expect(find.byKey(infoPane), findsOneWidget);
+      await tester.tap(inInfo(find.bySemanticsLabel('Cerrar la info')));
+      await tester.pumpAndSettle();
+      expect(find.byKey(infoPane), findsNothing);
+    });
+
+    testWidgets('a group shows its info, and switching chats keeps the pane open', (tester) async {
+      await pumpApp(tester, size: tabletWide);
+      await openInPane(tester, 'Ana Torres');
+      await tapHeader(tester, 'Ana Torres');
+      await openInPane(tester, 'Familia');
+      expect(inInfo(find.byType(GroupInfoScreen)), findsOneWidget);
+      expect(inInfo(find.byType(ContactInfoScreen)), findsNothing);
+    });
+
+    testWidgets('"Mensaje" in the pane closes it, back to the chat', (tester) async {
+      await pumpApp(tester, size: tabletWide);
+      await openInPane(tester, 'Ana Torres');
+      await tapHeader(tester, 'Ana Torres');
+      await tester.tap(inInfo(find.text('Mensaje')));
+      await tester.pumpAndSettle();
+      expect(find.byKey(infoPane), findsNothing);
+      expect(inDetail(find.byType(ChatScreen)), findsOneWidget);
+    });
+
+    testWidgets('deleting the chat from the pane closes the chat and its info', (tester) async {
+      await pumpApp(tester, size: tabletWide);
+      await openInPane(tester, 'Ana Torres');
+      await tapHeader(tester, 'Ana Torres');
+      await tester.tap(inInfo(find.text('Borrar el chat')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.descendant(of: find.byType(Dialog), matching: find.text('Borrar el chat')));
+      await tester.pumpAndSettle();
+      expect(find.byKey(infoPane), findsNothing);
+      expect(find.byType(ChatScreen), findsNothing);
+      expect(find.text('Elige un chat para leerlo aquí'), findsOneWidget);
+      expect(find.text('Se borró el chat.'), findsOneWidget);
+    });
+
+    testWidgets('Escape closes the info pane', (tester) async {
+      await pumpApp(tester, size: tabletWide);
+      await openInPane(tester, 'Ana Torres');
+      await tapHeader(tester, 'Ana Torres');
+      await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+      await tester.pumpAndSettle();
+      expect(find.byKey(infoPane), findsNothing);
+      expect(inDetail(find.byType(ChatScreen)), findsOneWidget);
+    });
+
+    testWidgets('under 1200 dp there is no toggle, and the header opens the info as a page', (tester) async {
+      await pumpApp(tester, size: tabletLandscape);
+      await openInPane(tester, 'Ana Torres');
+      expect(find.byKey(ChatScreen.infoToggleKey), findsNothing);
+      await tapHeader(tester, 'Ana Torres');
+      expect(find.byKey(infoPane), findsNothing);
+      expect(Navigator.of(tester.element(find.byType(ContactInfoScreen))).canPop(), isTrue);
     });
   });
 

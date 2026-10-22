@@ -23,12 +23,16 @@ import '../common.dart';
 import 'info_parts.dart';
 
 class ContactInfoScreen extends StatefulWidget {
-  const ContactInfoScreen({super.key, required this.chat});
+  const ContactInfoScreen({super.key, required this.chat, this.onClose});
 
   static Route<void> route(ChatSummary chat) => MaterialPageRoute(builder: (_) => ContactInfoScreen(chat: chat));
 
   /// The direct chat it was opened from.
   final ChatSummary chat;
+
+  /// Given when it shows beside the chat on a wide screen, rather than as a
+  /// page: closes it.
+  final VoidCallback? onClose;
 
   @override
   State<ContactInfoScreen> createState() => _ContactInfoScreenState();
@@ -41,8 +45,12 @@ class _ContactInfoScreenState extends State<ContactInfoScreen> {
 
   String get _contactId => widget.chat.contactId!;
 
-  /// "Mensaje": the chat is right below.
-  void _message() => Navigator.of(context).pop();
+  /// "Mensaje": the chat is right below, or right beside.
+  void _message() {
+    final close = widget.onClose;
+    if (close != null) return close();
+    Navigator.of(context).pop();
+  }
 
   Future<void> _call({bool video = false}) async {
     final navigator = Navigator.of(context);
@@ -100,7 +108,7 @@ class _ContactInfoScreenState extends State<ContactInfoScreen> {
       body: SafeArea(
         child: Column(
           children: [
-            const InfoBar(),
+            InfoBar(onClose: widget.onClose),
             Expanded(
               child: StreamBuilder<List<Contact>>(
                 stream: _contacts,

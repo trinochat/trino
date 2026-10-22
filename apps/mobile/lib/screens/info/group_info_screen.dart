@@ -23,11 +23,15 @@ import '../common.dart';
 import 'info_parts.dart';
 
 class GroupInfoScreen extends StatefulWidget {
-  const GroupInfoScreen({super.key, required this.chat});
+  const GroupInfoScreen({super.key, required this.chat, this.onClose});
 
   static Route<void> route(ChatSummary chat) => MaterialPageRoute(builder: (_) => GroupInfoScreen(chat: chat));
 
   final ChatSummary chat;
+
+  /// Given when it shows beside the chat on a wide screen, rather than as a
+  /// page: closes it.
+  final VoidCallback? onClose;
 
   @override
   State<GroupInfoScreen> createState() => _GroupInfoScreenState();
@@ -73,6 +77,7 @@ class _GroupInfoScreenState extends State<GroupInfoScreen> {
             child: Column(
               children: [
                 InfoBar(
+                  onClose: widget.onClose,
                   actions: [
                     if (youAdminister)
                       TrinoButton(
