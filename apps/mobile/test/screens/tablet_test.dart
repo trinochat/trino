@@ -308,6 +308,77 @@ void main() {
     });
   });
 
+  group('as the window changes width (rotating, split screen)', () {
+    Future<void> resize(WidgetTester tester, Size size) async {
+      tester.view.physicalSize = size * 3;
+      await tester.pumpAndSettle();
+    }
+
+    Finder composer() => find.descendant(of: find.byType(ChatScreen), matching: find.byType(TextField));
+    String draftShown(WidgetTester tester) => tester.widget<TextField>(composer()).controller!.text;
+
+    testWidgets('the chat open beside the list becomes a page, with its draft, and back', (tester) async {
+      await pumpApp(tester, size: tabletLandscape);
+      await openInPane(tester, 'Ana Torres');
+      await tester.enterText(composer(), 'Hola, ¿cómo');
+
+      await resize(tester, phoneSize);
+      expect(find.byKey(rail), findsNothing);
+      expect(find.byKey(const ValueKey('bottom-tabs')), findsNothing, reason: 'the chat page is on top');
+      expect(find.byType(ChatScreen), findsOneWidget);
+      expect(Navigator.of(tester.element(find.byType(ChatScreen))).canPop(), isTrue);
+      expect(find.bySemanticsLabel('Volver'), findsOneWidget);
+      expect(draftShown(tester), 'Hola, ¿cómo');
+      await tester.enterText(composer(), 'Hola, ¿cómo vas?');
+
+      await resize(tester, tabletPortrait);
+      expect(find.byKey(rail), findsOneWidget);
+      expect(inDetail(find.byType(ChatScreen)), findsOneWidget);
+      expect(find.byType(ChatScreen), findsOneWidget, reason: 'no page left over the panes');
+      expect(Navigator.of(tester.element(find.byType(ChatScreen))).canPop(), isFalse);
+      expect(draftShown(tester), 'Hola, ¿cómo vas?');
+      expect(tester.getSemantics(inList(find.text('Ana Torres'))), isSemantics(isSelected: true));
+    });
+
+    testWidgets('a chat opened on the phone moves beside the list when the window widens', (tester) async {
+      await pumpApp(tester);
+      await openChat(tester, 'Familia');
+      await tester.enterText(composer(), 'Llego tarde');
+      await resize(tester, tabletLandscape);
+      expect(inDetail(find.byType(ChatScreen)), findsOneWidget);
+      expect(find.byType(ChatScreen), findsOneWidget);
+      expect(tester.widget<ChatScreen>(find.byType(ChatScreen)).chat.title, 'Familia');
+      expect(draftShown(tester), 'Llego tarde');
+      expect(find.descendant(of: find.byType(LargeTitleBar), matching: find.text('Chats')), findsOneWidget);
+    });
+
+    testWidgets('crossing 1200 dp hides the info pane and brings it back, the chat and draft untouched', (
+      tester,
+    ) async {
+      await pumpApp(tester, size: tabletWide);
+      await openInPane(tester, 'Ana Torres');
+      await tapHeader(tester, 'Ana Torres');
+      await tester.enterText(composer(), 'Ya casi');
+      await resize(tester, tabletLandscape);
+      expect(find.byKey(infoPane), findsNothing);
+      expect(find.byKey(ChatScreen.infoToggleKey), findsNothing);
+      expect(draftShown(tester), 'Ya casi');
+      await resize(tester, tabletWide);
+      expect(find.byKey(infoPane), findsOneWidget);
+      expect(draftShown(tester), 'Ya casi');
+    });
+
+    testWidgets('the list keeps its filter across the change', (tester) async {
+      await pumpApp(tester, size: tabletLandscape);
+      await tester.tap(inList(find.text('Grupos')));
+      await tester.pumpAndSettle();
+      expect(find.text('Ana Torres'), findsNothing);
+      await resize(tester, phoneSize);
+      expect(find.text('Familia'), findsOneWidget);
+      expect(find.text('Ana Torres'), findsNothing);
+    });
+  });
+
   testWidgets('a phone keeps the bottom tabs and pushes the chat', (tester) async {
     await pumpApp(tester);
     expect(find.byKey(rail), findsNothing);

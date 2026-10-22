@@ -27,6 +27,7 @@ import '../ui/message_bubble.dart';
 import '../ui/motion_switcher.dart';
 import '../ui/trust_badge.dart';
 import 'call_screen.dart';
+import 'chat_panes.dart';
 import 'chats_screen.dart';
 import 'common.dart';
 import 'info/contact_info_screen.dart';
@@ -61,8 +62,11 @@ class ChatScreen extends StatefulWidget {
 class _ChatScreenState extends State<ChatScreen> {
   late final TrinoEngine _engine = context.engine;
   late final Stream<List<ChatMessage>> _messages = _engine.messages(widget.chat.id);
-  late final _composer = TextEditingController(text: widget.chat.draft ?? '');
+  late final ChatPanes? _panes = ChatPanes.maybeOf(context);
+  late final _composer = TextEditingController(text: _panes?.draftOf(widget.chat.id) ?? widget.chat.draft ?? '')
+    ..addListener(_keepDraft);
   var _read = false;
+  Route<dynamic>? _page;
 
   @override
   void didChangeDependencies() {
@@ -70,11 +74,18 @@ class _ChatScreenState extends State<ChatScreen> {
     if (!_read) {
       _read = true;
       unawaited(_engine.markRead(widget.chat.id));
+      // As a page, the home may move it beside the list if the window widens.
+      final route = ModalRoute.of(context);
+      if (!widget.inPane && route != null) _panes?.pageOpened(widget.chat, _page = route);
     }
   }
 
+  void _keepDraft() => _panes?.keepDraft(widget.chat.id, _composer.text);
+
   @override
   void dispose() {
+    final page = _page;
+    if (page != null) _panes?.pageClosed(page);
     // What is left in the composer waits as the chat's draft.
     unawaited(_engine.saveDraft(widget.chat.id, _composer.text));
     _composer.dispose();

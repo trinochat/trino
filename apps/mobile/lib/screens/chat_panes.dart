@@ -14,6 +14,25 @@ class ChatPanes {
   /// Set by the home while it shows the panes: opens the chat beside the list.
   ValueChanged<ChatSummary>? inPane;
 
+  /// The chats open as pages, oldest first, so the home can move the top one
+  /// beside the list when the window widens.
+  final _pages = <({ChatSummary chat, Route<dynamic> route})>[];
+
+  /// What each chat's composer holds right now. A chat moving between a page
+  /// and the pane is built anew, before (or after) the old one saves its
+  /// draft, so the words travel here.
+  final _drafts = <String, String>{};
+
+  List<({ChatSummary chat, Route<dynamic> route})> get pages => List.unmodifiable(_pages);
+
+  void pageOpened(ChatSummary chat, Route<dynamic> route) => _pages.add((chat: chat, route: route));
+
+  void pageClosed(Route<dynamic> route) => _pages.removeWhere((page) => page.route == route);
+
+  String? draftOf(String chatId) => _drafts[chatId];
+
+  void keepDraft(String chatId, String text) => _drafts[chatId] = text;
+
   static ChatPanes? maybeOf(BuildContext context) => context.getInheritedWidgetOfExactType<ChatPanesScope>()?.panes;
 }
 

@@ -79,6 +79,9 @@ class _HomeShellState extends State<HomeShell> {
   /// Whether the info pane fits, as of the last build.
   var _threePanes = false;
 
+  /// Whether the last build showed the panes; null before the first.
+  bool? _hadPanes;
+
   /// The call ringing in that the call screen was opened for.
   String? _ringingCallId;
   var _unseenMissed = 0;
@@ -155,6 +158,28 @@ class _HomeShellState extends State<HomeShell> {
     if (_tab != _chatsTab) _select(_chatsTab);
   }
 
+  /// Keeps the open chat open as the window crosses 600 dp (rotating, split
+  /// screen): the chat page moves beside the list, or the chat beside the list
+  /// becomes a page. Its draft goes along through [ChatPanes].
+  void _carryOpenChat({required bool toPanes}) {
+    final panes = _panes;
+    if (!mounted || panes == null) return;
+    final navigator = Navigator.of(context);
+    if (toPanes) {
+      final pages = panes.pages;
+      if (pages.isEmpty) return;
+      for (final page in pages) {
+        if (page.route.isActive) navigator.removeRoute(page.route);
+      }
+      _openInPane(pages.last.chat);
+    } else {
+      final chat = _open;
+      if (chat == null) return;
+      setState(() => _open = null);
+      unawaited(navigator.push(ChatScreen.route(chat)));
+    }
+  }
+
   void _select(int tab) {
     setState(() {
       _tab = tab;
@@ -190,6 +215,10 @@ class _HomeShellState extends State<HomeShell> {
     final layout = HomeLayout.forWidth(width);
     final panes = layout != HomeLayout.phone;
     _threePanes = layout == HomeLayout.threePanes;
+    if (_hadPanes != null && _hadPanes != panes) {
+      WidgetsBinding.instance.addPostFrameCallback((_) => _carryOpenChat(toPanes: panes));
+    }
+    _hadPanes = panes;
     // Chats open beside the list only while there is one.
     _panes?.inPane = panes ? _openInPane : null;
     final screens = [
