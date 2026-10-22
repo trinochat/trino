@@ -602,6 +602,32 @@ pub(super) fn move_new_store(disk: &impl Disk, home: &Path) -> io::Result<()> {
     disk.rename_durable(&home.join(NEW_STORE_DIR), &store)
 }
 
+/// Whether `name` is one a store set aside goes by, and only that: a single
+/// name in the data folder, never a path out of it.
+pub fn is_aside_name(name: &str) -> bool {
+    name.strip_prefix(super::session::OTHER_STORE_PREFIX)
+        .is_some_and(|rest| !rest.is_empty() && rest.bytes().all(|b| b.is_ascii_alphanumeric()))
+}
+
+/// Whether every file in `dir` is a file of the store of another vault than
+/// `keys`', and there is one at least: by their headers, which nothing
+/// authenticates here, so it is only ever used to remove what no key this
+/// vault holds could open anyway.
+fn of_another_vault(disk: &impl Disk, dir: &Path, keys: &StoreKeys) -> bool {
+    let Ok(names) = disk.list(dir) else {
+        return false;
+    };
+    let ids: Vec<_> = names
+        .iter()
+        .filter_map(|name| disk.read(&dir.join(name)).ok())
+        .map(|bytes| envelope::generation_of(&bytes).map(|(_, id_vault)| id_vault))
+        .collect();
+    !ids.is_empty()
+        && ids
+            .iter()
+            .all(|id| id.is_some_and(|id_vault| &id_vault != keys.id_vault()))
+}
+
 /// Before the store of a vault that carries its key (`record`) opens: finish
 /// what a cut left of the migration (the move of `store.new/`, M4), and tell
 /// of files of earlier versions that are there without being read.
@@ -616,14 +642,33 @@ pub fn settle<D: Disk + Clone>(disk: &D, home: &Path, record: &[u8]) -> io::Resu
         // rotation left (an older generation of this one) opens with no key
         // any vault holds. A rotation the vault never took left a
         // store.new/ of a newer generation, which nothing opens: it goes.
+        //
+        // Clave de emergencia, design §6.4: the vault took the empty
+        // account's store.new/, which names the store it takes the place
+        // of (step E5): that store goes aside under the name, in silence,
+        // to be removed. A store.new/ of another vault is one the
+        // emergency path left when a cut stopped it before the vault step;
+        // nothing opens it, and it goes.
+        //
         // Anything else there is not this vault's store, and is never
         // removed by itself.
-        let opens = peek_index(disk, &new, &keys).is_some();
-        let in_the_way =
-            holds_files(&store)? && generation_in(disk, &store, &keys) != Some(Generation::Older);
-        if opens && !in_the_way {
+        let new_index = peek_index(disk, &new, &keys);
+        let opens = new_index.is_some();
+        let replaces = new_index
+            .and_then(|index| index.deleting_stores.into_iter().next())
+            .filter(|name| is_aside_name(name) && !home.join(name).exists());
+        let holds = holds_files(&store)?;
+        let in_the_way = holds && generation_in(disk, &store, &keys) != Some(Generation::Older);
+        let another_account = holds && peek_index(disk, &store, &keys).is_none();
+        if let (true, Some(name)) = (opens && another_account, replaces) {
+            disk.rename_durable(&store, &home.join(name))?;
             move_new_store(disk, home)?;
-        } else if !opens && generation_in(disk, &new, &keys) == Some(Generation::Newer) {
+        } else if opens && !in_the_way {
+            move_new_store(disk, home)?;
+        } else if !opens
+            && (generation_in(disk, &new, &keys) == Some(Generation::Newer)
+                || of_another_vault(disk, &new, &keys))
+        {
             disk.remove_dir_all(&new)?;
         } else {
             disk.rename(&new, &home.join(other_store_name()))?;
@@ -1673,5 +1718,82 @@ mod tests {
         assert_reads_the_same(&unlocked, &written);
         drop(unlocked);
         assert!(!unlock_whole(home, 3).cleaned);
+    }
+
+    // ---- Clave de emergencia, design §6.4 ----
+
+    /// A store in `dir` under `keys(byte)`, with an account in it.
+    fn store_of(dir: &Path, byte: u8) -> Store<RealDisk> {
+        let mut store = Store::create(dir, keys(byte), RealDisk).unwrap();
+        store.write(&Slot::Account, b"{\"handle\":\"x\"}").unwrap();
+        store
+    }
+
+    fn aside_dirs(home: &Path) -> Vec<String> {
+        let mut names: Vec<String> = std::fs::read_dir(home)
+            .unwrap()
+            .flatten()
+            .map(|entry| entry.file_name().to_string_lossy().into_owned())
+            .filter(|name| name.starts_with(super::super::session::OTHER_STORE_PREFIX))
+            .collect();
+        names.sort();
+        names
+    }
+
+    /// Design §6.4, third row: a `store.new/` of another vault, which the
+    /// emergency path leaves if it is cut before it changes the vault,
+    /// goes in silence. Nothing opens it: the keys it was made with were
+    /// only ever in memory.
+    #[test]
+    fn a_store_new_of_another_vault_goes_in_silence() {
+        let scratch = ScratchDir::new("settle-other-new");
+        let home = scratch.path();
+        drop(store_of(&home.join(STORE_DIR), 1));
+        drop(store_of(&home.join(NEW_STORE_DIR), 2));
+
+        let settled = settle(&RealDisk, home, &keys(1).to_vault_app()).unwrap();
+
+        assert!(settled.findings.is_empty(), "{:?}", settled.findings);
+        assert!(!home.join(NEW_STORE_DIR).exists());
+        assert!(peek_index(&RealDisk, &home.join(STORE_DIR), &keys(1)).is_some());
+        assert!(aside_dirs(home).is_empty());
+    }
+
+    /// Design §6.4, fourth row (step E5 a cut stopped): the `store.new/`
+    /// the vault opens names the store it takes the place of. That store
+    /// goes aside under the name, in silence, and `store.new/` becomes
+    /// `store/`; a store CL set aside before stays where it is (RC-11).
+    #[test]
+    fn a_store_new_that_names_the_store_it_replaces_takes_its_place() {
+        for moved_already in [false, true] {
+            let scratch = ScratchDir::new("settle-replaces");
+            let home = scratch.path();
+            let aside = "store-aside-000000000000000000000002".to_string();
+            let kept_by_cl = home.join("store-aside-000000000000000000000001");
+            drop(store_of(&kept_by_cl, 9));
+            let old_at = if moved_already {
+                home.join(&aside)
+            } else {
+                home.join(STORE_DIR)
+            };
+            drop(store_of(&old_at, 1));
+            let mut new = store_of(&home.join(NEW_STORE_DIR), 2);
+            new.note_new_store(None, Legacy::default(), vec![aside.clone()])
+                .unwrap();
+            drop(new);
+
+            let settled = settle(&RealDisk, home, &keys(2).to_vault_app()).unwrap();
+
+            assert!(settled.findings.is_empty(), "{:?}", settled.findings);
+            assert!(!home.join(NEW_STORE_DIR).exists());
+            let index = peek_index(&RealDisk, &home.join(STORE_DIR), &keys(2)).unwrap();
+            assert_eq!(index.deleting_stores, std::slice::from_ref(&aside));
+            assert!(peek_index(&RealDisk, &home.join(&aside), &keys(1)).is_some());
+            assert!(peek_index(&RealDisk, &kept_by_cl, &keys(9)).is_some());
+            assert_eq!(
+                aside_dirs(home),
+                ["store-aside-000000000000000000000001", &aside]
+            );
+        }
     }
 }

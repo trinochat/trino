@@ -454,6 +454,22 @@ impl<D: Disk> Store<D> {
         self.bump_and_save_index()
     }
 
+    /// Note, in one write of the index, what a store made for a new account
+    /// starts with (clave de emergencia, step E3): the vault's header, the
+    /// state of the migration, and the stores to remove (`deleting_stores`).
+    pub fn note_new_store(
+        &mut self,
+        vault: Option<VaultHeader>,
+        legacy: Legacy,
+        deleting_stores: Vec<String>,
+    ) -> Result<(), StoreError> {
+        self.index.vault = vault;
+        self.index.vault_pending = None;
+        self.index.legacy = legacy;
+        self.index.deleting_stores = deleting_stores;
+        self.bump_and_save_index()
+    }
+
     /// Write `content` as the file in `slot` and note `legacy` in the index
     /// written right after it, so the two reach the disk together: a cut
     /// leaves either both, or the file one step ahead under the old note,

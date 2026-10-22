@@ -32,6 +32,13 @@ pub struct Index {
     /// The migration from the legacy files (CL-1c, CL-2a).
     #[serde(default)]
     pub legacy: Legacy,
+    /// Whole stores to remove, next to this one in the data folder: the
+    /// `deleting` of stores (clave de emergencia, design §6.1 E5). The
+    /// store this one took the place of goes aside under the name noted
+    /// here before it moves, so only that one is ever removed, never a
+    /// store set aside for another reason (RC-11).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub deleting_stores: Vec<String>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -87,6 +94,10 @@ mod tests {
         index.files.insert("account".into(), 11);
         index.deleting.push("sticker:00".into());
         index.legacy.migrated = true;
+        assert_eq!(Index::from_json(&index.to_json()), Some(index.clone()));
+        // An index with no store to remove is written as before.
+        assert!(!String::from_utf8_lossy(&index.to_json()).contains("deleting_stores"));
+        index.deleting_stores.push("store-aside-1".into());
         assert_eq!(Index::from_json(&index.to_json()), Some(index.clone()));
 
         let mut newer = index;
