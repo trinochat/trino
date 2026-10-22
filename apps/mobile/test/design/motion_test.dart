@@ -180,6 +180,13 @@ void motionTokens() {
       }
     });
 
+    test('a message rises 12 dp in Calma, 6 dp in Terminal, and not at all with less motion', () {
+      expect(TrinoMotion.calma.rise, 12);
+      expect(TrinoMotion.terminal.rise, 6);
+      expect(TrinoMotion.reduced.rise, 0);
+      expect(TrinoMotion.none.rise, 0);
+    });
+
     test('none: everything at once', () {
       for (final style in TrinoStyle.values) {
         final motion = TrinoMotion.of(style, MotionLevel.none);

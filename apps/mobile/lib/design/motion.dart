@@ -80,6 +80,7 @@ class TrinoMotion {
     required this.fadeCurve,
     required this.swapScale,
     required this.travels,
+    required this.rise,
   });
 
   /// Calma: a spring with a bounce of 0.15, which settles without a visible
@@ -91,6 +92,7 @@ class TrinoMotion {
     fadeCurve: Curves.easeOut,
     swapScale: 0.8,
     travels: true,
+    rise: 12,
   );
 
   /// Terminal: quick cuts that slow down, with no spring.
@@ -101,6 +103,7 @@ class TrinoMotion {
     fadeCurve: Curves.linear,
     swapScale: 0.9,
     travels: true,
+    rise: 6,
   );
 
   /// Reduce Motion, in either theme: a 150 ms fade in place (Apple's advice:
@@ -112,6 +115,7 @@ class TrinoMotion {
     fadeCurve: Curves.easeOut,
     swapScale: 1,
     travels: false,
+    rise: 0,
   );
 
   /// Remove animations, in either theme: at once.
@@ -122,6 +126,7 @@ class TrinoMotion {
     fadeCurve: Curves.linear,
     swapScale: 1,
     travels: false,
+    rise: 0,
   );
 
   static TrinoMotion of(TrinoStyle style, MotionLevel level) => switch (level) {
@@ -148,6 +153,10 @@ class TrinoMotion {
   /// Whether things may move or grow; false with Reduce Motion or Remove
   /// animations, where they only fade or change at once.
   final bool travels;
+
+  /// How far a message you send rises as it appears, in dp: 12 in Calma, 6 in
+  /// Terminal (as the approved mock), 0 when nothing may travel.
+  final double rise;
 }
 
 /// A spring as a curve: [bounce] as in SpringDescription.withDurationAndBounce

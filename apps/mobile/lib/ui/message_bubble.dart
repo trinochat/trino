@@ -5,6 +5,7 @@ import 'package:flutter/widgets.dart';
 
 import '../design/icons.dart';
 import '../design/theme.dart';
+import 'motion_switcher.dart';
 
 enum BubbleDirection { incoming, outgoing }
 
@@ -116,7 +117,15 @@ class MessageBubble extends StatelessWidget {
                               Text(time, style: styles.mono.copyWith(color: meta)),
                               if (status != null) ...[
                                 const SizedBox(width: 4),
-                                StatusTicks(state: status.state, label: status.label, color: meta),
+                                // A new state fades in (the check once sent) instead of popping.
+                                MotionSwitcher(
+                                  child: StatusTicks(
+                                    key: ValueKey(status.state),
+                                    state: status.state,
+                                    label: status.label,
+                                    color: meta,
+                                  ),
+                                ),
                               ],
                             ],
                           ),

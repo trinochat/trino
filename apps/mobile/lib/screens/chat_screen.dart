@@ -18,6 +18,7 @@ import '../ui/call_event_line.dart';
 import '../ui/composer_field.dart';
 import '../ui/day_separator.dart';
 import '../ui/icon_button.dart';
+import '../ui/message_arrival.dart';
 import '../ui/message_bubble.dart';
 import '../ui/motion_switcher.dart';
 import '../ui/trust_badge.dart';
@@ -100,6 +101,7 @@ class _ChatScreenState extends State<ChatScreen> {
               stream: _messages,
               builder: (context, snapshot) => _MessageList(
                 messages: snapshot.data ?? const [],
+                loaded: snapshot.hasData,
                 group: widget.chat.isGroup,
                 onRetry: (message) => _engine.retry(widget.chat.id, message.id),
               ),
@@ -220,16 +222,53 @@ class _Header extends StatelessWidget {
   }
 }
 
-class _MessageList extends StatelessWidget {
-  const _MessageList({required this.messages, required this.group, required this.onRetry});
+class _MessageList extends StatefulWidget {
+  const _MessageList({required this.messages, required this.loaded, required this.group, required this.onRetry});
 
   final List<ChatMessage> messages;
+
+  /// Whether [messages] came from the engine yet: what is there then is the
+  /// history, which does not move.
+  final bool loaded;
   final bool group;
   final void Function(ChatMessage message) onRetry;
 
   @override
+  State<_MessageList> createState() => _MessageListState();
+}
+
+class _MessageListState extends State<_MessageList> {
+  /// Every message shown so far; what is not here yet arrives now.
+  final _known = <String>{};
+
+  /// What arrived with the last change, to move in once.
+  var _arriving = const <String>{};
+
+  @override
+  void initState() {
+    super.initState();
+    _takeIn(animate: false);
+  }
+
+  @override
+  void didUpdateWidget(_MessageList oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    _takeIn(animate: oldWidget.loaded);
+  }
+
+  void _takeIn({required bool animate}) {
+    if (!widget.loaded) return;
+    final fresh = {
+      for (final message in widget.messages)
+        if (_known.add(message.id)) message.id,
+    };
+    _arriving = animate ? fresh : const {};
+  }
+
+  @override
   Widget build(BuildContext context) {
     final l10n = context.l10n;
+    final messages = widget.messages;
     if (messages.isEmpty) {
       return Center(child: Text(l10n.noMessages, style: context.text.secondary));
     }
@@ -250,31 +289,38 @@ class _MessageList extends StatelessWidget {
         continue;
       }
       items.add(
-        Padding(
+        MessageArrival(
           key: ValueKey(message.id),
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 3),
-          child: MessageBubble(
-            direction: message.outgoing ? BubbleDirection.outgoing : BubbleDirection.incoming,
-            text: message.text,
-            time: formatTime(context, message.sentAt),
-            sender: group ? message.sender : null,
-            status: message.outgoing
-                ? (state: _delivery(message.status), label: _statusLabel(context, message.status))
-                : null,
-            failure: message.status == MessageStatus.failed
-                ? (
-                    text: l10n.failedNotice,
-                    retry: TrinoButton(
-                      label: l10n.retry,
-                      variant: ButtonVariant.ghost,
-                      onPressed: () => onRetry(message),
-                    ),
-                  )
-                : null,
+          animate: _arriving.contains(message.id),
+          // Yours rise as they appear; theirs only fade in.
+          rise: message.outgoing,
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 3),
+            child: MessageBubble(
+              direction: message.outgoing ? BubbleDirection.outgoing : BubbleDirection.incoming,
+              text: message.text,
+              time: formatTime(context, message.sentAt),
+              sender: widget.group ? message.sender : null,
+              status: message.outgoing
+                  ? (state: _delivery(message.status), label: _statusLabel(context, message.status))
+                  : null,
+              failure: message.status == MessageStatus.failed
+                  ? (
+                      text: l10n.failedNotice,
+                      retry: TrinoButton(
+                        label: l10n.retry,
+                        variant: ButtonVariant.ghost,
+                        onPressed: () => widget.onRetry(message),
+                      ),
+                    )
+                  : null,
+            ),
           ),
         ),
       );
     }
+    // Each item keeps its place, and its motion, as new ones come in below.
+    final indexOf = {for (final (index, item) in items.indexed) item.key!: items.length - 1 - index};
     return Semantics(
       container: true,
       explicitChildNodes: true,
@@ -284,6 +330,7 @@ class _MessageList extends StatelessWidget {
         padding: const EdgeInsets.symmetric(vertical: 8),
         itemCount: items.length,
         itemBuilder: (context, index) => items[items.length - 1 - index],
+        findChildIndexCallback: (key) => indexOf[key],
       ),
     );
   }

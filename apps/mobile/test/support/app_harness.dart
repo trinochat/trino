@@ -35,6 +35,7 @@ FakeTrinoEngine testEngine({
   Duration callStartsAt = Duration.zero,
   CallPath callPath = CallPath.relay,
   Duration? answerAfter = Duration.zero,
+  Duration sendDelay = Duration.zero,
 }) => FakeTrinoEngine(
   clock: () => testNow,
   onboarded: onboarded,
@@ -42,6 +43,7 @@ FakeTrinoEngine testEngine({
   callStartsAt: callStartsAt,
   callPath: callPath,
   answerAfter: answerAfter,
+  sendDelay: sendDelay,
 );
 
 /// Around the whole app, so a test can capture what it shows.

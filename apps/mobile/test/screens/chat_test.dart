@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:trino_mobile/design/appearance.dart';
 import 'package:trino_mobile/screens/call_screen.dart';
 import 'package:trino_mobile/screens/chat_screen.dart';
 import 'package:trino_mobile/screens/info/contact_info_screen.dart';
@@ -10,6 +11,7 @@ import 'package:trino_mobile/ui/chat_row.dart';
 import 'package:trino_mobile/ui/composer_field.dart';
 import 'package:trino_mobile/ui/day_separator.dart';
 import 'package:trino_mobile/ui/icon_button.dart';
+import 'package:trino_mobile/ui/message_arrival.dart';
 import 'package:trino_mobile/ui/message_bubble.dart';
 import 'package:trino_mobile/ui/trust_badge.dart';
 
@@ -220,6 +222,146 @@ void main() {
       await typeHello(tester);
       expect(iconButton(TrinoIcons.mic), findsNothing);
       expect(iconButton(TrinoIcons.send), findsOneWidget);
+    });
+  });
+
+  group('a message as it arrives', () {
+    Finder arrivalOf(String text) => find.ancestor(of: bubbleWith(text), matching: find.byType(MessageArrival));
+
+    /// The opacity the arrival gives the bubble, leaving the page's own aside.
+    double arrivalOpacity(WidgetTester tester, String text) => tester
+        .widgetList<FadeTransition>(
+          find.descendant(
+            of: arrivalOf(text),
+            matching: find.ancestor(of: bubbleWith(text), matching: find.byType(FadeTransition)),
+          ),
+        )
+        .fold(1.0, (opacity, fade) => opacity * fade.opacity.value);
+
+    /// How far below its place the arrival holds the bubble.
+    double arrivalDrop(WidgetTester tester, String text) => tester
+        .widgetList<Transform>(
+          find.descendant(
+            of: arrivalOf(text),
+            matching: find.ancestor(of: bubbleWith(text), matching: find.byType(Transform)),
+          ),
+        )
+        .fold(0.0, (drop, transform) => drop + transform.transform.getTranslation().y);
+
+    Future<TestApp> send(
+      WidgetTester tester, {
+      Appearance appearance = const Appearance(),
+      Duration sendDelay = Duration.zero,
+    }) async {
+      final app = await pumpApp(
+        tester,
+        engine: testEngine(sendDelay: sendDelay),
+        appearance: appearance,
+      );
+      await openChat(tester, 'Lucía');
+      await tester.enterText(find.byType(TextField), 'Ya voy');
+      await tester.pump();
+      await tester.tap(find.bySemanticsLabel('Enviar'));
+      await tester.pump();
+      return app;
+    }
+
+    testWidgets('Calma: yours rises 12 dp with a hint of spring as it fades in, and the text leaves the field', (
+      tester,
+    ) async {
+      await send(tester);
+      expect(tester.widget<TextField>(find.byType(TextField)).controller!.text, isEmpty);
+      await tester.pump(const Duration(milliseconds: 50));
+      expect(arrivalDrop(tester, 'Ya voy'), inExclusiveRange(0, 12));
+      expect(arrivalOpacity(tester, 'Ya voy'), inExclusiveRange(0, 1));
+      await tester.pump(const Duration(milliseconds: 200));
+      expect(arrivalOpacity(tester, 'Ya voy'), 1, reason: 'the fade is short; the rise settles after');
+      await tester.pumpAndSettle();
+      expect(arrivalDrop(tester, 'Ya voy'), moreOrLessEquals(0, epsilon: 0.01));
+    });
+
+    testWidgets('Terminal: 6 dp, crisp, done in about 0.15 s', (tester) async {
+      await send(tester, appearance: const Appearance(style: TrinoStyle.terminal));
+      await tester.pump(const Duration(milliseconds: 40));
+      expect(arrivalDrop(tester, 'Ya voy'), inExclusiveRange(0, 6));
+      await tester.pump(const Duration(milliseconds: 130));
+      expect(arrivalDrop(tester, 'Ya voy'), 0);
+      expect(arrivalOpacity(tester, 'Ya voy'), 1);
+    });
+
+    testWidgets('with Reduce Motion it only fades in place', (tester) async {
+      tester.platformDispatcher.accessibilityFeaturesTestValue = const FakeAccessibilityFeatures(reduceMotion: true);
+      addTearDown(tester.platformDispatcher.clearAccessibilityFeaturesTestValue);
+      await send(tester);
+      await tester.pump(const Duration(milliseconds: 50));
+      expect(arrivalDrop(tester, 'Ya voy'), 0);
+      expect(arrivalOpacity(tester, 'Ya voy'), inExclusiveRange(0, 1));
+    });
+
+    testWidgets('with Animaciones "Ninguna" it is there at once', (tester) async {
+      await send(tester, appearance: const Appearance(animations: AnimationsSetting.none));
+      expect(bubbleWith('Ya voy'), findsOneWidget);
+      expect(arrivalDrop(tester, 'Ya voy'), 0);
+      expect(arrivalOpacity(tester, 'Ya voy'), 1);
+    });
+
+    testWidgets('the history does not move when the chat opens', (tester) async {
+      await pumpApp(tester);
+      await tester.tap(find.text('Lucía').first);
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 50));
+      expect(arrivalOf('¡Gracias!'), findsOneWidget);
+      expect(arrivalOpacity(tester, '¡Gracias!'), 1);
+      expect(arrivalDrop(tester, '¡Gracias!'), 0);
+    });
+
+    testWidgets('theirs only fade in, without rising', (tester) async {
+      final app = await pumpApp(tester);
+      await openChat(tester, 'Lucía');
+      app.engine.receive('chat-lucia', '¿Ya vienes?');
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 16));
+      await tester.pump(const Duration(milliseconds: 50));
+      expect(arrivalDrop(tester, '¿Ya vienes?'), 0);
+      expect(arrivalOpacity(tester, '¿Ya vienes?'), inExclusiveRange(0, 1));
+    });
+
+    Finder sentTick(String text) => find.descendant(
+      of: bubbleWith(text),
+      matching: find.byWidgetPredicate((w) => w is StatusTicks && w.state == DeliveryState.sent),
+    );
+    double tickOpacity(WidgetTester tester, String text) => tester
+        .widgetList<FadeTransition>(
+          find.descendant(
+            of: bubbleWith(text),
+            matching: find.ancestor(of: sentTick(text), matching: find.byType(FadeTransition)),
+          ),
+        )
+        .fold(1.0, (opacity, fade) => opacity * fade.opacity.value);
+
+    testWidgets('the check fades in once the message is sent, instead of popping in', (tester) async {
+      await send(tester, sendDelay: const Duration(seconds: 1));
+      await tester.pumpAndSettle();
+      expect(sentTick('Ya voy'), findsNothing);
+      await tester.pump(const Duration(seconds: 1));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 50));
+      expect(sentTick('Ya voy'), findsOneWidget);
+      expect(tickOpacity(tester, 'Ya voy'), inExclusiveRange(0, 1));
+      await tester.pumpAndSettle();
+      expect(tickOpacity(tester, 'Ya voy'), 1);
+    });
+
+    testWidgets('without motion the check is there at once', (tester) async {
+      await send(
+        tester,
+        appearance: const Appearance(animations: AnimationsSetting.none),
+        sendDelay: const Duration(seconds: 1),
+      );
+      await tester.pump(const Duration(seconds: 1));
+      await tester.pump();
+      expect(sentTick('Ya voy'), findsOneWidget);
+      expect(tickOpacity(tester, 'Ya voy'), 1);
     });
   });
 
