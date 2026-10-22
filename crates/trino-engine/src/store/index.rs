@@ -38,7 +38,8 @@ pub struct Index {
 pub struct VaultHeader {
     pub version: u8,
     pub flags: u8,
-    /// The salt, in hex.
+    /// The salt, in hex; for a version 3 vault, whose salt never changes, a
+    /// digest of the whole vault (`session::vault_header`).
     pub salt: String,
     /// The id of the signed prekey the vault held.
     pub spk: u32,

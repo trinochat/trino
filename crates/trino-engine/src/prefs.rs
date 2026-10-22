@@ -235,7 +235,10 @@ pub fn save_in(inner: &InnerState, prefs: &BTreeMap<String, String>) -> Result<(
     inner
         .storage
         .write_prefs(&json)
-        .map_err(|e| CommandError::io(&e))
+        .map_err(|e| CommandError::io(&e))?;
+    // A security setting goes to the vault's shared block too (design §3.5).
+    crate::vault_file::sync_shared(inner);
+    Ok(())
 }
 
 /// Set the backend's own entry `key` to `value` (or drop it) in the

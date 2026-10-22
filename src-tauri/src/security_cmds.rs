@@ -5,20 +5,29 @@
 //! The settings' commands seal the vault again. While they do, they hold
 //! `session_gate`, as `forge`, `unseal`, `lock_vault` and `wipe` do: a wipe
 //! in between would otherwise find its vault written back. The slow key
-//! derivation runs off the async workers, and the new vault replaces the old
-//! one atomically (fsutil.rs), so a crash leaves one or the other. Each
-//! re-seal is noted in the store's index first (design §4.9), so the next
-//! unlock does not take the new vault for another one.
+//! derivation runs off the async workers, and the new vault is written in
+//! two phases (the engine's vault_file.rs), so a crash leaves one or the
+//! other. Each re-seal is noted in the store's index first (design §4.9),
+//! so the next unlock does not take the new vault for another one.
+//!
+//! A version 3 vault (clave de emergencia CE-3) is sealed again part by
+//! part: TOTP in its shared block, a new passphrase in its slot. The
+//! session keeps its own copy of it, to seal its shared block when the name
+//! or a security setting changes; the settings hold that copy for the
+//! whole of their seal and put theirs in its place, so neither undoes the
+//! other.
 
 use crate::command_error::{CommandError, ErrorCode};
 use crate::commands::storage_cmds::write_vault_noted_in;
-use crate::commands::{open_vault, submitted_code};
+use crate::commands::submitted_code;
 use crate::passphrase::validate_passphrase;
 use crate::state::{vault_path, AppState, InnerState};
 use crate::store::session::StorageCell;
 use crate::vault::{encode_vault, seal_vault, UnsealedVault};
 use std::path::Path;
 use tauri::State;
+use trino_core::vault_v3::OpenVault;
+use trino_engine::vault_file::{OpenedVault, SessionVault, VaultCell};
 use zeroize::{Zeroize, Zeroizing};
 
 /// How a settings command writes the vault it sealed again: noted in the
@@ -27,11 +36,40 @@ use zeroize::{Zeroize, Zeroizing};
 struct NotedWrite {
     storage: StorageCell,
     spk: u32,
+    /// The session's version 3 vault, held while the settings seal theirs.
+    vault: VaultCell,
 }
 
 impl NotedWrite {
     fn write(&self, vault: &Path, bytes: &[u8]) -> std::io::Result<()> {
         write_vault_noted_in(&self.storage, vault, bytes, self.spk)
+    }
+}
+
+/// What a settings command sealed: a version 3 vault, which the session
+/// keeps from then on in place of its own, or nothing to keep (a vault of
+/// version 2, which the session does not keep, or nothing changed).
+struct Resealed(Option<Box<OpenVault>>);
+
+impl std::fmt::Debug for Resealed {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(if self.0.is_some() {
+            "Resealed(v3)"
+        } else {
+            "Resealed"
+        })
+    }
+}
+
+impl Resealed {
+    /// Put the vault sealed at `path` in the session, if there is one.
+    fn keep_in(self, session: &mut Option<SessionVault>, path: &Path) {
+        if let Some(vault) = self.0 {
+            *session = Some(SessionVault {
+                path: path.to_path_buf(),
+                vault,
+            });
+        }
     }
 }
 
@@ -45,6 +83,7 @@ fn noting(inner: &InnerState) -> Result<NotedWrite, CommandError> {
     Ok(NotedWrite {
         storage: inner.storage.clone(),
         spk,
+        vault: inner.vault.clone(),
     })
 }
 
@@ -78,9 +117,11 @@ pub async fn totp_enable(
     // The worker hands the secret back only once the vault holds it; on
     // any other way out it is dropped there, and wiped.
     let mut secret = run_blocking(move || {
+        let mut session = noted.vault.lock();
         enable_totp(&vault, &passphrase, &secret, |bytes| {
             noted.write(&vault, bytes)
-        })?;
+        })?
+        .keep_in(&mut session, &vault);
         Ok(secret)
     })
     .await?;
@@ -104,9 +145,12 @@ pub async fn totp_disable(
     let noted = noting(&*state.inner.lock().await)?;
     let vault = vault_path();
     run_blocking(move || {
+        let mut session = noted.vault.lock();
         disable_totp(&vault, &passphrase, &code, |bytes| {
             noted.write(&vault, bytes)
-        })
+        })?
+        .keep_in(&mut session, &vault);
+        Ok(())
     })
     .await?;
     replace_secret(&mut *state.inner.lock().await, None);
@@ -130,10 +174,13 @@ pub async fn change_passphrase(
     let noted = noting(&*state.inner.lock().await)?;
     let vault = vault_path();
     run_blocking(move || {
+        let mut session = noted.vault.lock();
         let code = totp_code.as_deref().map(String::as_str);
         reseal_with_new_passphrase(&vault, &current, &next, code, |bytes| {
             noted.write(&vault, bytes)
-        })
+        })?
+        .keep_in(&mut session, &vault);
+        Ok(())
     })
     .await
 }
@@ -179,13 +226,22 @@ fn enable_totp(
     passphrase: &str,
     secret: &[u8],
     write: impl FnOnce(&[u8]) -> std::io::Result<()>,
-) -> Result<(), CommandError> {
+) -> Result<Resealed, CommandError> {
     // Without a code, only a vault that has TOTP asks for one.
-    let opened = open_vault(vault, passphrase, None).map_err(|error| match error.code {
+    let opened = open_any(vault, passphrase, None).map_err(|error| match error.code {
         ErrorCode::TotpRequired => CommandError::internal("TOTP is on already"),
         _ => error,
     })?;
-    seal_and_write(&opened, Some(secret), passphrase, write)
+    match opened {
+        OpenedVault::V3(mut fresh) => {
+            fresh.set_totp_secret(Some(secret))?;
+            write_v3(fresh, write)
+        }
+        OpenedVault::Old(old) => {
+            seal_and_write(&old, Some(secret), passphrase, write)?;
+            Ok(Resealed(None))
+        }
+    }
 }
 
 /// Seal the vault at `vault` again without its TOTP secret, once
@@ -196,15 +252,24 @@ fn disable_totp(
     passphrase: &str,
     code: &str,
     write: impl FnOnce(&[u8]) -> std::io::Result<()>,
-) -> Result<(), CommandError> {
+) -> Result<Resealed, CommandError> {
     let code = submitted_code(Some(code)).ok_or_else(|| {
         CommandError::new(ErrorCode::TotpRequired, "turning TOTP off needs a code")
     })?;
-    let mut opened = open_vault(vault, passphrase, Some(code))?;
-    if opened.totp_secret.take().map(Zeroizing::new).is_none() {
-        return Ok(());
+    match open_any(vault, passphrase, Some(code))? {
+        OpenedVault::V3(fresh) if fresh.totp_secret().is_none() => Ok(Resealed(None)),
+        OpenedVault::V3(mut fresh) => {
+            fresh.set_totp_secret(None)?;
+            write_v3(fresh, write)
+        }
+        OpenedVault::Old(mut old) => {
+            if old.totp_secret.take().map(Zeroizing::new).is_none() {
+                return Ok(Resealed(None));
+            }
+            seal_and_write(&old, None, passphrase, write)?;
+            Ok(Resealed(None))
+        }
     }
-    seal_and_write(&opened, None, passphrase, write)
 }
 
 /// Seal the vault at `vault` with `next` instead of `current`, keeping its
@@ -217,15 +282,45 @@ fn reseal_with_new_passphrase(
     next: &str,
     code: Option<&str>,
     write: impl FnOnce(&[u8]) -> std::io::Result<()>,
-) -> Result<(), CommandError> {
+) -> Result<Resealed, CommandError> {
     validate_passphrase(next)?;
-    let mut opened = open_vault(vault, current, submitted_code(code))?;
-    let secret = opened.totp_secret.take().map(Zeroizing::new);
-    seal_and_write(&opened, secret.as_deref().map(Vec::as_slice), next, write)
+    match open_any(vault, current, submitted_code(code))? {
+        OpenedVault::V3(mut fresh) => {
+            // The same salt and parameters; the other slots as they are. A
+            // new passphrase that is the emergency key is refused.
+            fresh.change_passphrase(next)?;
+            write_v3(fresh, write)
+        }
+        OpenedVault::Old(mut old) => {
+            let secret = old.totp_secret.take().map(Zeroizing::new);
+            seal_and_write(&old, secret.as_deref().map(Vec::as_slice), next, write)?;
+            Ok(Resealed(None))
+        }
+    }
 }
 
-/// Seal the identity and the app data of `opened` with `passphrase` and, if
-/// given, `secret`, and save it with `write`. The app data always goes back
+/// Open the vault at `vault`, of any version, finishing a write a cut
+/// stopped (the engine's vault_file.rs).
+fn open_any(
+    vault: &Path,
+    passphrase: &str,
+    code: Option<&str>,
+) -> Result<OpenedVault, CommandError> {
+    trino_engine::vault_file::open(vault, passphrase, code)
+}
+
+/// Save the version 3 vault the settings sealed again, for the session to
+/// keep.
+fn write_v3(
+    fresh: Box<OpenVault>,
+    write: impl FnOnce(&[u8]) -> std::io::Result<()>,
+) -> Result<Resealed, CommandError> {
+    write(fresh.bytes()).map_err(|e| CommandError::io(&e))?;
+    Ok(Resealed(Some(fresh)))
+}
+
+/// Seal the identity and the app data of a vault of version 2, `opened`,
+/// with `passphrase` and, if given, `secret`, and save it with `write`. The app data always goes back
 /// in: trino-core seals only what it is given, and it holds the key to
 /// everything in store/.
 fn seal_and_write(
@@ -635,6 +730,81 @@ mod tests {
             before,
             "the old passphrase still opens it"
         );
+    }
+
+    // ---- The version 3 vault (clave de emergencia CE-3) ----
+
+    /// The settings seal a version 3 vault again part by part (design
+    /// §3.5): TOTP in the shared block, the passphrase in its slot, and
+    /// the rest, the app data and the shared block's own, as it was.
+    #[test]
+    fn the_settings_keep_a_version_3_vault_and_what_they_do_not_change() {
+        use trino_core::vault_v3::{create_vault_v3, vault_version, NewAccount, V3_VAULT_LEN};
+        use trino_engine::vault_file::OpenedVault;
+        let scratch = ScratchDir::new("settings-v3");
+        let vault = scratch.path().join("vault.bin");
+        let identity = create_identity();
+        let app: &[u8] = b"the key to the local data";
+        let shared: &[u8] = br#"{"v":1,"name":"ana","createdAt":1}"#;
+        let created = create_vault_v3(
+            &NewAccount {
+                identity: &identity,
+                app: Some(app),
+                shared_app: shared,
+                id_vault: [7; 16],
+            },
+            None,
+            PASSPHRASE,
+        )
+        .unwrap();
+        fsutil::atomic_write(&vault, created.bytes()).unwrap();
+        let secret = generate_totp_secret();
+        let v3 = |vault: &Path, passphrase: &str, code: Option<&str>| {
+            match trino_engine::vault_file::open(vault, passphrase, code) {
+                Ok(OpenedVault::V3(opened)) => Ok(opened),
+                Ok(OpenedVault::Old(_)) => panic!("sealed again as version 2"),
+                Err(error) => Err(error),
+            }
+        };
+
+        enable_totp(&vault, PASSPHRASE, &secret, save_to(&vault)).unwrap();
+        assert_eq!(vault_version(&bytes_of(&vault)).unwrap(), 3);
+        assert_eq!(
+            v3(&vault, PASSPHRASE, None).map(drop).unwrap_err().code,
+            ErrorCode::TotpRequired
+        );
+        with_fresh_code(&secret, |code| {
+            reseal_with_new_passphrase(
+                &vault,
+                PASSPHRASE,
+                NEW_PASSPHRASE,
+                Some(code),
+                save_to(&vault),
+            )
+        })
+        .unwrap();
+        let old = v3(&vault, PASSPHRASE, Some("000000"))
+            .map(drop)
+            .unwrap_err();
+        assert_eq!(old.code, ErrorCode::WrongPassphrase);
+        let opened =
+            with_fresh_code(&secret, |code| v3(&vault, NEW_PASSPHRASE, Some(code))).unwrap();
+        assert_eq!(opened.totp_secret(), Some(secret.as_slice()));
+        assert_eq!(opened.app(), Some(app));
+        assert_eq!(opened.shared_app(), shared);
+        assert_eq!(
+            opened.identity().ik_sign.pub_bytes,
+            identity.ik_sign.pub_bytes
+        );
+
+        with_fresh_code(&secret, |code| {
+            disable_totp(&vault, NEW_PASSPHRASE, code, save_to(&vault))
+        })
+        .unwrap();
+        let opened = v3(&vault, NEW_PASSPHRASE, None).unwrap();
+        assert_eq!(opened.totp_secret(), None);
+        assert_eq!(opened.shared_app(), shared);
+        assert_eq!(bytes_of(&vault).len(), V3_VAULT_LEN);
     }
 
     // ---- The app data (cifrado local): every re-seal carries it ----

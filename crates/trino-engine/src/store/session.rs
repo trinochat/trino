@@ -151,7 +151,22 @@ pub enum VaultCheck {
 
 /// The header of the vault in `bytes` as the index notes it, with `spk`,
 /// the id of the signed prekey it holds. `None` if it is not a vault.
+///
+/// A version 3 vault keeps its salt for life (clave de emergencia, design
+/// §3.3), so the index notes a digest of the whole vault in its place,
+/// with the TOTP hint as its flags: every seal changes it, as every seal
+/// changed the salt before, and a vault put back from before a new
+/// passphrase is still told apart.
 pub fn vault_header(bytes: &[u8], spk: u32) -> Option<VaultHeader> {
+    if crate::vault_v3::vault_version(bytes).ok() == Some(3) {
+        let hint = crate::vault_v3::vault_v3_requires_totp(bytes).ok()?;
+        return Some(VaultHeader {
+            version: 3,
+            flags: u8::from(hint),
+            salt: hex::encode(&crate::crypto::sha256(bytes)[..16]),
+            spk,
+        });
+    }
     let sealed = crate::vault::decode_vault(bytes).ok()?;
     Some(VaultHeader {
         version: sealed.version,

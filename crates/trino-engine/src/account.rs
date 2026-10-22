@@ -21,10 +21,11 @@ use crate::storage::{
     totp_flag_disagrees, wipe_home, write_vault_noted, LoadedSession, MigrationNote, RealWipe,
 };
 use crate::store::keys::{StoreKeys, VaultKeys};
-use crate::store::report::{Action, IntegrityReport, What};
+use crate::store::report::{Action, Finding, IntegrityReport, What};
 use crate::store::session::{AccountFile, PrefsImport, SessionStore, STORE_DIR};
 use crate::vault::{encode_vault, seal_vault, UnsealedVault};
-use crate::vault_file::OpenedVault;
+use crate::vault_file::{OpenedVault, SessionVault, SharedApp};
+use crate::vault_v3::{create_vault_v3, vault_v3_requires_totp, NewAccount, OpenVault};
 use crate::Engine;
 use serde::Serialize;
 use std::path::{Path, PathBuf};
@@ -205,6 +206,21 @@ pub fn create_account(
     totp_secret: Option<&[u8]>,
     write: impl FnOnce(&Path, &[u8]) -> std::io::Result<()>,
 ) -> Result<(Identity, Zeroizing<Vec<u8>>), CommandError> {
+    create_account_vault(files, handle, passphrase, totp_secret, write)
+        .map(|(identity, app, _)| (identity, app))
+}
+
+/// `create_account`, giving also the vault it wrote, which the session
+/// keeps (`forge`). The vault is of version 3 (clave de emergencia, design
+/// §3): its shared block carries the TOTP secret, the name and the date of
+/// creation.
+pub fn create_account_vault(
+    files: &DataFiles,
+    handle: &str,
+    passphrase: &str,
+    totp_secret: Option<&[u8]>,
+    write: impl FnOnce(&Path, &[u8]) -> std::io::Result<()>,
+) -> Result<(Identity, Zeroizing<Vec<u8>>, OpenVault), CommandError> {
     if files.vault.exists() {
         return Err(CommandError::new(
             ErrorCode::VaultExists,
@@ -216,20 +232,31 @@ pub fn create_account(
     let identity = create_identity();
     let keys = StoreKeys::generate();
     let app = keys.to_vault_app();
-    let sealed = seal_vault(&identity, totp_secret, Some(&app), passphrase)?;
+    let created_at = chrono::Utc::now().timestamp();
+    let shared = SharedApp::new(handle, created_at, &Default::default()).to_bytes();
+    let vault = create_vault_v3(
+        &NewAccount {
+            identity: &identity,
+            app: Some(&app),
+            shared_app: &shared,
+            id_vault: *keys.id_vault(),
+        },
+        totp_secret,
+        passphrase,
+    )?;
     let account = AccountFile {
         handle: handle.to_string(),
         nostr_pub: hex::encode(identity.nostr.pub_bytes),
         relays: default_relays(),
-        created_at: chrono::Utc::now().timestamp(),
+        created_at,
         ..AccountFile::default()
     };
     let json = Zeroizing::new(
         serde_json::to_vec(&account).map_err(|e| CommandError::internal(e.to_string()))?,
     );
-    create_identity_files(files, keys, &json, &encode_vault(&sealed), write)
+    create_identity_files(files, keys, &json, vault.bytes(), write)
         .map_err(|e| CommandError::io(&e))?;
-    Ok((identity, app))
+    Ok((identity, app, vault))
 }
 
 /// Open the vault at `vault` with `passphrase` and, if it holds a TOTP
@@ -246,7 +273,8 @@ pub fn open_vault(
     crate::vault_file::open(vault, passphrase, totp_code).map(OpenedVault::into_unsealed)
 }
 
-/// Rotate the signed prekey if it has aged out and expire retired ones; if
+/// For a vault of version 1 or 2 that could not move to version 3 yet:
+/// rotate the signed prekey if it has aged out and expire retired ones; if
 /// that changed anything, or `fix_flag` says the vault's TOTP flag is wrong
 /// (design §4.9), seal the vault again, with the same passphrase, the same
 /// TOTP secret or lack of one and the same app data, and save it with
@@ -352,12 +380,16 @@ pub async fn open_session(
         prefs,
         report,
         migration,
+        vault,
     }) = loaded
     else {
         return Err(CommandError::internal("nothing was loaded for the session"));
     };
 
     inner.identity = Some(identity);
+    if let Some(vault) = vault {
+        inner.vault.set(vault);
+    }
     // Moved out of its wrapper, which wipes what is left: an empty vector.
     inner.totp_secret = totp_secret.map(|mut secret| std::mem::take(&mut *secret));
     inner.storage.set(storage);
@@ -457,20 +489,25 @@ pub async fn forge_identity(
     let files = DataFiles::in_trino_home();
     crate::diag::remove_stale_log(&files.home, crate::diag::Build::CURRENT);
 
-    // PBKDF2 is slow on purpose: off the async runtime, as in `unseal`.
+    // The key derivation is slow on purpose: off the async runtime, as in
+    // `unseal`.
     let (identity, totp_secret, loaded) = tokio::task::spawn_blocking({
         let files = files.clone();
         let handle = handle.clone();
         move || {
             let secret = totp_secret.as_deref().map(Vec::as_slice);
-            let (identity, app) = create_account(
+            let (identity, app, vault) = create_account_vault(
                 &files,
                 &handle,
                 &passphrase,
                 secret,
                 crate::vault_file::write,
             )?;
-            let loaded = load_session(&files, &identity, Some(&app), None)?;
+            let mut loaded = load_session(&files, &identity, Some(&app), None)?;
+            loaded.vault = Some(SessionVault {
+                path: files.vault.clone(),
+                vault: Box::new(vault),
+            });
             Ok::<_, CommandError>((identity, totp_secret, loaded))
         }
     })
@@ -507,11 +544,13 @@ pub async fn forge_identity(
 pub type Unlocked = (Identity, Option<Zeroizing<Vec<u8>>>, Option<LoadedSession>);
 
 /// What `unseal` does on disk, off the async runtime: open the vault in
-/// `files` with `passphrase` and `code`; for an account of an earlier
-/// version, whose vault carries no data key, move it into the store first
-/// (CL-1c); load what the session needs; and seal the vault again if its
-/// signed prekey is due. With `session_open` it only checks the passphrase
-/// and the code, and loads nothing.
+/// `files` with `passphrase` and `code`, of any version, finishing a write a
+/// cut stopped (`vault_file::open_with`); load what the session needs; and
+/// seal the vault again where it has to (`unlock_v3`). A vault of version 1
+/// or 2 moves to version 3 (clave de emergencia, design §3.7): one that
+/// carries no data key moves into the store with it (CL-1c). With
+/// `session_open` it only checks the passphrase and the code, and loads
+/// nothing.
 pub fn unlock_files(
     files: &DataFiles,
     passphrase: &str,
@@ -519,17 +558,104 @@ pub fn unlock_files(
     session_open: bool,
     now: i64,
 ) -> Result<Unlocked, CommandError> {
+    let opened = crate::vault_file::open(&files.vault, passphrase, code)?;
+    if session_open {
+        let totp_secret = opened
+            .totp_secret()
+            .map(|secret| Zeroizing::new(secret.to_vec()));
+        return Ok((opened.identity().clone(), totp_secret, None));
+    }
+    match opened {
+        OpenedVault::V3(vault) => unlock_v3(files, *vault, Vec::new(), now),
+        OpenedVault::Old(old) => unlock_old(files, *old, passphrase, now),
+    }
+}
+
+/// `unlock_files` for a version 3 vault: its store loaded, and the vault
+/// sealed again, in one write noted in the store, if its signed prekey is
+/// due, if its TOTP hint does not say what its shared block holds (design
+/// §4.9), or if its shared block does not carry the account's name, date
+/// and security preferences as the store has them (design §3.5). The
+/// session keeps the vault. `findings` are the migration's, for the dialog.
+fn unlock_v3(
+    files: &DataFiles,
+    mut vault: OpenVault,
+    findings: Vec<Finding>,
+    now: i64,
+) -> Result<Unlocked, CommandError> {
+    let record = vault
+        .app()
+        .map(|app| Zeroizing::new(app.to_vec()))
+        .ok_or_else(|| CommandError::internal("the vault carries no key to the store"))?;
+    let mut loaded = load_session(files, vault.identity(), Some(&record), Some(vault.bytes()))?;
+    add_findings(&mut loaded, findings);
+
+    let mut identity = vault.identity().clone();
+    let mut changed = false;
+    if crate::identity::rotate_signed_prekey_if_due(&mut identity, now) {
+        if vault.set_identity(identity.clone()).is_ok() {
+            changed = true;
+        } else {
+            dbg_log("the rotated prekey does not fit the vault");
+            identity = vault.identity().clone();
+        }
+    }
+    let totp_on = vault.totp_secret().is_some();
+    if vault_v3_requires_totp(vault.bytes()).ok() != Some(totp_on) {
+        let secret = vault.totp_secret().map(<[u8]>::to_vec);
+        if vault.set_totp_secret(secret.as_deref()).is_ok() {
+            changed = true;
+            loaded.report.note("vault", What::TotpFlag, Action::Notice);
+        }
+    }
+    if let Some(account) = &loaded.account {
+        let prefs = SharedApp::prefs_of(loaded.prefs.as_ref());
+        let shared = SharedApp::new(&account.handle, account.created_at, &prefs).to_bytes();
+        if shared != vault.shared_app() && vault.set_shared_app(&shared).is_ok() {
+            changed = true;
+        }
+    }
+    if changed {
+        let spk = identity.signed_prekey.id;
+        match write_vault_noted(Some(&mut loaded.storage), &files.vault, vault.bytes(), spk) {
+            Ok(()) => crate::diag::note_with(
+                "vault sealed again",
+                &[
+                    ("spk_id", &identity.signed_prekey.id),
+                    ("retired", &identity.retired_signed_prekeys.len()),
+                ],
+            ),
+            // Keep the session usable; the next change or unlock retries.
+            Err(_) => dbg_log("the vault could not be sealed again"),
+        }
+    }
+    let totp_secret = vault
+        .totp_secret()
+        .map(|secret| Zeroizing::new(secret.to_vec()));
+    loaded.vault = Some(SessionVault {
+        path: files.vault.clone(),
+        vault: Box::new(vault),
+    });
+    Ok((identity, totp_secret, Some(loaded)))
+}
+
+/// `unlock_files` for a vault of version 1 or 2. One that carries no data
+/// key moves into the store with a version 3 vault (CL-1c,
+/// `migrate_account`), and opens as one. Otherwise, or if that stopped
+/// before its commit, the session opens as earlier versions opened it.
+fn unlock_old(
+    files: &DataFiles,
+    old: UnsealedVault,
+    passphrase: &str,
+    now: i64,
+) -> Result<Unlocked, CommandError> {
     let UnsealedVault {
         mut identity,
         totp_secret,
         app,
-    } = open_vault(&files.vault, passphrase, code)?;
+    } = old;
     let totp_secret = totp_secret.map(Zeroizing::new);
-    if session_open {
-        return Ok((identity, totp_secret, None));
-    }
     let secret = totp_secret.as_deref().map(Vec::as_slice);
-    let mut findings = Vec::new();
     let keys = VaultKeys::from_vault_app(app.as_deref().map(Vec::as_slice))
         .map_err(|e| CommandError::internal(e.to_string()))?;
     let app = match keys {
@@ -538,18 +664,18 @@ pub fn unlock_files(
         // new keys; if it stopped before that, with proof that the files of
         // before are this account's, they open as they did and the next
         // unlock tries again.
-        VaultKeys::New(keys) => migrate_account(files, &identity, keys, secret, passphrase, now)?
-            .map(|migrated| {
-                findings = migrated.findings;
-                migrated.record
-            }),
+        VaultKeys::New(keys) => {
+            match migrate_account(files, &identity, keys, secret, passphrase, now)? {
+                Some(migrated) => return unlock_v3(files, *migrated.vault, migrated.findings, now),
+                None => None,
+            }
+        }
     };
     // The store opens before the vault is sealed again, so the re-seal is
     // noted in its index (design §4.9).
     let bytes = std::fs::read(&files.vault).ok();
     let app = app.as_deref().map(Vec::as_slice);
     let mut loaded = load_session(files, &identity, app, bytes.as_deref())?;
-    add_findings(&mut loaded, findings);
     let fix_flag = bytes
         .as_deref()
         .is_some_and(|bytes| totp_flag_disagrees(bytes, totp_secret.is_some()));
@@ -779,6 +905,85 @@ mod tests {
         assert_eq!(opened.totp_secret.as_deref(), Some(secret.as_slice()));
         assert_eq!(std::fs::read(&vault).unwrap(), whole);
         assert!(!next.exists());
+    }
+
+    /// Clave de emergencia CE-3 (design §3): a new account gets a version 3
+    /// vault, with its name and creation date in the shared block, and the
+    /// TOTP secret there too, where the unlock reads it from.
+    #[test]
+    fn a_new_account_gets_a_version_3_vault() {
+        let scratch = ScratchDir::new("forge-v3");
+        let files = data_files_in(scratch.path().join("home"));
+        let secret = generate_totp_secret();
+
+        let (identity, app) = create_account(
+            &files,
+            "ana",
+            PASSPHRASE,
+            Some(&secret),
+            crate::vault_file::write,
+        )
+        .unwrap();
+
+        let bytes = std::fs::read(&files.vault).unwrap();
+        assert_eq!(bytes.len(), crate::vault_v3::V3_VAULT_LEN);
+        assert_eq!(crate::vault_v3::vault_version(&bytes).unwrap(), 3);
+        assert_eq!(totp_hint(&files.vault), Some(true));
+        let loaded = load_session(&files, &identity, Some(&app), None).unwrap();
+        let created_at = loaded.account.unwrap().created_at;
+        let code = totp_now(&secret);
+        let (opened, totp_secret, _) =
+            match unlock_files(&files, PASSPHRASE, Some(&code), true, NOW) {
+                Err(error) if error.code == ErrorCode::InvalidTotp => {
+                    unlock_files(&files, PASSPHRASE, Some(&totp_now(&secret)), true, NOW)
+                }
+                unlocked => unlocked,
+            }
+            .unwrap();
+        assert_eq!(opened.ik_sign.pub_bytes, identity.ik_sign.pub_bytes);
+        assert_eq!(
+            totp_secret.as_deref().map(Vec::as_slice),
+            Some(secret.as_slice())
+        );
+        match crate::vault_file::open(&files.vault, PASSPHRASE, Some(&totp_now(&secret))) {
+            Ok(crate::vault_file::OpenedVault::V3(vault)) => {
+                let shared: serde_json::Value = serde_json::from_slice(vault.shared_app()).unwrap();
+                assert_eq!(shared["name"], "ana");
+                assert_eq!(shared["createdAt"], created_at);
+                assert_eq!(vault.app(), Some(app.as_slice()));
+            }
+            Ok(_) => panic!("a vault of version 2"),
+            Err(error) => assert_eq!(error.code, ErrorCode::InvalidTotp, "{error}"),
+        }
+    }
+
+    /// Design §3.5: the rotation of the signed prekey seals a version 3
+    /// vault again as it is, with the new identity, and notes it.
+    #[test]
+    fn a_due_prekey_rotation_seals_a_version_3_vault_again() {
+        let scratch = ScratchDir::new("rotate-v3");
+        let files = data_files_in(scratch.path().join("home"));
+        let (identity, app) =
+            create_account(&files, "ana", PASSPHRASE, None, crate::vault_file::write).unwrap();
+        let due = identity.signed_prekey.created_at + crate::identity::SPK_ROTATION_SECS;
+
+        let (rotated, _, loaded) = unlock_files(&files, PASSPHRASE, None, false, due).unwrap();
+        drop(loaded);
+
+        assert_ne!(rotated.signed_prekey.id, identity.signed_prekey.id);
+        let opened = open_vault(&files.vault, PASSPHRASE, None).unwrap();
+        assert_eq!(opened.identity.signed_prekey.id, rotated.signed_prekey.id);
+        assert_eq!(
+            opened.app.as_deref().map(Vec::as_slice),
+            Some(app.as_slice())
+        );
+        let bytes = std::fs::read(&files.vault).unwrap();
+        assert_eq!(crate::vault_v3::vault_version(&bytes).unwrap(), 3);
+        let (_, _, again) = unlock_files(&files, PASSPHRASE, None, false, due).unwrap();
+        assert!(
+            again.unwrap().report.is_empty(),
+            "the rotation was not noted"
+        );
     }
 
     #[test]

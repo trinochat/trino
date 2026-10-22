@@ -274,6 +274,8 @@ pub fn clear_sensitive_state(inner: &mut InnerState) {
     // The storage holds the data key: taken out, it is dropped and wiped,
     // and nothing is written until the next unlock.
     drop(inner.storage.take());
+    // The session's vault holds the body key: it goes too.
+    drop(inner.vault.take());
 
     for ratchet in inner.ratchets.values_mut() {
         ratchet.zeroize_secrets();

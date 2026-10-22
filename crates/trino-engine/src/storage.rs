@@ -35,7 +35,7 @@ use crate::store::session::{
     legacy_open, vault_header, AccountFile, Found, LegacyFiles, OpenedStore, SessionStore, Storage,
     StorageCell, OTHER_STORE_PREFIX, STORE_DIR,
 };
-use crate::vault::{decode_vault, encode_vault, seal_vault, vault_requires_totp};
+use crate::vault::{decode_vault, vault_requires_totp};
 use crate::Engine;
 use base64::Engine as _;
 use serde::Serialize;
@@ -78,7 +78,10 @@ pub fn persist_account(inner: &InnerState) -> Result<(), String> {
     inner
         .storage
         .write_account(&account_of(inner))
-        .map_err(|e| e.to_string())
+        .map_err(|e| e.to_string())?;
+    // A new name goes to the vault's shared block too (design §3.5).
+    crate::vault_file::sync_shared(inner);
+    Ok(())
 }
 
 /// Wipe the names in memory where it is cheap: this identity's, its
@@ -165,6 +168,9 @@ pub struct LoadedSession {
     pub report: IntegrityReport,
     /// The one note after the migration (design §11.5).
     pub migration: Option<MigrationNote>,
+    /// The version 3 vault the session keeps (vault_file.rs): set by the
+    /// unlock and by a new account, none when the vault is of version 2.
+    pub vault: Option<crate::vault_file::SessionVault>,
 }
 
 /// What the migration moved into the store, for its one note (design
@@ -178,10 +184,11 @@ pub struct MigrationNote {
 }
 
 /// What `migrate_account` committed: the key to the store that the vault
-/// carries now, and what the dialog tells.
+/// carries now, the version 3 vault itself, and what the dialog tells.
 pub struct AccountMigrated {
     pub record: Zeroizing<Vec<u8>>,
     pub findings: Vec<Finding>,
+    pub vault: Box<crate::vault_v3::OpenVault>,
 }
 
 /// Move the account of `identity`, whose vault carries no data key, into
@@ -201,15 +208,23 @@ pub fn migrate_account(
 ) -> Result<Option<AccountMigrated>, CommandError> {
     harden_dir(&files.home);
     let record = keys.to_vault_app();
+    let id_vault = *keys.id_vault();
     drop(keys);
     // The vault the migration commits: the same identity, TOTP secret and
-    // passphrase, with the key to the store.
-    let sealed = seal_vault(identity, totp_secret, Some(&record), passphrase)?;
-    let bytes = encode_vault(&sealed);
+    // passphrase, with the key to the store, as a version 3 vault (clave
+    // de emergencia, design §3.7). Its shared block is filled from the
+    // store once it opens (`account::unlock_files`).
+    let old = crate::vault::UnsealedVault {
+        identity: identity.clone(),
+        totp_secret: totp_secret.map(<[u8]>::to_vec),
+        app: None,
+    };
+    let sealed = crate::vault_v3::migrate_to_v3(&old, passphrase, Some(&record), &[], id_vault)?;
+    let bytes = sealed.bytes();
     let vault = NewVault {
         record: &record,
-        bytes: &bytes,
-        header: vault_header(&bytes, identity.signed_prekey.id),
+        bytes,
+        header: vault_header(bytes, identity.signed_prekey.id),
     };
     let nostr_pub = hex::encode(identity.nostr.pub_bytes);
     match migrate(
@@ -221,8 +236,9 @@ pub fn migrate_account(
         now,
     ) {
         Ok(migrated) => Ok(Some(AccountMigrated {
-            record,
             findings: migrated.findings,
+            record,
+            vault: Box::new(sealed),
         })),
         Err(failed) if failed.proof && !failed.committed => {
             dbg_log("the migration stopped before its commit: the files of before stay");
@@ -330,6 +346,7 @@ pub fn load_store(
         prefs,
         report,
         migration,
+        vault: None,
     })
 }
 
@@ -388,6 +405,7 @@ pub fn load_legacy(files: &DataFiles, identity: &Identity) -> Result<LoadedSessi
         prefs: None,
         report,
         migration: None,
+        vault: None,
     })
 }
 
@@ -1100,6 +1118,7 @@ mod tests {
     use crate::state::{FriendRecord, GroupInvite};
     use crate::store::session::legacy_seal;
     use crate::store::session::testing::{reopen, store_cell};
+    use crate::vault::{encode_vault, seal_vault};
 
     const NOW: i64 = 1_760_000_000;
     const PASSPHRASE: &str = "correct horse battery staple";
@@ -1713,6 +1732,201 @@ mod tests {
         held.read_to_end(&mut through_handle).unwrap();
         assert_eq!(through_handle, resealed, "replaced, not written over");
         assert!(!files.home.join("vault.bin.next").exists());
+    }
+
+    // ---- the version 3 vault (clave de emergencia CE-3) ----
+
+    /// The shared block of the vault in `files`, opened with `PASSPHRASE`.
+    fn shared_on_disk(files: &DataFiles) -> serde_json::Value {
+        match crate::vault_file::open(&files.vault, PASSPHRASE, None).unwrap() {
+            crate::vault_file::OpenedVault::V3(vault) => {
+                serde_json::from_slice(vault.shared_app()).unwrap()
+            }
+            crate::vault_file::OpenedVault::Old(_) => panic!("a vault of version 2"),
+        }
+    }
+
+    /// The session of the account in `files`, opened as `unseal` opens it.
+    async fn unlocked_session(files: &DataFiles) -> InnerState {
+        let (identity, totp_secret, loaded) =
+            unlock_files(files, PASSPHRASE, None, false, NOW).unwrap();
+        let inner = tokio::sync::Mutex::new(InnerState::default());
+        open_session(&inner, identity, totp_secret, loaded, |_| {})
+            .await
+            .unwrap();
+        inner.into_inner()
+    }
+
+    /// Every file under `dir` with what it holds.
+    fn snapshot(dir: &Path) -> Vec<(PathBuf, Vec<u8>)> {
+        let mut files = Vec::new();
+        for entry in std::fs::read_dir(dir).unwrap().flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                files.extend(snapshot(&path));
+            } else {
+                files.push((path.clone(), std::fs::read(&path).unwrap()));
+            }
+        }
+        files.sort();
+        files
+    }
+
+    /// Design §3.7 step 4 and §6.5: the shared block carries the account's
+    /// name, when it was created and its security settings, as the store
+    /// has them at unlock, and no other preference.
+    #[test]
+    fn unlocking_carries_the_name_and_the_security_prefs_into_the_shared_block() {
+        let scratch = ScratchDir::new("v3-shared-unlock");
+        let files = data_files_in(scratch.path().to_path_buf());
+        let (me, app) = new_account(&files, "Ana");
+        let loaded = load_session(&files, &me, Some(&app), None).unwrap();
+        let created_at = loaded.account.as_ref().unwrap().created_at;
+        let cell = StorageCell::default();
+        cell.set(loaded.storage);
+        let prefs = serde_json::json!({
+            "autolock": "15",
+            "trino.pref.reinforced": "1",
+            "note:bob": "a note about bob",
+            "trino.pref.ringtone": "classic",
+        });
+        cell.write_prefs(&serde_json::to_vec(&prefs).unwrap())
+            .unwrap();
+        drop(cell);
+
+        let (_, _, loaded) = unlock_files(&files, PASSPHRASE, None, false, NOW).unwrap();
+        let loaded = loaded.unwrap();
+        assert!(loaded.report.is_empty(), "{:?}", loaded.report);
+        drop(loaded);
+
+        let shared = shared_on_disk(&files);
+        assert_eq!(shared["name"], "Ana");
+        assert_eq!(shared["createdAt"], created_at);
+        assert_eq!(
+            shared["prefs"],
+            serde_json::json!({ "autolock": "15", "trino.pref.reinforced": "1" })
+        );
+        // Unchanged, the next unlock leaves the vault as it is.
+        let before = std::fs::read(&files.vault).unwrap();
+        drop(unlock_files(&files, PASSPHRASE, None, false, NOW).unwrap());
+        assert_eq!(std::fs::read(&files.vault).unwrap(), before);
+    }
+
+    /// Design §3.5: a new name, or a security setting, seals the shared
+    /// block again during the session; any other preference does not.
+    #[tokio::test]
+    async fn the_session_seals_a_new_name_or_security_pref_into_the_shared_block() {
+        let scratch = ScratchDir::new("v3-shared-session");
+        let files = data_files_in(scratch.path().to_path_buf());
+        new_account(&files, "Ana");
+        let mut inner = unlocked_session(&files).await;
+
+        inner.handle = Some("Ana Belén".into());
+        persist_account(&inner).unwrap();
+        assert_eq!(shared_on_disk(&files)["name"], "Ana Belén");
+
+        let before = std::fs::read(&files.vault).unwrap();
+        let mut prefs = std::collections::BTreeMap::new();
+        prefs.insert("note:bob".to_string(), "a note".to_string());
+        crate::prefs::save_in(&inner, &prefs).unwrap();
+        assert_eq!(
+            std::fs::read(&files.vault).unwrap(),
+            before,
+            "a note sealed it"
+        );
+
+        prefs.insert("trino.pref.lockWithSystem".to_string(), "0".to_string());
+        crate::prefs::save_in(&inner, &prefs).unwrap();
+        assert_eq!(
+            shared_on_disk(&files)["prefs"],
+            serde_json::json!({ "trino.pref.lockWithSystem": "0" })
+        );
+        // Each seal was noted: the next unlock takes the vault in silence.
+        clear_sensitive_state(&mut inner);
+        let (_, _, again) = unlock_files(&files, PASSPHRASE, None, false, NOW).unwrap();
+        assert!(again.unwrap().report.is_empty());
+    }
+
+    /// Design §12.2, test 33, for the real path: a failed unlock writes
+    /// nothing, whatever it failed on.
+    #[test]
+    fn a_failed_unlock_writes_nothing() {
+        let scratch = ScratchDir::new("v3-failed-unlock");
+        let files = data_files_in(scratch.path().to_path_buf());
+        let secret = crate::totp::generate_totp_secret();
+        create_account(
+            &files,
+            "ana",
+            PASSPHRASE,
+            Some(&secret),
+            fsutil::atomic_write,
+        )
+        .unwrap();
+        let before = snapshot(&files.home);
+
+        for (passphrase, code) in [
+            ("not the passphrase", None),
+            (PASSPHRASE, None),
+            (PASSPHRASE, Some("000000")),
+            ("not the passphrase", Some("000000")),
+        ] {
+            assert!(unlock_files(&files, passphrase, code, false, NOW).is_err());
+            assert_eq!(snapshot(&files.home), before, "{passphrase} {code:?}");
+        }
+    }
+
+    /// Design §12.2, test 34: there is no attempt counter. Three failures
+    /// and then the passphrase leave the same files as the passphrase alone.
+    #[test]
+    fn there_is_no_attempt_counter() {
+        let scratch = ScratchDir::new("v3-no-counter");
+        let files = data_files_in(scratch.path().join("home"));
+        new_account(&files, "ana");
+        let copy = scratch.path().join("copy");
+        std::fs::create_dir_all(&copy).unwrap();
+        for (path, bytes) in snapshot(&files.home) {
+            let to = copy.join(path.strip_prefix(&files.home).unwrap());
+            std::fs::create_dir_all(to.parent().unwrap()).unwrap();
+            std::fs::write(to, bytes).unwrap();
+        }
+        let other = data_files_in(copy);
+
+        for _ in 0..3 {
+            assert!(unlock_files(&files, "not it", None, false, NOW).is_err());
+        }
+        drop(unlock_files(&files, PASSPHRASE, None, false, NOW).unwrap());
+        drop(unlock_files(&other, PASSPHRASE, None, false, NOW).unwrap());
+
+        let names = |files: &DataFiles| -> Vec<PathBuf> {
+            snapshot(&files.home)
+                .into_iter()
+                .map(|(path, _)| path.strip_prefix(&files.home).unwrap().to_path_buf())
+                .collect()
+        };
+        assert_eq!(names(&files), names(&other));
+        assert_eq!(
+            std::fs::read(&files.vault).unwrap().len(),
+            std::fs::read(&other.vault).unwrap().len()
+        );
+    }
+
+    /// Design §3.7 for an account of an earlier version (CL-1c): it moves
+    /// into the store with a version 3 vault at once.
+    #[test]
+    fn an_earlier_versions_account_moves_to_a_version_3_vault() {
+        let scratch = ScratchDir::new("v3-from-legacy");
+        let files = data_files_in(scratch.path().to_path_buf());
+        earlier_account(&files);
+
+        drop(unlock_files(&files, PASSPHRASE, None, false, NOW).unwrap());
+
+        let bytes = std::fs::read(&files.vault).unwrap();
+        assert_eq!(crate::vault_v3::vault_version(&bytes).unwrap(), 3);
+        assert_eq!(shared_on_disk(&files)["name"], "ana");
+        let (_, _, again) = unlock_files(&files, PASSPHRASE, None, false, NOW).unwrap();
+        let again = again.unwrap();
+        assert!(again.report.is_empty(), "{:?}", again.report);
+        assert!(history_text(&again.history).contains("hola bob"));
     }
 
     #[test]

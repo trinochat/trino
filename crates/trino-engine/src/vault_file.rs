@@ -1,6 +1,7 @@
-//! `vault.bin` on disk (clave de emergencia CE-3, design §3.6 and §3.7):
-//! opening every version the app reads, and the two-phase write every seal
-//! goes through.
+//! `vault.bin` on disk (clave de emergencia CE-3, design §3.6, §3.7 and
+//! §4): opening every version the app reads, the two-phase write every
+//! seal goes through, what the shared block carries for the app, and the
+//! vault the open session keeps to seal it again.
 //!
 //! - **Opening.** A version 3 vault (trino-core `vault_v3`) opens with
 //!   `unseal_vault_v3`; one of version 1 or 2 with `unseal_vault`, and the
@@ -15,17 +16,32 @@
 //!   Every seal of the vault goes through it: a new account, the rotation
 //!   of the signed prekey, the settings, the migrations and the shared
 //!   block, so the way the vault is written never tells one from another.
+//! - **The shared block** (design §3.2 and §6.5) carries, besides the TOTP
+//!   secret that trino-core keeps in it, the account's name, when it was
+//!   created and its security settings (`SharedApp`): what an empty
+//!   account made by the emergency key inherits (CE-4).
+//! - **The session's vault** (`VaultCell`). The open session keeps its
+//!   version 3 vault, as it keeps the store's data key, to seal the shared
+//!   block again when the name or a security setting changes, without
+//!   asking for the passphrase. The settings put the vault they seal in its
+//!   place under the same lock, so no two seals undo each other.
 
 use crate::command_error::{CommandError, ErrorCode};
 use crate::identity::Identity;
+use crate::session::dbg_log;
+use crate::state::InnerState;
 use crate::store::disk::{Disk, RealDisk};
+use crate::store::session::StorageCell;
 use crate::vault::{decode_vault, unseal_vault, vault_requires_totp, UnsealedVault, VaultError};
 use crate::vault_v3::{
-    unseal_vault_v3, vault_v3_requires_totp, vault_version, OpenVault, Unlocked,
+    unseal_vault_v3, vault_v3_requires_totp, vault_version, OpenVault, Unlocked, MAX_SHARED_APP_LEN,
 };
+use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 use std::ffi::OsString;
 use std::io;
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex, MutexGuard, TryLockError};
 use zeroize::Zeroizing;
 
 /// Where the new bytes of a two-phase write wait: `vault.bin.next`.
@@ -218,6 +234,177 @@ pub fn open(
     })
 }
 
+/// The preferences of `prefs.bin` that the shared block keeps (design §6.5):
+/// those that keep the device protected, so an empty account made by the
+/// emergency key is no less so, and nothing changes in sight. Relays,
+/// consent, the other preferences and the private bridges come with the
+/// emergency path (CE-4).
+pub const SECURITY_PREFS: [&str; 5] = [
+    "autolock",
+    "trino.pref.lockWithSystem",
+    "trino.pref.notifPreview",
+    "trino.pref.reinforced",
+    "trino.pref.reinforcedBefore",
+];
+const SHARED_FORMAT: u32 = 1;
+/// A name longer than this is cut (at a character): no name of the app
+/// comes near it.
+pub const MAX_SHARED_NAME_BYTES: usize = 256;
+/// A security preference longer than this is not kept: none of them comes
+/// near it.
+const MAX_SHARED_PREF_BYTES: usize = 512;
+
+/// What the shared block carries for the app, as JSON.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SharedApp {
+    pub v: u32,
+    pub name: String,
+    pub created_at: i64,
+    #[serde(default)]
+    pub prefs: BTreeMap<String, String>,
+}
+
+impl SharedApp {
+    /// The shared block of an account named `name`, created at
+    /// `created_at`, with the security preferences among `prefs`.
+    pub fn new(name: &str, created_at: i64, prefs: &BTreeMap<String, String>) -> Self {
+        let mut end = name.len().min(MAX_SHARED_NAME_BYTES);
+        while !name.is_char_boundary(end) {
+            end -= 1;
+        }
+        SharedApp {
+            v: SHARED_FORMAT,
+            name: name[..end].to_string(),
+            created_at,
+            prefs: prefs
+                .iter()
+                .filter(|(key, value)| {
+                    SECURITY_PREFS.contains(&key.as_str()) && value.len() <= MAX_SHARED_PREF_BYTES
+                })
+                .map(|(key, value)| (key.clone(), value.clone()))
+                .collect(),
+        }
+    }
+
+    /// The preferences of `prefs.bin` as the unlock reads them: the entries
+    /// that are text.
+    pub fn prefs_of(prefs: Option<&serde_json::Value>) -> BTreeMap<String, String> {
+        prefs
+            .and_then(serde_json::Value::as_object)
+            .map(|entries| {
+                entries
+                    .iter()
+                    .filter_map(|(key, value)| Some((key.clone(), value.as_str()?.to_string())))
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    pub fn to_bytes(&self) -> Vec<u8> {
+        let bytes = serde_json::to_vec(self).expect("the shared block always serializes");
+        debug_assert!(bytes.len() <= MAX_SHARED_APP_LEN);
+        bytes
+    }
+
+    pub fn from_bytes(bytes: &[u8]) -> Option<Self> {
+        serde_json::from_slice(bytes).ok()
+    }
+}
+
+/// The version 3 vault of the open session, and where it lives.
+pub struct SessionVault {
+    pub path: PathBuf,
+    pub vault: Box<OpenVault>,
+}
+
+/// The session's `SessionVault`, or nothing while no session is open, or
+/// while it opened from a vault of version 2 that could not move yet.
+/// Clones share it, so a worker of the settings can put its vault in place.
+#[derive(Clone, Default)]
+pub struct VaultCell(Arc<Mutex<Option<SessionVault>>>);
+
+impl VaultCell {
+    /// Held by the settings for the whole of their seal, so the shared
+    /// block is never sealed in between (`update_shared`).
+    pub fn lock(&self) -> MutexGuard<'_, Option<SessionVault>> {
+        self.0
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
+    pub fn set(&self, vault: SessionVault) {
+        *self.lock() = Some(vault);
+    }
+
+    /// Take it out, as a lock does: dropping it wipes the body key.
+    pub fn take(&self) -> Option<SessionVault> {
+        self.lock().take()
+    }
+
+    pub fn is_open(&self) -> bool {
+        self.lock().is_some()
+    }
+
+    /// The shared block's app data the session's vault holds now.
+    pub fn shared_app(&self) -> Option<Vec<u8>> {
+        self.lock()
+            .as_ref()
+            .map(|session| session.vault.shared_app().to_vec())
+    }
+
+    /// Seal `shared` into the shared block of the session's vault and write
+    /// it, noted in `storage`, unless that is what it holds. Whether it
+    /// wrote. While the settings seal the vault this does nothing: their
+    /// vault carries the shared block as the disk has it, and the next
+    /// change, or the next unlock, brings it up to date.
+    pub fn update_shared(
+        &self,
+        shared: &[u8],
+        storage: &StorageCell,
+    ) -> Result<bool, CommandError> {
+        let mut guard = match self.0.try_lock() {
+            Ok(guard) => guard,
+            Err(TryLockError::Poisoned(poisoned)) => poisoned.into_inner(),
+            Err(TryLockError::WouldBlock) => return Ok(false),
+        };
+        let Some(session) = guard.as_mut() else {
+            return Ok(false);
+        };
+        if session.vault.shared_app() == shared {
+            return Ok(false);
+        }
+        let before = session.vault.shared_app().to_vec();
+        session.vault.set_shared_app(shared)?;
+        let spk = session.vault.identity().signed_prekey.id;
+        if let Err(error) =
+            crate::storage::write_vault_noted_in(storage, &session.path, session.vault.bytes(), spk)
+        {
+            // As the disk has it, so the next change tries again.
+            let _ = session.vault.set_shared_app(&before);
+            return Err(CommandError::io(&error));
+        }
+        Ok(true)
+    }
+}
+
+/// Bring the shared block of the session's vault up to date with the
+/// session's name and security preferences, after either changed (design
+/// §3.5). Best effort: the next unlock does it again.
+pub fn sync_shared(inner: &InnerState) {
+    if !inner.vault.is_open() {
+        return;
+    }
+    let Some(name) = inner.handle.as_deref() else {
+        return;
+    };
+    let prefs = crate::prefs::current_map(inner);
+    let shared = SharedApp::new(name, inner.created_at, &prefs).to_bytes();
+    if inner.vault.update_shared(&shared, &inner.storage).is_err() {
+        dbg_log("the vault's shared block could not be sealed again");
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -361,5 +548,104 @@ mod tests {
         let error = open_with(&RealDisk, &vault, opener("pass")).unwrap_err();
         assert_eq!(error.code, ErrorCode::NoVault);
         assert_eq!(totp_hint(&vault), None);
+    }
+
+    #[test]
+    fn the_shared_block_keeps_the_name_the_date_and_only_the_security_prefs() {
+        let prefs: BTreeMap<String, String> = [
+            ("autolock", "15"),
+            ("trino.pref.reinforced", "1"),
+            ("trino.pref.lockWithSystem", "1"),
+            ("trino.pref.notifPreview", "hidden"),
+            ("note:bob", "a note about bob"),
+            ("verified:bob", "call:ab12"),
+            ("net.bridges", "obfs4 192.0.2.1:443"),
+            ("trino.pref.ringtone", "classic"),
+        ]
+        .into_iter()
+        .map(|(key, value)| (key.to_string(), value.to_string()))
+        .collect();
+
+        let shared = SharedApp::new("Ana", 1_760_000_000, &prefs);
+
+        assert_eq!(shared.name, "Ana");
+        assert_eq!(shared.created_at, 1_760_000_000);
+        assert_eq!(
+            shared.prefs.keys().map(String::as_str).collect::<Vec<_>>(),
+            [
+                "autolock",
+                "trino.pref.lockWithSystem",
+                "trino.pref.notifPreview",
+                "trino.pref.reinforced"
+            ]
+        );
+        let bytes = shared.to_bytes();
+        assert!(!String::from_utf8_lossy(&bytes).contains("bob"));
+        assert_eq!(SharedApp::from_bytes(&bytes), Some(shared));
+    }
+
+    #[test]
+    fn a_long_name_or_preference_still_fits_the_shared_block() {
+        let name = "ñ".repeat(400);
+        let mut prefs = BTreeMap::new();
+        for key in SECURITY_PREFS {
+            prefs.insert(key.to_string(), "x".repeat(MAX_SHARED_PREF_BYTES));
+        }
+        prefs.insert("autolock".into(), "y".repeat(MAX_SHARED_PREF_BYTES + 1));
+        let shared = SharedApp::new(&name, 0, &prefs);
+        assert!(shared.name.len() <= MAX_SHARED_NAME_BYTES);
+        assert!(name.starts_with(&shared.name));
+        assert!(!shared.prefs.contains_key("autolock"));
+        assert!(shared.to_bytes().len() <= MAX_SHARED_APP_LEN);
+    }
+
+    fn session_vault(path: &Path) -> SessionVault {
+        let identity = crate::identity::create_identity();
+        let vault = crate::vault_v3::create_vault_v3(
+            &crate::vault_v3::NewAccount {
+                identity: &identity,
+                app: Some(b"the key to the store"),
+                shared_app: b"{}",
+                id_vault: [1; 16],
+            },
+            None,
+            "pass",
+        )
+        .unwrap();
+        SessionVault {
+            path: path.to_path_buf(),
+            vault: Box::new(vault),
+        }
+    }
+
+    /// The settings hold the session's vault while they seal it: the shared
+    /// block waits, so neither seal undoes the other; then it goes out.
+    #[test]
+    fn the_shared_block_waits_while_the_settings_hold_the_vault() {
+        let scratch = ScratchDir::new("vault-cell");
+        let path = scratch.path().join("vault.bin");
+        let cell = VaultCell::default();
+        let storage = StorageCell::default();
+        assert!(
+            !cell.update_shared(b"{\"v\":1}", &storage).unwrap(),
+            "no session"
+        );
+        cell.set(session_vault(&path));
+
+        let held = cell.lock();
+        assert!(!cell.update_shared(b"{\"v\":1}", &storage).unwrap());
+        assert!(!path.exists());
+        drop(held);
+
+        assert!(cell.update_shared(b"{\"v\":1}", &storage).unwrap());
+        assert_eq!(cell.shared_app().unwrap(), b"{\"v\":1}");
+        let written = std::fs::read(&path).unwrap();
+        assert_eq!(cell.lock().as_ref().unwrap().vault.bytes(), &written[..]);
+        assert!(
+            !cell.update_shared(b"{\"v\":1}", &storage).unwrap(),
+            "unchanged"
+        );
+        assert!(cell.take().is_some());
+        assert!(!cell.is_open());
     }
 }

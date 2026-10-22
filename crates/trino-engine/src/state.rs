@@ -56,6 +56,9 @@ pub struct InnerState {
     /// Where the session keeps its data: the store, or the files of an
     /// account not moved yet (store/session.rs). Empty with no session.
     pub storage: crate::store::session::StorageCell,
+    /// The session's version 3 vault, to seal its shared block again
+    /// (vault_file.rs). Empty with no session.
+    pub vault: crate::vault_file::VaultCell,
     /// The relays this account connects to, as its account file keeps them.
     pub relay_urls: Vec<String>,
     /// When this account was created, in unix seconds.
