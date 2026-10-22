@@ -254,6 +254,18 @@ fn aad(header: &[u8; AAD_HEADER_LEN], slot: &Slot) -> Vec<u8> {
     aad
 }
 
+/// The key generation and the `id_vault` the header of `bytes` names, if
+/// it is a file of the store. Nothing authenticates them here: only to
+/// tell a store a rotation left behind (`rotate::generation_in`).
+pub fn generation_of(bytes: &[u8]) -> Option<(u32, [u8; ID_VAULT_LEN])> {
+    if bytes.len() < AAD_HEADER_LEN || &bytes[..6] != MAGIC || bytes[6] != FORMAT_VERSION {
+        return None;
+    }
+    let key_gen = u32::from_le_bytes(bytes[8..12].try_into().expect("4 bytes"));
+    let id_vault = bytes[12..AAD_HEADER_LEN].try_into().expect("16 bytes");
+    Some((key_gen, id_vault))
+}
+
 /// Open `bytes` as the file in `slot`.
 pub fn open(keys: &StoreKeys, slot: &Slot, bytes: &[u8]) -> Result<Opened, EnvelopeError> {
     if bytes.len() < AAD_HEADER_LEN || &bytes[..6] != MAGIC {

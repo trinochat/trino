@@ -248,6 +248,44 @@ pub fn migrate_account(
     }
 }
 
+/// Design §3.7: the version 2 vault `old`, whose store is under the data
+/// key `keys` of the cifrado local stage, moves to version 3 with the data
+/// key rotated once (`store::rotate`), the same TOTP secret and passphrase.
+/// Its shared block is filled from the store once it opens
+/// (`account::unlock_files`). The version 3 vault the disk holds now;
+/// `None` if the move stopped before its commit: the version 2 vault and
+/// its store are as they were, the session opens from them, and the next
+/// unlock tries again.
+pub fn rotate_to_v3(
+    files: &DataFiles,
+    old: &crate::vault::UnsealedVault,
+    keys: &StoreKeys,
+    passphrase: &str,
+) -> Result<Option<crate::vault_v3::OpenVault>, CommandError> {
+    harden_dir(&files.home);
+    let new_keys = keys.next_generation();
+    let record = new_keys.to_vault_app();
+    let Ok(vault) =
+        crate::vault_v3::migrate_to_v3(old, passphrase, Some(&record), &[], *keys.id_vault())
+    else {
+        dbg_log("the vault could not move to version 3");
+        return Ok(None);
+    };
+    let new_vault = NewVault {
+        record: &record,
+        bytes: vault.bytes(),
+        header: vault_header(vault.bytes(), old.identity.signed_prekey.id),
+    };
+    match crate::store::rotate::rotate(&RealDisk, &files.home, keys, &new_keys, &new_vault) {
+        Ok(()) => Ok(Some(vault)),
+        Err(failed) if !failed.committed => {
+            dbg_log("the move to version 3 stopped before its commit");
+            Ok(None)
+        }
+        Err(failed) => Err(CommandError::io(&failed.error)),
+    }
+}
+
 /// The keys earlier versions derived from `identity` for their files. One
 /// that does not derive is an error, never a fallback key (TRN-ENG-09).
 pub fn legacy_keys(identity: &Identity) -> Result<LegacyKeys, CommandError> {
@@ -1927,6 +1965,154 @@ mod tests {
         let again = again.unwrap();
         assert!(again.report.is_empty(), "{:?}", again.report);
         assert!(history_text(&again.history).contains("hola bob"));
+    }
+
+    // ---- version 2 to version 3, with the data key rotated once ----
+
+    /// An account as the cifrado local stage leaves it: a version 2 vault
+    /// that carries the store's first data key, and its store, with "bob"
+    /// and a conversation with him.
+    fn version_2_account(
+        files: &DataFiles,
+        secret: Option<&[u8]>,
+    ) -> (Identity, Zeroizing<Vec<u8>>) {
+        let me = create_identity();
+        let keys = StoreKeys::generate();
+        let record = keys.to_vault_app();
+        std::fs::create_dir_all(&files.home).unwrap();
+        let account = AccountFile {
+            handle: "ana".into(),
+            nostr_pub: hex::encode(me.nostr.pub_bytes),
+            relays: default_relays(),
+            created_at: NOW,
+            friends: vec![friend(&create_identity(), "bob")],
+            ..AccountFile::default()
+        };
+        SessionStore::create(&files.home, keys, &serde_json::to_vec(&account).unwrap()).unwrap();
+        let opened = SessionStore::open(&files.home, &record, None).unwrap();
+        let cell = StorageCell::default();
+        cell.set(Storage::Store(Box::new(opened.session)));
+        cell.write_history(&history_with("bob", "hola bob"))
+            .unwrap();
+        drop(cell);
+        let sealed = seal_vault(&me, secret, Some(&record), PASSPHRASE).unwrap();
+        fsutil::atomic_write(&files.vault, &encode_vault(&sealed)).unwrap();
+        (me, record)
+    }
+
+    /// The key generation each file of the store in `home` names.
+    fn generations_in(home: &Path) -> Vec<u32> {
+        let dir = home.join(STORE_DIR);
+        names_in(&dir)
+            .iter()
+            .filter(|name| name.ends_with(".bin"))
+            .map(|name| {
+                let bytes = std::fs::read(dir.join(name)).unwrap();
+                u32::from_le_bytes(bytes[8..12].try_into().unwrap())
+            })
+            .collect()
+    }
+
+    /// Design §12.2, test 35, and §3.7: the first unlock moves a version 2
+    /// vault to version 3 and rotates the data key once, under the same
+    /// `id_vault`; the store reads as before, and no file of it is left
+    /// under the old key. The next unlock rotates nothing.
+    #[test]
+    fn the_migration_to_version_3_rotates_the_data_key_once() {
+        let scratch = ScratchDir::new("v2-to-v3");
+        let files = data_files_in(scratch.path().to_path_buf());
+        let (_, old_record) = version_2_account(&files, None);
+        let old_keys = StoreKeys::from_vault_app(&old_record).unwrap();
+        assert_eq!(generations_in(&files.home), [1, 1, 1]);
+
+        let (_, _, loaded) = unlock_files(&files, PASSPHRASE, None, false, NOW).unwrap();
+
+        let loaded = loaded.unwrap();
+        assert!(loaded.report.is_empty(), "{:?}", loaded.report);
+        assert_eq!(loaded.account.as_ref().unwrap().friends.len(), 1);
+        assert!(history_text(&loaded.history).contains("hola bob"));
+        drop(loaded);
+        let bytes = std::fs::read(&files.vault).unwrap();
+        assert_eq!(crate::vault_v3::vault_version(&bytes).unwrap(), 3);
+        let record = open_vault(&files.vault, PASSPHRASE, None)
+            .unwrap()
+            .app
+            .unwrap();
+        let keys = StoreKeys::from_vault_app(&record).unwrap();
+        assert_eq!(keys.key_gen(), 2);
+        assert_eq!(keys.id_vault(), old_keys.id_vault());
+        assert_ne!(&record[..], &old_record[..], "the same data key");
+        assert_eq!(generations_in(&files.home), [2, 2, 2]);
+        assert!(!files.home.join(NEW_STORE_DIR).exists());
+        assert!(!files.home.join("vault.bin.next").exists());
+        assert!(names_in(&files.home)
+            .iter()
+            .all(|name| !name.starts_with(OTHER_STORE_PREFIX)));
+
+        let (_, _, again) = unlock_files(&files, PASSPHRASE, None, false, NOW).unwrap();
+        let again = again.unwrap();
+        assert!(again.report.is_empty(), "{:?}", again.report);
+        assert!(history_text(&again.history).contains("hola bob"));
+        drop(again);
+        let record = open_vault(&files.vault, PASSPHRASE, None)
+            .unwrap()
+            .app
+            .unwrap();
+        assert_eq!(StoreKeys::from_vault_app(&record).unwrap().key_gen(), 2);
+    }
+
+    /// The TOTP secret moves to the shared block of the version 3 vault:
+    /// the code is asked for as before.
+    #[test]
+    fn a_version_2_vault_keeps_its_totp_through_the_move() {
+        let scratch = ScratchDir::new("v2-to-v3-totp");
+        let files = data_files_in(scratch.path().to_path_buf());
+        let secret = crate::totp::generate_totp_secret();
+        version_2_account(&files, Some(&secret));
+
+        let error = unlock_files(&files, PASSPHRASE, None, false, NOW)
+            .map(drop)
+            .unwrap_err();
+        assert_eq!(error.code, crate::command_error::ErrorCode::TotpRequired);
+        let unlock = || {
+            let code = crate::totp::totp_now(&secret);
+            unlock_files(&files, PASSPHRASE, Some(&code), false, NOW)
+        };
+        let (_, totp_secret, loaded) = match unlock() {
+            Err(error) if error.code == crate::command_error::ErrorCode::InvalidTotp => unlock(),
+            unlocked => unlocked,
+        }
+        .unwrap();
+        drop(loaded);
+
+        assert_eq!(
+            totp_secret.as_deref().map(Vec::as_slice),
+            Some(secret.as_slice())
+        );
+        let bytes = std::fs::read(&files.vault).unwrap();
+        assert_eq!(crate::vault_v3::vault_version(&bytes).unwrap(), 3);
+        assert_eq!(totp_hint(&files.vault), Some(true));
+    }
+
+    /// A rotation that stops before its commit leaves the version 2 vault
+    /// and its store as they were; the session opens from them, as before.
+    #[test]
+    fn a_rotation_stopped_before_its_commit_opens_the_version_2_account() {
+        let scratch = ScratchDir::new("v2-to-v3-stopped");
+        let files = data_files_in(scratch.path().to_path_buf());
+        version_2_account(&files, None);
+        // Something no rotation can clear out of its way.
+        std::fs::write(files.home.join(NEW_STORE_DIR), b"not a folder").unwrap();
+        let vault = std::fs::read(&files.vault).unwrap();
+
+        let (_, _, loaded) = unlock_files(&files, PASSPHRASE, None, false, NOW).unwrap();
+
+        let loaded = loaded.unwrap();
+        assert!(matches!(loaded.storage, Storage::Store(_)));
+        assert!(history_text(&loaded.history).contains("hola bob"));
+        drop(loaded);
+        assert_eq!(std::fs::read(&files.vault).unwrap(), vault);
+        assert_eq!(generations_in(&files.home), [1, 1, 1]);
     }
 
     #[test]

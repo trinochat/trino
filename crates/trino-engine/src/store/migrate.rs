@@ -45,6 +45,7 @@ use super::files::{peek_index, Store, StoreError};
 use super::index::{Legacy, VaultHeader};
 use super::keys::StoreKeys;
 use super::report::{Action, Finding, What};
+use super::rotate::{generation_in, Generation};
 use super::session::{legacy_open, other_store_name, AccountFile, StickerFile, STORE_DIR};
 use crate::group::GroupRoster;
 use crate::state::{ConfigFile, FriendsFile, GroupInvite};
@@ -591,8 +592,9 @@ fn kept_aside(disk: &impl Disk, dir: &Path, keys: &StoreKeys, unreadable: &Unrea
 }
 
 /// `store.new/` becomes `store/`, on the disk when it returns. Only an empty
-/// `store/` can be in the way; it goes first.
-fn move_new_store(disk: &impl Disk, home: &Path) -> io::Result<()> {
+/// `store/`, or one the vault no longer opens (a rotation's, `rotate.rs`),
+/// can be in the way; it goes first.
+pub(super) fn move_new_store(disk: &impl Disk, home: &Path) -> io::Result<()> {
     let store = home.join(STORE_DIR);
     if store.exists() {
         disk.remove_dir_all(&store)?;
@@ -609,12 +611,20 @@ pub fn settle<D: Disk + Clone>(disk: &D, home: &Path, record: &[u8]) -> io::Resu
     let new = home.join(NEW_STORE_DIR);
     let mut settled = Settled::default();
     if new.exists() {
-        // The vault took the key of a migration that was cut before
-        // store.new/ became store/: finish it. Anything else there is not
-        // this vault's store, and is never removed by itself.
-        let committed = peek_index(disk, &new, &keys).is_some_and(|index| index.legacy.migrated);
-        if committed && !holds_files(&store)? {
+        // The vault took the key of a migration or of a rotation that was
+        // cut before store.new/ became store/: finish it. The store a
+        // rotation left (an older generation of this one) opens with no key
+        // any vault holds. A rotation the vault never took left a
+        // store.new/ of a newer generation, which nothing opens: it goes.
+        // Anything else there is not this vault's store, and is never
+        // removed by itself.
+        let opens = peek_index(disk, &new, &keys).is_some();
+        let in_the_way =
+            holds_files(&store)? && generation_in(disk, &store, &keys) != Some(Generation::Older);
+        if opens && !in_the_way {
             move_new_store(disk, home)?;
+        } else if !opens && generation_in(disk, &new, &keys) == Some(Generation::Newer) {
+            disk.remove_dir_all(&new)?;
         } else {
             disk.rename(&new, &home.join(other_store_name()))?;
             settled

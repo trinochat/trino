@@ -15,6 +15,8 @@
 //!   not moved to it yet, as the commands use them (`storage_cmds.rs`).
 //! - `migrate`: moving an account of an earlier version into the store, so
 //!   that a cut at any step loses nothing (design §5).
+//! - `rotate`: the data key rotated once, as the vault moves to version 3
+//!   (clave de emergencia CE-3), under the same rule.
 
 pub mod disk;
 pub mod envelope;
@@ -23,4 +25,5 @@ pub mod index;
 pub mod keys;
 pub mod migrate;
 pub mod report;
+pub mod rotate;
 pub mod session;

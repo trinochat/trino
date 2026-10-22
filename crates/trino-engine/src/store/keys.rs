@@ -27,8 +27,9 @@ use zeroize::Zeroizing;
 
 /// The bytes of `id_vault`.
 pub const ID_VAULT_LEN: usize = 16;
-/// The key generation of the store's first DK. Rotation (design §3.3) comes
-/// with the emergency key; until then every file carries this one.
+/// The key generation of the store's first DK. It rotates once as the vault
+/// moves to version 3 (design §3.3; clave de emergencia CE-3,
+/// `rotate.rs`): an account created from then on stays at this one.
 pub const FIRST_KEY_GEN: u32 = 1;
 
 /// Start of the record the vault carries as its app data.
@@ -147,6 +148,16 @@ impl StoreKeys {
         StoreKeys {
             key_gen: FIRST_KEY_GEN,
             id_vault: random_array(),
+            dk: Zeroizing::new(random_array()),
+        }
+    }
+
+    /// The keys of the next generation (design §3.3): a new DK under the
+    /// same `id_vault`, one generation up.
+    pub fn next_generation(&self) -> Self {
+        StoreKeys {
+            key_gen: self.key_gen + 1,
+            id_vault: self.id_vault,
             dk: Zeroizing::new(random_array()),
         }
     }

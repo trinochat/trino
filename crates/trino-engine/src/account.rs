@@ -17,7 +17,7 @@ use crate::state::{
     ratchets_path, trino_home, vault_path, InnerState,
 };
 use crate::storage::{
-    add_findings, apply_loaded, harden_dir, load_session, migrate_account, status_of,
+    add_findings, apply_loaded, harden_dir, load_session, migrate_account, rotate_to_v3, status_of,
     totp_flag_disagrees, wipe_home, write_vault_noted, LoadedSession, MigrationNote, RealWipe,
 };
 use crate::store::keys::{StoreKeys, VaultKeys};
@@ -639,10 +639,11 @@ fn unlock_v3(
     Ok((identity, totp_secret, Some(loaded)))
 }
 
-/// `unlock_files` for a vault of version 1 or 2. One that carries no data
-/// key moves into the store with a version 3 vault (CL-1c,
-/// `migrate_account`), and opens as one. Otherwise, or if that stopped
-/// before its commit, the session opens as earlier versions opened it.
+/// `unlock_files` for a vault of version 1 or 2, which moves to version 3
+/// and opens as one: with the data key rotated if it carries one
+/// (`rotate_to_v3`), or into the store with a new one if it does not
+/// (CL-1c, `migrate_account`). If that stopped before its commit, the
+/// session opens as earlier versions opened it.
 fn unlock_old(
     files: &DataFiles,
     old: UnsealedVault,
@@ -659,7 +660,21 @@ fn unlock_old(
     let keys = VaultKeys::from_vault_app(app.as_deref().map(Vec::as_slice))
         .map_err(|e| CommandError::internal(e.to_string()))?;
     let app = match keys {
-        VaultKeys::InVault(_) => app,
+        // The first unlock with this version moves the vault to version 3
+        // and rotates the data key once (design §3.7). If that stops
+        // before its commit, the session opens as before, and the next
+        // unlock tries again.
+        VaultKeys::InVault(keys) => {
+            let old = UnsealedVault {
+                identity: identity.clone(),
+                totp_secret: secret.map(<[u8]>::to_vec),
+                app: app.clone(),
+            };
+            if let Some(vault) = rotate_to_v3(files, &old, &keys, passphrase)? {
+                return unlock_v3(files, vault, Vec::new(), now);
+            }
+            app
+        }
         // Into the store first. The vault the migration writes carries the
         // new keys; if it stopped before that, with proof that the files of
         // before are this account's, they open as they did and the next
