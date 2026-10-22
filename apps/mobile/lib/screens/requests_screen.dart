@@ -16,7 +16,7 @@ import '../ui/avatar.dart';
 import '../ui/banner.dart';
 import '../ui/button.dart';
 import '../ui/icon_button.dart';
-import 'chat_screen.dart';
+import 'chat_panes.dart';
 import 'common.dart';
 
 /// The name as the request shows it: with "~" when it comes from a group,
@@ -223,10 +223,11 @@ class _RequestScreenState extends State<RequestScreen> {
   Future<void> _accept() async {
     setState(() => _busy = true);
     final navigator = Navigator.of(context);
+    final panes = ChatPanes.maybeOf(context);
     final chatId = await _engine.acceptRequest(widget.requestId);
     final chats = await _engine.chats.first;
     final chat = chats.firstWhere((chat) => chat.id == chatId);
-    unawaited(navigator.pushReplacement(ChatScreen.route(chat)));
+    unawaited(showChatOn(navigator, panes, chat, replace: true));
   }
 
   Future<void> _delete() async {

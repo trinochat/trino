@@ -13,6 +13,7 @@ import '../platform/biometrics.dart';
 import '../platform/call_sounds.dart';
 import '../platform/proximity.dart';
 import '../platform/qr_scanner.dart';
+import '../screens/chat_panes.dart';
 import '../screens/home_shell.dart';
 import '../screens/onboarding_screen.dart';
 import '../screens/unlock_screen.dart';
@@ -69,6 +70,7 @@ class _TrinoAppState extends State<TrinoApp> {
   late final QrScanner _scanner = widget.scanner ?? DemoQrScanner();
   late final CallSounds _callSounds = widget.callSounds ?? DemoCallSounds();
   late final CallAlerts _callAlerts = CallAlerts(engine: widget.engine, sounds: _callSounds);
+  final _chatPanes = ChatPanes();
 
   @override
   void initState() {
@@ -114,7 +116,10 @@ class _TrinoAppState extends State<TrinoApp> {
           // the theme's background.
           value: systemBarsFor(Theme.of(context).brightness),
           // Around the navigator, so pages and their transitions read it.
-          child: AnimationsScope(setting: _appearance.value.animations, child: child!),
+          child: AnimationsScope(
+            setting: _appearance.value.animations,
+            child: ChatPanesScope(panes: _chatPanes, child: child!),
+          ),
         ),
         home: const AppGate(),
       ),

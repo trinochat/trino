@@ -486,5 +486,12 @@
   "chatKindGroup": "Group",
   "chatKindContact": "Contact",
   "chatMoreOptions": "More options",
-  "deleteGroupChatBody": "The messages are deleted from this phone only. The other members keep theirs, and so do your other devices."
+  "deleteGroupChatBody": "The messages are deleted from this phone only. The other members keep theirs, and so do your other devices.",
+  "navSections": "Sections",
+  "chatPickOne": "Choose a chat to read it here",
+  "paneConversation": "Conversation",
+  "chatInfoPane": "Info",
+  "infoPaneClose": "Close the info",
+  "settingsPickOne": "Choose a section to see it here",
+  "paneSection": "Section"
 }

@@ -12,6 +12,12 @@ export 'package:trino_mobile/design/theme.dart';
 /// A phone the size the approved mock was drawn at.
 const phoneSize = Size(390, 844);
 
+/// The tablet sizes of the approved tablet mock: lying down, standing up, and
+/// a wide screen, from 1200 dp, with the info as a third pane.
+const tabletLandscape = Size(1180, 820);
+const tabletPortrait = Size(820, 1180);
+const tabletWide = Size(1366, 1024);
+
 const supportedLocales = [Locale('es'), Locale('en'), Locale('pt')];
 
 /// Sets the test view to a phone, restored after the test.

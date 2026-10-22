@@ -486,5 +486,12 @@
   "chatKindGroup": "Grupo",
   "chatKindContact": "Contato",
   "chatMoreOptions": "Mais opções",
-  "deleteGroupChatBody": "As mensagens são apagadas só deste celular. Os outros membros mantêm as próprias, e seus outros dispositivos também."
+  "deleteGroupChatBody": "As mensagens são apagadas só deste celular. Os outros membros mantêm as próprias, e seus outros dispositivos também.",
+  "navSections": "Seções",
+  "chatPickOne": "Escolha uma conversa para lê-la aqui",
+  "paneConversation": "Conversa",
+  "chatInfoPane": "Info",
+  "infoPaneClose": "Fechar a info",
+  "settingsPickOne": "Escolha uma seção para vê-la aqui",
+  "paneSection": "Seção"
 }

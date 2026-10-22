@@ -594,5 +594,19 @@
   "chatMoreOptions": "Más opciones",
   "@chatMoreOptions": {"description": "What a long press on a chat row does, for screen readers."},
   "deleteGroupChatBody": "Los mensajes se borran solo de este celular. Los demás miembros conservan los suyos, y tus otros dispositivos también.",
-  "@deleteGroupChatBody": {"description": "deleteChatBody for a group."}
+  "@deleteGroupChatBody": {"description": "deleteChatBody for a group."},
+  "navSections": "Secciones",
+  "@navSections": {"description": "The rail of the four sections on a tablet, for screen readers."},
+  "chatPickOne": "Elige un chat para leerlo aquí",
+  "@chatPickOne": {"description": "The right pane of a tablet while no chat is open."},
+  "paneConversation": "Conversación",
+  "@paneConversation": {"description": "The name of the pane with the open chat on a tablet, for screen readers."},
+  "chatInfoPane": "Info",
+  "@chatInfoPane": {"description": "The toggle at the end of the chat header, from 1200 dp: shows and hides the info beside the chat."},
+  "infoPaneClose": "Cerrar la info",
+  "@infoPaneClose": {"description": "Closes the info shown beside the chat on a wide screen."},
+  "settingsPickOne": "Elige una sección para verla aquí",
+  "@settingsPickOne": {"description": "The right pane of Ajustes on a tablet while no section is open."},
+  "paneSection": "Sección",
+  "@paneSection": {"description": "The name of the pane with the open section of Ajustes on a tablet, for screen readers."}
 }

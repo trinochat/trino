@@ -74,8 +74,9 @@ Future<TestApp> pumpApp(
   DemoCallSounds? sounds,
   VoidCallback? demoIncomingCall,
   ProximityScreen? proximity,
+  Size size = phoneSize,
 }) async {
-  usePhone(tester);
+  usePhone(tester, size: size);
   if (textScale != 1) {
     tester.platformDispatcher.textScaleFactorTestValue = textScale;
     addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);

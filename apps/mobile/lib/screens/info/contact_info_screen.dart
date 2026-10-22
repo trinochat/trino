@@ -18,7 +18,7 @@ import '../../ui/list_row.dart';
 import '../../ui/settings_group.dart';
 import '../../ui/trust_badge.dart';
 import '../call_screen.dart';
-import '../chat_screen.dart';
+import '../chat_panes.dart';
 import '../common.dart';
 import 'info_parts.dart';
 
@@ -51,14 +51,8 @@ class _ContactInfoScreenState extends State<ContactInfoScreen> {
   }
 
   void _openGroups(List<ChatSummary> groups) {
-    final navigator = Navigator.of(context);
-    unawaited(
-      navigator.push(
-        groups.length == 1
-            ? ChatScreen.route(groups.single)
-            : MaterialPageRoute<void>(builder: (_) => CommonGroupsScreen(groups: groups)),
-      ),
-    );
+    if (groups.length == 1) return unawaited(showChat(context, groups.single));
+    unawaited(Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => CommonGroupsScreen(groups: groups))));
   }
 
   Future<void> _block(Contact contact) async {
@@ -228,7 +222,7 @@ class CommonGroupsScreen extends StatelessWidget {
                 leading: TrinoAvatar(name: group.title, size: 40, kind: AvatarKind.group),
                 title: group.title,
                 subtitle: l10n.groupMembers(group.memberNames.length + 1),
-                onTap: () => Navigator.of(context).push(ChatScreen.route(group)),
+                onTap: () => showChat(context, group),
               ),
           ],
         ),

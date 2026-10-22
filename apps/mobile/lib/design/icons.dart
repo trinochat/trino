@@ -145,6 +145,8 @@ enum TrinoIcons {
   ]),
   atSign([_C(12, 12, 4), _P('M16 8v4.5a1.75 1.75 0 003.5 0V12a7.5 7.5 0 10-3 6')]),
   key([_P('M15.5 7.5l2.3 2.3a1 1 0 001.4 0l2.1-2.1a1 1 0 000-1.4L19 4'), _P('M21 2l-9.6 9.6'), _C(7.5, 15.5, 5.5)]),
+  // A window with its right side marked off: the info beside the chat.
+  sidePanel([_R(3, 3, 18, 18, 2), _P('M15 3v18')]),
   smartphone([_R(5, 2, 14, 20, 2), _P('M12 18h.01')]),
   door([_P('M18 20V6a2 2 0 00-2-2H8a2 2 0 00-2 2v14'), _P('M3 20h18'), _P('M14 12v.01')]),
   laptop([

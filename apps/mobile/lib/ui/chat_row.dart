@@ -28,7 +28,10 @@ class ChatRow extends StatelessWidget {
     this.onLongPress,
     this.longPressHint,
     this.actions = const {},
+    this.selected,
   });
+
+  static const highlightKey = ValueKey('chat-row-highlight');
 
   final String name;
   final VoidCallback onTap;
@@ -68,6 +71,11 @@ class ChatRow extends StatelessWidget {
   /// The same actions as the swipe and the sheet, as screen reader actions.
   final Map<CustomSemanticsAction, VoidCallback> actions;
 
+  /// On a tablet, whether this is the chat open beside the list: it sits on
+  /// the soft accent and is read as selected. Null on a phone, where rows are
+  /// not chosen.
+  final bool? selected;
+
   @override
   Widget build(BuildContext context) {
     final t = context.tokens;
@@ -81,133 +89,151 @@ class ChatRow extends StatelessWidget {
     return MergeSemantics(
       child: Semantics(
         button: true,
+        selected: selected,
         onLongPressHint: onLongPress == null ? null : longPressHint,
         customSemanticsActions: actions.isEmpty ? null : actions,
-        child: Material(
-          type: MaterialType.transparency,
-          child: CallbackShortcuts(
-            bindings: {
-              if (onLongPress != null) ...{
-                const SingleActivator(LogicalKeyboardKey.contextMenu): onLongPress,
-                const SingleActivator(LogicalKeyboardKey.f10, shift: true): onLongPress,
-              },
-            },
-            child: InkWell(
-              onTap: onTap,
-              onLongPress: onLongPress,
-              child: ConstrainedBox(
-                constraints: const BoxConstraints(minHeight: 72),
+        // The highlight behind the row, a little in from its sides, as the
+        // approved mock. Always in a Stack, so the row keeps its focus as it
+        // turns selected.
+        child: Stack(
+          children: [
+            if (selected ?? false)
+              Positioned.fill(
                 child: Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-                  child: Row(
-                    children: [
-                      TrinoAvatar(name: name, kind: avatarKind),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        child: Column(
-                          mainAxisSize: MainAxisSize.min,
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Row(
-                              children: [
-                                Flexible(
-                                  child: Text(
-                                    name,
-                                    maxLines: 1,
-                                    overflow: TextOverflow.ellipsis,
-                                    style: text.bodyStrong,
-                                  ),
-                                ),
-                                if (trust != null) ...[
-                                  const SizedBox(width: 4),
-                                  TrustBadge(kind: trust.kind, label: trust.label, compact: true),
-                                ],
-                              ],
-                            ),
-                            if (draftPrefix != null)
-                              Padding(
-                                padding: const EdgeInsets.only(top: 2),
-                                child: Text.rich(
-                                  TextSpan(
-                                    children: [
-                                      TextSpan(
-                                        text: '$draftPrefix ',
-                                        style: text.secondary.copyWith(
-                                          color: t.accentText,
-                                          fontWeight: FontWeight.w600,
-                                        ),
-                                      ),
-                                      TextSpan(text: preview ?? '', style: text.secondary),
-                                    ],
-                                  ),
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                ),
-                              )
-                            else if (preview != null)
-                              Padding(
-                                padding: const EdgeInsets.only(top: 2),
-                                child: Text(
-                                  preview!,
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                  style: text.secondary,
-                                ),
-                              ),
-                          ],
-                        ),
-                      ),
-                      if (time != null || pinnedLabel != null || hasCount || markedUnreadLabel != null) ...[
-                        const SizedBox(width: 12),
-                        Column(
-                          mainAxisSize: MainAxisSize.min,
-                          crossAxisAlignment: CrossAxisAlignment.end,
-                          children: [
-                            Row(
+                  padding: const EdgeInsets.symmetric(horizontal: 4),
+                  child: DecoratedBox(
+                    key: highlightKey,
+                    decoration: BoxDecoration(color: t.accentSoft, borderRadius: BorderRadius.circular(t.radius)),
+                  ),
+                ),
+              ),
+            Material(
+              type: MaterialType.transparency,
+              child: CallbackShortcuts(
+                bindings: {
+                  if (onLongPress != null) ...{
+                    const SingleActivator(LogicalKeyboardKey.contextMenu): onLongPress,
+                    const SingleActivator(LogicalKeyboardKey.f10, shift: true): onLongPress,
+                  },
+                },
+                child: InkWell(
+                  onTap: onTap,
+                  onLongPress: onLongPress,
+                  child: ConstrainedBox(
+                    constraints: const BoxConstraints(minHeight: 72),
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                      child: Row(
+                        children: [
+                          TrinoAvatar(name: name, kind: avatarKind),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: Column(
                               mainAxisSize: MainAxisSize.min,
+                              crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
-                                // The pin fades in and out with the theme's motion.
-                                MotionSwitcher(
-                                  child: pinnedLabel != null
-                                      ? Padding(
-                                          key: const ValueKey('pinned'),
-                                          padding: const EdgeInsetsDirectional.only(end: 4),
-                                          child: TrinoIcon(
-                                            TrinoIcons.pin,
-                                            size: 14,
-                                            color: t.muted,
-                                            semanticLabel: pinnedLabel,
-                                          ),
-                                        )
-                                      : const SizedBox.shrink(key: ValueKey('not-pinned')),
+                                Row(
+                                  children: [
+                                    Flexible(
+                                      child: Text(
+                                        name,
+                                        maxLines: 1,
+                                        overflow: TextOverflow.ellipsis,
+                                        style: text.bodyStrong,
+                                      ),
+                                    ),
+                                    if (trust != null) ...[
+                                      const SizedBox(width: 4),
+                                      TrustBadge(kind: trust.kind, label: trust.label, compact: true),
+                                    ],
+                                  ],
                                 ),
-                                if (time != null) Text(time!, style: text.mono),
+                                if (draftPrefix != null)
+                                  Padding(
+                                    padding: const EdgeInsets.only(top: 2),
+                                    child: Text.rich(
+                                      TextSpan(
+                                        children: [
+                                          TextSpan(
+                                            text: '$draftPrefix ',
+                                            style: text.secondary.copyWith(
+                                              color: t.accentText,
+                                              fontWeight: FontWeight.w600,
+                                            ),
+                                          ),
+                                          TextSpan(text: preview ?? '', style: text.secondary),
+                                        ],
+                                      ),
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                    ),
+                                  )
+                                else if (preview != null)
+                                  Padding(
+                                    padding: const EdgeInsets.only(top: 2),
+                                    child: Text(
+                                      preview!,
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: text.secondary,
+                                    ),
+                                  ),
                               ],
                             ),
-                            if (hasCount)
-                              Padding(
-                                padding: const EdgeInsets.only(top: 6),
-                                child: UnreadBadge(count: unread.count, semanticLabel: unread.label),
-                              )
-                            else if (markedUnreadLabel != null)
-                              Padding(
-                                padding: const EdgeInsets.only(top: 4),
-                                child: TrinoIcon(
-                                  TrinoIcons.mail,
-                                  size: 20,
-                                  color: t.accentText,
-                                  semanticLabel: markedUnreadLabel,
+                          ),
+                          if (time != null || pinnedLabel != null || hasCount || markedUnreadLabel != null) ...[
+                            const SizedBox(width: 12),
+                            Column(
+                              mainAxisSize: MainAxisSize.min,
+                              crossAxisAlignment: CrossAxisAlignment.end,
+                              children: [
+                                Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    // The pin fades in and out with the theme's motion.
+                                    MotionSwitcher(
+                                      child: pinnedLabel != null
+                                          ? Padding(
+                                              key: const ValueKey('pinned'),
+                                              padding: const EdgeInsetsDirectional.only(end: 4),
+                                              child: TrinoIcon(
+                                                TrinoIcons.pin,
+                                                size: 14,
+                                                color: t.muted,
+                                                semanticLabel: pinnedLabel,
+                                              ),
+                                            )
+                                          : const SizedBox.shrink(key: ValueKey('not-pinned')),
+                                    ),
+                                    if (time != null) Text(time!, style: text.mono),
+                                  ],
                                 ),
-                              ),
+                                if (hasCount)
+                                  Padding(
+                                    padding: const EdgeInsets.only(top: 6),
+                                    child: UnreadBadge(count: unread.count, semanticLabel: unread.label),
+                                  )
+                                else if (markedUnreadLabel != null)
+                                  Padding(
+                                    padding: const EdgeInsets.only(top: 4),
+                                    child: TrinoIcon(
+                                      TrinoIcons.mail,
+                                      size: 20,
+                                      color: t.accentText,
+                                      semanticLabel: markedUnreadLabel,
+                                    ),
+                                  ),
+                              ],
+                            ),
                           ],
-                        ),
-                      ],
-                    ],
+                        ],
+                      ),
+                    ),
                   ),
                 ),
               ),
             ),
-          ),
+          ],
         ),
       ),
     );

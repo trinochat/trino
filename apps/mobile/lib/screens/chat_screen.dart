@@ -12,6 +12,7 @@ import 'package:flutter/material.dart';
 import '../app/format.dart';
 import '../app/scope.dart';
 import '../design/icons.dart';
+import '../design/layout.dart';
 import '../design/theme.dart';
 import '../engine/engine.dart';
 import '../ui/avatar.dart';
@@ -32,13 +33,26 @@ import 'info/contact_info_screen.dart';
 import 'info/group_info_screen.dart';
 
 class ChatScreen extends StatefulWidget {
-  const ChatScreen({super.key, required this.chat});
+  const ChatScreen({super.key, required this.chat, this.inPane = false, this.onInfo, this.infoOpen});
 
   static Route<void> route(ChatSummary chat) => MaterialPageRoute(builder: (_) => ChatScreen(chat: chat));
 
   static const headerKey = ValueKey('chat-header');
+  static const infoToggleKey = ValueKey('chat-info-toggle');
 
   final ChatSummary chat;
+
+  /// Beside the list on a tablet, rather than a page: there is nothing to go
+  /// back to.
+  final bool inPane;
+
+  /// What the header does instead of pushing the info, such as opening it as
+  /// a third pane.
+  final VoidCallback? onInfo;
+
+  /// Whether the info shows beside the chat; when given, the header ends in a
+  /// toggle that shows and hides it.
+  final bool? infoOpen;
 
   @override
   State<ChatScreen> createState() => _ChatScreenState();
@@ -82,10 +96,14 @@ class _ChatScreenState extends State<ChatScreen> {
     await navigator.push(CallScreen.route());
   }
 
-  void _openInfo() => unawaited(
-    Navigator.of(context)
-        .push(widget.chat.isGroup ? GroupInfoScreen.route(widget.chat) : ContactInfoScreen.route(widget.chat)),
-  );
+  void _openInfo() {
+    final onInfo = widget.onInfo;
+    if (onInfo != null) return onInfo();
+    unawaited(
+      Navigator.of(context)
+          .push(widget.chat.isGroup ? GroupInfoScreen.route(widget.chat) : ContactInfoScreen.route(widget.chat)),
+    );
+  }
 
   @override
   Widget build(BuildContext context) => Scaffold(
@@ -95,18 +113,24 @@ class _ChatScreenState extends State<ChatScreen> {
           _Header(
             key: ChatScreen.headerKey,
             chat: widget.chat,
+            showBack: !widget.inPane,
+            infoOpen: widget.infoOpen,
             onInfo: _openInfo,
             onCall: _call,
             onVideoCall: () => _call(video: true),
           ),
+          // On a wide screen the conversation keeps a readable width, in the
+          // middle, so lines and bubbles do not stretch.
           Expanded(
-            child: StreamBuilder<List<ChatMessage>>(
-              stream: _messages,
-              builder: (context, snapshot) => _MessageList(
-                messages: snapshot.data ?? const [],
-                loaded: snapshot.hasData,
-                group: widget.chat.isGroup,
-                onRetry: (message) => _engine.retry(widget.chat.id, message.id),
+            child: _Readable(
+              child: StreamBuilder<List<ChatMessage>>(
+                stream: _messages,
+                builder: (context, snapshot) => _MessageList(
+                  messages: snapshot.data ?? const [],
+                  loaded: snapshot.hasData,
+                  group: widget.chat.isGroup,
+                  onRetry: (message) => _engine.retry(widget.chat.id, message.id),
+                ),
               ),
             ),
           ),
@@ -117,10 +141,35 @@ class _ChatScreenState extends State<ChatScreen> {
   );
 }
 
+/// At most [readableWidth] wide, centred.
+class _Readable extends StatelessWidget {
+  const _Readable({required this.child});
+
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) => Center(
+    child: ConstrainedBox(
+      constraints: const BoxConstraints(maxWidth: readableWidth),
+      child: child,
+    ),
+  );
+}
+
 class _Header extends StatelessWidget {
-  const _Header({super.key, required this.chat, required this.onInfo, required this.onCall, required this.onVideoCall});
+  const _Header({
+    super.key,
+    required this.chat,
+    required this.showBack,
+    required this.infoOpen,
+    required this.onInfo,
+    required this.onCall,
+    required this.onVideoCall,
+  });
 
   final ChatSummary chat;
+  final bool showBack;
+  final bool? infoOpen;
   final VoidCallback onInfo;
   final VoidCallback onCall;
   final VoidCallback onVideoCall;
@@ -144,7 +193,10 @@ class _Header extends StatelessWidget {
         padding: const EdgeInsets.fromLTRB(4, 4, 4, 4),
         child: Row(
           children: [
-            TrinoIconButton(icon: TrinoIcons.back, label: l10n.back, onPressed: () => Navigator.maybePop(context)),
+            if (showBack)
+              TrinoIconButton(icon: TrinoIcons.back, label: l10n.back, onPressed: () => Navigator.maybePop(context))
+            else
+              const SizedBox(width: 8),
             Expanded(
               // One button: it reads its name and, as its value, the state.
               child: Semantics(
@@ -218,6 +270,14 @@ class _Header extends StatelessWidget {
               TrinoIconButton(icon: TrinoIcons.phone, label: l10n.call, onPressed: onCall),
               TrinoIconButton(icon: TrinoIcons.video, label: l10n.videoCall, onPressed: onVideoCall),
             ],
+            if (infoOpen case final open?)
+              TrinoIconButton(
+                key: ChatScreen.infoToggleKey,
+                icon: TrinoIcons.sidePanel,
+                label: l10n.chatInfoPane,
+                pressed: open,
+                onPressed: onInfo,
+              ),
           ],
         ),
       ),

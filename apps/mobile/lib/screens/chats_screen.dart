@@ -22,7 +22,7 @@ import '../ui/text_field.dart';
 import '../ui/trust_badge.dart';
 import '../ui/underline_tabs.dart';
 import 'chat_actions.dart';
-import 'chat_screen.dart';
+import 'chat_panes.dart';
 import 'common.dart';
 import 'info/info_parts.dart';
 import 'new_chat_screen.dart';
@@ -31,13 +31,19 @@ import 'requests_screen.dart';
 enum ChatFilter { all, unread, groups }
 
 class ChatsScreen extends StatefulWidget {
-  const ChatsScreen({super.key, this.onNetworkHelp});
+  const ChatsScreen({super.key, this.onNetworkHelp, this.inPanes = false, this.selectedChatId});
 
   static const requestsRowKey = ValueKey('requests-row');
 
   /// "Ver qué hacer" after "No se pudo conectar.". Without it, the inbox says
   /// the help is not in this version yet.
   final VoidCallback? onNetworkHelp;
+
+  /// Beside the chat on a tablet: the rows say which one is open.
+  final bool inPanes;
+
+  /// The chat open beside the list, on a tablet: its row stands out.
+  final String? selectedChatId;
 
   @override
   State<ChatsScreen> createState() => _ChatsScreenState();
@@ -239,7 +245,8 @@ class _ChatsScreenState extends State<ChatsScreen> {
         unread: chat.unread > 0 ? (count: chat.unread, label: l10n.unreadCount(chat.unread)) : null,
         markedUnreadLabel: chat.markedUnread ? l10n.chatMarkedUnread : null,
         pinnedLabel: chat.pinned ? l10n.chatPinned : null,
-        onTap: () => Navigator.of(context).push(ChatScreen.route(chat)),
+        selected: widget.inPanes ? chat.id == widget.selectedChatId : null,
+        onTap: () => showChat(context, chat),
         onLongPress: () => unawaited(_openActions(chat)),
         longPressHint: l10n.chatMoreOptions,
         actions: {
