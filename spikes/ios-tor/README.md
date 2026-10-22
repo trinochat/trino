@@ -36,6 +36,14 @@ TestFlight sube cada build a una app de App Store Connect, y esa app se identifi
 4. **En App Store Connect, la pregunta de cifrado.** El spike no declara `ITSAppUsesNonExemptEncryption`, a propósito: usa Tor y TLS, así que el «no» de la demo no sería cierto. App Store Connect te va a preguntar por el cifrado antes de dejar probar la build. La respuesta la decides tú.
 5. Instalas la build 0.1.1 (la de número más alto) desde TestFlight y mides lo de abajo.
 
+### Instalar sin TestFlight (Ad Hoc)
+El 21 oct 2026 TestFlight mostraba las builds, tanto la del spike como una demo nueva, pero no dejaba instalarlas («La app solicitada no está disponible o no existe»). Por eso el workflow también exporta un `.ipa` firmado Ad Hoc, que solo se instala en los iPhone registrados en la cuenta de desarrollador.
+
+1. **Registrar el iPhone, antes de correr el workflow.** Conecta el iPhone por cable al PC y abre la app «Dispositivos Apple» de Windows. Al hacer clic en el número de serie aparece el UDID. Regístralo en developer.apple.com › Certificates, IDs & Profiles › Devices. El perfil Ad Hoc solo incluye los equipos registrados cuando corre el workflow.
+2. **Correr el workflow** como siempre. En el resumen sale «Ad Hoc .ipa» y, en los artefactos de la corrida, `trino-tor-adhoc-<n>`, que se guarda 7 días. Si ese paso falla, la subida a TestFlight sigue igual.
+3. **Servirlo por HTTPS.** iOS solo instala desde un manifiesto servido por HTTPS con un certificado válido. Se sirve con `tailscale serve` en georgia, así que solo se alcanza desde tu red de Tailscale; el iPhone tiene que estar conectado a Tailscale. Hace falta activar HTTPS una vez en el panel de Tailscale (DNS › HTTPS Certificates). El nombre `georgia.<tu-red>.ts.net` queda en los registros públicos de certificados.
+4. **Instalar:** abres en Safari del iPhone el enlace `itms-services://…` de la página que sirve georgia, y luego, si iOS lo pide, confías en el perfil en Ajustes › General › VPN y gestión de dispositivos.
+
 ## Qué medir en el iPhone
 
 Cada botón muestra el JSON. **«Copiar informe»** copia todo (corridas, pruebas, notas, memoria y errores) para pegarlo en el chat.

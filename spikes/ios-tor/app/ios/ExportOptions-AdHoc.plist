@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- Options for the Ad Hoc export in .github/workflows/ios-tor-spike.yml
+     (the full list: `xcodebuild -help`). It signs the same archive with the
+     team's cloud-managed Apple Distribution certificate and an Ad Hoc
+     profile, which xcodebuild creates or updates with the App Store Connect
+     API key, and writes an .ipa that installs only on the devices registered
+     in the developer account. For when TestFlight will not install a build. -->
+<plist version="1.0">
+<dict>
+	<key>destination</key>
+	<string>export</string>
+	<key>manageAppVersionAndBuildNumber</key>
+	<false/>
+	<key>method</key>
+	<string>release-testing</string>
+	<key>signingStyle</key>
+	<string>automatic</string>
+	<key>teamID</key>
+	<string>3KD8QNQXH6</string>
+	<key>thinning</key>
+	<string>&lt;none&gt;</string>
+</dict>
+</plist>

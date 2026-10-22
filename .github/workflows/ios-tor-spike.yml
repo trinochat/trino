@@ -177,6 +177,47 @@ jobs:
           printf '%s\n' "$ASC_KEY_P8" > "$key_path"
           echo "ASC_KEY_PATH=$key_path" >> "$GITHUB_ENV"
 
+      # An .ipa signed Ad Hoc, for the iPhones registered in the developer
+      # account, kept as this run's artifact for 7 days. It is installed
+      # over HTTPS from a manifest (spikes/ios-tor/README.md), without
+      # TestFlight. If it fails (no registered device, say), the TestFlight
+      # upload below still runs.
+      - name: Sign in the cloud for Ad Hoc and export the .ipa
+        id: adhoc
+        continue-on-error: true
+        working-directory: ${{ env.SPIKE }}/app/ios
+        env:
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+        run: |
+          xcodebuild -exportArchive \
+            -archivePath "$RUNNER_TEMP/Runner.xcarchive" \
+            -exportOptionsPlist ExportOptions-AdHoc.plist \
+            -exportPath "$RUNNER_TEMP/adhoc" \
+            -allowProvisioningUpdates \
+            -authenticationKeyPath "$ASC_KEY_PATH" \
+            -authenticationKeyID "$ASC_KEY_ID" \
+            -authenticationKeyIssuerID "$ASC_ISSUER_ID"
+          ipa=$(find "$RUNNER_TEMP/adhoc" -name '*.ipa' | head -n 1)
+          if [ -z "$ipa" ]; then
+            echo "::error::The Ad Hoc export wrote no .ipa."
+            exit 1
+          fi
+          mv "$ipa" "$RUNNER_TEMP/adhoc/trino-tor.ipa"
+          {
+            echo "### Ad Hoc .ipa"
+            echo "- \`trino-tor.ipa\`: $(du -h "$RUNNER_TEMP/adhoc/trino-tor.ipa" | cut -f1), build $(( 1000 + ${{ github.run_number }} )) (0.1.1), in this run's artifacts"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Keep the Ad Hoc .ipa
+        if: steps.adhoc.outcome == 'success'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: trino-tor-adhoc-${{ github.run_number }}
+          path: ${{ runner.temp }}/adhoc/trino-tor.ipa
+          retention-days: 7
+          if-no-files-found: error
+
       - name: Sign in the cloud and upload to App Store Connect
         working-directory: ${{ env.SPIKE }}/app/ios
         env:
