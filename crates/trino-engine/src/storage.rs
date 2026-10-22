@@ -224,7 +224,7 @@ pub fn migrate_account(
             record,
             findings: migrated.findings,
         })),
-        Err(failed) if failed.proof => {
+        Err(failed) if failed.proof && !failed.committed => {
             dbg_log("the migration stopped before its commit: the files of before stay");
             Ok(None)
         }
@@ -512,9 +512,10 @@ pub fn totp_flag_disagrees(vault: &[u8], totp_on: bool) -> bool {
     sealed.version == 1 && vault_requires_totp(vault).is_ok_and(|flag| flag != totp_on)
 }
 
-/// Write `bytes` as the vault at `vault`, noting its header in the store's
-/// index as pending first and as the vault's after (design §4.9), so a cut
-/// in between is not taken for another vault at the next unlock.
+/// Write `bytes` as the vault at `vault`, in two phases (vault_file.rs),
+/// noting its header in the store's index as pending first and as the
+/// vault's after (design §4.9), so a cut in between is not taken for
+/// another vault at the next unlock.
 pub fn write_vault_noted(
     mut storage: Option<&mut Storage>,
     vault: &Path,
@@ -525,7 +526,7 @@ pub fn write_vault_noted(
     if let (Some(storage), Some(header)) = (storage.as_mut(), header.as_ref()) {
         storage.note_vault_pending(header);
     }
-    fsutil::atomic_write(vault, bytes)?;
+    crate::vault_file::write(vault, bytes)?;
     if let (Some(storage), Some(header)) = (storage.as_mut(), header.as_ref()) {
         storage.note_vault_written(header);
     }
@@ -624,6 +625,11 @@ pub fn destroy_tree(ops: &mut dyn WipeOps, dir: &Path, failures: &mut Vec<String
 pub fn wipe_home(home: &Path, ops: &mut dyn WipeOps) -> Vec<String> {
     let mut failures = Vec::new();
     destroy_with_leftovers(ops, &home.join("vault.bin"), &mut failures);
+    // A vault a cut left waiting in its two-phase write (vault_file.rs).
+    let next = crate::vault_file::next_path(&home.join("vault.bin"));
+    if next.exists() {
+        destroy_with_leftovers(ops, &next, &mut failures);
+    }
     remove_dir_with(ops, &home.join(STORE_DIR), &mut failures);
     remove_dir_with(ops, &home.join(NEW_STORE_DIR), &mut failures);
     let mut others: Vec<PathBuf> = std::fs::read_dir(home)
@@ -1660,6 +1666,53 @@ mod tests {
         assert_eq!(ops.0[1], "remove store");
         assert!(ops.0.contains(&format!("remove {OTHER_STORE_PREFIX}0001")));
         assert_eq!(names_in(home), ["notes.txt"]);
+    }
+
+    /// A vault waiting in `vault.bin.next` (a two-phase write a cut
+    /// stopped) holds the keys as much as `vault.bin`: it goes with it,
+    /// before anything else.
+    #[test]
+    fn wipe_destroys_a_vault_waiting_in_next_with_the_vault() {
+        let scratch = ScratchDir::new("wipe-next");
+        let home = scratch.path();
+        let files = data_files_in(home.to_path_buf());
+        let (_, _) = new_account(&files, "ana");
+        std::fs::write(home.join("vault.bin.next"), b"a vault waiting").unwrap();
+        let mut ops = Recording::default();
+
+        let failures = wipe_home(home, &mut ops);
+
+        assert!(failures.is_empty(), "{failures:?}");
+        assert_eq!(
+            ops.0[..3],
+            [
+                "destroy vault.bin",
+                "destroy vault.bin.next",
+                "remove store"
+            ]
+        );
+        assert!(names_in(home).is_empty(), "{:?}", names_in(home));
+    }
+
+    /// Design §12.2, test 19, for the re-seals the session notes: through
+    /// `vault.bin.next`, and over `vault.bin` in place.
+    #[test]
+    fn a_noted_reseal_overwrites_the_vault_in_place_through_next() {
+        use std::io::{Read, Seek};
+        let scratch = ScratchDir::new("vault-noted-in-place");
+        let files = data_files_in(scratch.path().to_path_buf());
+        let (me, app) = new_account(&files, "ana");
+        let mut loaded = load_session(&files, &me, Some(&app), None).unwrap();
+        let mut held = std::fs::File::open(&files.vault).unwrap();
+        let resealed = b"the vault sealed again".to_vec();
+
+        write_vault_noted(Some(&mut loaded.storage), &files.vault, &resealed, 1).unwrap();
+
+        let mut through_handle = Vec::new();
+        held.rewind().unwrap();
+        held.read_to_end(&mut through_handle).unwrap();
+        assert_eq!(through_handle, resealed, "replaced, not written over");
+        assert!(!files.home.join("vault.bin.next").exists());
     }
 
     #[test]

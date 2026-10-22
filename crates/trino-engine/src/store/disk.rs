@@ -21,6 +21,10 @@ pub trait Disk {
     /// Move the file or directory `from` to `to`, which must not exist, on
     /// the disk when it returns (`fsutil::rename_durable`).
     fn rename_durable(&self, from: &Path, to: &Path) -> io::Result<()>;
+    /// Write `bytes` over the file at `path` in place, the same file, on
+    /// the disk when it returns (`fsutil::overwrite_durable`): the second
+    /// phase of the vault's write (vault_file.rs).
+    fn overwrite_durable(&self, path: &Path, bytes: &[u8]) -> io::Result<()>;
     /// Overwrite the file at `path`, sync it and remove it; one that is not
     /// there is no error (`fsutil::destroy_file`).
     fn destroy(&self, path: &Path) -> io::Result<()>;
@@ -81,6 +85,10 @@ impl Disk for RealDisk {
 
     fn rename_durable(&self, from: &Path, to: &Path) -> io::Result<()> {
         fsutil::rename_durable(from, to)
+    }
+
+    fn overwrite_durable(&self, path: &Path, bytes: &[u8]) -> io::Result<()> {
+        fsutil::overwrite_durable(path, bytes)
     }
 
     fn destroy(&self, path: &Path) -> io::Result<()> {
@@ -156,6 +164,11 @@ pub mod faulty {
             RealDisk.rename_durable(from, to)
         }
 
+        fn overwrite_durable(&self, path: &Path, bytes: &[u8]) -> io::Result<()> {
+            hit(&self.fail_writes, path)?;
+            RealDisk.overwrite_durable(path, bytes)
+        }
+
         fn destroy(&self, path: &Path) -> io::Result<()> {
             hit(&self.fail_removes, path)?;
             RealDisk.destroy(path)
@@ -171,7 +184,8 @@ pub mod faulty {
 /// that then loses the changes it had not put on the disk yet, as NTFS may
 /// (design §5.2, tests 31 and 62).
 ///
-/// Every change counts as one step: a write, a rename, a removal. Once the
+/// Every change counts as one step: a write, a rename, an overwrite, a
+/// removal. Once the
 /// steps run out the disk is cut: that change and every one after it fail,
 /// as nothing more reaches the disk of a computer that lost its power. Then
 /// `lose_last` undoes the newest changes that a durable write or rename
@@ -196,6 +210,7 @@ pub mod cut {
         Remove(PathBuf),
         Rename(PathBuf, PathBuf),
         RenameDurable(PathBuf, PathBuf),
+        Overwrite(PathBuf),
         Destroy(PathBuf),
         RemoveDir(PathBuf),
     }
@@ -336,6 +351,15 @@ pub mod cut {
         fn rename_durable(&self, from: &Path, to: &Path) -> io::Result<()> {
             self.step(Step::RenameDurable(from.to_path_buf(), to.to_path_buf()))?;
             RealDisk.rename_durable(from, to)?;
+            self.flushed();
+            Ok(())
+        }
+
+        /// One step, all or nothing: this disk does not tear a file; the
+        /// vault's tests tear one by hand (vault_file.rs).
+        fn overwrite_durable(&self, path: &Path, bytes: &[u8]) -> io::Result<()> {
+            self.step(Step::Overwrite(path.to_path_buf()))?;
+            RealDisk.overwrite_durable(path, bytes)?;
             self.flushed();
             Ok(())
         }

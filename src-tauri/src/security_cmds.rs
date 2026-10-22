@@ -502,8 +502,9 @@ mod tests {
         let code: String = code.split_whitespace().collect();
         assert!(!code.contains("fs::write("), "a plain write");
         assert!(code.contains("write_vault_noted_in(&self.storage,vault,bytes,self.spk)"));
-        // That one notes the re-seal in the store and writes atomically
-        // (the engine's storage.rs since M4-0c).
+        // That one notes the re-seal in the store and writes the vault in
+        // two phases, over the same file (the engine's storage.rs since
+        // M4-0c; vault_file.rs since clave de emergencia CE-3).
         let storage: String = include_str!("../../crates/trino-engine/src/storage.rs")
             .split("#[cfg(test)]")
             .next()
@@ -516,7 +517,7 @@ mod tests {
             .and_then(|rest| rest.split("pubfn").next())
             .unwrap();
         assert!(!noted.contains("fs::write("), "a plain write");
-        assert!(noted.contains("fsutil::atomic_write(vault,bytes)"));
+        assert!(noted.contains("crate::vault_file::write(vault,bytes)"));
     }
 
     // ---- K6: a new passphrase ----

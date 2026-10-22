@@ -9,7 +9,6 @@
 //! runtime.
 
 use crate::command_error::{CommandError, ErrorCode};
-use crate::fsutil;
 use crate::identity::{create_identity, public_bundle_for, Identity};
 use crate::passphrase::validate_passphrase;
 use crate::session::{dbg_log, forget_session, fp};
@@ -24,9 +23,8 @@ use crate::storage::{
 use crate::store::keys::{StoreKeys, VaultKeys};
 use crate::store::report::{Action, IntegrityReport, What};
 use crate::store::session::{AccountFile, PrefsImport, SessionStore, STORE_DIR};
-use crate::vault::{
-    decode_vault, encode_vault, seal_vault, unseal_vault, vault_requires_totp, UnsealedVault,
-};
+use crate::vault::{encode_vault, seal_vault, UnsealedVault};
+use crate::vault_file::OpenedVault;
 use crate::Engine;
 use serde::Serialize;
 use std::path::{Path, PathBuf};
@@ -179,8 +177,7 @@ pub fn create_identity_files(
 /// what the unlock screen shows; `unseal` still answers `totp_required`
 /// whenever the sealed vault holds a secret.
 pub fn totp_hint(vault: &Path) -> Option<bool> {
-    let bytes = std::fs::read(vault).ok()?;
-    vault_requires_totp(&bytes).ok()
+    crate::vault_file::totp_hint(vault)
 }
 
 /// The name an identity gets: what the user typed, trimmed, or "anon" if
@@ -236,8 +233,9 @@ pub fn create_account(
 }
 
 /// Open the vault at `vault` with `passphrase` and, if it holds a TOTP
-/// secret, `totp_code`. Returns what it holds: the identity, that secret and
-/// the app data. The settings open it too, to seal it again
+/// secret, `totp_code`, finishing a write a cut stopped
+/// (`vault_file::open_with`). Returns what it holds: the identity, that
+/// secret and the app data. The settings open it too, to seal it again
 /// (security_cmds.rs); every re-seal gives the app data back, since
 /// trino-core seals only what it is given.
 pub fn open_vault(
@@ -245,14 +243,7 @@ pub fn open_vault(
     passphrase: &str,
     totp_code: Option<&str>,
 ) -> Result<UnsealedVault, CommandError> {
-    let bytes = std::fs::read(vault).map_err(|error| match error.kind() {
-        std::io::ErrorKind::NotFound => {
-            CommandError::new(ErrorCode::NoVault, "there is no identity on this device")
-        }
-        _ => CommandError::io(&error),
-    })?;
-    let blob = decode_vault(&bytes)?;
-    Ok(unseal_vault(&blob, passphrase, totp_code)?)
+    crate::vault_file::open(vault, passphrase, totp_code).map(OpenedVault::into_unsealed)
 }
 
 /// Rotate the signed prekey if it has aged out and expire retired ones; if
@@ -472,8 +463,13 @@ pub async fn forge_identity(
         let handle = handle.clone();
         move || {
             let secret = totp_secret.as_deref().map(Vec::as_slice);
-            let (identity, app) =
-                create_account(&files, &handle, &passphrase, secret, fsutil::atomic_write)?;
+            let (identity, app) = create_account(
+                &files,
+                &handle,
+                &passphrase,
+                secret,
+                crate::vault_file::write,
+            )?;
             let loaded = load_session(&files, &identity, Some(&app), None)?;
             Ok::<_, CommandError>((identity, totp_secret, loaded))
         }
@@ -658,12 +654,13 @@ mod tests {
     //! M4-0c: from the app's commands.rs.
 
     use super::*;
+    use crate::fsutil;
     use crate::fsutil::scratch::ScratchDir;
     use crate::passphrase::MIN_PASSPHRASE_CHARS;
     use crate::session::tests::{friend, NOW};
     use crate::state::{ConfigFile, FriendsFile};
     use crate::totp::{generate_totp_secret, totp_now};
-    use crate::vault::SealedVault;
+    use crate::vault::{decode_vault, vault_requires_totp, SealedVault};
 
     fn data_files_in(home: PathBuf) -> DataFiles {
         DataFiles::in_home(home)
@@ -746,6 +743,42 @@ mod tests {
             fsutil::atomic_write(&vault, &bytes).unwrap();
             assert_eq!(totp_hint(&vault), expected, "{bytes:?}");
         }
+    }
+
+    /// Design §12.2, test 20, through the unlock: a `vault.bin` a cut tore
+    /// during a two-phase write opens from `vault.bin.next`, which is then
+    /// written over it; the unlock screen reads its hint from there too.
+    #[test]
+    fn a_torn_vault_opens_from_next_and_the_write_is_finished() {
+        let scratch = ScratchDir::new("vault-torn-unlock");
+        let vault = scratch.path().join("vault.bin");
+        let next = scratch.path().join("vault.bin.next");
+        let secret = generate_totp_secret();
+        let whole =
+            encode_vault(&seal_vault(&create_identity(), Some(&secret), None, PASSPHRASE).unwrap());
+        std::fs::write(&next, &whole).unwrap();
+        let mut torn = whole.clone();
+        torn[..8].fill(0);
+        std::fs::write(&vault, &torn).unwrap();
+
+        assert_eq!(totp_hint(&vault), Some(true), "the hint of the copy");
+        let wrong = open_vault(&vault, "not the passphrase", None)
+            .map(drop)
+            .unwrap_err();
+        assert_eq!(wrong.code, ErrorCode::WrongPassphrase);
+        let missing = open_vault(&vault, PASSPHRASE, None).map(drop).unwrap_err();
+        assert_eq!(missing.code, ErrorCode::TotpRequired);
+        assert_eq!(
+            std::fs::read(&vault).unwrap(),
+            torn,
+            "a failed unlock wrote"
+        );
+
+        let opened = open_with_code(&vault, &secret).unwrap();
+
+        assert_eq!(opened.totp_secret.as_deref(), Some(secret.as_slice()));
+        assert_eq!(std::fs::read(&vault).unwrap(), whole);
+        assert!(!next.exists());
     }
 
     #[test]

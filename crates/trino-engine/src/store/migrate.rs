@@ -141,6 +141,9 @@ pub struct MigrateError {
     /// Whether M0 found the proof, so the files of before may be used as
     /// earlier versions used them for this session.
     pub proof: bool,
+    /// Whether the vault that holds the new key was committed: then the
+    /// next opening finishes it, and the files of before are not used.
+    pub committed: bool,
     pub error: io::Error,
 }
 
@@ -409,9 +412,14 @@ pub fn migrate<D: Disk + Clone>(
     // M0, before anything is written.
     let proof = has_proof(disk, home, legacy).map_err(|error| MigrateError {
         proof: false,
+        committed: false,
         error,
     })?;
-    let failed = |error: io::Error| MigrateError { proof, error };
+    let failed = |error: io::Error| MigrateError {
+        proof,
+        committed: false,
+        error,
+    };
     let data = if proof {
         read_legacy(disk, home, legacy, nostr_pub, now).map_err(failed)?
     } else {
@@ -436,10 +444,20 @@ pub fn migrate<D: Disk + Clone>(
         let _ = disk.remove_dir_all(&new);
         return Err(failed(error));
     }
-    // The commit, on the disk when it returns.
-    if let Err(error) = disk.write_durable(&home.join(VAULT_FILE), vault.bytes) {
+    // The commit, in two phases (vault_file.rs). Until vault.bin.next is
+    // on the disk nothing changed; from then on the vault holds the key, or
+    // the next opening finishes writing it from vault.bin.next.
+    let vault_path = home.join(VAULT_FILE);
+    if let Err(error) = crate::vault_file::write_next(disk, &vault_path, vault.bytes) {
         let _ = disk.remove_dir_all(&new);
         return Err(failed(error));
+    }
+    if let Err(error) = crate::vault_file::finish(disk, &vault_path, vault.bytes) {
+        return Err(MigrateError {
+            proof,
+            committed: true,
+            error,
+        });
     }
     // The vault opens only the new store from here. If this fails, `settle`
     // finishes it before the store opens.
@@ -1044,6 +1062,30 @@ mod tests {
         assert!(!again.cleaned);
     }
 
+    /// Clave de emergencia CE-3 (design §3.6): the migration commits its
+    /// vault as every vault is written, through `vault.bin.next` first.
+    #[test]
+    fn the_migration_commits_its_vault_through_next() {
+        let steps = whole_run();
+        let next = steps
+            .iter()
+            .position(
+                |step| matches!(step, Step::WriteDurable(path) if path.ends_with("vault.bin.next")),
+            )
+            .expect("the vault went through vault.bin.next");
+        assert!(
+            !steps
+                .iter()
+                .any(|step| matches!(step, Step::WriteDurable(path) if path.ends_with(VAULT_FILE))),
+            "vault.bin was replaced by a rename"
+        );
+        let moved = steps
+            .iter()
+            .position(|step| matches!(step, Step::RenameDurable(_, to) if to.ends_with(STORE_DIR)))
+            .unwrap();
+        assert!(next < moved);
+    }
+
     /// Design §12.4, test 31: a cut at every step.
     #[test]
     fn a_cut_at_every_step_loses_nothing() {
@@ -1367,10 +1409,12 @@ mod tests {
     #[test]
     fn nothing_old_is_touched_before_the_disk_step() {
         let steps = whole_run();
+        // The vault is written over in place, after its copy in
+        // vault.bin.next (clave de emergencia CE-3, design §3.6).
         let vault = steps
             .iter()
             .position(|step| {
-                matches!(step, Step::WriteDurable(path) if path.file_name().unwrap() == VAULT_FILE)
+                matches!(step, Step::Overwrite(path) if path.file_name().unwrap() == VAULT_FILE)
             })
             .expect("the vault is not written durably");
         let moved = steps
@@ -1392,11 +1436,13 @@ mod tests {
                     Step::Write(path)
                     | Step::WriteDurable(path)
                     | Step::Remove(path)
+                    | Step::Overwrite(path)
                     | Step::Destroy(path)
                     | Step::RemoveDir(path) => path,
                     Step::Rename(from, _) | Step::RenameDurable(from, _) => from,
                 };
-                !in_a_store(path) && path.file_name().unwrap() != VAULT_FILE
+                let name = path.file_name().unwrap().to_string_lossy();
+                !in_a_store(path) && !name.starts_with(VAULT_FILE)
             })
             .expect("nothing old was destroyed");
         assert!(

@@ -41,5 +41,6 @@ pub mod store;
 pub mod testing;
 pub mod totp_enrollment;
 pub mod turn;
+pub mod vault_file;
 
 pub use engine::Engine;

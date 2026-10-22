@@ -124,6 +124,28 @@ fn move_on_disk(from: &Path, to: &Path, replace: bool) -> io::Result<()> {
     fs::rename(from, to)
 }
 
+/// Write `bytes` over the file at `path` in place, the same file, creating
+/// it if it is not there, and return once they are on the disk. Unlike
+/// `atomic_write`, no rename leaves the older contents whole in another
+/// file; a cut halfway leaves the file torn, which is why the vault writes
+/// the same bytes to `vault.bin.next` first (vault_file.rs, design §3.6).
+pub fn overwrite_durable(path: &Path, bytes: &[u8]) -> io::Result<()> {
+    let existed = path.exists();
+    let mut file = OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(path)?;
+    file.write_all(bytes)?;
+    file.set_len(bytes.len() as u64)?;
+    file.sync_all()?;
+    drop(file);
+    if !existed {
+        sync_dir_of(path);
+    }
+    Ok(())
+}
+
 /// Overwrite the file at `path` with random bytes of its length, sync it and
 /// remove it. A file that is not there is no error. On an SSD the old bytes
 /// may stay elsewhere (design §5.4); on a hard disk, and for the small files
