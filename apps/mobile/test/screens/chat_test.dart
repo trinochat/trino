@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:trino_mobile/design/appearance.dart';
+import 'package:trino_mobile/l10n/app_localizations.dart';
 import 'package:trino_mobile/screens/call_screen.dart';
 import 'package:trino_mobile/screens/chat_screen.dart';
 import 'package:trino_mobile/screens/info/contact_info_screen.dart';
@@ -10,6 +11,7 @@ import 'package:trino_mobile/ui/call_event_line.dart';
 import 'package:trino_mobile/ui/chat_row.dart';
 import 'package:trino_mobile/ui/composer_field.dart';
 import 'package:trino_mobile/ui/day_separator.dart';
+import 'package:trino_mobile/ui/go_to_bottom_button.dart';
 import 'package:trino_mobile/ui/icon_button.dart';
 import 'package:trino_mobile/ui/message_arrival.dart';
 import 'package:trino_mobile/ui/message_bubble.dart';
@@ -362,6 +364,127 @@ void main() {
       await tester.pump();
       expect(sentTick('Ya voy'), findsOneWidget);
       expect(tickOpacity(tester, 'Ya voy'), 1);
+    });
+  });
+
+  group('the button to go to the bottom', () {
+    Finder goToBottom() => find.byType(GoToBottomButton);
+    ScrollPosition listPosition(WidgetTester tester) => tester
+        .state<ScrollableState>(find.descendant(of: find.byType(ChatScreen), matching: find.byType(Scrollable)).first)
+        .position;
+
+    Future<TestApp> openLongChat(WidgetTester tester, {Appearance appearance = const Appearance()}) async {
+      final engine = testEngine();
+      for (var i = 1; i <= 40; i++) {
+        engine.receive('chat-lucia', 'Antes $i');
+      }
+      final app = await pumpApp(tester, engine: engine, appearance: appearance);
+      await openChat(tester, 'Lucía');
+      return app;
+    }
+
+    Future<void> scrollUpTo(WidgetTester tester, double offset) async {
+      listPosition(tester).jumpTo(offset);
+      await tester.pumpAndSettle();
+    }
+
+    Future<void> receive(WidgetTester tester, TestApp app, int count) async {
+      for (var i = 1; i <= count; i++) {
+        app.engine.receive('chat-lucia', 'Nuevo $i');
+      }
+      await tester.pumpAndSettle();
+    }
+
+    testWidgets('does not show at the bottom, even as new messages arrive', (tester) async {
+      final app = await openLongChat(tester);
+      expect(goToBottom(), findsNothing);
+      await receive(tester, app, 2);
+      expect(goToBottom(), findsNothing);
+    });
+
+    testWidgets('scrolled up, new messages out of view show it with their count, as a number badge', (tester) async {
+      final app = await openLongChat(tester);
+      await scrollUpTo(tester, 300);
+      expect(goToBottom(), findsNothing, reason: 'only a little up, and nothing new');
+      await receive(tester, app, 3);
+      expect(goToBottom(), findsOneWidget);
+      expect(tester.widget<GoToBottomButton>(goToBottom()).count, 3);
+      expect(find.descendant(of: goToBottom(), matching: find.text('3')), findsOneWidget);
+      expect(
+        tester.getSemantics(goToBottom()),
+        isSemantics(label: '3 mensajes nuevos, ir al final', isButton: true, hasTapAction: true),
+      );
+      final size = tester.getSize(find.descendant(of: goToBottom(), matching: find.byType(Material)).first);
+      expect(size, const Size.square(44));
+      // Bottom right, above the composer.
+      final button = tester.getRect(goToBottom());
+      final composer = tester.getRect(find.byType(TextField));
+      expect(button.bottom, lessThan(composer.top));
+      expect(button.right, greaterThan(tester.getSize(find.byType(ChatScreen)).width - 64));
+    });
+
+    testWidgets('not when the new messages already show', (tester) async {
+      final app = await openLongChat(tester);
+      await scrollUpTo(tester, 10);
+      await receive(tester, app, 1);
+      expect(find.text('Nuevo 1').hitTestable(), findsOneWidget);
+      expect(goToBottom(), findsNothing);
+    });
+
+    testWidgets('far up, it shows without a count', (tester) async {
+      await openLongChat(tester);
+      await scrollUpTo(tester, 1500);
+      expect(goToBottom(), findsOneWidget);
+      expect(tester.widget<GoToBottomButton>(goToBottom()).count, 0);
+      expect(tester.getSemantics(goToBottom()), isSemantics(label: 'Ir al final', isButton: true));
+    });
+
+    testWidgets('tapping it scrolls to the bottom with the theme motion and clears the count', (tester) async {
+      final app = await openLongChat(tester);
+      await scrollUpTo(tester, 1500);
+      await receive(tester, app, 2);
+      await tester.tap(goToBottom());
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+      expect(listPosition(tester).pixels, inExclusiveRange(0, 1500), reason: 'on its way');
+      await tester.pumpAndSettle();
+      expect(listPosition(tester).pixels, 0);
+      expect(goToBottom(), findsNothing);
+      expect(find.text('Nuevo 2').hitTestable(), findsOneWidget);
+    });
+
+    testWidgets('with Animaciones "Ninguna" it goes to the bottom at once', (tester) async {
+      await openLongChat(tester, appearance: const Appearance(animations: AnimationsSetting.none));
+      await scrollUpTo(tester, 1500);
+      await tester.tap(goToBottom());
+      await tester.pump();
+      expect(listPosition(tester).pixels, 0);
+    });
+
+    testWidgets('with Reduce Motion it does not slide there either', (tester) async {
+      tester.platformDispatcher.accessibilityFeaturesTestValue = const FakeAccessibilityFeatures(reduceMotion: true);
+      addTearDown(tester.platformDispatcher.clearAccessibilityFeaturesTestValue);
+      await openLongChat(tester);
+      await scrollUpTo(tester, 1500);
+      await tester.tap(goToBottom());
+      await tester.pump();
+      expect(listPosition(tester).pixels, 0);
+    });
+
+    testWidgets('sending while scrolled up goes to the bottom, to see it arrive', (tester) async {
+      await openLongChat(tester);
+      await scrollUpTo(tester, 1500);
+      await tester.enterText(find.byType(TextField), 'Ya voy');
+      await tester.pump();
+      await tester.tap(find.bySemanticsLabel('Enviar'));
+      await tester.pumpAndSettle();
+      expect(listPosition(tester).pixels, 0);
+      expect(find.text('Ya voy').hitTestable(), findsOneWidget);
+    });
+
+    test('in English and Portuguese too', () {
+      expect(lookupAppLocalizations(const Locale('en')).goToBottomNew(3), '3 new messages, go to the bottom');
+      expect(lookupAppLocalizations(const Locale('pt')).goToBottom, 'Ir para o fim');
     });
   });
 

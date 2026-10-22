@@ -79,6 +79,8 @@
   "messages": "Mensagens",
   "messageLabel": "Mensagem",
   "composerHint": "Mensagem",
+  "goToBottomNew": "{count, plural, =1{1 mensagem nova, ir para o fim} other{{count} mensagens novas, ir para o fim}}",
+  "goToBottom": "Ir para o fim",
   "attach": "Anexar",
   "emojiAndStickers": "Emojis e figurinhas",
   "voiceMessage": "Mensagem de voz",

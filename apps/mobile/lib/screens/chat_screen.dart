@@ -1,9 +1,11 @@
 // A conversation: the header (back; avatar and name with its shield and the
 // state in words under it, one button that opens the info; call and video),
 // the messages by day with the calls as
-// centred lines among them, and the composer. Enter writes a new line; the send button
+// centred lines among them, the button to go back to the newest message when
+// new ones arrive out of view, and the composer. Enter writes a new line; the send button
 // sends, and it turns active only when there is something to send.
 import 'dart:async';
+import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 
@@ -17,6 +19,7 @@ import '../ui/button.dart';
 import '../ui/call_event_line.dart';
 import '../ui/composer_field.dart';
 import '../ui/day_separator.dart';
+import '../ui/go_to_bottom_button.dart';
 import '../ui/icon_button.dart';
 import '../ui/message_arrival.dart';
 import '../ui/message_bubble.dart';
@@ -244,10 +247,30 @@ class _MessageListState extends State<_MessageList> {
   /// What arrived with the last change, to move in once.
   var _arriving = const <String>{};
 
+  final _scroll = ScrollController();
+
+  /// Messages from others that arrived while the chat was open and have not
+  /// shown yet, each with a key to find where it is.
+  final _watching = <String, GlobalKey>{};
+
+  /// Of those, the ones below what shows, as of the last look: the count on
+  /// the button.
+  var _below = 0;
+
+  /// More than a screen up from the newest message.
+  var _farUp = false;
+  var _lookScheduled = false;
+
   @override
   void initState() {
     super.initState();
     _takeIn(animate: false);
+  }
+
+  @override
+  void dispose() {
+    _scroll.dispose();
+    super.dispose();
   }
 
   @override
@@ -263,6 +286,77 @@ class _MessageListState extends State<_MessageList> {
         if (_known.add(message.id)) message.id,
     };
     _arriving = animate ? fresh : const {};
+    var sent = false;
+    for (final message in widget.messages) {
+      if (!_arriving.contains(message.id)) continue;
+      if (message.outgoing) {
+        sent = true;
+      } else {
+        _watching[message.id] = GlobalKey();
+      }
+    }
+    // What you send arrives at the bottom: go there to see it.
+    if (sent) WidgetsBinding.instance.addPostFrameCallback((_) => _goToBottom());
+  }
+
+  /// After the next frame, sees which new messages show and how far up the
+  /// list is.
+  void _scheduleLook() {
+    if (_lookScheduled) return;
+    _lookScheduled = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _lookScheduled = false;
+      _look();
+    });
+    WidgetsBinding.instance.ensureVisualUpdate();
+  }
+
+  void _look() {
+    if (!mounted || !_scroll.hasClients) return;
+    final list = context.findRenderObject();
+    if (list is! RenderBox || !list.hasSize) return;
+    final height = list.size.height;
+    final seen = <String>[];
+    var below = 0;
+    for (final MapEntry(key: id, value: key) in _watching.entries) {
+      final box = key.currentContext?.findRenderObject();
+      if (box is! RenderBox || !box.attached || !box.hasSize) {
+        below++;
+        continue;
+      }
+      final top = box.localToGlobal(Offset.zero, ancestor: list).dy;
+      final shown = math.min(top + box.size.height, height) - math.max(top, 0.0);
+      // Seen once at least half of it shows.
+      if (shown >= math.min(box.size.height, height) / 2) {
+        seen.add(id);
+      } else {
+        below++;
+      }
+    }
+    final position = _scroll.position;
+    final farUp = position.pixels > position.viewportDimension;
+    if (seen.isEmpty && below == _below && farUp == _farUp) return;
+    setState(() {
+      seen.forEach(_watching.remove);
+      _below = below;
+      _farUp = farUp;
+    });
+  }
+
+  void _goToBottom() {
+    if (!mounted) return;
+    if (_watching.isNotEmpty || _below > 0) {
+      setState(() {
+        _watching.clear();
+        _below = 0;
+      });
+    }
+    if (!_scroll.hasClients || _scroll.position.pixels <= 0) return;
+    final motion = context.motion;
+    // Nothing slides with less motion. A spring would pass the end of the
+    // list, so the scroll eases out instead.
+    if (!motion.travels) return _scroll.jumpTo(0);
+    unawaited(_scroll.animateTo(0, duration: motion.medium, curve: Curves.easeOutCubic));
   }
 
   @override
@@ -294,26 +388,29 @@ class _MessageListState extends State<_MessageList> {
           animate: _arriving.contains(message.id),
           // Yours rise as they appear; theirs only fade in.
           rise: message.outgoing,
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 3),
-            child: MessageBubble(
-              direction: message.outgoing ? BubbleDirection.outgoing : BubbleDirection.incoming,
-              text: message.text,
-              time: formatTime(context, message.sentAt),
-              sender: widget.group ? message.sender : null,
-              status: message.outgoing
-                  ? (state: _delivery(message.status), label: _statusLabel(context, message.status))
-                  : null,
-              failure: message.status == MessageStatus.failed
-                  ? (
-                      text: l10n.failedNotice,
-                      retry: TrinoButton(
-                        label: l10n.retry,
-                        variant: ButtonVariant.ghost,
-                        onPressed: () => widget.onRetry(message),
-                      ),
-                    )
-                  : null,
+          child: KeyedSubtree(
+            key: _watching[message.id],
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 3),
+              child: MessageBubble(
+                direction: message.outgoing ? BubbleDirection.outgoing : BubbleDirection.incoming,
+                text: message.text,
+                time: formatTime(context, message.sentAt),
+                sender: widget.group ? message.sender : null,
+                status: message.outgoing
+                    ? (state: _delivery(message.status), label: _statusLabel(context, message.status))
+                    : null,
+                failure: message.status == MessageStatus.failed
+                    ? (
+                        text: l10n.failedNotice,
+                        retry: TrinoButton(
+                          label: l10n.retry,
+                          variant: ButtonVariant.ghost,
+                          onPressed: () => widget.onRetry(message),
+                        ),
+                      )
+                    : null,
+              ),
             ),
           ),
         ),
@@ -321,17 +418,48 @@ class _MessageListState extends State<_MessageList> {
     }
     // Each item keeps its place, and its motion, as new ones come in below.
     final indexOf = {for (final (index, item) in items.indexed) item.key!: items.length - 1 - index};
-    return Semantics(
-      container: true,
-      explicitChildNodes: true,
-      label: l10n.messages,
-      child: ListView.builder(
-        reverse: true,
-        padding: const EdgeInsets.symmetric(vertical: 8),
-        itemCount: items.length,
-        itemBuilder: (context, index) => items[items.length - 1 - index],
-        findChildIndexCallback: (key) => indexOf[key],
-      ),
+    _scheduleLook();
+    // Only when scrolled up with new messages out of view, or far up; never
+    // while the new messages show.
+    final showButton = _below > 0 || _farUp;
+    return Stack(
+      children: [
+        NotificationListener<ScrollNotification>(
+          onNotification: (_) {
+            _scheduleLook();
+            return false;
+          },
+          child: Semantics(
+            container: true,
+            explicitChildNodes: true,
+            label: l10n.messages,
+            child: ListView.builder(
+              controller: _scroll,
+              reverse: true,
+              padding: const EdgeInsets.symmetric(vertical: 8),
+              itemCount: items.length,
+              itemBuilder: (context, index) => items[items.length - 1 - index],
+              findChildIndexCallback: (key) => indexOf[key],
+            ),
+          ),
+        ),
+        PositionedDirectional(
+          end: 8,
+          bottom: 8,
+          child: MotionSwitcher(
+            grow: true,
+            alignment: AlignmentDirectional.bottomEnd,
+            child: showButton
+                ? GoToBottomButton(
+                    key: const ValueKey('go-to-bottom'),
+                    count: _below,
+                    label: _below > 0 ? l10n.goToBottomNew(_below) : l10n.goToBottom,
+                    onPressed: _goToBottom,
+                  )
+                : const SizedBox.shrink(key: ValueKey('at-bottom')),
+          ),
+        ),
+      ],
     );
   }
 
