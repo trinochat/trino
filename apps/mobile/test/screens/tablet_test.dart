@@ -2,9 +2,9 @@
 // panes, the list and what was opened from it; from 1200 dp the info of a
 // chat as a third pane. Under 600 dp the phone app, which the other tests
 // cover, stays as it is.
-import 'dart:ui' show SemanticsRole;
 
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:trino_mobile/design/appearance.dart';
@@ -181,6 +181,19 @@ void main() {
     }
   });
 
+  testWidgets('every rail label fits whole, in Terminal too', (tester) async {
+    await pumpApp(
+      tester,
+      size: tabletLandscape,
+      appearance: const Appearance(style: TrinoStyle.terminal, mode: AppearanceMode.dark),
+    );
+    for (final label in ['Llamadas', 'Chats', 'Contactos', 'Ajustes']) {
+      final paragraph = tester.renderObject<RenderParagraph>(inRail(label));
+      expect(paragraph.didExceedMaxLines, isFalse, reason: label);
+      expect(tester.getRect(inRail(label)).width, lessThanOrEqualTo(64), reason: label);
+    }
+  });
+
   group('Ajustes beside its sections', () {
     testWidgets('a section opens on the right, without back, and another takes its place', (tester) async {
       await pumpApp(tester, size: tabletLandscape);
@@ -195,6 +208,11 @@ void main() {
       expect(inDetail(find.byType(AppearanceScreen)), findsOneWidget);
       expect(inList(find.text('Apariencia')), findsOneWidget, reason: 'the sections stay beside it');
       expect(inDetail(find.bySemanticsLabel('Volver')), findsNothing);
+      expect(
+        tester.getSize(find.descendant(of: find.byKey(detailPane), matching: find.byType(SubPageBar))).height,
+        greaterThanOrEqualTo(56),
+        reason: 'as tall as with back',
+      );
 
       await tester.tap(inList(find.text('Idioma')));
       await tester.pumpAndSettle();

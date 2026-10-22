@@ -128,14 +128,18 @@ class _RailItem extends StatelessWidget {
                           ],
                         ),
                         const SizedBox(height: 3),
-                        Text(
-                          label,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          textAlign: TextAlign.center,
-                          style: context.text.caption.copyWith(
-                            color: ink,
-                            fontWeight: selected ? FontWeight.w700 : FontWeight.w600,
+                        // Whole, if a little smaller, rather than cut: a
+                        // wide font (Terminal's) or a long word.
+                        FittedBox(
+                          fit: BoxFit.scaleDown,
+                          child: Text(
+                            label,
+                            maxLines: 1,
+                            textAlign: TextAlign.center,
+                            style: context.text.caption.copyWith(
+                              color: ink,
+                              fontWeight: selected ? FontWeight.w700 : FontWeight.w600,
+                            ),
                           ),
                         ),
                       ],
