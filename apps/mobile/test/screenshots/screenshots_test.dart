@@ -1,5 +1,6 @@
 // Renders the main screens to PNG files for review, on a 390×844 phone at
-// 3× in Calma light and Terminal dark, with the bundled fonts:
+// 3× (and the tablet layouts at 1.5×) in Calma light and Terminal dark, with
+// the bundled fonts:
 //
 //   flutter test test/screenshots --dart-define=TRINO_SHOTS_DIR=<folder>
 //
@@ -47,11 +48,11 @@ Future<void> loadFonts() async {
 }
 
 /// Without [settle], as it is now, such as while a button's spinner turns.
-Future<void> shot(WidgetTester tester, String name, {bool settle = true}) async {
+Future<void> shot(WidgetTester tester, String name, {bool settle = true, double pixelRatio = 3}) async {
   if (settle) await tester.pumpAndSettle();
   final boundary = tester.renderObject<RenderRepaintBoundary>(find.byKey(appBoundaryKey));
   await tester.runAsync(() async {
-    final image = await boundary.toImage(pixelRatio: 3);
+    final image = await boundary.toImage(pixelRatio: pixelRatio);
     final png = await image.toByteData(format: ui.ImageByteFormat.png);
     image.dispose();
     File('$shotsDir/$name.png')
@@ -365,6 +366,28 @@ void main() {
       await tester.pumpAndSettle();
       await tester.longPress(row('Familia'));
       await shot(tester, '$name-56-chat-actions-sheet');
+    }, skip: skip != false);
+
+    testWidgets('the tablet in $name', (tester) async {
+      Future<void> tablet(String file) => shot(tester, '$name-$file', pixelRatio: 1.5);
+      Finder inList(String text) =>
+          find.descendant(of: find.byKey(const ValueKey('list-pane')), matching: find.text(text));
+      await pumpApp(tester, appearance: appearance, size: tabletLandscape);
+      await tablet('60-tablet-landscape-empty');
+      await tester.tap(inList('Ana Torres'));
+      await tablet('61-tablet-landscape-chat');
+      tester.view.physicalSize = tabletPortrait * 3;
+      await tablet('62-tablet-portrait-chat');
+      tester.view.physicalSize = tabletWide * 3;
+      await tester.pumpAndSettle();
+      await tester.tap(find.bySemanticsLabel('Info'));
+      await tablet('63-tablet-wide-info');
+      tester.view.physicalSize = tabletLandscape * 3;
+      await tester.pumpAndSettle();
+      await tester.tap(find.descendant(of: find.byKey(const ValueKey('nav-rail')), matching: find.text('Ajustes')));
+      await tester.pumpAndSettle();
+      await tester.tap(inList('Apariencia'));
+      await tablet('64-tablet-settings');
     }, skip: skip != false);
 
     testWidgets('the unlock screen with the fingerprint in $name', (tester) async {
