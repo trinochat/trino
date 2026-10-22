@@ -16,6 +16,7 @@ import '../l10n/app_localizations.dart';
 import '../ui/avatar.dart';
 import '../ui/chat_row.dart';
 import '../ui/icon_button.dart';
+import '../ui/moving_rows.dart';
 import '../ui/swipe_actions.dart';
 import '../ui/text_field.dart';
 import '../ui/trust_badge.dart';
@@ -50,6 +51,10 @@ class _ChatsScreenState extends State<ChatsScreen> {
   final _search = TextEditingController();
   var _searching = false;
   var _filter = ChatFilter.all;
+
+  /// The filter and search the rows were last shown for: a new one shows
+  /// its chats at once, instead of rows closing and opening.
+  (ChatFilter, String)? _shownFor;
 
   @override
   void dispose() {
@@ -145,30 +150,45 @@ class _ChatsScreenState extends State<ChatsScreen> {
                   final chats = _visible(all);
                   final requestCount = requests.data?.length ?? 0;
                   final showRequests = requestCount > 0 && _filter == ChatFilter.all && _query.isEmpty;
+                  final shownFor = (_filter, _query);
+                  final snap = shownFor != _shownFor;
+                  _shownFor = shownFor;
                   return SwipeGroup(
-                    child: ListView(
-                      padding: const EdgeInsets.only(top: 4),
-                      children: [
-                        if (showRequests)
-                          _RequestsRow(
-                            key: ChatsScreen.requestsRowKey,
-                            label: l10n.requestsRow(requestCount),
-                            onTap: _openRequests,
+                    child: CustomScrollView(
+                      slivers: [
+                        SliverPadding(
+                          padding: const EdgeInsets.only(top: 4),
+                          sliver: SliverList.list(
+                            children: [
+                              if (showRequests)
+                                _RequestsRow(
+                                  key: ChatsScreen.requestsRowKey,
+                                  label: l10n.requestsRow(requestCount),
+                                  onTap: _openRequests,
+                                ),
+                              if (chats.isEmpty)
+                                Padding(
+                                  padding: const EdgeInsets.all(24),
+                                  child: Text(
+                                    all.isEmpty
+                                        ? l10n.noChats
+                                        : _query.isNotEmpty
+                                        ? l10n.searchEmpty
+                                        : l10n.filterEmpty,
+                                    textAlign: TextAlign.center,
+                                    style: context.text.secondary,
+                                  ),
+                                ),
+                            ],
                           ),
-                        if (chats.isEmpty)
-                          Padding(
-                            padding: const EdgeInsets.all(24),
-                            child: Text(
-                              all.isEmpty
-                                  ? l10n.noChats
-                                  : _query.isNotEmpty
-                                  ? l10n.searchEmpty
-                                  : l10n.filterEmpty,
-                              textAlign: TextAlign.center,
-                              style: context.text.secondary,
-                            ),
-                          ),
-                        for (final chat in chats) _row(context, chat),
+                        ),
+                        // Pinning, a new message or a draft moves a chat:
+                        // the rows slide to their places, and a deleted one
+                        // closes.
+                        MovingRows(
+                          snap: snap,
+                          rows: [for (final chat in chats) (key: ValueKey(chat.id), child: _row(context, chat))],
+                        ),
                       ],
                     ),
                   );

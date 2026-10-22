@@ -8,6 +8,7 @@ import 'package:flutter/services.dart';
 import '../design/icons.dart';
 import '../design/theme.dart';
 import 'avatar.dart';
+import 'motion_switcher.dart';
 import 'trust_badge.dart';
 import 'unread_badge.dart';
 
@@ -165,10 +166,21 @@ class ChatRow extends StatelessWidget {
                             Row(
                               mainAxisSize: MainAxisSize.min,
                               children: [
-                                if (pinnedLabel != null) ...[
-                                  TrinoIcon(TrinoIcons.pin, size: 14, color: t.muted, semanticLabel: pinnedLabel),
-                                  const SizedBox(width: 4),
-                                ],
+                                // The pin fades in and out with the theme's motion.
+                                MotionSwitcher(
+                                  child: pinnedLabel != null
+                                      ? Padding(
+                                          key: const ValueKey('pinned'),
+                                          padding: const EdgeInsetsDirectional.only(end: 4),
+                                          child: TrinoIcon(
+                                            TrinoIcons.pin,
+                                            size: 14,
+                                            color: t.muted,
+                                            semanticLabel: pinnedLabel,
+                                          ),
+                                        )
+                                      : const SizedBox.shrink(key: ValueKey('not-pinned')),
+                                ),
                                 if (time != null) Text(time!, style: text.mono),
                               ],
                             ),

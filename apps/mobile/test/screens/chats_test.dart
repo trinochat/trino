@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:trino_mobile/design/appearance.dart';
 import 'package:trino_mobile/screens/chats_screen.dart';
 import 'package:trino_mobile/screens/common.dart';
 import 'package:trino_mobile/screens/connection/connection_failed_screen.dart';
@@ -438,6 +439,134 @@ void main() {
       await tester.sendKeyUpEvent(LogicalKeyboardKey.shiftLeft);
       await tester.pumpAndSettle();
       expect(inSheet('Lucía'), findsOneWidget);
+    });
+  });
+
+  group('the list moves instead of jumping', () {
+    double topOf(WidgetTester tester, String name) => tester.getTopLeft(rowOf(name)).dy;
+
+    double opacityOfRow(WidgetTester tester, String name) => tester
+        .widgetList<Opacity>(find.ancestor(of: rowOf(name), matching: find.byType(Opacity)))
+        .fold(1.0, (opacity, fade) => opacity * fade.opacity);
+
+    void useReduceMotion(WidgetTester tester) {
+      tester.platformDispatcher.accessibilityFeaturesTestValue = const FakeAccessibilityFeatures(reduceMotion: true);
+      addTearDown(tester.platformDispatcher.clearAccessibilityFeaturesTestValue);
+    }
+
+    Future<(double from, double to)> pinLucia(WidgetTester tester, {Appearance appearance = const Appearance()}) async {
+      final app = await pumpApp(tester, appearance: appearance);
+      final from = topOf(tester, 'Lucía');
+      final to = topOf(tester, 'Ana Torres');
+      await app.engine.setChatPinned('chat-lucia', true);
+      await tester.pump();
+      return (from, to);
+    }
+
+    testWidgets('Calma: a pinned chat slides up to its place, and the others make room', (tester) async {
+      final (from, to) = await pinLucia(tester);
+      final anaBefore = to;
+      await tester.pump(const Duration(milliseconds: 100));
+      expect(topOf(tester, 'Lucía'), inExclusiveRange(to, from), reason: 'on its way up');
+      expect(topOf(tester, 'Ana Torres'), greaterThan(anaBefore), reason: 'on its way down');
+      await tester.pumpAndSettle();
+      expect(topOf(tester, 'Lucía'), moreOrLessEquals(to, epsilon: 0.01));
+      expect(tester.widgetList<ChatRow>(find.byType(ChatRow)).map((row) => row.name), [
+        'Lucía',
+        'Ana Torres',
+        'Familia',
+        'Carlos Méndez',
+      ]);
+    });
+
+    testWidgets('Terminal: the same, short and crisp', (tester) async {
+      final (from, to) = await pinLucia(tester, appearance: const Appearance(style: TrinoStyle.terminal));
+      await tester.pump(const Duration(milliseconds: 60));
+      expect(topOf(tester, 'Lucía'), inExclusiveRange(to, from));
+      await tester.pump(const Duration(milliseconds: 110));
+      expect(topOf(tester, 'Lucía'), to);
+    });
+
+    testWidgets('with Reduce Motion nothing slides: it is in its place at once', (tester) async {
+      useReduceMotion(tester);
+      final (_, to) = await pinLucia(tester);
+      await tester.pump(const Duration(milliseconds: 16));
+      expect(topOf(tester, 'Lucía'), to);
+    });
+
+    testWidgets('with Animaciones "Ninguna" it is in its place at once', (tester) async {
+      final (_, to) = await pinLucia(tester, appearance: const Appearance(animations: AnimationsSetting.none));
+      await tester.pump(const Duration(milliseconds: 16));
+      expect(topOf(tester, 'Lucía'), to);
+    });
+
+    testWidgets('the pin fades in', (tester) async {
+      await pinLucia(tester);
+      await tester.pump(const Duration(milliseconds: 50));
+      final pin = find.descendant(
+        of: rowOf('Lucía'),
+        matching: find.byWidgetPredicate((w) => w is TrinoIcon && w.icon == TrinoIcons.pin),
+      );
+      expect(pin, findsOneWidget);
+      final opacity = tester
+          .widgetList<FadeTransition>(
+            find.descendant(
+              of: rowOf('Lucía'),
+              matching: find.ancestor(of: pin, matching: find.byType(FadeTransition)),
+            ),
+          )
+          .fold(1.0, (opacity, fade) => opacity * fade.opacity.value);
+      expect(opacity, inExclusiveRange(0, 1));
+    });
+
+    testWidgets('a deleted chat closes, neither read nor tappable, and the rows below move up', (tester) async {
+      final app = await pumpApp(tester);
+      final carlosFrom = topOf(tester, 'Carlos Méndez');
+      final familiaTop = topOf(tester, 'Familia');
+      await app.engine.deleteChat('chat-familia');
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+      expect(rowOf('Familia'), findsOneWidget, reason: 'still closing');
+      expect(find.text('Familia').hitTestable(), findsNothing);
+      expect(
+        find.ancestor(
+          of: rowOf('Familia'),
+          matching: find.byWidgetPredicate((w) => w is ExcludeSemantics && w.excluding),
+        ),
+        findsOneWidget,
+        reason: 'not read',
+      );
+      expect(topOf(tester, 'Carlos Méndez'), inExclusiveRange(familiaTop, carlosFrom));
+      await tester.pumpAndSettle();
+      expect(rowOf('Familia'), findsNothing);
+      expect(topOf(tester, 'Carlos Méndez'), familiaTop);
+    });
+
+    testWidgets('with Reduce Motion a deleted chat only fades out', (tester) async {
+      useReduceMotion(tester);
+      final app = await pumpApp(tester);
+      final carlosFrom = topOf(tester, 'Carlos Méndez');
+      await app.engine.deleteChat('chat-familia');
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 50));
+      expect(opacityOfRow(tester, 'Familia'), inExclusiveRange(0, 1));
+      expect(topOf(tester, 'Carlos Méndez'), carlosFrom, reason: 'no closing');
+      await tester.pumpAndSettle();
+      expect(rowOf('Familia'), findsNothing);
+    });
+
+    testWidgets('with Animaciones "Ninguna" a deleted chat is gone at once', (tester) async {
+      final app = await pumpApp(tester, appearance: const Appearance(animations: AnimationsSetting.none));
+      await app.engine.deleteChat('chat-familia');
+      await tester.pump();
+      expect(rowOf('Familia'), findsNothing);
+    });
+
+    testWidgets('a new filter shows its chats at once, without rows closing', (tester) async {
+      await pumpApp(tester);
+      await tester.tap(find.text('Grupos'));
+      await tester.pump();
+      expect(find.byType(ChatRow), findsOneWidget);
     });
   });
 
