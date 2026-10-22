@@ -116,6 +116,18 @@ Each upload:
 Without a Mac this workflow cannot be tried locally: its first real run is the
 test.
 
+### Installing without TestFlight (Ad Hoc)
+
+On 21 Oct 2026 TestFlight listed builds but would not install them, so the
+workflow also exports an `.ipa` signed Ad Hoc (`ios/ExportOptions-AdHoc.plist`),
+as `spike/ios-tor` does. It installs only on the iPhones registered in the
+developer account when the workflow runs, and stays as the run's artifact
+`trino-adhoc-<run>` for 7 days. If that step fails, the TestFlight upload still
+runs. To install it, serve it over HTTPS with a manifest and open the
+`itms-services://` link in Safari, as `spikes/ios-tor/README.md` describes
+(on `spike/ios-tor`). The app is version 0.1.2, above the spike's 0.1.1: both
+use `org.trinochat.app`, so installing one replaces the other.
+
 ## Export compliance
 
 `ios/Runner/Info.plist` declares `ITSAppUsesNonExemptEncryption` as `false`, so

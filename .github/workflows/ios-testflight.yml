@@ -113,6 +113,39 @@ jobs:
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGN_IDENTITY=""
 
+      # An .ipa signed Ad Hoc, for the iPhones registered in the developer
+      # account, kept as this run's artifact for 7 days, as spike/ios-tor
+      # does: TestFlight showed builds but would not install them (21 Oct
+      # 2026). If it fails (no registered device, say), the upload still runs.
+      - name: Sign in the cloud for Ad Hoc and export the .ipa
+        id: adhoc
+        continue-on-error: true
+        working-directory: apps/mobile/ios
+        env:
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+        run: |
+          xcodebuild -exportArchive             -archivePath "$RUNNER_TEMP/Runner.xcarchive"             -exportOptionsPlist ExportOptions-AdHoc.plist             -exportPath "$RUNNER_TEMP/adhoc"             -allowProvisioningUpdates             -authenticationKeyPath "$ASC_KEY_PATH"             -authenticationKeyID "$ASC_KEY_ID"             -authenticationKeyIssuerID "$ASC_ISSUER_ID"
+          ipa=$(find "$RUNNER_TEMP/adhoc" -name '*.ipa' | head -n 1)
+          if [ -z "$ipa" ]; then
+            echo "::error::The Ad Hoc export wrote no .ipa."
+            exit 1
+          fi
+          mv "$ipa" "$RUNNER_TEMP/adhoc/trino.ipa"
+          {
+            echo "### Ad Hoc .ipa"
+            echo "- \`trino.ipa\`: $(du -h "$RUNNER_TEMP/adhoc/trino.ipa" | cut -f1), build ${{ github.run_number }}, in this run's artifacts"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Keep the Ad Hoc .ipa
+        if: steps.adhoc.outcome == 'success'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: trino-adhoc-${{ github.run_number }}
+          path: ${{ runner.temp }}/adhoc/trino.ipa
+          retention-days: 7
+          if-no-files-found: error
+
       - name: Sign in the cloud and upload to App Store Connect
         working-directory: apps/mobile/ios
         env:
