@@ -11,7 +11,9 @@
 
 // The protocol and cryptography are trino-core's, re-exported as the app
 // does, so `crate::crypto::…` reads the same in the code moved here.
-pub use trino_core::{call_signal, crypto, envelope, group, identity, ratchet, totp, vault, x3dh};
+pub use trino_core::{
+    call_signal, crypto, envelope, group, identity, kdf, ratchet, totp, vault, vault_v3, x3dh,
+};
 
 pub mod account;
 pub mod blossom;

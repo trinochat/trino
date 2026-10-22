@@ -1192,11 +1192,11 @@ pub fn derive_history_key(identity: &Identity) -> std::io::Result<Zeroizing<[u8;
 
 /// A legacy key from what HKDF gave: 32 bytes, not all zero. A failed
 /// derivation, another length or all zeros are an error, so no path turns
-/// them into a key (TRN-ENG-09).
+/// them into a key (TRN-ENG-09). trino-core hands the bytes in `Zeroizing`.
 pub(crate) fn legacy_key<E: std::fmt::Display>(
-    okm: Result<Vec<u8>, E>,
+    okm: Result<Zeroizing<Vec<u8>>, E>,
 ) -> std::io::Result<Zeroizing<[u8; 32]>> {
-    let okm = Zeroizing::new(okm.map_err(|error| std::io::Error::other(error.to_string()))?);
+    let okm = okm.map_err(|error| std::io::Error::other(error.to_string()))?;
     let mut key = Zeroizing::new([0u8; 32]);
     if okm.len() != key.len() {
         return Err(std::io::Error::other("a legacy key is 32 bytes"));
@@ -2042,10 +2042,22 @@ pub(crate) mod tests {
     #[test]
     fn a_failed_derivation_is_an_error_not_a_zero_key() {
         assert!(legacy_key::<&str>(Err("HKDF failed")).is_err());
-        assert!(legacy_key::<&str>(Ok(vec![0u8; 32])).is_err(), "all zeros");
-        assert!(legacy_key::<&str>(Ok(vec![1u8; 16])).is_err(), "short");
-        assert!(legacy_key::<&str>(Ok(vec![1u8; 64])).is_err(), "long");
-        assert_eq!(*legacy_key::<&str>(Ok(vec![1u8; 32])).unwrap(), [1u8; 32]);
+        assert!(
+            legacy_key::<&str>(Ok(Zeroizing::new(vec![0u8; 32]))).is_err(),
+            "all zeros"
+        );
+        assert!(
+            legacy_key::<&str>(Ok(Zeroizing::new(vec![1u8; 16]))).is_err(),
+            "short"
+        );
+        assert!(
+            legacy_key::<&str>(Ok(Zeroizing::new(vec![1u8; 64]))).is_err(),
+            "long"
+        );
+        assert_eq!(
+            *legacy_key::<&str>(Ok(Zeroizing::new(vec![1u8; 32]))).unwrap(),
+            [1u8; 32]
+        );
     }
 
     #[test]

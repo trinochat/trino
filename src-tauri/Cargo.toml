@@ -18,7 +18,7 @@ tauri-build = { version = "2", features = [] }
 # repository so it can be audited on its own; Cargo.lock pins the exact commit,
 # so builds stay reproducible. To work on both at once, add a [patch] pointing
 # at a local checkout — do not commit it.
-trino-core = { git = "https://github.com/trinochat/trino-core", rev = "3421e168c94da92d21234e1a8c1587d552b0002b" }
+trino-core = { git = "https://github.com/trinochat/trino-core", rev = "ca3d59268f277855210e416f50e56ffd3d4df99d" }
 
 # Every connection the app opens: through Tor, or with one of the two
 # permits to go without it (Tor design §2). No Tauri in it.
@@ -108,6 +108,9 @@ webview2-com = "=0.38.2"
 
 [dev-dependencies]
 proptest = "1"
+# The vault's test KDF (trino-core's `test-kdf`), as in the engine's
+# dev-dependencies: never in a build that ships.
+trino-core = { git = "https://github.com/trinochat/trino-core", rev = "ca3d59268f277855210e416f50e56ffd3d4df99d", features = ["test-kdf"] }
 # Tor as an in-memory pipe, and a direct transport that fails the test.
 trino-net = { path = "../crates/trino-net", features = ["test-util"] }
 # The engine's scratch directories for tests that touch the disk.

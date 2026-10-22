@@ -127,14 +127,31 @@ impl std::fmt::Display for CommandError {
 
 impl From<VaultError> for CommandError {
     fn from(error: VaultError) -> Self {
+        // These name the emergency key: their message says nothing the
+        // real path would not say (clave de emergencia, design §5.3).
+        let neutral = match error {
+            VaultError::PassphraseOpensEmergencySlot | VaultError::EmergencyKeyOpensAnotherSlot => {
+                Some("choose another passphrase")
+            }
+            VaultError::IdVaultReused => Some("the vault could not be sealed"),
+            _ => None,
+        };
         let code = match error {
             // AES-GCM cannot tell a wrong key from a modified file; a wrong
             // passphrase is by far the likelier.
             VaultError::DecryptionFailed => ErrorCode::WrongPassphrase,
             VaultError::TotpRequired => ErrorCode::TotpRequired,
             VaultError::InvalidTotp => ErrorCode::InvalidTotp,
-            VaultError::UnsupportedVersion(_) | VaultError::UnsupportedFlags(_) => {
-                ErrorCode::UnsupportedVault
+            // A vault of a newer Trino, or one a test build wrote (its
+            // KDF byte, trino-core `test-kdf`).
+            VaultError::UnsupportedVersion(_)
+            | VaultError::UnsupportedFlags(_)
+            | VaultError::UnsupportedKdf(_) => ErrorCode::UnsupportedVault,
+            // A new passphrase that is the emergency key, or an emergency
+            // key that is the passphrase: refused as any other passphrase
+            // the user has to change.
+            VaultError::PassphraseOpensEmergencySlot | VaultError::EmergencyKeyOpensAnotherSlot => {
+                ErrorCode::PassphraseTooCommon
             }
             // A damaged file or a failure in the crypto: nothing the user
             // can fix by typing something else.
@@ -142,10 +159,16 @@ impl From<VaultError> for CommandError {
             | VaultError::BadMagic
             | VaultError::BadPayload
             | VaultError::InvalidAppData(_)
+            | VaultError::Kdf(_)
+            | VaultError::TooLarge { .. }
+            | VaultError::IdVaultReused
             | VaultError::Crypto(_)
             | VaultError::Identity(_) => ErrorCode::Internal,
         };
-        CommandError::new(code, error.to_string())
+        match neutral {
+            Some(message) => CommandError::new(code, message),
+            None => CommandError::new(code, error.to_string()),
+        }
     }
 }
 
@@ -217,6 +240,55 @@ mod tests {
             VaultError::Identity(IdentityError::InvalidLength),
         ] {
             assert_eq!(code_of(error), ErrorCode::Internal);
+        }
+    }
+
+    /// The version 3 vault's errors (clave de emergencia CE-3, design
+    /// §5.3): none tells the real path from the emergency one, in its code
+    /// or in its message, which the log may keep.
+    #[test]
+    fn the_errors_of_a_version_3_vault_never_name_the_emergency_key() {
+        use crate::kdf::KdfError;
+        assert_eq!(
+            code_of(VaultError::UnsupportedKdf(0xf1)),
+            ErrorCode::UnsupportedVault
+        );
+        for error in [
+            VaultError::Kdf(KdfError::ParamsOutOfBounds),
+            VaultError::Kdf(KdfError::Failed),
+            VaultError::TooLarge {
+                what: "body",
+                len: 30_000,
+                max: 24_236,
+            },
+            VaultError::IdVaultReused,
+        ] {
+            assert_eq!(code_of(error), ErrorCode::Internal);
+        }
+        // A new passphrase that is the emergency key, or an emergency key
+        // that is the passphrase: "choose another", as any refused one.
+        for error in [
+            VaultError::PassphraseOpensEmergencySlot,
+            VaultError::EmergencyKeyOpensAnotherSlot,
+        ] {
+            assert_eq!(code_of(error), ErrorCode::PassphraseTooCommon);
+        }
+        for error in [
+            VaultError::UnsupportedKdf(0xf1),
+            VaultError::Kdf(KdfError::ParamsOutOfBounds),
+            VaultError::TooLarge {
+                what: "body",
+                len: 30_000,
+                max: 24_236,
+            },
+            VaultError::PassphraseOpensEmergencySlot,
+            VaultError::EmergencyKeyOpensAnotherSlot,
+            VaultError::IdVaultReused,
+        ] {
+            let message = CommandError::from(error).message.to_lowercase();
+            for word in ["emergency", "empty", "slot", "redirect"] {
+                assert!(!message.contains(word), "{message}");
+            }
         }
     }
 

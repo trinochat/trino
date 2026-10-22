@@ -7990,9 +7990,10 @@ dependencies = [
 [[package]]
 name = "trino-core"
 version = "0.1.0"
-source = "git+https://github.com/trinochat/trino-core?rev=3421e168c94da92d21234e1a8c1587d552b0002b#3421e168c94da92d21234e1a8c1587d552b0002b"
+source = "git+https://github.com/trinochat/trino-core?rev=ca3d59268f277855210e416f50e56ffd3d4df99d#ca3d59268f277855210e416f50e56ffd3d4df99d"
 dependencies = [
  "aes-gcm",
+ "argon2",
  "base64 0.22.1",
  "chrono",
  "ed25519-dalek",

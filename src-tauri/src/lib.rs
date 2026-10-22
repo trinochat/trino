@@ -454,6 +454,38 @@ mod tests {
         }
     }
 
+    /// Clave de emergencia CE-3: trino-core's `test-kdf` feature, which
+    /// derives vault keys at test parameters, is turned on only in the
+    /// dev-dependencies of the app and of the engine, so no build that
+    /// ships has it.
+    #[test]
+    fn the_test_kdf_is_only_ever_a_dev_dependency() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        for manifest in [
+            root.join("Cargo.toml"),
+            root.join("../crates/trino-engine/Cargo.toml"),
+            root.join("../crates/trino-net/Cargo.toml"),
+        ] {
+            let text = std::fs::read_to_string(&manifest).unwrap();
+            let (normal, dev) = text
+                .split_once("[dev-dependencies]")
+                .unwrap_or((text.as_str(), ""));
+            assert!(
+                !normal.contains("test-kdf"),
+                "{} turns test-kdf on outside its dev-dependencies",
+                manifest.display()
+            );
+            if normal.contains("trino-core") {
+                assert!(
+                    dev.lines()
+                        .any(|line| line.starts_with("trino-core") && line.contains("test-kdf")),
+                    "{}: its tests would pay a real Argon2id",
+                    manifest.display()
+                );
+            }
+        }
+    }
+
     /// Tor design §2.8 and test 2 (R-07): clippy.toml disallows building
     /// trino-net's permit to go without Tor anywhere, and only these two
     /// files may do it under an `#[allow]`: the `net_connect_without_tor`
