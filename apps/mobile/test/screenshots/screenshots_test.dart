@@ -114,6 +114,9 @@ void main() {
       await shot(tester, '$name-07-settings');
       await tester.tap(find.text('Apariencia'));
       await shot(tester, '$name-08-appearance');
+      await tester.scrollUntilVisible(find.text('Ninguna'), 200);
+      await tester.drag(find.text('Ninguna'), const Offset(0, -200));
+      await shot(tester, '$name-57-appearance-animations');
       await tester.tap(find.bySemanticsLabel('Volver'));
       await tester.pumpAndSettle();
       await tester.tap(find.text('Cuenta y seguridad'));
@@ -130,6 +133,26 @@ void main() {
       await tester.pumpAndSettle();
       await tester.tap(find.text('Dispositivos'));
       await shot(tester, '$name-18-devices');
+    }, skip: skip != false);
+
+    testWidgets('the go-to-bottom button in $name', (tester) async {
+      final engine = testEngine();
+      for (var i = 1; i <= 30; i++) {
+        engine.receive('chat-lucia', 'Mensaje $i de la tarde');
+      }
+      await pumpApp(tester, engine: engine, appearance: appearance);
+      await openChat(tester, 'Lucía');
+      tester
+          .state<ScrollableState>(
+            find.descendant(of: find.byType(Scaffold).last, matching: find.byType(Scrollable)).first,
+          )
+          .position
+          .jumpTo(400);
+      await tester.pumpAndSettle();
+      for (final text in ['Ya llegué', '¿Dónde estás?', 'Te espero en la entrada']) {
+        engine.receive('chat-lucia', text);
+      }
+      await shot(tester, '$name-58-chat-go-to-bottom');
     }, skip: skip != false);
 
     testWidgets('the connection screens in $name', (tester) async {
