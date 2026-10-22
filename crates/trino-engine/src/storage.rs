@@ -1814,7 +1814,7 @@ mod tests {
     /// name, when it was created and its security settings, as the store
     /// has them at unlock, and no other preference.
     #[test]
-    fn unlocking_carries_the_name_and_the_security_prefs_into_the_shared_block() {
+    fn unlocking_carries_the_name_relays_and_account_prefs_into_the_shared_block() {
         let scratch = ScratchDir::new("v3-shared-unlock");
         let files = data_files_in(scratch.path().to_path_buf());
         let (me, app) = new_account(&files, "Ana");
@@ -1840,10 +1840,17 @@ mod tests {
         let shared = shared_on_disk(&files);
         assert_eq!(shared["name"], "Ana");
         assert_eq!(shared["createdAt"], created_at);
+        // Every preference that names nobody (clave de emergencia CE-4,
+        // RC-05); a contact's note does not.
         assert_eq!(
             shared["prefs"],
-            serde_json::json!({ "autolock": "15", "trino.pref.reinforced": "1" })
+            serde_json::json!({
+                "autolock": "15",
+                "trino.pref.reinforced": "1",
+                "trino.pref.ringtone": "classic",
+            })
         );
+        assert_eq!(shared["relays"], serde_json::json!(default_relays()));
         // Unchanged, the next unlock leaves the vault as it is.
         let before = std::fs::read(&files.vault).unwrap();
         drop(unlock_files(&files, PASSPHRASE, None, false, NOW).unwrap());

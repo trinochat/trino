@@ -233,7 +233,8 @@ pub fn create_account_vault(
     let keys = StoreKeys::generate();
     let app = keys.to_vault_app();
     let created_at = chrono::Utc::now().timestamp();
-    let shared = SharedApp::new(handle, created_at, &Default::default()).to_bytes();
+    let relays = default_relays();
+    let shared = SharedApp::new(handle, created_at, &Default::default(), &relays).to_bytes();
     let vault = create_vault_v3(
         &NewAccount {
             identity: &identity,
@@ -247,7 +248,7 @@ pub fn create_account_vault(
     let account = AccountFile {
         handle: handle.to_string(),
         nostr_pub: hex::encode(identity.nostr.pub_bytes),
-        relays: default_relays(),
+        relays,
         created_at,
         ..AccountFile::default()
     };
@@ -610,7 +611,8 @@ fn unlock_v3(
     }
     if let Some(account) = &loaded.account {
         let prefs = SharedApp::prefs_of(loaded.prefs.as_ref());
-        let shared = SharedApp::new(&account.handle, account.created_at, &prefs).to_bytes();
+        let shared =
+            SharedApp::new(&account.handle, account.created_at, &prefs, &account.relays).to_bytes();
         if shared != vault.shared_app() && vault.set_shared_app(&shared).is_ok() {
             changed = true;
         }

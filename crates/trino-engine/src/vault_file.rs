@@ -279,11 +279,9 @@ pub fn open(
     })
 }
 
-/// The preferences of `prefs.bin` that the shared block keeps (design §6.5):
-/// those that keep the device protected, so an empty account made by the
-/// emergency key is no less so, and nothing changes in sight. Relays,
-/// consent, the other preferences and the private bridges come with the
-/// emergency path (CE-4).
+/// The security preferences of `prefs.bin`: those that keep the device
+/// protected, so an empty account made by the emergency key is no less so.
+/// The shared block keeps them first (`SharedApp::new`).
 pub const SECURITY_PREFS: [&str; 5] = [
     "autolock",
     "trino.pref.lockWithSystem",
@@ -291,45 +289,178 @@ pub const SECURITY_PREFS: [&str; 5] = [
     "trino.pref.reinforced",
     "trino.pref.reinforcedBefore",
 ];
+/// The consent record of the Ley 1581 (the frontend's `consent.ts`).
+pub const CONSENT_PREF: &str = "trino.consent";
+/// The entry of the consent record that names the key of the account that
+/// accepted: the shared block keeps the record without it.
+const CONSENT_KEY_FIELD: &str = "publicKey";
 const SHARED_FORMAT: u32 = 1;
 /// A name longer than this is cut (at a character): no name of the app
 /// comes near it.
 pub const MAX_SHARED_NAME_BYTES: usize = 256;
-/// A security preference longer than this is not kept: none of them comes
-/// near it.
+/// A preference that takes more than this in the JSON, its key included,
+/// is not kept, but for the bridges: none of them comes near it.
 const MAX_SHARED_PREF_BYTES: usize = 512;
+/// The relays the shared block keeps, at most, and the room they take.
+pub const MAX_SHARED_RELAYS: usize = 8;
+const SHARED_RELAYS_ROOM: usize = 1024;
+/// The room of the preferences, the bridges apart: the five security ones
+/// and the consent record always fit. And the room of the bridges. With the
+/// name at its worst (every byte escaped) and the rest of the JSON, the
+/// whole stays under `MAX_SHARED_APP_LEN` (a test checks it).
+const SHARED_PREFS_ROOM: usize = 6 * MAX_SHARED_PREF_BYTES;
+const SHARED_BRIDGES_ROOM: usize = 2048;
 
-/// What the shared block carries for the app, as JSON.
+/// Whether the shared block keeps the preference `key` of `prefs.bin`
+/// (design §6.5, RC-05 and RC-06): every one of the account's that names
+/// no contact, group or sticker. The settings, the consent record, what
+/// was read of the news, the private bridges and "No volver a preguntar"
+/// before a link; not the notes, verified marks, timers or muted groups,
+/// the recent stickers, the retired entries, nor the screen before
+/// unlocking's, which the device keeps.
+pub fn is_inherited(key: &str) -> bool {
+    if key == CONSENT_PREF || crate::prefs::BACKEND_PREFS.contains(&key) {
+        return true;
+    }
+    crate::prefs::is_general(key)
+        && !key.starts_with("trino.pref.groupMuted:")
+        && key != "sticker-recents"
+        && !crate::prefs::RETIRED_PREFS.contains(&key)
+}
+
+/// The room `key` and `value` take in the JSON of the block.
+fn json_len(key: &str, value: &str) -> usize {
+    let quoted = |text: &str| serde_json::to_string(text).map_or(usize::MAX / 4, |s| s.len());
+    quoted(key) + quoted(value) + 2
+}
+
+/// The consent record in `value` without the key it names; none if it is
+/// not a record.
+fn consent_without_key(value: &str) -> Option<String> {
+    let mut record = serde_json::from_str::<serde_json::Value>(value).ok()?;
+    record.as_object_mut()?.remove(CONSENT_KEY_FIELD);
+    serde_json::to_string(&record).ok()
+}
+
+/// What the shared block carries for the app, as JSON: what an empty
+/// account made by the emergency key inherits (design §6.5).
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SharedApp {
     pub v: u32,
     pub name: String,
     pub created_at: i64,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub relays: Vec<String>,
     #[serde(default)]
     pub prefs: BTreeMap<String, String>,
 }
 
 impl SharedApp {
     /// The shared block of an account named `name`, created at
-    /// `created_at`, with the security preferences among `prefs`.
-    pub fn new(name: &str, created_at: i64, prefs: &BTreeMap<String, String>) -> Self {
+    /// `created_at`, that uses `relays`, with the preferences among `prefs`
+    /// it keeps (`is_inherited`).
+    ///
+    /// Everything has a room (the block holds 8 KiB, and the core pads it
+    /// to that size whatever it carries): the name is cut, the relays and
+    /// the bridges' lines are kept while they fit, and the preferences too,
+    /// the security ones first, then the consent record, then the rest.
+    pub fn new(
+        name: &str,
+        created_at: i64,
+        prefs: &BTreeMap<String, String>,
+        relays: &[String],
+    ) -> Self {
         let mut end = name.len().min(MAX_SHARED_NAME_BYTES);
         while !name.is_char_boundary(end) {
             end -= 1;
         }
+        let mut kept_relays = Vec::new();
+        let mut room = SHARED_RELAYS_ROOM;
+        for relay in relays.iter().take(MAX_SHARED_RELAYS) {
+            let len = json_len("", relay);
+            if len > room {
+                break;
+            }
+            room -= len;
+            kept_relays.push(relay.clone());
+        }
+
+        let inherited = |key: &str| prefs.get(key).filter(|_| is_inherited(key));
+        let first: Vec<&str> = SECURITY_PREFS.into_iter().chain([CONSENT_PREF]).collect();
+        let rest = prefs
+            .keys()
+            .map(String::as_str)
+            .filter(|key| !first.contains(key) && *key != crate::prefs::NET_BRIDGES);
+        let order: Vec<&str> = first.iter().copied().chain(rest).collect();
+        let mut kept = BTreeMap::new();
+        let mut room = SHARED_PREFS_ROOM;
+        for key in order {
+            let Some(value) = inherited(key) else {
+                continue;
+            };
+            let value = if key == CONSENT_PREF {
+                match consent_without_key(value) {
+                    Some(record) => record,
+                    None => continue,
+                }
+            } else {
+                value.clone()
+            };
+            let len = json_len(key, &value);
+            if len > MAX_SHARED_PREF_BYTES || len > room {
+                continue;
+            }
+            room -= len;
+            kept.insert(key.to_string(), value);
+        }
+        if let Some(bridges) = inherited(crate::prefs::NET_BRIDGES) {
+            let mut lines = String::new();
+            for line in bridges.lines() {
+                let more = if lines.is_empty() {
+                    line.to_string()
+                } else {
+                    format!("{lines}\n{line}")
+                };
+                if json_len(crate::prefs::NET_BRIDGES, &more) > SHARED_BRIDGES_ROOM {
+                    break;
+                }
+                lines = more;
+            }
+            if !lines.is_empty() {
+                kept.insert(crate::prefs::NET_BRIDGES.to_string(), lines);
+            }
+        }
+
         SharedApp {
             v: SHARED_FORMAT,
             name: name[..end].to_string(),
             created_at,
-            prefs: prefs
-                .iter()
-                .filter(|(key, value)| {
-                    SECURITY_PREFS.contains(&key.as_str()) && value.len() <= MAX_SHARED_PREF_BYTES
-                })
-                .map(|(key, value)| (key.clone(), value.clone()))
-                .collect(),
+            relays: kept_relays,
+            prefs: kept,
         }
+    }
+
+    /// The preferences of an account made from this block (step E2): the
+    /// block's, with the consent record naming `nostr_pub`, the new
+    /// account's key. It is the same person who accepted, so nothing asks
+    /// again (RC-05), and the key of before is nowhere in the new account.
+    pub fn prefs_for(&self, nostr_pub: &str) -> BTreeMap<String, String> {
+        let mut prefs = self.prefs.clone();
+        let record = prefs
+            .get(CONSENT_PREF)
+            .and_then(|value| serde_json::from_str::<serde_json::Value>(value).ok());
+        match record {
+            Some(serde_json::Value::Object(mut record)) => {
+                record.insert(CONSENT_KEY_FIELD.to_string(), nostr_pub.into());
+                let value = serde_json::Value::Object(record).to_string();
+                prefs.insert(CONSENT_PREF.to_string(), value);
+            }
+            _ => {
+                prefs.remove(CONSENT_PREF);
+            }
+        }
+        prefs
     }
 
     /// The preferences of `prefs.bin` as the unlock reads them: the entries
@@ -444,7 +575,7 @@ pub fn sync_shared(inner: &InnerState) {
         return;
     };
     let prefs = crate::prefs::current_map(inner);
-    let shared = SharedApp::new(name, inner.created_at, &prefs).to_bytes();
+    let shared = SharedApp::new(name, inner.created_at, &prefs, &inner.relay_urls).to_bytes();
     if inner.vault.update_shared(&shared, &inner.storage).is_err() {
         dbg_log("the vault's shared block could not be sealed again");
     }
@@ -727,52 +858,163 @@ mod tests {
         assert_eq!(totp_hint(&vault), None);
     }
 
+    fn map(entries: &[(&str, &str)]) -> BTreeMap<String, String> {
+        entries
+            .iter()
+            .map(|(key, value)| (key.to_string(), value.to_string()))
+            .collect()
+    }
+
+    fn consent(public_key: &str) -> String {
+        serde_json::json!({
+            "format": 1,
+            "acceptedAt": "2026-10-12T15:00:00.000Z",
+            "publicKey": public_key,
+            "lang": "es",
+            "age": { "minimum": 18, "version": 1 },
+            "privacyPolicy": { "version": 1, "url": "https://trinochat.org/privacidad/" },
+        })
+        .to_string()
+    }
+
+    fn relays(urls: &[&str]) -> Vec<String> {
+        urls.iter().map(|url| url.to_string()).collect()
+    }
+
+    /// Design §6.5, RC-04, RC-05 and RC-06: the shared block keeps the
+    /// name, the date, the relays and every preference of the account that
+    /// names no contact, group or sticker: the security settings, the
+    /// consent record (without the key it names), what was read of the
+    /// news, the other settings and the private bridges.
     #[test]
-    fn the_shared_block_keeps_the_name_the_date_and_only_the_security_prefs() {
-        let prefs: BTreeMap<String, String> = [
+    fn the_shared_block_keeps_what_names_nobody() {
+        let old_key = "ab".repeat(32);
+        let prefs = map(&[
             ("autolock", "15"),
             ("trino.pref.reinforced", "1"),
+            ("trino.pref.reinforcedBefore", r#"{"autolock":"5"}"#),
             ("trino.pref.lockWithSystem", "1"),
-            ("trino.pref.notifPreview", "hidden"),
+            ("trino.pref.notifPreview", "none"),
+            ("trino.pref.ringtone", "soft"),
+            ("trino.pref.callsSeenAt", "1760000000"),
+            ("updates.lastRead", "2026-10-01"),
+            ("updates.muted", "1"),
+            ("trino.consent", &consent(&old_key)),
+            ("net.bridges", "obfs4 192.0.2.1:443 cert=x iat-mode=0"),
+            ("net.linksNoAsk", "1"),
+            // A contact's, a group's, the stickers', a retired one.
             ("note:bob", "a note about bob"),
             ("verified:bob", "call:ab12"),
-            ("net.bridges", "obfs4 192.0.2.1:443"),
-            ("trino.pref.ringtone", "classic"),
-        ]
-        .into_iter()
-        .map(|(key, value)| (key.to_string(), value.to_string()))
-        .collect();
+            ("ttl:bob", "30"),
+            ("ttl:grp:g1", "60"),
+            ("trino.pref.groupMuted:g1", "1"),
+            ("sticker-recents", r#"["s1"]"#),
+            ("trino:announcements:minSeq", "7"),
+            // The screen before unlocking's: the device keeps them.
+            ("trino.pref.scanLines", "0"),
+            ("trino.pref.textSize", "large"),
+            ("trino.pref.blockCaptures", "1"),
+        ]);
+        let urls = relays(&["wss://mio.example", "wss://otro.example"]);
 
-        let shared = SharedApp::new("Ana", 1_760_000_000, &prefs);
+        let shared = SharedApp::new("Ana", 1_760_000_000, &prefs, &urls);
 
         assert_eq!(shared.name, "Ana");
         assert_eq!(shared.created_at, 1_760_000_000);
+        assert_eq!(shared.relays, urls);
         assert_eq!(
             shared.prefs.keys().map(String::as_str).collect::<Vec<_>>(),
             [
                 "autolock",
+                "net.bridges",
+                "net.linksNoAsk",
+                "trino.consent",
+                "trino.pref.callsSeenAt",
                 "trino.pref.lockWithSystem",
                 "trino.pref.notifPreview",
-                "trino.pref.reinforced"
+                "trino.pref.reinforced",
+                "trino.pref.reinforcedBefore",
+                "trino.pref.ringtone",
+                "updates.lastRead",
+                "updates.muted",
             ]
         );
         let bytes = shared.to_bytes();
-        assert!(!String::from_utf8_lossy(&bytes).contains("bob"));
+        let text = String::from_utf8_lossy(&bytes);
+        assert!(!text.contains("bob") && !text.contains("g1") && !text.contains("s1"));
+        // The consent record without the key of the account that accepted:
+        // whoever opens the block with the emergency key does not learn it.
+        assert!(!text.contains(&old_key), "{text}");
+        assert!(shared.prefs["trino.consent"].contains("acceptedAt"));
         assert_eq!(SharedApp::from_bytes(&bytes), Some(shared));
     }
 
+    /// E2: the empty account's preferences are the block's, with the
+    /// consent record naming the new account's key, as if it had accepted
+    /// (RC-05): it is the same person, and nothing asks again.
     #[test]
-    fn a_long_name_or_preference_still_fits_the_shared_block() {
-        let name = "ñ".repeat(400);
+    fn the_consent_goes_back_with_the_new_accounts_key() {
+        let prefs = map(&[
+            ("autolock", "15"),
+            ("trino.consent", &consent(&"ab".repeat(32))),
+        ]);
+        let shared = SharedApp::new("Ana", 1, &prefs, &[]);
+        let new_key = "cd".repeat(32);
+
+        let inherited = shared.prefs_for(&new_key);
+
+        assert_eq!(inherited["autolock"], "15");
+        let record: serde_json::Value = serde_json::from_str(&inherited["trino.consent"]).unwrap();
+        let expected: serde_json::Value = serde_json::from_str(&consent(&new_key)).unwrap();
+        assert_eq!(record, expected);
+        // What the empty account keeps gives back the same block.
+        assert_eq!(SharedApp::new("Ana", 1, &inherited, &[]), shared);
+        // A record that is not one is not kept.
+        let odd = SharedApp::new("Ana", 1, &map(&[("trino.consent", "not json")]), &[]);
+        assert!(odd.prefs.is_empty());
+    }
+
+    /// The worst a name, the relays, the preferences and the bridges can be
+    /// still fits the shared block, the security settings and the consent
+    /// first; what finds no room is left out.
+    #[test]
+    fn a_long_name_relays_prefs_or_bridges_still_fit_the_shared_block() {
+        // Control characters: six bytes each in JSON.
+        let name = "\u{1}".repeat(400);
         let mut prefs = BTreeMap::new();
         for key in SECURITY_PREFS {
-            prefs.insert(key.to_string(), "x".repeat(MAX_SHARED_PREF_BYTES));
+            // Escaped, nearly the most a preference may take.
+            prefs.insert(key.to_string(), "\"".repeat(MAX_SHARED_PREF_BYTES / 2 - 30));
+        }
+        prefs.insert("trino.consent".into(), consent(&"ab".repeat(32)));
+        for i in 0..200 {
+            prefs.insert(format!("trino.pref.x{i:03}"), "\"".repeat(100));
         }
         prefs.insert("autolock".into(), "y".repeat(MAX_SHARED_PREF_BYTES + 1));
-        let shared = SharedApp::new(&name, 0, &prefs);
+        prefs.insert(
+            "net.bridges".into(),
+            "obfs4 192.0.2.1:443 cert=xx\n".repeat(200),
+        );
+        let urls: Vec<String> = (0..50)
+            .map(|i| format!("wss://{}{i}.example", "r".repeat(200)))
+            .collect();
+
+        let shared = SharedApp::new(&name, 0, &prefs, &urls);
+
         assert!(shared.name.len() <= MAX_SHARED_NAME_BYTES);
         assert!(name.starts_with(&shared.name));
-        assert!(!shared.prefs.contains_key("autolock"));
+        assert!(!shared.relays.is_empty());
+        assert!(shared.relays.len() <= MAX_SHARED_RELAYS);
+        assert!(!shared.prefs.contains_key("autolock"), "over its limit");
+        for key in &SECURITY_PREFS[1..] {
+            assert!(shared.prefs.contains_key(*key), "{key}");
+        }
+        assert!(shared.prefs.contains_key("trino.consent"));
+        let bridges = &shared.prefs["net.bridges"];
+        assert!(!bridges.is_empty());
+        assert!(bridges
+            .lines()
+            .all(|line| line == "obfs4 192.0.2.1:443 cert=xx"));
         assert!(shared.to_bytes().len() <= MAX_SHARED_APP_LEN);
     }
 

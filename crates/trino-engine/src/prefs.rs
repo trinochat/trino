@@ -259,7 +259,10 @@ pub fn set_backend_pref(
     inner
         .storage
         .write_prefs(&json)
-        .map_err(|e| CommandError::io(&e))
+        .map_err(|e| CommandError::io(&e))?;
+    // The bridges go to the vault's shared block too (design §6.5, RC-06).
+    crate::vault_file::sync_shared(inner);
+    Ok(())
 }
 
 /// `prefs_import` on the session in `inner`.
@@ -723,6 +726,42 @@ mod tests {
             Some(PrefsImport::Pending)
         );
         assert!(save_in(&inner, &map(&[("autolock", "1")])).is_err());
+    }
+
+    /// Clave de emergencia RC-06: the private bridges, which only the
+    /// backend writes, go to the vault's shared block too, with the
+    /// account's relays (RC-04), so an empty account inherits them as they
+    /// are now.
+    #[test]
+    fn a_backend_pref_goes_to_the_shared_block_too() {
+        use crate::vault_file::{SessionVault, SharedApp};
+        let scratch = ScratchDir::new("prefs-backend-shared");
+        let files = DataFiles::in_home(scratch.path().to_path_buf());
+        let (me, app, vault) = crate::account::create_account_vault(
+            &files,
+            "ana",
+            PASSPHRASE,
+            None,
+            crate::vault_file::write,
+        )
+        .unwrap();
+        let inner = unlocked(&files, &me, &app);
+        inner.vault.set(SessionVault {
+            path: files.vault.clone(),
+            vault: Box::new(vault),
+        });
+        let line = "obfs4 192.0.2.1:443 cert=x iat-mode=0";
+
+        set_backend_pref(&inner, NET_BRIDGES, Some(line)).unwrap();
+
+        let shared = SharedApp::from_bytes(&inner.vault.shared_app().unwrap()).unwrap();
+        assert_eq!(shared.prefs[NET_BRIDGES], line);
+        assert_eq!(shared.relays, inner.relay_urls);
+        let on_disk = match crate::vault_file::open(&files.vault, PASSPHRASE, None).unwrap() {
+            crate::vault_file::OpenedVault::V3(vault) => vault.shared_app().to_vec(),
+            crate::vault_file::OpenedVault::Old(_) => panic!("a vault of version 2"),
+        };
+        assert_eq!(SharedApp::from_bytes(&on_disk), Some(shared));
     }
 
     /// Design §12.3 test 60 and §5.3: the answer of the unlock that opens
