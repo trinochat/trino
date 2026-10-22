@@ -300,6 +300,8 @@ class _HomeShellState extends State<HomeShell> {
                     container: true,
                     explicitChildNodes: true,
                     child: DecoratedBox(
+                      // Over the pane, whose screen paints its own background.
+                      position: DecorationPosition.foreground,
                       decoration: BoxDecoration(
                         border: Border(right: BorderSide(color: t.line)),
                       ),
@@ -406,6 +408,8 @@ class _HomeShellState extends State<HomeShell> {
               container: true,
               explicitChildNodes: true,
               child: DecoratedBox(
+                // Over the pane, whose screen paints its own background.
+                position: DecorationPosition.foreground,
                 decoration: BoxDecoration(
                   border: Border(left: BorderSide(color: t.line)),
                 ),

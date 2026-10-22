@@ -168,6 +168,19 @@ void main() {
     });
   });
 
+  testWidgets('the lines between the panes are drawn over them, so no screen hides them', (tester) async {
+    await pumpApp(tester, size: tabletWide);
+    await openInPane(tester, 'Ana Torres');
+    await tapHeader(tester, 'Ana Torres');
+    for (final pane in [listPane, infoPane]) {
+      final lines = tester
+          .widgetList<DecoratedBox>(find.descendant(of: find.byKey(pane), matching: find.byType(DecoratedBox)))
+          .where((box) => (box.decoration as BoxDecoration?)?.border != null)
+          .first;
+      expect(lines.position, DecorationPosition.foreground, reason: '$pane');
+    }
+  });
+
   group('Ajustes beside its sections', () {
     testWidgets('a section opens on the right, without back, and another takes its place', (tester) async {
       await pumpApp(tester, size: tabletLandscape);
