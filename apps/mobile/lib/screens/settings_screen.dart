@@ -27,7 +27,10 @@ import 'settings/profile_screen.dart';
 import 'share_code_screen.dart';
 
 class SettingsScreen extends StatefulWidget {
-  const SettingsScreen({super.key});
+  const SettingsScreen({super.key, this.onOpen});
+
+  /// On a tablet, shows a section beside the list instead of pushing it.
+  final ValueChanged<Widget>? onOpen;
 
   @override
   State<SettingsScreen> createState() => _SettingsScreenState();
@@ -37,7 +40,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
   late final Stream<Profile> _profile = context.engine.profile;
   late final Stream<List<LinkedDevice>> _devices = context.engine.devices;
 
-  void _open(Widget page) => Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => page));
+  void _open(Widget page) {
+    final onOpen = widget.onOpen;
+    if (onOpen != null) return onOpen(page);
+    unawaited(Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => page)));
+  }
 
   @override
   Widget build(BuildContext context) {

@@ -50,12 +50,17 @@ class SubPageBar extends StatelessWidget {
       padding: const EdgeInsets.fromLTRB(4, 4, 16, 4),
       child: Row(
         children: [
-          TrinoIconButton(
-            icon: TrinoIcons.back,
-            label: context.l10n.back,
-            onPressed: () => Navigator.maybePop(context),
-          ),
-          const SizedBox(width: 4),
+          // A section shown beside the list on a tablet has nothing to go
+          // back to; a page always has.
+          if (Navigator.canPop(context)) ...[
+            TrinoIconButton(
+              icon: TrinoIcons.back,
+              label: context.l10n.back,
+              onPressed: () => Navigator.maybePop(context),
+            ),
+            const SizedBox(width: 4),
+          ] else
+            const SizedBox(width: 12),
           Expanded(
             child: Semantics(container: true, header: true, child: Text(title, style: context.text.title)),
           ),

@@ -14,6 +14,8 @@ import 'package:trino_mobile/screens/chat_screen.dart';
 import 'package:trino_mobile/screens/common.dart';
 import 'package:trino_mobile/screens/info/contact_info_screen.dart';
 import 'package:trino_mobile/screens/info/group_info_screen.dart';
+import 'package:trino_mobile/screens/settings/appearance_screen.dart';
+import 'package:trino_mobile/screens/settings/language_screen.dart';
 import 'package:trino_mobile/ui/chat_row.dart';
 
 import '../support/app_harness.dart';
@@ -163,6 +165,69 @@ void main() {
       expect(Navigator.of(tester.element(find.byType(ChatScreen))).canPop(), isFalse);
       expect(tester.getSemantics(inRail('Chats')), isSemantics(isSelected: true));
       expect(tester.getSemantics(inList(find.text('Carlos Méndez'))), isSemantics(isSelected: true));
+    });
+  });
+
+  group('Ajustes beside its sections', () {
+    testWidgets('a section opens on the right, without back, and another takes its place', (tester) async {
+      await pumpApp(tester, size: tabletLandscape);
+      await tapRail(tester, 'Ajustes');
+      expect(inList(find.text('Tu nombre y tu código')), findsOneWidget);
+      expect(inDetail(find.text('Elige una sección para verla aquí')), findsOneWidget);
+      expect(find.text('Elige un chat para leerlo aquí'), findsNothing);
+      expect(tester.getSemantics(find.byKey(detailPane)), isSemantics(role: SemanticsRole.region, label: 'Sección'));
+
+      await tester.tap(inList(find.text('Apariencia')));
+      await tester.pumpAndSettle();
+      expect(inDetail(find.byType(AppearanceScreen)), findsOneWidget);
+      expect(inList(find.text('Apariencia')), findsOneWidget, reason: 'the sections stay beside it');
+      expect(inDetail(find.bySemanticsLabel('Volver')), findsNothing);
+
+      await tester.tap(inList(find.text('Idioma')));
+      await tester.pumpAndSettle();
+      expect(inDetail(find.byType(LanguageScreen)), findsOneWidget);
+      expect(find.byType(AppearanceScreen), findsNothing);
+    });
+
+    testWidgets('a page inside a section opens in the pane too, with back', (tester) async {
+      await pumpApp(tester, size: tabletLandscape);
+      await tapRail(tester, 'Ajustes');
+      await tester.tap(inList(find.text('Privacidad')));
+      await tester.pumpAndSettle();
+      await tester.tap(inDetail(find.text('Conexión')).first);
+      await tester.pumpAndSettle();
+      expect(inDetail(find.bySemanticsLabel('Volver')), findsOneWidget);
+      expect(inList(find.text('Privacidad')), findsOneWidget);
+      await tester.tap(inDetail(find.bySemanticsLabel('Volver')));
+      await tester.pumpAndSettle();
+      expect(inDetail(find.text('Conexión')), findsWidgets);
+      expect(inDetail(find.bySemanticsLabel('Volver')), findsNothing);
+    });
+
+    testWidgets("the system's back goes back through the section's pages", (tester) async {
+      await pumpApp(tester, size: tabletLandscape);
+      await tapRail(tester, 'Ajustes');
+      await tester.tap(inList(find.text('Privacidad')));
+      await tester.pumpAndSettle();
+      await tester.tap(inDetail(find.text('Conexión')).first);
+      await tester.pumpAndSettle();
+      await tester.binding.handlePopRoute();
+      await tester.pumpAndSettle();
+      expect(inDetail(find.bySemanticsLabel('Volver')), findsNothing);
+      expect(inList(find.text('Privacidad')), findsOneWidget);
+    });
+
+    testWidgets('the chat stays open on Chats while Ajustes shows its section', (tester) async {
+      await pumpApp(tester, size: tabletLandscape);
+      await openInPane(tester, 'Ana Torres');
+      await tapRail(tester, 'Ajustes');
+      await tester.tap(inList(find.text('Apariencia')));
+      await tester.pumpAndSettle();
+      await tapRail(tester, 'Chats');
+      expect(inDetail(find.byType(ChatScreen)), findsOneWidget);
+      expect(find.byType(AppearanceScreen), findsNothing);
+      await tapRail(tester, 'Ajustes');
+      expect(inDetail(find.byType(AppearanceScreen)), findsOneWidget);
     });
   });
 

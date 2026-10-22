@@ -9,7 +9,8 @@
 // the left and the screen splits in two: the list, and beside it the chat
 // opened from it, or words saying none is. Calls still open full screen.
 // From 1200 dp the chat's info can open as a third pane, from its header or
-// the toggle at its end; Escape closes it.
+// the toggle at its end; Escape closes it. Ajustes shows its sections on the
+// left and the chosen one on the right.
 import 'dart:async';
 import 'dart:ui' show SemanticsRole;
 
@@ -78,6 +79,9 @@ class _HomeShellState extends State<HomeShell> {
 
   /// Whether the info pane fits, as of the last build.
   var _threePanes = false;
+
+  /// The pages of Ajustes beside its list, on a tablet.
+  final _settingsPages = GlobalKey<NavigatorState>();
 
   /// Whether the last build showed the panes; null before the first.
   bool? _hadPanes;
@@ -180,6 +184,26 @@ class _HomeShellState extends State<HomeShell> {
     }
   }
 
+  /// Shows [page] beside the list of Ajustes, in place of the one there:
+  /// with nothing to go back to, it has no back button. It fades in.
+  void _openSetting(Widget page) {
+    final motion = context.motion;
+    unawaited(
+      _settingsPages.currentState?.pushAndRemoveUntil(
+        PageRouteBuilder<void>(
+          pageBuilder: (_, _, _) => page,
+          transitionDuration: motion.short,
+          reverseTransitionDuration: motion.short,
+          transitionsBuilder: (_, animation, _, child) => FadeTransition(
+            opacity: CurvedAnimation(parent: animation, curve: motion.fadeCurve),
+            child: child,
+          ),
+        ),
+        (_) => false,
+      ),
+    );
+  }
+
   void _select(int tab) {
     setState(() {
       _tab = tab;
@@ -230,7 +254,7 @@ class _HomeShellState extends State<HomeShell> {
         selectedChatId: panes ? _open?.id : null,
       ),
       ContactsScreen(key: _tabKeys[_contactsTab]),
-      SettingsScreen(key: _tabKeys[_settingsTab]),
+      SettingsScreen(key: _tabKeys[_settingsTab], onOpen: panes ? _openSetting : null),
     ];
     final items = _items(context);
     final badges = {_callsTab: (count: _unseenMissed, label: l10n.missedCallsBadge(_unseenMissed))};
@@ -294,10 +318,15 @@ class _HomeShellState extends State<HomeShell> {
                       child: Semantics(
                         key: HomeShell.detailPaneKey,
                         role: SemanticsRole.region,
-                        label: l10n.paneConversation,
+                        label: _tab == _settingsTab ? l10n.paneSection : l10n.paneConversation,
                         container: true,
                         explicitChildNodes: true,
-                        child: FocusTraversalGroup(child: _chatPane(context)),
+                        child: FocusTraversalGroup(
+                          child: IndexedStack(
+                            index: _tab == _settingsTab ? 1 : 0,
+                            children: [_chatPane(context), _settingsPane(context)],
+                          ),
+                        ),
                       ),
                     ),
                   ),
@@ -325,6 +354,25 @@ class _HomeShellState extends State<HomeShell> {
               onInfo: _threePanes ? _toggleInfo : null,
               infoOpen: _threePanes ? _infoOpen : null,
             ),
+    );
+  }
+
+  /// The section of Ajustes chosen on the left, with the pages it opens, or
+  /// words saying none is. Back (the system's) goes back through its pages.
+  Widget _settingsPane(BuildContext context) {
+    final text = context.l10n.settingsPickOne;
+    return NavigatorPopHandler<Object?>(
+      enabled: _tab == _settingsTab,
+      onPopWithResult: (_) => _settingsPages.currentState?.maybePop(),
+      child: Navigator(
+        key: _settingsPages,
+        onGenerateInitialRoutes: (_, _) => [
+          PageRouteBuilder<void>(
+            pageBuilder: (_, _, _) => _NoChat(text: text, icon: TrinoIcons.settings),
+            transitionDuration: Duration.zero,
+          ),
+        ],
+      ),
     );
   }
 
@@ -375,11 +423,13 @@ class _HomeShellState extends State<HomeShell> {
   }
 }
 
-/// The right pane before a chat is chosen: an outline chats icon and words.
+/// The right pane before a chat (or a section) is chosen: an outline icon
+/// and words.
 class _NoChat extends StatelessWidget {
-  const _NoChat({super.key, required this.text});
+  const _NoChat({super.key, required this.text, this.icon = TrinoIcons.chats});
 
   final String text;
+  final TrinoIcons icon;
 
   @override
   Widget build(BuildContext context) {
@@ -393,7 +443,7 @@ class _NoChat extends StatelessWidget {
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-                TrinoIcon(TrinoIcons.chats, size: 40, color: t.muted),
+                TrinoIcon(icon, size: 40, color: t.muted),
                 const SizedBox(height: 12),
                 Text(
                   text,
