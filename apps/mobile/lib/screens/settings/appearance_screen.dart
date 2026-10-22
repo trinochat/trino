@@ -1,12 +1,15 @@
-// Apariencia: style, mode and accent, applied at once to the whole app.
+// Apariencia: style, mode and accent, applied at once to the whole app, and
+// how much it moves (Animaciones).
 import 'package:flutter/material.dart';
 
 import '../../app/scope.dart';
 import '../../design/appearance.dart';
 import '../../design/theme.dart';
 import '../../l10n/app_localizations.dart';
+import '../../ui/list_row.dart';
 import '../../ui/message_bubble.dart';
 import '../../ui/segmented.dart';
+import '../../ui/settings_group.dart';
 import '../common.dart';
 
 class AppearanceScreen extends StatelessWidget {
@@ -73,6 +76,26 @@ class AppearanceScreen extends StatelessWidget {
             ),
             const SizedBox(height: 16),
             const _Preview(),
+            SectionLabel(l10n.appearanceAnimations),
+            SettingsGroup(
+              children: [
+                for (final (setting, title, subtitle) in [
+                  (AnimationsSetting.system, l10n.animationsSystem, l10n.animationsSystemHelp),
+                  (AnimationsSetting.reduced, l10n.animationsReduced, l10n.animationsReducedHelp),
+                  (AnimationsSetting.none, l10n.animationsNone, l10n.animationsNoneHelp),
+                ])
+                  ChoiceRow(
+                    title: title,
+                    subtitle: subtitle,
+                    selected: value.animations == setting,
+                    onTap: () => appearance.setAnimations(setting),
+                  ),
+              ],
+            ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+              child: Text(l10n.animationsNote, style: context.text.secondary),
+            ),
           ],
         );
       },

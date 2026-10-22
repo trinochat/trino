@@ -213,6 +213,14 @@
   "accentNaranja": "Laranja",
   "appearancePreviewIn": "Recebeu o arquivo?",
   "appearancePreviewOut": "Sim, já recebi",
+  "appearanceAnimations": "Animações",
+  "animationsSystem": "Igual ao celular",
+  "animationsSystemHelp": "Recomendado: segue “Reduzir movimento” ou “Remover animações”",
+  "animationsReduced": "Reduzidas",
+  "animationsReducedHelp": "Nada desliza: só esmaecimentos curtos",
+  "animationsNone": "Nenhuma",
+  "animationsNoneHelp": "Tudo muda na hora",
+  "animationsNote": "As animações nunca escondem informação: com qualquer uma das três, o app faz o mesmo.",
 
   "languageHelp": "No início, o Trino usa o idioma do seu celular. Você pode mudar aqui quando quiser.",
 

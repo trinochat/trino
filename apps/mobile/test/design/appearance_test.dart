@@ -60,4 +60,19 @@ void main() {
     }
     appearance.dispose();
   });
+
+  test('Animaciones follows the phone by default, and the choice is kept with the rest', () {
+    final appearance = AppearanceController();
+    expect(appearance.value.animations, AnimationsSetting.system);
+    final light = appearance.lightTheme;
+    var notified = 0;
+    appearance.addListener(() => notified++);
+    appearance.setAnimations(AnimationsSetting.none);
+    appearance.setAnimations(AnimationsSetting.none);
+    expect(notified, 1);
+    expect(appearance.value, const Appearance(animations: AnimationsSetting.none));
+    expect(appearance.value, isNot(const Appearance()));
+    expect(identical(appearance.lightTheme, light), isTrue, reason: 'the colours did not change');
+    appearance.dispose();
+  });
 }

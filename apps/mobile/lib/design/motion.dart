@@ -1,7 +1,8 @@
 // How much the system lets the app move. Android's "Remove animations" sets
 // MediaQuery.disableAnimations; the iPhone's Reduce Motion does not: it comes
 // apart, as AccessibilityFeatures.reduceMotion (see MediaQueryData's docs).
-// Reading only the first ignored Reduce Motion on the iPhone.
+// Reading only the first ignored Reduce Motion on the iPhone. The app's own
+// Animaciones setting (AnimationsSetting) can take motion away further.
 import 'package:flutter/physics.dart';
 import 'package:flutter/widgets.dart';
 
@@ -18,10 +19,45 @@ enum MotionLevel {
   none,
 }
 
+/// Ajustes › Apariencia › Animaciones: the app's own say, for whoever gets
+/// dizzy with motion without having turned it off on the phone. It can only
+/// take motion away: never back from what the system removed.
+enum AnimationsSetting {
+  /// "Según el celular", the default: as the system says.
+  system,
+
+  /// "Reducidas": at least [MotionLevel.reduced].
+  reduced,
+
+  /// "Ninguna": [MotionLevel.none].
+  none,
+}
+
+/// Gives [setting] to everything below; the app puts it around its pages, so
+/// page transitions and the predictive back read it too. Without one, the
+/// system decides alone.
+class AnimationsScope extends InheritedWidget {
+  const AnimationsScope({super.key, required this.setting, required super.child});
+
+  final AnimationsSetting setting;
+
+  @override
+  bool updateShouldNotify(AnimationsScope oldWidget) => setting != oldWidget.setting;
+}
+
 MotionLevel motionOf(BuildContext context) {
-  if (MediaQuery.disableAnimationsOf(context)) return MotionLevel.none;
-  if (View.of(context).platformDispatcher.accessibilityFeatures.reduceMotion) return MotionLevel.reduced;
-  return MotionLevel.full;
+  final system = MediaQuery.disableAnimationsOf(context)
+      ? MotionLevel.none
+      : View.of(context).platformDispatcher.accessibilityFeatures.reduceMotion
+      ? MotionLevel.reduced
+      : MotionLevel.full;
+  final app = switch (context.dependOnInheritedWidgetOfExactType<AnimationsScope>()?.setting) {
+    null || AnimationsSetting.system => MotionLevel.full,
+    AnimationsSetting.reduced => MotionLevel.reduced,
+    AnimationsSetting.none => MotionLevel.none,
+  };
+  // The levels go from most to least motion: the stricter one wins.
+  return system.index >= app.index ? system : app;
 }
 
 /// True when something should not slide, bounce or travel: Reduce Motion or

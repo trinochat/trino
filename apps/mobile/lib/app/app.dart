@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../design/appearance.dart';
+import '../design/motion.dart';
 import '../engine/engine.dart';
 import '../l10n/app_localizations.dart';
 import '../platform/biometrics.dart';
@@ -112,7 +113,8 @@ class _TrinoAppState extends State<TrinoApp> {
           // Clear bars, the app behind them, with icons that stay visible on
           // the theme's background.
           value: systemBarsFor(Theme.of(context).brightness),
-          child: child!,
+          // Around the navigator, so pages and their transitions read it.
+          child: AnimationsScope(setting: _appearance.value.animations, child: child!),
         ),
         home: const AppGate(),
       ),

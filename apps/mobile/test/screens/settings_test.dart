@@ -105,6 +105,70 @@ void main() {
     await expectLater(tester, meetsGuideline(labeledTapTargetGuideline));
   });
 
+  group('Apariencia › Animaciones', () {
+    Future<TestApp> openAnimations(WidgetTester tester) async {
+      final app = await pumpApp(tester);
+      await openTab(tester, 'Ajustes');
+      await openSection(tester, 'Apariencia');
+      await tester.scrollUntilVisible(find.text('Ninguna'), 100);
+      await tester.pumpAndSettle();
+      return app;
+    }
+
+    testWidgets('three choices with what each does, and the note; the phone\'s is the default', (tester) async {
+      await openAnimations(tester);
+      expect(find.text('Animaciones'), findsOneWidget);
+      for (final (title, subtitle) in [
+        ('Según el celular', 'Recomendado: sigue «Reducir movimiento» o «Quitar animaciones»'),
+        ('Reducidas', 'Nada se desliza: solo fundidos cortos'),
+        ('Ninguna', 'Todo cambia al instante'),
+      ]) {
+        expect(find.text(title), findsOneWidget);
+        expect(find.text(subtitle), findsOneWidget);
+      }
+      expect(
+        find.text('Las animaciones nunca esconden información: con cualquiera de las tres, la app hace lo mismo.'),
+        findsOneWidget,
+      );
+      expect(tester.getSemantics(find.text('Según el celular')), isSemantics(isChecked: true));
+      expect(tester.getSemantics(find.text('Ninguna')), isSemantics(isChecked: false));
+      await expectLater(tester, meetsGuideline(androidTapTargetGuideline));
+      await expectLater(tester, meetsGuideline(labeledTapTargetGuideline));
+    });
+
+    testWidgets('"Ninguna" is kept and stops the motion of the whole app, pages included', (tester) async {
+      final app = await openAnimations(tester);
+      await tester.tap(find.text('Ninguna'));
+      await tester.pumpAndSettle();
+      expect(app.appearance.value.animations, AnimationsSetting.none);
+      expect(tester.getSemantics(find.text('Ninguna')), isSemantics(isChecked: true));
+      expect(motionOf(tester.element(find.text('Ninguna'))), MotionLevel.none);
+
+      // Back to Ajustes at once: no slide.
+      await tester.tap(find.bySemanticsLabel('Volver'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 16));
+      expect(find.text('Ninguna').hitTestable(), findsNothing);
+      expect(find.text('Apariencia').hitTestable(), findsOneWidget);
+    });
+
+    testWidgets('"Reducidas" leaves only fades', (tester) async {
+      await openAnimations(tester);
+      await tester.tap(find.text('Reducidas'));
+      await tester.pumpAndSettle();
+      expect(motionOf(tester.element(find.text('Reducidas'))), MotionLevel.reduced);
+    });
+
+    testWidgets('in English and Portuguese too', (tester) async {
+      await pumpApp(tester, locale: const Locale('en'));
+      await openTab(tester, 'Settings');
+      await openSection(tester, 'Appearance');
+      await tester.scrollUntilVisible(find.text('None'), 100);
+      expect(find.text('Animations'), findsOneWidget);
+      expect(find.text('Same as the phone'), findsOneWidget);
+    });
+  });
+
   testWidgets('Idioma switches the whole app', (tester) async {
     await pumpApp(tester);
     await openTab(tester, 'Ajustes');

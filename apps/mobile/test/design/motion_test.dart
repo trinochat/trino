@@ -2,20 +2,26 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:trino_mobile/design/theme.dart';
 
-Future<MotionLevel> levelIn(WidgetTester tester, {bool disableAnimations = false}) async {
+Future<MotionLevel> levelIn(WidgetTester tester, {bool disableAnimations = false, AnimationsSetting? setting}) async {
   late MotionLevel level;
+  final probe = Builder(
+    builder: (context) {
+      level = motionOf(context);
+      return const SizedBox();
+    },
+  );
   await tester.pumpWidget(
     MediaQuery(
       data: MediaQueryData(disableAnimations: disableAnimations),
-      child: Builder(
-        builder: (context) {
-          level = motionOf(context);
-          return const SizedBox();
-        },
-      ),
+      child: setting == null ? probe : AnimationsScope(setting: setting, child: probe),
     ),
   );
   return level;
+}
+
+void useReduceMotion(WidgetTester tester) {
+  tester.platformDispatcher.accessibilityFeaturesTestValue = const FakeAccessibilityFeatures(reduceMotion: true);
+  addTearDown(tester.platformDispatcher.clearAccessibilityFeaturesTestValue);
 }
 
 void main() {
@@ -33,6 +39,54 @@ void main() {
     tester.platformDispatcher.accessibilityFeaturesTestValue = const FakeAccessibilityFeatures(reduceMotion: true);
     addTearDown(tester.platformDispatcher.clearAccessibilityFeaturesTestValue);
     expect(await levelIn(tester, disableAnimations: true), MotionLevel.none);
+  });
+
+  group("the app's own Animaciones setting", () {
+    testWidgets('"Según el celular" follows the system', (tester) async {
+      expect(await levelIn(tester, setting: AnimationsSetting.system), MotionLevel.full);
+      expect(await levelIn(tester, setting: AnimationsSetting.system, disableAnimations: true), MotionLevel.none);
+    });
+
+    testWidgets('"Reducidas" means at least reduced', (tester) async {
+      expect(await levelIn(tester, setting: AnimationsSetting.reduced), MotionLevel.reduced);
+      expect(
+        await levelIn(tester, setting: AnimationsSetting.reduced, disableAnimations: true),
+        MotionLevel.none,
+        reason: 'never more motion than the system allows',
+      );
+    });
+
+    testWidgets('"Ninguna" means none, whatever the system says', (tester) async {
+      expect(await levelIn(tester, setting: AnimationsSetting.none), MotionLevel.none);
+      useReduceMotion(tester);
+      expect(await levelIn(tester, setting: AnimationsSetting.none), MotionLevel.none);
+    });
+
+    testWidgets('with Reduce Motion on, no setting brings the motion back', (tester) async {
+      useReduceMotion(tester);
+      for (final setting in [AnimationsSetting.system, AnimationsSetting.reduced]) {
+        expect(await levelIn(tester, setting: setting), MotionLevel.reduced, reason: '$setting');
+      }
+    });
+
+    testWidgets('context.motion follows it too', (tester) async {
+      late TrinoMotion motion;
+      await tester.pumpWidget(
+        AnimationsScope(
+          setting: AnimationsSetting.reduced,
+          child: Theme(
+            data: buildTrinoTheme(TrinoStyle.calma, Brightness.light, TrinoAccent.verde),
+            child: Builder(
+              builder: (context) {
+                motion = context.motion;
+                return const SizedBox();
+              },
+            ),
+          ),
+        ),
+      );
+      expect(motion, TrinoMotion.reduced);
+    });
   });
 
   motionTokens();

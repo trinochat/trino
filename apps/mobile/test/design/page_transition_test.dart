@@ -9,20 +9,27 @@ import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:trino_mobile/design/theme.dart';
 
-Future<void> pumpTwoPages(WidgetTester tester, {bool reduceMotion = false}) async {
+Future<void> pumpTwoPages(
+  WidgetTester tester, {
+  bool reduceMotion = false,
+  AnimationsSetting setting = AnimationsSetting.system,
+}) async {
   await tester.pumpWidget(
     MediaQuery(
       data: MediaQueryData.fromView(tester.view).copyWith(disableAnimations: reduceMotion),
-      child: MaterialApp(
-        theme: buildTrinoTheme(TrinoStyle.calma, Brightness.light, TrinoAccent.verde),
-        home: Builder(
-          builder: (context) => Scaffold(
-            body: Center(
-              child: TextButton(
-                onPressed: () =>
-                    Navigator.of(context)
-                        .push(MaterialPageRoute<void>(builder: (_) => const Scaffold(body: Text('Second')))),
-                child: const Text('Open'),
+      child: AnimationsScope(
+        setting: setting,
+        child: MaterialApp(
+          theme: buildTrinoTheme(TrinoStyle.calma, Brightness.light, TrinoAccent.verde),
+          home: Builder(
+            builder: (context) => Scaffold(
+              body: Center(
+                child: TextButton(
+                  onPressed: () =>
+                      Navigator.of(context)
+                          .push(MaterialPageRoute<void>(builder: (_) => const Scaffold(body: Text('Second')))),
+                  child: const Text('Open'),
+                ),
               ),
             ),
           ),
@@ -69,8 +76,12 @@ Future<void> backGesture(WidgetTester tester, String method, [double? progress])
 }
 
 /// Opens the second page, lets it settle, and drags the back gesture halfway.
-Future<void> dragBackHalfway(WidgetTester tester, {bool reduceMotion = false}) async {
-  await pumpTwoPages(tester, reduceMotion: reduceMotion);
+Future<void> dragBackHalfway(
+  WidgetTester tester, {
+  bool reduceMotion = false,
+  AnimationsSetting setting = AnimationsSetting.system,
+}) async {
+  await pumpTwoPages(tester, reduceMotion: reduceMotion, setting: setting);
   await tester.pumpAndSettle();
   await backGesture(tester, 'startBackGesture', 0);
   await backGesture(tester, 'updateBackGestureProgress', 0.5);
@@ -133,6 +144,36 @@ void main() {
     final second = find.text('Second');
     expect(find.ancestor(of: second, matching: find.byType(CupertinoPageTransition)), findsNothing);
     expect(tester.getTopLeft(find.ancestor(of: second, matching: find.byType(Scaffold)).first).dx, 0);
+  });
+
+  testWidgets('with Animaciones "Reducidas", the page fades in place instead of sliding', (tester) async {
+    await pumpTwoPages(tester, setting: AnimationsSetting.reduced);
+    await tester.pump(const Duration(milliseconds: 100));
+    final second = find.text('Second');
+    expect(find.ancestor(of: second, matching: find.byType(CupertinoPageTransition)), findsNothing);
+    expect(tester.getTopLeft(find.ancestor(of: second, matching: find.byType(Scaffold)).first).dx, 0);
+    expect(opacityOf(tester, second), lessThan(1.0));
+  }, variant: const TargetPlatformVariant({TargetPlatform.android, TargetPlatform.iOS}));
+
+  testWidgets('with Animaciones "Ninguna", the page just appears', (tester) async {
+    await pumpTwoPages(tester, setting: AnimationsSetting.none);
+    await tester.pump(const Duration(milliseconds: 16));
+    final second = find.text('Second');
+    expect(find.ancestor(of: second, matching: find.byType(CupertinoPageTransition)), findsNothing);
+    expect(tester.getTopLeft(find.ancestor(of: second, matching: find.byType(Scaffold)).first).dx, 0);
+    expect(opacityOf(tester, second), 1.0);
+  }, variant: const TargetPlatformVariant({TargetPlatform.android, TargetPlatform.iOS}));
+
+  testWidgets('without motion, a closing page is gone at once, not left on screen until its time ends', (tester) async {
+    await pumpTwoPages(tester, setting: AnimationsSetting.none);
+    await tester.pumpAndSettle();
+    tester.state<NavigatorState>(find.byType(Navigator)).pop();
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 16));
+    expect(opacityOf(tester, find.text('Second')), 0.0);
+    expect(opacityOf(tester, find.text('Open')), 1.0);
+    await tester.pumpAndSettle();
+    expect(find.text('Second'), findsNothing);
   });
 
   group('the Android back gesture', () {
@@ -202,6 +243,21 @@ void main() {
       await dragBackHalfway(tester);
       expect(pageRect(tester), Offset.zero & tester.getSize(find.byType(MaterialApp)), reason: 'no moving');
       expect(opacityOf(tester, find.text('Second')), lessThan(1.0));
+      await backGesture(tester, 'commitBackGesture');
+      await tester.pumpAndSettle();
+      expect(find.text('Second'), findsNothing);
+    }, variant: android);
+
+    testWidgets('with Animaciones "Reducidas", the page fades with the finger', (tester) async {
+      await dragBackHalfway(tester, setting: AnimationsSetting.reduced);
+      expect(pageRect(tester), Offset.zero & tester.getSize(find.byType(MaterialApp)));
+      expect(opacityOf(tester, find.text('Second')), lessThan(1.0));
+    }, variant: android);
+
+    testWidgets('with Animaciones "Ninguna", nothing previews and the gesture still goes back', (tester) async {
+      await dragBackHalfway(tester, setting: AnimationsSetting.none);
+      expect(pageRect(tester), Offset.zero & tester.getSize(find.byType(MaterialApp)));
+      expect(opacityOf(tester, find.text('Second')), 1.0);
       await backGesture(tester, 'commitBackGesture');
       await tester.pumpAndSettle();
       expect(find.text('Second'), findsNothing);

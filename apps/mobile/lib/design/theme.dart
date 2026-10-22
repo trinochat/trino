@@ -210,7 +210,7 @@ class TrinoPageTransitionsBuilder extends PageTransitionsBuilder {
   ) {
     final motion = motionOf(context);
     Widget transition(BuildContext context, PredictiveBackGesture? gesture) => switch (motion) {
-      MotionLevel.none => child,
+      MotionLevel.none => _AtOnce(animation: animation, child: child),
       MotionLevel.reduced => FadeTransition(
         opacity: CurvedAnimation(parent: animation, curve: Curves.easeOut, reverseCurve: Curves.easeIn),
         child: child,
@@ -225,6 +225,22 @@ class TrinoPageTransitionsBuilder extends PageTransitionsBuilder {
     };
     if (!predictiveBack || route.fullscreenDialog || motion == MotionLevel.none) return transition(context, null);
     return PredictiveBackGestureDetector(route: route, builder: transition);
+  }
+}
+
+/// A page with no transition: there at once, and gone at once when it
+/// closes. The route still runs its animation's duration before it leaves the
+/// tree, so a closing page is hidden for that time instead of lingering.
+class _AtOnce extends AnimatedWidget {
+  const _AtOnce({required Animation<double> animation, required this.child}) : super(listenable: animation);
+
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    final status = (listenable as Animation<double>).status;
+    final closing = status == AnimationStatus.reverse || status == AnimationStatus.dismissed;
+    return Opacity(opacity: closing ? 0 : 1, child: child);
   }
 }
 

@@ -213,6 +213,14 @@
   "accentNaranja": "Orange",
   "appearancePreviewIn": "Did you get the file?",
   "appearancePreviewOut": "Yes, I have it",
+  "appearanceAnimations": "Animations",
+  "animationsSystem": "Same as the phone",
+  "animationsSystemHelp": "Recommended: follows “Reduce motion” or “Remove animations”",
+  "animationsReduced": "Reduced",
+  "animationsReducedHelp": "Nothing slides: only short fades",
+  "animationsNone": "None",
+  "animationsNoneHelp": "Everything changes at once",
+  "animationsNote": "Animations never hide information: with any of the three, the app does the same.",
 
   "languageHelp": "At first, Trino uses your phone's language. You can change it here anytime.",
 
