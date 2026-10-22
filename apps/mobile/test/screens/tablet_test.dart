@@ -7,6 +7,9 @@ import 'dart:ui' show SemanticsRole;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:trino_mobile/design/appearance.dart';
+import 'package:trino_mobile/design/motion.dart';
+import 'package:trino_mobile/design/layout.dart';
 import 'package:trino_mobile/screens/call_screen.dart';
 import 'package:trino_mobile/screens/chat_screen.dart';
 import 'package:trino_mobile/screens/common.dart';
@@ -305,6 +308,73 @@ void main() {
       await tapHeader(tester, 'Ana Torres');
       expect(find.byKey(infoPane), findsNothing);
       expect(Navigator.of(tester.element(find.byType(ContactInfoScreen))).canPop(), isTrue);
+    });
+  });
+
+  group('motion between chats in the pane', () {
+    testWidgets('switching chats crossfades in place, with the theme timing', (tester) async {
+      await pumpApp(tester, size: tabletLandscape);
+      await openInPane(tester, 'Ana Torres');
+      final paneLeft = tester.getTopLeft(find.byKey(detailPane)).dx;
+      await tester.tap(inList(find.text('Familia')));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 60));
+      final chats = find.byType(ChatScreen);
+      expect(chats, findsNWidgets(2), reason: 'both while they fade');
+      for (final chat in chats.evaluate()) {
+        expect(tester.getTopLeft(find.byWidget(chat.widget)).dx, paneLeft, reason: 'nothing slides');
+      }
+      final fades = find.ancestor(of: chats.first, matching: find.byType(FadeTransition));
+      expect(fades, findsWidgets);
+      await tester.pumpAndSettle();
+      expect(chats, findsOneWidget);
+    });
+
+    for (final (setting, name) in [(AnimationsSetting.none, 'Ninguna'), (AnimationsSetting.reduced, 'Reducidas')]) {
+      testWidgets('with Animaciones: $name, nothing travels: the info pane does not slide open', (tester) async {
+        await pumpApp(
+          tester,
+          size: tabletWide,
+          appearance: Appearance(animations: setting),
+        );
+        await openInPane(tester, 'Ana Torres');
+        await tester.tap(find.byKey(ChatScreen.infoToggleKey));
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 16));
+        // Already at its full width, the chat already narrower: it may only
+        // fade.
+        final chatWidth = tester.getSize(find.byKey(detailPane)).width;
+        await tester.pumpAndSettle();
+        expect(chatWidth, tester.getSize(find.byKey(detailPane)).width);
+        expect(tester.getSize(find.byKey(infoPane)).width, infoPaneWidth);
+      });
+    }
+
+    testWidgets('with full motion the info pane slides open, pushing the chat aside', (tester) async {
+      await pumpApp(tester, size: tabletWide);
+      await openInPane(tester, 'Ana Torres');
+      final before = tester.getSize(find.byKey(detailPane)).width;
+      await tester.tap(find.byKey(ChatScreen.infoToggleKey));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 60));
+      final during = tester.getSize(find.byKey(detailPane)).width;
+      await tester.pumpAndSettle();
+      final after = tester.getSize(find.byKey(detailPane)).width;
+      expect(during, lessThan(before));
+      expect(during, greaterThan(after));
+    });
+
+    testWidgets('with Animaciones: Ninguna, switching chats is at once', (tester) async {
+      await pumpApp(
+        tester,
+        size: tabletLandscape,
+        appearance: const Appearance(animations: AnimationsSetting.none),
+      );
+      await openInPane(tester, 'Ana Torres');
+      await tester.tap(inList(find.text('Familia')));
+      await tester.pump();
+      expect(find.byType(ChatScreen), findsOneWidget);
+      expect(tester.widget<ChatScreen>(find.byType(ChatScreen)).chat.title, 'Familia');
     });
   });
 
