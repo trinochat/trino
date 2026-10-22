@@ -101,6 +101,9 @@ class _ComposerFieldState extends State<ComposerField> {
             decoration: InputDecoration(
               hintText: widget.hint,
               hintStyle: text.body.copyWith(color: t.muted, height: 22 / 16),
+              // The theme fills text fields; filled, this one would cover the
+              // pill drawn under it.
+              filled: false,
               border: InputBorder.none,
               enabledBorder: InputBorder.none,
               focusedBorder: InputBorder.none,

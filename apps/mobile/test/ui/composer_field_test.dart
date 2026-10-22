@@ -35,6 +35,14 @@ void main() {
     await expectLater(tester, meetsGuideline(androidTapTargetGuideline));
   });
 
+  testWidgets('the field itself is not filled, so the pill under it shows', (tester) async {
+    // The theme fills every text field; filled, this one covered the pill
+    // with a square grey box (seen in the screenshots of 8ff88d9).
+    await pumpField(tester);
+    final decoration = tester.widget<InputDecorator>(find.byType(InputDecorator)).decoration;
+    expect(decoration.filled, isFalse);
+  });
+
   testWidgets('Terminal keeps its square corners', (tester) async {
     await pumpField(tester, style: TrinoStyle.terminal);
     final shape = pillOf(tester).shape as RoundedRectangleBorder;
