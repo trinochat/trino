@@ -8,10 +8,15 @@ import 'dart:typed_data';
 /// The build settings of each configuration of [target] (Debug, Release,
 /// Profile) in a project.pbxproj, by configuration name. Only one-line
 /// `KEY = value;` settings are read; lists such as LD_RUNPATH_SEARCH_PATHS are
-/// left out.
-Map<String, Map<String, String>> xcodeBuildSettings(String pbxproj, {required String target}) {
+/// left out. With [isa] `PBXProject`, the project's own settings, which every
+/// target inherits unless it sets its own.
+Map<String, Map<String, String>> xcodeBuildSettings(
+  String pbxproj, {
+  required String target,
+  String isa = 'PBXNativeTarget',
+}) {
   final list = RegExp(
-    '/\\* Build configuration list for PBXNativeTarget "${RegExp.escape(target)}" \\*/ = \\{'
+    '/\\* Build configuration list for $isa "${RegExp.escape(target)}" \\*/ = \\{'
     r'[^}]*?buildConfigurations = \(([^)]*)\);',
   ).firstMatch(pbxproj);
   if (list == null) throw FormatException('No build configuration list for the target $target');
