@@ -470,6 +470,24 @@ impl<D: Disk> Store<D> {
         self.bump_and_save_index()
     }
 
+    /// The store `name` noted in `deleting_stores` is gone: drop the note.
+    /// Best effort, like every index write: while the index cannot be
+    /// written, the next unlock finds the store gone and tries again.
+    pub fn forget_deleting_store(&mut self, name: &str) -> Result<(), StoreError> {
+        if !self.index.deleting_stores.iter().any(|noted| noted == name) {
+            return Ok(());
+        }
+        self.index.deleting_stores.retain(|noted| noted != name);
+        if self.index_frozen {
+            return Err(StoreError::Frozen("the store".into()));
+        }
+        if self.index_blocked() {
+            self.index_saved = false;
+            return Ok(());
+        }
+        self.bump_and_save_index()
+    }
+
     /// Write `content` as the file in `slot` and note `legacy` in the index
     /// written right after it, so the two reach the disk together: a cut
     /// leaves either both, or the file one step ahead under the old note,

@@ -218,8 +218,16 @@ pub async fn unseal(
     totp_code: Option<String>,
 ) -> Result<UnsealResponse, CommandError> {
     let events = crate::events::sink(app.clone());
-    let starter = relay_starter(events, profile::resend_through(app), &state);
-    account::unseal(&state, starter, passphrase, totp_code).await
+    let starter = relay_starter(events, profile::resend_through(app.clone()), &state);
+    // B3 of the emergency path (design §6.1): the download history and the
+    // minidumps of the WebView, as every lock clears them.
+    let clear_traces = move || {
+        #[cfg(desktop)]
+        crate::traces::clear(&app);
+        #[cfg(not(desktop))]
+        let _ = app;
+    };
+    account::unseal(&state, starter, clear_traces, passphrase, totp_code).await
 }
 
 /// Open read-only connections to the relays this device is ACTUALLY using and

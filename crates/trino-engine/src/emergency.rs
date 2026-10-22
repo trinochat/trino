@@ -205,9 +205,10 @@ mod tests {
     use crate::session::tests::friend;
     use crate::state::{HistItem, InnerState};
     use crate::storage::{apply_loaded, import_sticker_into, load_session, persist_account};
+    use crate::store::cleanup::Cleanup;
     use crate::store::disk::cut::{CutDisk, Step};
     use crate::store::migrate::NEW_STORE_DIR;
-    use crate::store::session::{Found, Storage, OTHER_STORE_PREFIX, STORE_DIR};
+    use crate::store::session::{Found, Storage, StorageCell, OTHER_STORE_PREFIX, STORE_DIR};
     use crate::totp::{generate_totp_secret, totp_code, totp_now};
     use crate::vault_file::next_path;
     use std::collections::BTreeMap;
@@ -800,6 +801,7 @@ mod tests {
             &engine,
             ana.files.clone(),
             |start| starts.push((start.relays, start.bridges.is_some())),
+            || {},
             PASSPHRASE.into(),
             None,
         )
@@ -809,6 +811,7 @@ mod tests {
             &engine,
             ana.files.clone(),
             |start| starts.push((start.relays, start.bridges.is_some())),
+            || {},
             EMERGENCY.into(),
             None,
         )
@@ -850,5 +853,132 @@ mod tests {
         assert!(opened.integrity.is_none() && opened.migration.is_none());
         assert_eq!(opened.handle, "Ana");
         assert_eq!(inner.lock().await.relay_urls, [RELAY]);
+    }
+
+    fn aside_stores(home: &Path) -> Vec<String> {
+        let mut names: Vec<String> = std::fs::read_dir(home)
+            .unwrap()
+            .flatten()
+            .map(|entry| entry.file_name().to_string_lossy().into_owned())
+            .filter(|name| name.starts_with(OTHER_STORE_PREFIX))
+            .collect();
+        names.sort();
+        names
+    }
+
+    /// Design §12.4b, test 56 (RC-11), and §12.2, test 31: the store of
+    /// before is noted by its name, and only it goes, in the background; a
+    /// store CL set aside stays. The small files of before (a temporary of
+    /// the vault, a file of an earlier version) are destroyed before the
+    /// account opens, so nothing offers them.
+    #[test]
+    fn the_old_store_goes_by_its_noted_name_and_other_aside_stores_stay() {
+        let scratch = ScratchDir::new("emergency-cleanup");
+        let ana = Ana::new(scratch.path(), false);
+        let home = ana.home().to_path_buf();
+        let kept_by_cl = home.join("store-aside-000000000000000000000001");
+        std::fs::create_dir_all(&kept_by_cl).unwrap();
+        std::fs::write(kept_by_cl.join("index.bin"), b"a store of before").unwrap();
+        let plain = home.join("config.json");
+        std::fs::write(&plain, br#"{"handle":"Ana","relays":[]}"#).unwrap();
+        let temporary = home.join(".vault.bin.tmp-1-2-3");
+        std::fs::write(&temporary, b"half a vault").unwrap();
+
+        let (_, _, loaded) = ana.unlock(EMERGENCY).unwrap();
+
+        let loaded = loaded.unwrap();
+        assert!(loaded.report.is_empty(), "{:?}", loaded.report);
+        assert!(!plain.exists() && !temporary.exists());
+        let noted = loaded.deleting_stores.clone();
+        assert_eq!(noted.len(), 1);
+        assert!(home.join(&noted[0]).is_dir());
+        assert_eq!(aside_stores(&home).len(), 2);
+        let cell = StorageCell::default();
+        cell.set(loaded.storage);
+
+        Cleanup {
+            home: home.clone(),
+            stores: noted.clone(),
+        }
+        .run(&cell);
+
+        assert!(!home.join(&noted[0]).exists());
+        assert_eq!(
+            aside_stores(&home),
+            ["store-aside-000000000000000000000001"]
+        );
+        drop(cell);
+        let (_, _, again) = ana.unlock(PASSPHRASE).unwrap();
+        assert!(again.unwrap().deleting_stores.is_empty(), "still noted");
+    }
+
+    /// Design §12.2, test 32: while a file of the old store cannot go, the
+    /// note stays, and the next unlock tries again.
+    #[test]
+    fn the_old_store_stays_noted_until_it_is_gone() {
+        let scratch = ScratchDir::new("emergency-cleanup-held");
+        let ana = Ana::new(scratch.path(), false);
+        let home = ana.home().to_path_buf();
+        let (_, _, loaded) = ana.unlock(EMERGENCY).unwrap();
+        let loaded = loaded.unwrap();
+        let noted = loaded.deleting_stores.clone();
+        assert_eq!(noted.len(), 1);
+        let cell = StorageCell::default();
+        cell.set(loaded.storage);
+
+        Cleanup {
+            home: home.clone(),
+            stores: noted.clone(),
+        }
+        .run_with(
+            &cell,
+            &mut |_| Err(std::io::Error::other("held")),
+            &mut || {},
+        );
+        drop(cell);
+
+        assert!(home.join(&noted[0]).exists());
+        let (_, _, again) = ana.unlock(EMERGENCY).unwrap();
+        assert_eq!(again.unwrap().deleting_stores, noted);
+    }
+
+    /// Steps B2 and B3, after the answer: the old store goes in the
+    /// background, and the host clears what the WebView kept (traces), only
+    /// after the emergency path. B1, the network action, hooks here too
+    /// (CE-6); with none chosen nothing goes out.
+    #[tokio::test]
+    async fn after_the_answer_the_old_store_goes_and_the_host_clears_its_traces() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let scratch = ScratchDir::new("emergency-background");
+        let ana = Ana::new(scratch.path(), false);
+        let engine = crate::Engine::default();
+        let cleared = std::sync::Arc::new(AtomicUsize::new(0));
+        let unseal = |passphrase: &str| {
+            let cleared = std::sync::Arc::clone(&cleared);
+            unseal_in(
+                &engine,
+                ana.files.clone(),
+                |_| {},
+                move || {
+                    cleared.fetch_add(1, Ordering::SeqCst);
+                },
+                passphrase.to_string(),
+                None,
+            )
+        };
+
+        unseal(PASSPHRASE).await.unwrap();
+        assert_eq!(cleared.load(Ordering::SeqCst), 0);
+        unseal(EMERGENCY).await.unwrap();
+        assert_eq!(cleared.load(Ordering::SeqCst), 1);
+
+        let home = ana.home().to_path_buf();
+        let gone = tokio::time::timeout(std::time::Duration::from_secs(20), async {
+            while !aside_stores(&home).is_empty() {
+                tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+            }
+        })
+        .await;
+        assert!(gone.is_ok(), "the old store is still there");
     }
 }

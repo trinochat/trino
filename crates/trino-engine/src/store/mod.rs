@@ -18,6 +18,7 @@
 //! - `rotate`: the data key rotated once, as the vault moves to version 3
 //!   (clave de emergencia CE-3), under the same rule.
 
+pub mod cleanup;
 pub mod disk;
 pub mod envelope;
 pub mod files;

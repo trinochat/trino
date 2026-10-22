@@ -200,22 +200,29 @@ pub(crate) fn tray_lock(app: &AppHandle) {
     }
 }
 
+/// What `event` does now, given the session. An unlock, a lock, a wipe or
+/// a seal of the settings that is running (`session_gate`) is waited for
+/// first: an event during an unlock, the emergency path's included, then
+/// locks the session it opened instead of finding none (clave de
+/// emergencia RC-13).
+pub(crate) async fn system_action(state: &AppState, event: SystemEvent) -> SystemAction {
+    drop(state.session_gate.lock().await);
+    let inner = state.inner.lock().await;
+    action_for(
+        event,
+        lock_with_system(&inner),
+        inner.identity.is_some(),
+        state.call_active.load(Ordering::SeqCst),
+    )
+}
+
 /// An event of the system, on the thread that hears them: the lock is done
 /// before this returns, within the two seconds sleep gives.
 #[cfg_attr(not(windows), allow(dead_code))]
 pub(crate) fn on_system_event(app: &AppHandle, event: SystemEvent) {
     let state = app.state::<AppState>();
     tauri::async_runtime::block_on(async {
-        let action = {
-            let inner = state.inner.lock().await;
-            action_for(
-                event,
-                lock_with_system(&inner),
-                inner.identity.is_some(),
-                state.call_active.load(Ordering::SeqCst),
-            )
-        };
-        let cause = match action {
+        let cause = match system_action(&state, event).await {
             SystemAction::Nothing => return,
             SystemAction::LockNow(cause) => cause,
             SystemAction::LockAfterCall => {
@@ -640,5 +647,118 @@ mod tests {
         assert!(
             serde_json::from_value::<LockReason>(serde_json::json!({ "kind": "cold" })).is_err()
         );
+    }
+
+    // ---- Clave de emergencia, RC-13 ----
+
+    /// RC-13: Windows locks, or the computer goes to sleep, while an unlock
+    /// runs (the emergency path's too). The event waits for it, and locks
+    /// the session it opened, instead of finding none and doing nothing.
+    #[tokio::test]
+    async fn a_system_lock_during_an_unlock_waits_for_it_and_locks_what_it_opened() {
+        for event in [SystemEvent::Suspending, SystemEvent::SessionLocked] {
+            let state = Arc::new(AppState::default());
+            let unlocking = state.session_gate.lock().await;
+            let deciding = tokio::spawn({
+                let state = Arc::clone(&state);
+                async move { system_action(&state, event).await }
+            });
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
+            // The unlock opens its session, then lets go.
+            state.inner.lock().await.identity = Some(create_identity());
+            drop(unlocking);
+
+            assert!(
+                matches!(deciding.await.unwrap(), SystemAction::LockNow(_)),
+                "{event:?}"
+            );
+        }
+    }
+
+    const PASSPHRASE: &str = "correct horse battery staple";
+    const EMERGENCY: &str = "una clave de emergencia distinta";
+
+    /// Design §12.4b, test 58 (RC-13): a lock that comes while the emergency
+    /// path runs waits for it (`session_gate`), then locks the empty account
+    /// it opened, as any lock; the store of before still goes, after the
+    /// lock, as its cleanup does not hold the gate.
+    #[tokio::test]
+    async fn a_lock_during_the_emergency_path_waits_and_locks_the_empty_account() {
+        let scratch = ScratchDir::new("lock-emergency");
+        let files = trino_engine::account::DataFiles::in_home(scratch.path().join("home"));
+        let (me, _, mut vault) = trino_engine::account::create_account_vault(
+            &files,
+            "Ana",
+            PASSPHRASE,
+            None,
+            trino_engine::vault_file::write,
+        )
+        .unwrap();
+        vault.set_emergency_key(PASSPHRASE, EMERGENCY).unwrap();
+        trino_engine::vault_file::write(&files.vault, vault.bytes()).unwrap();
+        let home = files.home.clone();
+        let asides = |home: &Path| {
+            std::fs::read_dir(home)
+                .unwrap()
+                .flatten()
+                .filter(|entry| {
+                    entry
+                        .file_name()
+                        .to_string_lossy()
+                        .starts_with("store-aside-")
+                })
+                .count()
+        };
+        let state = Arc::new(AppState::default());
+        let window = Arc::new(Recording::over(&state));
+        let busy = state.session_gate.lock().await;
+
+        let unlocking = tokio::spawn({
+            let state = Arc::clone(&state);
+            async move {
+                trino_engine::account::unseal_in(
+                    &state.engine,
+                    files,
+                    |_| {},
+                    || {},
+                    EMERGENCY.into(),
+                    None,
+                )
+                .await
+            }
+        });
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        let locking = tokio::spawn({
+            let (state, window) = (Arc::clone(&state), Arc::clone(&window));
+            async move {
+                let reason = Some(LockReason::Idle { minutes: 5 });
+                lock_and_renew(&state, &*window, reason, LockOrigin::Frontend).await
+            }
+        });
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        drop(busy);
+
+        let opened = unlocking.await.unwrap().unwrap();
+        assert!(locking.await.unwrap(), "the lock found no session");
+        assert_ne!(
+            opened.fingerprint,
+            trino_engine::session::fp(
+                &me.ik_sign.pub_bytes,
+                &me.ik_dh.pub_bytes,
+                &me.nostr.pub_bytes
+            )
+        );
+        assert_eq!(window.calls(), ["renew, session closed: true"]);
+        let inner = state.inner.lock().await;
+        assert!(inner.identity.is_none() && !inner.storage.is_open());
+        drop(inner);
+        let gone = tokio::time::timeout(std::time::Duration::from_secs(20), async {
+            while asides(&home) > 0 {
+                tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+            }
+        })
+        .await;
+        assert!(gone.is_ok(), "the store of before is still there");
     }
 }

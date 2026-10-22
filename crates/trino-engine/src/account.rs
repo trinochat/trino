@@ -20,6 +20,7 @@ use crate::storage::{
     add_findings, apply_loaded, harden_dir, load_session, migrate_account, rotate_to_v3, status_of,
     totp_flag_disagrees, wipe_home, write_vault_noted, LoadedSession, MigrationNote, RealWipe,
 };
+use crate::store::cleanup::Cleanup;
 use crate::store::keys::{StoreKeys, VaultKeys};
 use crate::store::report::{Action, Finding, IntegrityReport, What};
 use crate::store::session::{AccountFile, PrefsImport, SessionStore, STORE_DIR};
@@ -384,6 +385,7 @@ pub async fn open_session(
         report,
         migration,
         vault,
+        ..
     }) = loaded
     else {
         return Err(CommandError::internal("nothing was loaded for the session"));
@@ -771,6 +773,7 @@ pub fn status(inner: &InnerState) -> StatusResponse {
 pub async fn unseal(
     state: &Engine,
     start_relays: impl FnOnce(RelayStart),
+    after_emergency: impl FnOnce() + Send + 'static,
     passphrase: String,
     totp_code: Option<String>,
 ) -> Result<UnsealResponse, CommandError> {
@@ -778,6 +781,7 @@ pub async fn unseal(
         state,
         DataFiles::in_trino_home(),
         start_relays,
+        after_emergency,
         passphrase,
         totp_code,
     )
@@ -789,6 +793,7 @@ pub async fn unseal_in(
     state: &Engine,
     files: DataFiles,
     start_relays: impl FnOnce(RelayStart),
+    after_emergency: impl FnOnce() + Send + 'static,
     passphrase: String,
     totp_code: Option<String>,
 ) -> Result<UnsealResponse, CommandError> {
@@ -799,6 +804,7 @@ pub async fn unseal_in(
     let session_open = state.inner.lock().await.identity.is_some();
     crate::diag::remove_stale_log(&files.home, crate::diag::Build::CURRENT);
     let now = chrono::Utc::now().timestamp();
+    let home = files.home.clone();
 
     let outcome = tokio::task::spawn_blocking({
         let files = files.clone();
@@ -809,6 +815,7 @@ pub async fn unseal_in(
     })
     .await
     .map_err(|_| CommandError::internal("vault unlock worker failed"))??;
+    let emergency = matches!(outcome, Unlocking::Emergency(_));
     let (identity, totp_secret, loaded) = match outcome {
         Unlocking::Real(unlocked) => *unlocked,
         Unlocking::Emergency(vault) => {
@@ -829,7 +836,28 @@ pub async fn unseal_in(
         // A new session never inherits TURN credentials (lock and wipe clear them too).
         state.turn.clear();
     }
-    open_session(&state.inner, identity, totp_secret, loaded, start_relays).await
+    let cleanup = loaded
+        .as_ref()
+        .filter(|loaded| !loaded.deleting_stores.is_empty())
+        .map(|loaded| Cleanup {
+            home,
+            stores: loaded.deleting_stores.clone(),
+        });
+    let opened = open_session(&state.inner, identity, totp_secret, loaded, start_relays).await?;
+
+    // After the answer, in silence (design §6.1). B1, the network action the
+    // user chose, goes here (CE-6); with none, nothing goes out. B2: a store
+    // noted for removal, the emergency path's or one a lock or a cut left,
+    // goes on a thread of its own, without `session_gate` (RC-13). B3: the
+    // host clears what the WebView kept.
+    if let Some(cleanup) = cleanup {
+        let storage = state.inner.lock().await.storage.clone();
+        std::thread::spawn(move || cleanup.run(&storage));
+    }
+    if emergency {
+        after_emergency();
+    }
+    Ok(opened)
 }
 
 /// `share_bundle`: this identity's bundle as contacts get it.

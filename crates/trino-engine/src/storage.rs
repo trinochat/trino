@@ -171,6 +171,9 @@ pub struct LoadedSession {
     /// The version 3 vault the session keeps (vault_file.rs): set by the
     /// unlock and by a new account, none when the vault is of version 2.
     pub vault: Option<crate::vault_file::SessionVault>,
+    /// The stores the index notes for removal (clave de emergencia B2):
+    /// the session removes them in the background once it opens.
+    pub deleting_stores: Vec<String>,
 }
 
 /// What the migration moved into the store, for its one note (design
@@ -369,6 +372,7 @@ pub fn load_store(
         None => None,
     };
     let report = session.report();
+    let deleting_stores = session.deleting_stores();
     // The one note, at the unlock whose cleanup ended the migration.
     let migration = settled.cleaned.then(|| MigrationNote {
         contacts: account.as_ref().map_or(0, |account| account.friends.len()),
@@ -385,6 +389,7 @@ pub fn load_store(
         report,
         migration,
         vault: None,
+        deleting_stores,
     })
 }
 
@@ -444,6 +449,7 @@ pub fn load_legacy(files: &DataFiles, identity: &Identity) -> Result<LoadedSessi
         report,
         migration: None,
         vault: None,
+        deleting_stores: Vec::new(),
     })
 }
 

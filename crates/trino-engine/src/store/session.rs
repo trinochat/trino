@@ -366,6 +366,11 @@ impl SessionStore {
         Ok(!self.store.is_behind())
     }
 
+    /// The stores the index notes for removal (`Index::deleting_stores`).
+    pub fn deleting_stores(&self) -> Vec<String> {
+        self.store.index().deleting_stores.clone()
+    }
+
     /// The migration's cleanup (M4, `migrate::settle`) ran to its end: the
     /// index says so, and the next unlock does not run it again. Best
     /// effort: if the index cannot take it now, M4 runs again, in silence.
@@ -715,6 +720,17 @@ impl StorageCell {
             Storage::Legacy(_) => None,
         })
         .flatten()
+    }
+
+    /// The store `name` noted for removal is gone (clave de emergencia
+    /// B2): its note leaves the index. Nothing with no session, or one
+    /// that does not note it.
+    pub fn forget_deleting_store(&self, name: &str) {
+        self.with(|storage| {
+            if let Storage::Store(store) = storage {
+                let _ = store.store.forget_deleting_store(name);
+            }
+        });
     }
 
     /// At lock: write whatever waits for the index (design §4.6).
