@@ -164,6 +164,38 @@ void main() {
     });
   });
 
+  group('with a keyboard', () {
+    /// The chats in the list, top to bottom.
+    List<String> namesInOrder(WidgetTester tester) {
+      final rows = tester.widgetList<ChatRow>(inList(find.byType(ChatRow))).toList()
+        ..sort((a, b) => tester.getTopLeft(find.byWidget(a)).dy.compareTo(tester.getTopLeft(find.byWidget(b)).dy));
+      return [for (final row in rows) row.name];
+    }
+
+    /// The row's own focus, as Tab would reach it.
+    void focusRow(WidgetTester tester, String name) => Focus.of(tester.element(inList(find.text(name)))).requestFocus();
+
+    testWidgets('the arrows move through the chats and Enter opens one', (tester) async {
+      await pumpApp(tester, size: tabletLandscape);
+      final names = namesInOrder(tester);
+      expect(names.length, greaterThanOrEqualTo(3));
+      focusRow(tester, names[0]);
+      await tester.pump();
+      await tester.sendKeyEvent(LogicalKeyboardKey.arrowDown);
+      await tester.sendKeyEvent(LogicalKeyboardKey.arrowDown);
+      await tester.sendKeyEvent(LogicalKeyboardKey.arrowUp);
+      await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+      await tester.pumpAndSettle();
+      expect(tester.widget<ChatScreen>(find.byType(ChatScreen)).chat.title, names[1]);
+      expect(tester.getSemantics(inList(find.text(names[1]))), isSemantics(isSelected: true));
+      // The focus stays in the list, on the row just opened, to go on.
+      await tester.sendKeyEvent(LogicalKeyboardKey.arrowDown);
+      await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+      await tester.pumpAndSettle();
+      expect(tester.widget<ChatScreen>(find.byType(ChatScreen)).chat.title, names[2]);
+    });
+  });
+
   group('from 1200 dp, the info as a third pane', () {
     testWidgets('the header opens it beside the chat, and the toggle shows it and hides it', (tester) async {
       await pumpApp(tester, size: tabletWide);
@@ -241,6 +273,29 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.byKey(infoPane), findsNothing);
       expect(inDetail(find.byType(ChatScreen)), findsOneWidget);
+      // Also while writing, and the words stay.
+      await tapHeader(tester, 'Ana Torres');
+      await tester.enterText(inDetail(find.byType(TextField)), 'Hola');
+      await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+      await tester.pumpAndSettle();
+      expect(find.byKey(infoPane), findsNothing);
+      expect(inDetail(find.text('Hola')), findsOneWidget);
+      // Nothing to close: Escape is left alone.
+      await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+      await tester.pumpAndSettle();
+      expect(inDetail(find.byType(ChatScreen)), findsOneWidget);
+    });
+
+    testWidgets('Escape leaves the info pane alone while a dialog is over it', (tester) async {
+      await pumpApp(tester, size: tabletWide);
+      await openInPane(tester, 'Ana Torres');
+      await tapHeader(tester, 'Ana Torres');
+      await tester.tap(inInfo(find.text('Borrar el chat')));
+      await tester.pumpAndSettle();
+      await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+      await tester.pumpAndSettle();
+      expect(find.byType(Dialog), findsNothing, reason: 'Escape closes the dialog');
+      expect(find.byKey(infoPane), findsOneWidget, reason: 'and only the dialog');
     });
 
     testWidgets('under 1200 dp there is no toggle, and the header opens the info as a page', (tester) async {
