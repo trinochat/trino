@@ -12,7 +12,10 @@
 //!   rename would leave every older vault whole in the free space; written
 //!   in place, the live file holds only the newest. If a cut tears
 //!   `vault.bin`, the next opening finds that it does not open, opens
-//!   `vault.bin.next` with the same passphrase, and finishes the write.
+//!   `vault.bin.next` with the same passphrase, and finishes the write. A
+//!   second phase that another program keeps from `vault.bin` is tried
+//!   again, and then undone if `vault.bin` is untouched, so the answer is
+//!   always what the next opening finds (`write_with`).
 //!   Every seal of the vault goes through it: a new account, the rotation
 //!   of the signed prekey, the settings, the migrations and the shared
 //!   block, so the way the vault is written never tells one from another.
@@ -68,10 +71,52 @@ pub fn finish(disk: &impl Disk, vault: &Path, bytes: &[u8]) -> io::Result<()> {
     Ok(())
 }
 
+/// Attempts at the second phase while another program holds `vault.bin`,
+/// and the pause before the first retry, doubled after each one (150 ms in
+/// all, as `fsutil` waits for a rename).
+const FINISH_ATTEMPTS: u32 = 5;
+const FIRST_FINISH_PAUSE: std::time::Duration = std::time::Duration::from_millis(10);
+
 /// The two-phase write on `disk` (design §3.6).
+///
+/// What it answers is what the next opening finds (CE-3's open end). If the
+/// second phase keeps failing (another program holds `vault.bin`), it is
+/// tried a few times; then:
+/// - `vault.bin` holds the new bytes after all: written;
+/// - it is as it was: the write is undone (`vault.bin.next` destroyed) and
+///   fails, so the vault of before is the one, and a passphrase the write
+///   was changing does not open a copy left behind;
+/// - it is torn, so nothing can bring it back: the new vault is the one,
+///   the next opening finishes it from `vault.bin.next`, and the write
+///   counts as done.
 pub fn write_with(disk: &impl Disk, vault: &Path, bytes: &[u8]) -> io::Result<()> {
+    let before = disk.read(vault).ok();
     write_next(disk, vault, bytes)?;
-    finish(disk, vault, bytes)
+    let mut pause = FIRST_FINISH_PAUSE;
+    let mut attempt = 1;
+    let error = loop {
+        match finish(disk, vault, bytes) {
+            Ok(()) => return Ok(()),
+            Err(error) if attempt >= FINISH_ATTEMPTS => break error,
+            Err(_) => {
+                std::thread::sleep(pause);
+                pause *= 2;
+                attempt += 1;
+            }
+        }
+    };
+    let now = disk.read(vault).ok();
+    if now.as_deref() == Some(bytes) {
+        let _ = disk.destroy(&next_path(vault));
+        return Ok(());
+    }
+    if now == before {
+        // Undone. If even that fails, the copy waits and the next opening
+        // with the new vault's passphrase finishes it: the error stands.
+        let _ = disk.destroy(&next_path(vault));
+        return Err(error);
+    }
+    Ok(())
 }
 
 /// The two-phase write on the real disk: how every vault is written.
@@ -455,6 +500,138 @@ mod tests {
         held.rewind().unwrap();
         held.read_to_end(&mut through_handle).unwrap();
         assert_eq!(through_handle, NEW);
+    }
+
+    /// A disk whose overwrite of `vault.bin` fails `fails` times, then
+    /// works. With `tears`, each failure writes the first half of the new
+    /// bytes before it fails, as a cut halfway would.
+    struct HeldVault {
+        fails: std::cell::Cell<usize>,
+        tears: bool,
+    }
+
+    impl HeldVault {
+        fn failing(fails: usize, tears: bool) -> Self {
+            HeldVault {
+                fails: std::cell::Cell::new(fails),
+                tears,
+            }
+        }
+    }
+
+    impl Disk for HeldVault {
+        fn read(&self, path: &Path) -> io::Result<Vec<u8>> {
+            RealDisk.read(path)
+        }
+        fn write(&self, path: &Path, bytes: &[u8]) -> io::Result<()> {
+            RealDisk.write(path, bytes)
+        }
+        fn remove(&self, path: &Path) -> io::Result<()> {
+            RealDisk.remove(path)
+        }
+        fn rename(&self, from: &Path, to: &Path) -> io::Result<()> {
+            RealDisk.rename(from, to)
+        }
+        fn list(&self, dir: &Path) -> io::Result<Vec<String>> {
+            RealDisk.list(dir)
+        }
+        fn write_durable(&self, path: &Path, bytes: &[u8]) -> io::Result<()> {
+            RealDisk.write_durable(path, bytes)
+        }
+        fn rename_durable(&self, from: &Path, to: &Path) -> io::Result<()> {
+            RealDisk.rename_durable(from, to)
+        }
+        fn overwrite_durable(&self, path: &Path, bytes: &[u8]) -> io::Result<()> {
+            if self.fails.get() == 0 {
+                return RealDisk.overwrite_durable(path, bytes);
+            }
+            self.fails.set(self.fails.get() - 1);
+            if self.tears {
+                let mut torn = std::fs::read(path)?;
+                let half = bytes.len().min(torn.len()) / 2;
+                torn[..half].copy_from_slice(&bytes[..half]);
+                std::fs::write(path, torn)?;
+            }
+            Err(io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                "vault.bin is held by another program",
+            ))
+        }
+        fn destroy(&self, path: &Path) -> io::Result<()> {
+            RealDisk.destroy(path)
+        }
+        fn remove_dir_all(&self, dir: &Path) -> io::Result<()> {
+            RealDisk.remove_dir_all(dir)
+        }
+    }
+
+    /// CE-3's open end: another program holding `vault.bin` for a moment
+    /// does not fail the write; the second phase is tried again.
+    #[test]
+    fn a_second_phase_held_for_a_moment_is_tried_again() {
+        let scratch = ScratchDir::new("vault-held-moment");
+        let vault = scratch.path().join("vault.bin");
+        std::fs::write(&vault, OLD).unwrap();
+
+        write_with(&HeldVault::failing(2, false), &vault, NEW).unwrap();
+
+        assert_eq!(std::fs::read(&vault).unwrap(), NEW);
+        assert!(!next_path(&vault).exists());
+    }
+
+    /// CE-3's open end: a second phase that keeps failing with `vault.bin`
+    /// untouched is undone. The error the settings show is then the truth:
+    /// the next opening finds the vault of before, and nothing waiting in
+    /// `vault.bin.next` that the new passphrase would open.
+    #[test]
+    fn a_second_phase_that_keeps_failing_is_undone_while_the_vault_is_untouched() {
+        let scratch = ScratchDir::new("vault-held-long");
+        let vault = scratch.path().join("vault.bin");
+        std::fs::write(&vault, b"old|the vault of before").unwrap();
+
+        let error = write_with(&HeldVault::failing(usize::MAX, false), &vault, b"new|x");
+
+        assert!(error.is_err());
+        assert_eq!(std::fs::read(&vault).unwrap(), b"old|the vault of before");
+        assert!(!next_path(&vault).exists(), "the new vault still waits");
+        let refused = open_with(&RealDisk, &vault, opener("new")).unwrap_err();
+        assert_eq!(refused.code, ErrorCode::WrongPassphrase);
+        assert!(open_with(&RealDisk, &vault, opener("old")).is_ok());
+    }
+
+    /// A second phase that fails after it tore `vault.bin` cannot be
+    /// undone: the new vault is the one, and the write says so. The next
+    /// opening finishes it from `vault.bin.next`.
+    #[test]
+    fn a_second_phase_that_tore_the_vault_counts_as_written() {
+        let scratch = ScratchDir::new("vault-held-torn");
+        let vault = scratch.path().join("vault.bin");
+        std::fs::write(&vault, b"old|the vault of before").unwrap();
+        let new = b"new|the vault of now, as long".to_vec();
+
+        // Only the whole vault opens: a torn one opens with nothing.
+        let exact = |whole: Vec<u8>| {
+            move |bytes: &[u8]| -> Result<Vec<u8>, CommandError> {
+                if bytes == whole {
+                    Ok(bytes.to_vec())
+                } else {
+                    Err(VaultError::DecryptionFailed.into())
+                }
+            }
+        };
+
+        write_with(&HeldVault::failing(usize::MAX, true), &vault, &new).unwrap();
+
+        assert_eq!(std::fs::read(next_path(&vault)).unwrap(), new);
+        let old = b"old|the vault of before".to_vec();
+        let refused = open_with(&RealDisk, &vault, exact(old)).unwrap_err();
+        assert_eq!(refused.code, ErrorCode::WrongPassphrase);
+        assert_eq!(
+            open_with(&RealDisk, &vault, exact(new.clone())).unwrap(),
+            new
+        );
+        assert_eq!(std::fs::read(&vault).unwrap(), new);
+        assert!(!next_path(&vault).exists());
     }
 
     #[test]

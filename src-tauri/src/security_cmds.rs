@@ -732,6 +732,35 @@ mod tests {
         );
     }
 
+    /// CE-3's open end (clave de emergencia CE-4): the new vault reached
+    /// `vault.bin.next`, but `vault.bin` stayed held by another program.
+    /// The settings say the change was not saved, and that is what the next
+    /// unlock finds: the old passphrase opens, the new one does not, and no
+    /// copy waits to finish the change behind the user's back.
+    #[test]
+    fn a_new_passphrase_whose_second_phase_fails_is_not_kept_halfway() {
+        use trino_engine::store::disk::faulty::FaultyDisk;
+        let scratch = ScratchDir::new("passphrase-phase-2");
+        let vault = vault_with(&scratch, None);
+        let before = bytes_of(&vault);
+        let held = std::rc::Rc::new(FaultyDisk::default());
+        held.fail_writes.borrow_mut().insert("vault.bin".into());
+
+        let error = reseal_with_new_passphrase(&vault, PASSPHRASE, NEW_PASSPHRASE, None, |bytes| {
+            trino_engine::vault_file::write_with(&held, &vault, bytes)
+        })
+        .unwrap_err();
+
+        assert_eq!(error.code, ErrorCode::Io);
+        assert_eq!(bytes_of(&vault), before);
+        assert!(!trino_engine::vault_file::next_path(&vault).exists());
+        let new = open_vault(&vault, NEW_PASSPHRASE, None)
+            .map(drop)
+            .unwrap_err();
+        assert_eq!(new.code, ErrorCode::WrongPassphrase);
+        assert!(open_vault(&vault, PASSPHRASE, None).is_ok());
+    }
+
     // ---- The version 3 vault (clave de emergencia CE-3) ----
 
     /// The settings seal a version 3 vault again part by part (design
