@@ -3,13 +3,19 @@ import { cleanup, fireEvent, screen, waitFor, within } from '@testing-library/re
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { isAutoLockHeld } from '../../../app/autolock-hold';
 import { commandError, fakeApi, renderEs } from '../test-utils';
+import type { EmergencyNetworkView, NodeInfo } from '../../../lib/api';
 import type { SettingsApi } from '../types';
 import { EmergencyKeyView, type EmergencyKeyViewProps } from './EmergencyKeyView';
 
 afterEach(cleanup);
 
 function setup(
-  { totpEnabled = false, platform = 'windows', api: overrides = {} }: Partial<Pick<EmergencyKeyViewProps, 'totpEnabled' | 'platform'>> & {
+  {
+    totpEnabled = false,
+    platform = 'windows',
+    api: overrides = {},
+    isVerified = () => false,
+  }: Partial<Pick<EmergencyKeyViewProps, 'totpEnabled' | 'platform' | 'isVerified'>> & {
     api?: Partial<SettingsApi>;
   } = {},
 ) {
@@ -20,6 +26,7 @@ function setup(
     platform,
     onBack: vi.fn(),
     onOpenReinforced: vi.fn(),
+    isVerified,
   };
   const view = renderEs(<EmergencyKeyView {...props} />);
   return { api, props, view };
@@ -264,7 +271,12 @@ describe('EmergencyKeyView', () => {
       const { api } = setup();
       fireEvent.click(screen.getByRole('button', { name: 'Quitar' }));
       const dialog = await screen.findByRole('alertdialog', { name: '¿Quitar la clave de emergencia?' });
-      expect(within(dialog).getByText('Si tienes una, deja de servir.')).toBeTruthy();
+      // CE-6: the mockup's second line is true now.
+      expect(
+        within(dialog).getByText(
+          'Si tienes una, deja de servir. Si Trino iba a avisarle a un contacto de confianza, le dice que ya no lo hará.',
+        ),
+      ).toBeTruthy();
       expect(document.activeElement).toBe(within(dialog).getByLabelText('Tu contraseña'));
       type('Tu contraseña', PASS, dialog);
       fireEvent.click(within(dialog).getByRole('button', { name: 'Quitar' }));
@@ -285,13 +297,38 @@ describe('EmergencyKeyView', () => {
   });
 
   // Test 49 and CE-D11: behind the password; "Ninguna" and the warning to a
-  // contact only, the warning not yet open (CE-6).
+  // trusted contact (CE-6, card 6), which unmark each other.
   describe('Qué pasa en la red', () => {
+    const node = (handle: string) => ({ handle, fingerprint: `fp-${handle}`, has_session: true, added_at: 0 }) as NodeInfo;
+    const view = (over: Partial<EmergencyNetworkView> = {}): EmergencyNetworkView =>
+      ({ action: 'none', candidates: ['Ana Torres', 'Diego'], ...over }) as EmergencyNetworkView;
+
+    /** Opens the section with `PASS`, the backend answering `opened`. */
+    async function open(opened: EmergencyNetworkView, api: Partial<SettingsApi> = {}) {
+      const result = setup({
+        api: {
+          emergencyNetwork: vi.fn(async () => opened),
+          listNodes: vi.fn(async () => [node('Ana Torres'), node('Diego'), node('Carla')]),
+          ...api,
+        },
+        isVerified: (handle: string, fingerprint: string) => handle === 'Ana Torres' && fingerprint === 'fp-Ana Torres',
+      });
+      fireEvent.click(screen.getByRole('button', { name: /Qué pasa en la red/ }));
+      type('Tu contraseña', PASS);
+      fireEvent.click(screen.getByRole('button', { name: 'Seguir' }));
+      await screen.findByRole('checkbox', { name: 'Ninguna' });
+      return result;
+    }
+
+    const checkbox = (name: string) => screen.getByRole('checkbox', { name }) as HTMLInputElement;
+    const radio = (name: RegExp) => screen.getByRole('radio', { name });
+    const isChecked = (element: HTMLElement) => element.getAttribute('aria-checked') === 'true';
+
     it('shows nothing of the choice before the password opens it', async () => {
       const emergencyNetwork = vi
         .fn<SettingsApi['emergencyNetwork']>()
         .mockRejectedValueOnce(commandError('wrong_passphrase'))
-        .mockResolvedValueOnce({ action: 'none' });
+        .mockResolvedValueOnce(view());
       setup({ api: { emergencyNetwork } });
       fireEvent.click(screen.getByRole('button', { name: /Qué pasa en la red/ }));
       expect(await screen.findByText('Escribe tu contraseña para ver y cambiar esto.')).toBeTruthy();
@@ -306,12 +343,12 @@ describe('EmergencyKeyView', () => {
       const none = await screen.findByRole('checkbox', { name: 'Ninguna' });
       expect(emergencyNetwork).toHaveBeenLastCalledWith(PASS, null);
       expect((none as HTMLInputElement).checked).toBe(true);
-      const alert = screen.getByRole('checkbox', { name: 'Avisar a un contacto de confianza' }) as HTMLInputElement;
+      const alert = checkbox('Avisar a un contacto de confianza');
       expect(alert.checked).toBe(false);
-      expect(alert.disabled).toBe(true);
-      expect(screen.getByText(/^Todavía no se puede elegir/)).toBeTruthy();
+      expect(alert.disabled).toBe(false);
+      expect(screen.queryByRole('radio')).toBeNull();
       expect(screen.queryByLabelText(/Tu contraseña/)).toBeNull();
-      expect(document.body.textContent).not.toMatch(/relays que borren/);
+      expect(document.body.textContent).not.toMatch(/relays que borren|próxima versión/);
     });
 
     it('takes the code too when two-step verification is on', async () => {
@@ -321,6 +358,94 @@ describe('EmergencyKeyView', () => {
       type('Código de tu app autenticadora', '654 321');
       fireEvent.click(screen.getByRole('button', { name: 'Seguir' }));
       await waitFor(() => expect(api.emergencyNetwork).toHaveBeenCalledWith(PASS, '654321'));
+    });
+
+    it('offers the contacts whose Trino reads the warning, and says when one is not verified', async () => {
+      await open(view());
+      fireEvent.click(checkbox('Avisar a un contacto de confianza'));
+      expect(checkbox('Ninguna').checked).toBe(false);
+      expect(screen.getAllByRole('radio')).toHaveLength(2);
+      expect(screen.queryByRole('radio', { name: /Carla/ })).toBeNull();
+      expect(screen.getByText('Solo salen los contactos que tienen una versión de Trino que entiende el aviso.')).toBeTruthy();
+      expect(radio(/Ana Torres/).textContent).toContain('Verificado');
+      expect(radio(/Diego/).textContent).toContain('Sin verificar');
+
+      fireEvent.click(radio(/Diego/));
+      expect(screen.getByText('No verificaste a Diego. Verifícalo primero para confirmar que es la persona.')).toBeTruthy();
+      fireEvent.click(radio(/Ana Torres/));
+      expect(screen.queryByText(/No verificaste/)).toBeNull();
+    });
+
+    it('saves the warning with its message, and says where the answer stands', async () => {
+      const saved = view({ action: 'alert', contact: 'Ana Torres', state: 'waiting', message: 'Si no te escribo en dos días, ya sabes qué hacer.' });
+      const { api } = await open(view(), { saveEmergencyNetwork: vi.fn(async () => saved) });
+      const save = screen.getByRole('button', { name: 'Guardar' });
+      fireEvent.click(checkbox('Avisar a un contacto de confianza'));
+      expect((screen.getByRole('button', { name: 'Guardar' }) as HTMLButtonElement).disabled).toBe(true);
+      fireEvent.click(radio(/Ana Torres/));
+      const message = screen.getByLabelText('Mensaje (opcional)') as HTMLTextAreaElement;
+      expect(message.maxLength).toBe(280);
+      expect(screen.getByText(/^Escribe lo que quieres que lea \(hasta 280 caracteres\)/)).toBeTruthy();
+      fireEvent.change(message, { target: { value: 'Si no te escribo en dos días, ya sabes qué hacer.' } });
+      fireEvent.click(save);
+      await waitFor(() =>
+        expect(api.saveEmergencyNetwork).toHaveBeenCalledWith({
+          action: 'alert',
+          contact: 'Ana Torres',
+          message: 'Si no te escribo en dos días, ya sabes qué hacer.',
+        }),
+      );
+      expect(await screen.findByText('Esperando a que Ana Torres acepte.')).toBeTruthy();
+      expect(screen.getByText('Guardado.')).toBeTruthy();
+    });
+
+    it('opens on what was saved, and "Ninguna" takes the warning off', async () => {
+      const { api } = await open(view({ action: 'alert', contact: 'Ana Torres', state: 'accepted', message: 'hola' }), {
+        saveEmergencyNetwork: vi.fn(async () => view()),
+      });
+      expect(checkbox('Ninguna').checked).toBe(false);
+      expect(checkbox('Avisar a un contacto de confianza').checked).toBe(true);
+      expect(isChecked(radio(/Ana Torres/))).toBe(true);
+      expect((screen.getByLabelText('Mensaje (opcional)') as HTMLTextAreaElement).value).toBe('hola');
+      expect(screen.getByText('Ana Torres aceptó.')).toBeTruthy();
+      // Another contact: the state was the other one's.
+      fireEvent.click(radio(/Diego/));
+      expect(screen.queryByText('Ana Torres aceptó.')).toBeNull();
+
+      fireEvent.click(checkbox('Ninguna'));
+      expect(checkbox('Avisar a un contacto de confianza').checked).toBe(false);
+      expect(screen.queryByRole('radio')).toBeNull();
+      fireEvent.click(screen.getByRole('button', { name: 'Guardar' }));
+      await waitFor(() => expect(api.saveEmergencyNetwork).toHaveBeenCalledWith({ action: 'none' }));
+    });
+
+    it('says when the contact said no', async () => {
+      await open(view({ action: 'alert', contact: 'Diego', state: 'declined', message: '' }));
+      expect(screen.getByText('Diego no aceptó.')).toBeTruthy();
+    });
+
+    it('says when no contact can get the warning yet', async () => {
+      await open(view({ candidates: [] }));
+      fireEvent.click(checkbox('Avisar a un contacto de confianza'));
+      expect(screen.getByText('Ninguno de tus contactos tiene todavía una versión de Trino que entienda el aviso.')).toBeTruthy();
+      expect((screen.getByRole('button', { name: 'Guardar' }) as HTMLButtonElement).disabled).toBe(true);
+    });
+
+    it('asks for the password again once the section closed', async () => {
+      await open(view(), { saveEmergencyNetwork: vi.fn(async () => Promise.reject(commandError('wrong_passphrase'))) });
+      fireEvent.click(screen.getByRole('button', { name: 'Guardar' }));
+      expect(await screen.findByLabelText('Tu contraseña')).toBeTruthy();
+      expect(screen.getByRole('alert').textContent).toBe(
+        'Pasó un rato desde que escribiste tu contraseña. Escríbela otra vez para guardar.',
+      );
+      expect(screen.queryByRole('checkbox')).toBeNull();
+    });
+
+    it('says when it could not save', async () => {
+      await open(view(), { saveEmergencyNetwork: vi.fn(async () => Promise.reject(commandError('offline'))) });
+      fireEvent.click(screen.getByRole('button', { name: 'Guardar' }));
+      expect((await screen.findByRole('alert')).textContent).toBe('No se pudo guardar. Revisa tu conexión e inténtalo de nuevo.');
+      expect(screen.getByRole('checkbox', { name: 'Ninguna' })).toBeTruthy();
     });
   });
 });

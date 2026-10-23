@@ -15,6 +15,11 @@
  * reach you, nor in a group you are no longer in: a line says why in place
  * of the composer, and no message offers Responder. A blocked contact is
  * never called back either.
+ *
+ * The warning to a trusted contact (CE-6, EmergencyAlert.tsx): a contact's
+ * question shows over its chat, and a line says when you accepted; a
+ * warning that came shows as a strip under the header. Neither is a
+ * message of the log.
  */
 import { Check, CircleAlert, Trash2 } from 'lucide-react';
 import { useEffect, useId, useMemo, useRef, useState } from 'react';
@@ -25,6 +30,7 @@ import { Button, Dialog, iconSize } from '../../ui';
 import type { ChatPaneProps, ReplyRef } from '../types';
 import { ChatHeader } from './ChatHeader';
 import { Composer } from './composer/Composer';
+import { EmergencyAskDialog, EmergencyWarningStrip } from './EmergencyAlert';
 import { KeyChangeBanner } from './KeyChangeBanner';
 import type { MessageActions } from './MessageItem';
 import { MessageList } from './MessageList';
@@ -102,6 +108,8 @@ export function ChatPane(props: ChatPaneProps) {
   /** A deletion on its way: the message that goes, and the one that takes the focus it leaves. */
   const refocus = useRef<{ gone: string; next: string | null } | null>(null);
   const composerRows = useComposerRows(pane);
+  /** You accepted this contact's question just now (CE-6): the line that says so. */
+  const [accepted, setAccepted] = useState(false);
 
   const contact = header.kind === 'contact';
   const blocked = header.kind === 'contact' && header.blocked;
@@ -222,6 +230,9 @@ export function ChatPane(props: ChatPaneProps) {
       {header.kind === 'contact' && header.trust === 'keyChanged' && (
         <KeyChangeBanner name={header.name} onVerify={props.onVerify} onAcknowledge={props.onAcknowledgeKeyChange} />
       )}
+      {header.kind === 'contact' && props.emergencyWarning ? (
+        <EmergencyWarningStrip name={header.name} at={props.emergencyWarning.at} message={props.emergencyWarning.message} />
+      ) : null}
       <MessageList
         messages={props.messages}
         now={props.now}
@@ -229,6 +240,11 @@ export function ChatPane(props: ChatPaneProps) {
         actions={actions}
         onCall={call}
       />
+      {accepted ? (
+        <p role="status" className="mx-auto mt-2 max-w-[92%] rounded-ui bg-ui-raised px-3 py-2 text-center text-ui-md leading-normal text-ui-ink">
+          {t('emergency.contact.accepted', { name: header.name })}
+        </p>
+      ) : null}
       <div role="status" className="px-4 text-ui-md text-ui-muted">
         {notice?.tone === 'status' && (
           <span className="flex items-center gap-1.5 pt-2">
@@ -244,6 +260,13 @@ export function ChatPane(props: ChatPaneProps) {
         </p>
       )}
       {footer}
+      {header.kind === 'contact' && props.onEmergencyAnswer ? (
+        <EmergencyAskDialog
+          name={header.name}
+          onAnswer={props.onEmergencyAnswer}
+          onAnswered={accept => setAccepted(accept)}
+        />
+      ) : null}
       {deleting !== null && (
         <DeleteQuestion
           group={header.kind === 'group'}

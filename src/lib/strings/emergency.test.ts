@@ -90,7 +90,35 @@ const KEYS: string[] = [
   'emergency.net.noneBody',
   'emergency.net.alert',
   'emergency.net.alertBody',
-  'emergency.net.alertSoon',
+  // The warning to a trusted contact (CE-6, card 6, §7.2, §11.3).
+  'emergency.net.who',
+  'emergency.net.onlyReaders',
+  'emergency.net.noReaders',
+  'emergency.net.verified',
+  'emergency.net.unverified',
+  'emergency.net.notVerified',
+  'emergency.net.waiting',
+  'emergency.net.accepted',
+  'emergency.net.declined',
+  'emergency.net.message',
+  'emergency.net.messageHint',
+  'emergency.net.save',
+  'emergency.net.saved',
+  'emergency.net.closed',
+  'emergency.net.saveFailed',
+  // The contact's side (CE-6, cards 9 and 10, §11.6).
+  'emergency.contact.title',
+  'emergency.contact.ask',
+  'emergency.contact.askNote',
+  'emergency.contact.decline',
+  'emergency.contact.accept',
+  'emergency.contact.accepted',
+  'emergency.contact.answerFailed',
+  'emergency.contact.warning',
+  'emergency.contact.quote',
+  'emergency.contact.whatToDo',
+  'emergency.contact.whatToDoBody',
+  'emergency.contact.notification',
 ];
 
 /**
@@ -125,6 +153,17 @@ describe('the texts of the emergency key', () => {
         'emergency.setup.step': ['n'],
         'emergency.setup.keyRule': ['min'],
         'emergency.err.short': ['min'],
+        'emergency.net.notVerified': ['name'],
+        'emergency.net.waiting': ['name'],
+        'emergency.net.accepted': ['name'],
+        'emergency.net.declined': ['name'],
+        'emergency.contact.ask': ['name'],
+        'emergency.contact.askNote': ['name'],
+        'emergency.contact.accepted': ['name'],
+        'emergency.contact.warning': ['name', 'date', 'time'],
+        'emergency.contact.quote': ['message'],
+        'emergency.contact.whatToDoBody': ['name'],
+        'emergency.contact.notification': ['name'],
       },
     });
   });
@@ -148,6 +187,17 @@ describe('the texts of the emergency key', () => {
     const net = Object.keys(emergency.es).filter(key => key.startsWith('emergency.net.'));
     expect(net.some(key => /relay|delete|vanish/i.test(key))).toBe(false);
     expect(emergency.es['emergency.net.none']).toBe('Ninguna');
+  });
+
+  it('say that "Quitar" tells the trusted contact, and never call the warning sure (§7.5, §11.6)', () => {
+    expect(emergency.es['emergency.remove.body']).toBe(
+      'Si tienes una, deja de servir. Si Trino iba a avisarle a un contacto de confianza, le dice que ya no lo hará.',
+    );
+    for (const lang of LANG_CODES) {
+      expect(emergency[lang]['emergency.net.alertSoon'], lang).toBeUndefined();
+      // The contact is told a warning may be false (RC-09).
+      expect(emergency[lang]['emergency.contact.whatToDoBody'], lang).toMatch(/fals/i);
+    }
   });
 
   it('speak Colombian Spanish with tú', () => {

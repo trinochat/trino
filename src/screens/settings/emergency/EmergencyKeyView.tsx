@@ -26,7 +26,10 @@ import { EmergencySetup } from './EmergencySetup';
 import { EmergencyTestDialog } from './EmergencyTestDialog';
 
 export interface EmergencyKeyViewProps {
-  api: Pick<SettingsApi, 'setEmergencyKey' | 'testEmergencyKey' | 'removeEmergencyKey' | 'emergencyNetwork'>;
+  api: Pick<
+    SettingsApi,
+    'setEmergencyKey' | 'testEmergencyKey' | 'removeEmergencyKey' | 'emergencyNetwork' | 'saveEmergencyNetwork' | 'listNodes'
+  >;
   /** Two-step verification is on: each password asked here takes a code too. */
   totpEnabled: boolean;
   /** Protección reforzada is on Windows only. */
@@ -35,13 +38,15 @@ export interface EmergencyKeyViewProps {
   onBack(): void;
   /** Opens Settings › Privacidad, where Protección reforzada is. */
   onOpenReinforced?(): void;
+  /** Whether you verified a contact (`prefs.isVerified`): the network section says so (CE-6). */
+  isVerified(handle: string, fingerprint: string): boolean;
   autoFocus?: boolean;
 }
 
 type View = 'page' | 'setup' | 'network';
 type OpenDialog = 'test' | 'remove' | null;
 
-export function EmergencyKeyView({ api, totpEnabled, platform, onBack, onOpenReinforced, autoFocus }: EmergencyKeyViewProps) {
+export function EmergencyKeyView({ api, totpEnabled, platform, onBack, onOpenReinforced, isVerified, autoFocus }: EmergencyKeyViewProps) {
   const t = useT();
   const [view, setView] = useState<View>('page');
   const [dialog, setDialog] = useState<OpenDialog>(null);
@@ -67,7 +72,7 @@ export function EmergencyKeyView({ api, totpEnabled, platform, onBack, onOpenRei
       />
     );
   } else if (view === 'network') {
-    content = <EmergencyNetworkView api={api} totpEnabled={totpEnabled} onBack={back} />;
+    content = <EmergencyNetworkView api={api} totpEnabled={totpEnabled} isVerified={isVerified} onBack={back} />;
   } else {
     content = (
       <SettingsSection

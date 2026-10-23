@@ -26,6 +26,7 @@ export const settingsBackend: SettingsBackend = {
   testEmergencyKey: api.testEmergencyKey,
   removeEmergencyKey: api.removeEmergencyKey,
   emergencyNetwork: api.emergencyNetwork,
+  saveEmergencyNetwork: api.saveEmergencyNetwork,
   wipe: api.wipe,
   getAutostart: api.getAutostart,
   setAutostart: api.setAutostart,

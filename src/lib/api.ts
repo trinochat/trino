@@ -147,9 +147,30 @@ export interface ForgeResponse extends UnsealResponse {
   bundle_json: string;
 }
 
-// What Trino does on the network when the emergency key is used (CE-5,
-// design §7): today only nothing. CE-6 adds the warning to a contact.
-export type EmergencyNetwork = { action: 'none' };
+// What Trino does on the network when the emergency key is used (design §7,
+// CE-D11): nothing, or the warning to a trusted contact (CE-6), with where
+// that contact's answer stands.
+export type AlertAnswer = 'waiting' | 'accepted' | 'declined';
+export type EmergencyNetwork =
+  | { action: 'none' }
+  | { action: 'alert'; contact: string; state: AlertAnswer; message: string };
+// "Qué pasa en la red", open: the choice, and the contacts whose Trino reads
+// the warning (by name).
+export type EmergencyNetworkView = EmergencyNetwork & { candidates: string[] };
+// What "Guardar" saves.
+export type EmergencyNetworkChoice = { action: 'none' } | { action: 'alert'; contact: string; message: string };
+
+// The chats' side of the warning (CE-6, design §7.2, §11.6): the contacts
+// whose question waits for an answer, and the warnings that came.
+export interface EmergencyAlerts {
+  asks: string[];
+  warnings: { handle: string; at: number; message: string }[];
+}
+// `emergency-alert`: a contact asked, answered, withdrew, or its warning came.
+export interface EmergencyAlertEvent {
+  handle: string;
+  what: 'asked' | 'answered' | 'withdrawn' | 'warned';
+}
 
 // A new TOTP secret to add to an authenticator app, as a QR code or typed in.
 export interface TotpBeginResponse {
@@ -636,9 +657,19 @@ export const api = {
   // "Quitar": the same answer with a key or without one.
   removeEmergencyKey: (current: string, totpCode?: string | null): Promise<void> =>
     invoke('remove_emergency_key', { current, totpCode: totpCode ?? null }),
-  // "Qué pasa en la red", behind the password: what is chosen.
-  emergencyNetwork: (passphrase: string, totpCode?: string | null): Promise<EmergencyNetwork> =>
+  // "Qué pasa en la red", behind the password: what is chosen, and who the
+  // warning can go to. It stays open ten minutes for "Guardar".
+  emergencyNetwork: (passphrase: string, totpCode?: string | null): Promise<EmergencyNetworkView> =>
     invoke('emergency_network', { passphrase, totpCode: totpCode ?? null }),
+  // "Guardar" (CE-6): `wrong_passphrase` once the section closed, `not_found`
+  // for a contact the warning cannot go to.
+  saveEmergencyNetwork: (choice: EmergencyNetworkChoice): Promise<EmergencyNetworkView> =>
+    invoke('save_emergency_network', { choice }),
+  // The chats (CE-6): the questions waiting, and the warnings that came.
+  emergencyAlerts: (): Promise<EmergencyAlerts> => invoke('emergency_alerts'),
+  // "Aceptar" or "No, gracias" to a contact's question (CE-D4).
+  answerEmergencyAlert: (handle: string, accept: boolean): Promise<void> =>
+    invoke('answer_emergency_alert', { handle, accept }),
   // K8: checks a pasted code and reports a clash, without saving anything.
   previewContact: (bundleJson: string): Promise<ContactPreview> =>
     invoke('preview_contact', { bundleJson }),
@@ -803,6 +834,10 @@ export async function onCallLogged(cb: (entry: CallLogWire) => void): Promise<Un
 }
 
 // A contact's shared profile changed (K12).
+export async function onEmergencyAlert(cb: (event: EmergencyAlertEvent) => void): Promise<UnlistenFn> {
+  return await listen<EmergencyAlertEvent>('emergency-alert', e => cb(e.payload));
+}
+
 export async function onProfileUpdated(cb: (event: ProfileUpdatedEvent) => void): Promise<UnlistenFn> {
   return await listen<ProfileUpdatedEvent>('profile-updated', e => cb(e.payload));
 }

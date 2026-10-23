@@ -35,6 +35,7 @@ describe('settingsBackend', () => {
       'testEmergencyKey',
       'removeEmergencyKey',
       'emergencyNetwork',
+      'saveEmergencyNetwork',
       'wipe',
       'getAutostart',
       'setAutostart',

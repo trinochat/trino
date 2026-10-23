@@ -188,6 +188,16 @@ export interface ChatPaneProps {
   /** The whole file as a data URL, refused past `maxBytes` when given (TRN-APP-02). */
   fetchFile(f: FileRef, maxBytes?: number): Promise<string>;
   stickers: StickerApi;
+  /**
+   * CE-6 (design §7.2, §11.6): the warning of this contact's emergency key
+   * came. The chat shows it in a strip under the header, for good.
+   */
+  emergencyWarning?: { at: number; message: string };
+  /**
+   * CE-6 (CE-D4): this contact asks to warn you if it ever uses its
+   * emergency key. The chat asks; the answer goes through here.
+   */
+  onEmergencyAnswer?(accept: boolean): Promise<void>;
 }
 export interface ChannelViewProps {
   announcements: readonly Announcement[];

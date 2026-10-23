@@ -63,6 +63,11 @@ function yesterday(lang: Lang): string {
   return formatter.format(-1, 'day');
 }
 
+/** The day and the month in words: "17 de octubre", "October 17". */
+export function dayMonth(ts: number, lang: Lang): string {
+  return format(ts, lang, DAY_MONTH_LONG);
+}
+
 /** Hours and minutes: "09:05", "09:05 AM". */
 export function clockTime(ts: number, lang: Lang): string {
   return format(ts, lang, CLOCK);

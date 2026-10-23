@@ -3,8 +3,8 @@
  * card 5): your password (and the code, with two-step verification on),
  * then the same "Listo" whether there was a key or not.
  *
- * The mockup's second line, that a trusted contact would be told, waits for
- * CE-6: today no contact can be chosen, so it would promise nothing true.
+ * Its second line says that a trusted contact would be told: the backend
+ * withdraws the warning once the key is gone (CE-6).
  */
 import { Trash2 } from 'lucide-react';
 import { useId, useRef, useState, type FormEvent } from 'react';

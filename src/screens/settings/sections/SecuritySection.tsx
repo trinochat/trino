@@ -39,6 +39,8 @@ export interface SecuritySectionProps {
     | 'testEmergencyKey'
     | 'removeEmergencyKey'
     | 'emergencyNetwork'
+    | 'saveEmergencyNetwork'
+    | 'listNodes'
   >;
   prefs: Prefs;
   capabilities: Pick<SettingsCapabilities, 'totp' | 'changePassphrase' | 'emergencyKey'>;
@@ -127,6 +129,7 @@ export function SecuritySection({
         api={api}
         totpEnabled={totpEnabled === true}
         platform={platform}
+        isVerified={prefs.isVerified}
         onBack={() => {
           setMoved(true);
           setEmergencyOpen(false);

@@ -34,6 +34,7 @@ import {
   onCallSignal,
   onConnectionChanged,
   onContactKeyMismatch,
+  onEmergencyAlert,
   onFileMessage,
   onGroupInvite,
   onGroupMessage,
@@ -63,6 +64,7 @@ import { VerifyContactDialog } from '../screens/verify';
 import { capabilities as buildCapabilities, type Capabilities } from './capabilities';
 import { useCalls, type CallGate, type CallsBackend } from './calls';
 import { downloadBlob } from './download';
+import { useEmergencyAlerts, type EmergencyAlertsBackend } from './emergency-alerts';
 import { createNotifier } from './notifier';
 import { platformOf, settingsBackend, type SettingsBackend } from './settings';
 import { useLegacyMarksNotice } from './verification';
@@ -127,6 +129,8 @@ export interface MainDeps {
   makeAvatar(file: File): Promise<string>;
   /** Tor's state and commands (TOR-6); null shows nothing of Tor. */
   net?: NetScreensApi | null;
+  /** The warning to a trusted contact's side of the chats (CE-6); null shows nothing of it. */
+  alerts?: EmergencyAlertsBackend | null;
 }
 
 /** This window through Tauri, asked for on each use, so that loading this module needs no Tauri. */
@@ -167,6 +171,11 @@ const DEVICE_DEPS: MainDeps = {
   download: downloadBlob,
   makeAvatar,
   net: netScreensApi,
+  alerts: {
+    emergencyAlerts: api.emergencyAlerts,
+    answerEmergencyAlert: api.answerEmergencyAlert,
+    onEmergencyAlert,
+  },
 };
 
 export interface MainScreenProps extends MainProps {
@@ -268,9 +277,20 @@ export function MainScreen({ intent, onLock, onAutolockChanged, onWiped, onCallG
     [d, t, isWindowFocused],
   );
 
+  // CE-6: a contact's question and the warning that came, in its chat; a
+  // warning that came is told as a message is.
+  const alertsFor = useEmergencyAlerts(d.alerts ?? null, handle =>
+    notifier.message({
+      convo: { kind: 'contact', handle },
+      title: handle,
+      text: t('emergency.contact.notification', { name: handle }),
+      kind: 'text',
+    }),
+  );
+
   const devicePrefsOfGroups = useMemo(() => groupPrefs(d.prefs), [d.prefs]);
   const slots: ShellSlots = {
-    chat: p => <ChatPane {...p} />,
+    chat: p => <ChatPane {...p} {...alertsFor(p.convo)} />,
     channel: p => <ChannelView {...p} />,
     contacts: p => <ContactsDialog {...p} api={d.api} download={d.download} groupPrefs={devicePrefsOfGroups} />,
     newGroup: p => <NewGroupDialog {...p} api={d.api} groupPrefs={devicePrefsOfGroups} />,

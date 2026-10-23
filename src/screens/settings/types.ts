@@ -6,7 +6,8 @@
  */
 import type {
   ConnectionStatus,
-  EmergencyNetwork,
+  EmergencyNetworkChoice,
+  EmergencyNetworkView,
   NodeInfo,
   NotificationTest,
   ProfileResponse,
@@ -35,7 +36,9 @@ export interface SettingsApi {
   /** "Quitar": the same answer with a key or without one. */
   removeEmergencyKey(current: string, totpCode?: string | null): Promise<void>;
   /** "Qué pasa en la red", only once your password (and code) opened it. */
-  emergencyNetwork(passphrase: string, totpCode?: string | null): Promise<EmergencyNetwork>;
+  emergencyNetwork(passphrase: string, totpCode?: string | null): Promise<EmergencyNetworkView>;
+  /** "Guardar" there (CE-6): `wrong_passphrase` once it closed. */
+  saveEmergencyNetwork(choice: EmergencyNetworkChoice): Promise<EmergencyNetworkView>;
   wipe(): Promise<void>;
   getAutostart(): Promise<boolean>;
   setAutostart(enable: boolean): Promise<void>;

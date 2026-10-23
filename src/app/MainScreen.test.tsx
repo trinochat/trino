@@ -7,6 +7,7 @@ import type {
   CallEventWire,
   CallLogWire,
   CallSignalEvent,
+  EmergencyAlertEvent,
   GroupInfo,
   HistItem,
   NodeInfo,
@@ -22,6 +23,7 @@ import { fakeApi as fakeSettingsApi, fakeHost, memoryPrefs } from '../screens/se
 import { fakeApi as fakeShellApi, fakeEvents } from '../screens/shell/test-fakes';
 import { ToastProvider } from '../ui';
 import type { Capabilities } from './capabilities';
+import type { EmergencyAlertsBackend } from './emergency-alerts';
 import { MainScreen, type MainApi, type MainDeps, type MainProps } from './MainScreen';
 
 // The chats of the redesign (plan §4, I6; plan-cambios-11oct §7, I6): W2's
@@ -146,6 +148,8 @@ interface SetupOptions {
   capabilities?: Capabilities;
   /** Whether Trino is in front at the start. */
   inFront?: boolean;
+  /** The warning to a trusted contact's side of the chats (CE-6); none by default. */
+  alerts?: EmergencyAlertsBackend | null;
 }
 
 function setup({
@@ -157,6 +161,7 @@ function setup({
   stored = {},
   capabilities = ALL,
   inFront = true,
+  alerts = null,
 }: SetupOptions = {}) {
   let contacts = nodes;
   let profile = PROFILE;
@@ -251,6 +256,7 @@ function setup({
     makeAvatar: async () => 'data:image/jpeg;base64,AAAA',
     // Tor's screens have tests of their own (src/screens/net).
     net: null,
+    alerts,
   };
   const main = {
     intent,
@@ -390,6 +396,55 @@ describe('MainScreen: the chats', () => {
     fireEvent.click(within(notice).getByRole('button', { name: 'Entendido' }));
     expect(storage.data.has('verified:Ana')).toBe(false);
     expect(screen.queryByRole('dialog', { name: 'Vuelve a verificar a tus contactos' })).toBeNull();
+  });
+});
+
+// CE-6: the warning to a trusted contact, in the chats.
+describe('MainScreen: the warning to a trusted contact', () => {
+  function alertsOf(asks: string[]) {
+    let heard: ((event: EmergencyAlertEvent) => void) | null = null;
+    let state = { asks, warnings: [] as { handle: string; at: number; message: string }[] };
+    const backend: EmergencyAlertsBackend = {
+      emergencyAlerts: vi.fn(async () => state),
+      answerEmergencyAlert: vi.fn(async (handle: string) => {
+        state = { ...state, asks: state.asks.filter(ask => ask !== handle) };
+      }),
+      onEmergencyAlert: vi.fn(async (cb: (event: EmergencyAlertEvent) => void) => {
+        heard = cb;
+        return () => {};
+      }),
+    };
+    const warn = (handle: string) =>
+      act(async () => {
+        state = { ...state, warnings: [{ handle, at: NOW, message: 'ya sabes' }] };
+        heard?.({ handle, what: 'warned' });
+      });
+    return { backend, warn };
+  }
+
+  it('asks in the chat of the contact who asks, and the answer goes to the backend', async () => {
+    const { backend } = alertsOf(['Ana']);
+    setup({ alerts: backend });
+    fireEvent.click(await row('Bea'));
+    await composer('Bea');
+    expect(screen.queryByRole('dialog', { name: 'Contacto de confianza' })).toBeNull();
+    fireEvent.click(await row('Ana'));
+    const dialog = await screen.findByRole('dialog', { name: 'Contacto de confianza' });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Aceptar' }));
+    await waitFor(() => expect(backend.answerEmergencyAlert).toHaveBeenCalledWith('Ana', true));
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Contacto de confianza' })).toBeNull());
+    expect(await screen.findByText('Aceptaste. Si Ana usa su clave de emergencia, verás un aviso en este chat.')).toBeTruthy();
+  });
+
+  it('tells of a warning that came as of a message, and shows its strip in the chat', async () => {
+    const { backend, warn } = alertsOf([]);
+    const { notify } = setup({ alerts: backend, inFront: false });
+    fireEvent.click(await row('Ana'));
+    await composer('Ana');
+    await waitFor(() => expect(backend.onEmergencyAlert).toHaveBeenCalled());
+    await warn('Ana');
+    expect(notify.mock.calls.map(call => call[0])).toContain('Ana');
+    expect((await screen.findByRole('note')).textContent).toMatch(/^Ana usó su clave de emergencia en uno de sus equipos\./);
   });
 });
 
