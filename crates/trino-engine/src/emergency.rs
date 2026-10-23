@@ -981,4 +981,81 @@ mod tests {
         .await;
         assert!(gone.is_ok(), "the old store is still there");
     }
+
+    // ---- Design §6.3 and §12.5: the time of the two paths (CE-8) ----
+
+    /// Ana's account with `messages` messages in its history, as she would
+    /// have it after a while.
+    fn with_history(ana: &Ana, messages: usize) {
+        let (identity, _, loaded) = ana.unlock(PASSPHRASE).unwrap();
+        let loaded = loaded.unwrap();
+        let mut inner = InnerState {
+            identity: Some(identity),
+            ..InnerState::default()
+        };
+        inner.storage.set(loaded.storage);
+        let items = (0..messages)
+            .map(|i| HistItem {
+                side: if i % 2 == 0 { "them" } else { "me" }.into(),
+                from: None,
+                text: Some(format!(
+                    "mensaje número {i}, con algo de texto como cualquiera"
+                )),
+                file: None,
+                call: None,
+                ts: i as i64,
+            })
+            .collect();
+        inner.history.insert("Bob".into(), items);
+        crate::session::write_history(&inner).unwrap();
+    }
+
+    /// The median and the 90th percentile of `times`, in milliseconds.
+    fn median_and_p90(times: &mut [std::time::Duration]) -> (f64, f64) {
+        times.sort();
+        let ms = |at: usize| times[at.min(times.len() - 1)].as_secs_f64() * 1000.0;
+        (ms(times.len() / 2), ms(times.len() * 9 / 10))
+    }
+
+    /// Design §6.3 and §12.5 (CE-D9: measure first; nothing is evened out
+    /// yet): how long each path takes to open the account, a real unlock
+    /// against the emergency path, with a small and a large history.
+    ///
+    /// Not part of the suite. Run it with
+    /// `cargo test -p trino-engine --lib -- --ignored measure_the_two_paths --nocapture`,
+    /// with `TMP` (or `TMPDIR`) on the disk to measure: an SSD, a hard disk.
+    /// The tests' KDF is cheap, and the same in both paths, as Argon2id is
+    /// (one derivation each, with the same parameters): what this compares
+    /// is what comes after it, in the test profile (`test-kdf` refuses a
+    /// release build), so the times are higher than a release's and only
+    /// the difference counts. CE-8 measures the app itself.
+    #[test]
+    #[ignore = "a measurement for CE-8, not a check"]
+    fn measure_the_two_paths() {
+        const RUNS: usize = 15;
+        println!("design §6.3: {RUNS} runs each, after the key derivation");
+        for messages in [10, 5_000] {
+            let (mut real, mut emergency) = (Vec::new(), Vec::new());
+            for _ in 0..RUNS {
+                let scratch = ScratchDir::new("emergency-measure");
+                let ana = Ana::new(scratch.path(), false);
+                with_history(&ana, messages);
+
+                let started = std::time::Instant::now();
+                drop(ana.unlock(PASSPHRASE).unwrap());
+                real.push(started.elapsed());
+                let started = std::time::Instant::now();
+                drop(ana.unlock(EMERGENCY).unwrap());
+                emergency.push(started.elapsed());
+            }
+            let (real_median, real_p90) = median_and_p90(&mut real);
+            let (emergency_median, emergency_p90) = median_and_p90(&mut emergency);
+            println!(
+                "history of {messages:>5} messages: real {real_median:7.1} ms (p90 {real_p90:7.1}), \
+                 emergency {emergency_median:7.1} ms (p90 {emergency_p90:7.1}), \
+                 difference of the medians {:+7.1} ms",
+                emergency_median - real_median
+            );
+        }
+    }
 }
