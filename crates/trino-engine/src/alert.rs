@@ -15,6 +15,9 @@
 //!    the block with the emergency key and an old copy of the vault does not
 //!    learn who it is (§7.6). The store keeps who it is (`OwnAlert`).
 //!
+//! Those messages go through the ratchet padded with spaces to a multiple
+//! of `WIRE_STEP` (`Wire::padded`), the size of a short text (CE-D14).
+//!
 //! Choosing "Ninguna", another contact, or removing the emergency key sends
 //! `{"ty":"alert-reg","v":1,"id":…,"off":true}` to the contact chosen
 //! before, whose Trino closes that registration (§8.5).
@@ -73,6 +76,11 @@ pub const MAX_CONTACT_RELAYS: usize = 5;
 const CONTACT_RELAYS_ROOM: usize = 512;
 /// The longest relay URL taken.
 const MAX_RELAY_URL: usize = 200;
+/// What the messages of the warning are padded to inside the ratchet, in
+/// steps: as much as a text of some 170 characters takes. The question,
+/// its withdrawal and both answers, with the relays a Trino uses by
+/// default, fit in one.
+pub const WIRE_STEP: usize = 256;
 const LABEL: &[u8] = b"trino/alert/v1";
 const EPOCH_INFO: &[u8] = b"trino/alert/v1/epoch";
 /// What the content is padded to: the label, the id, the time, the length
@@ -189,8 +197,19 @@ fn read_ack(fields: &Map<String, Value>) -> Option<Wire> {
 }
 
 impl Wire {
-    /// The message as it goes through the ratchet: compact JSON, its fields
-    /// in this order.
+    /// The message as it goes through the ratchet (CE-D14): its JSON, and
+    /// spaces up to the next multiple of `WIRE_STEP`, so its size does not
+    /// tell it from a short text. The messages have no padding of their
+    /// own until P1; JSON takes spaces after the value, so it reads as
+    /// before.
+    pub fn padded(&self) -> Vec<u8> {
+        let mut bytes = self.to_bytes();
+        let len = bytes.len().max(1).div_ceil(WIRE_STEP) * WIRE_STEP;
+        bytes.resize(len, b' ');
+        bytes
+    }
+
+    /// The message's compact JSON, its fields in this order.
     pub fn to_bytes(&self) -> Vec<u8> {
         let quoted = |text: &str| serde_json::to_string(text).unwrap_or_default();
         let text = match self {
@@ -847,7 +866,7 @@ async fn send(state: &Engine, to: &str, wire: &Wire) -> Result<(), CommandError>
             .ok_or_else(|| CommandError::new(ErrorCode::NotFound, "no such contact"))?
     };
     crate::session::ensure_session(state, &handle).await?;
-    crate::session::publish_sealed(state, &handle, &wire.to_bytes(), None).await?;
+    crate::session::publish_sealed(state, &handle, &wire.padded(), None).await?;
     Ok(())
 }
 
@@ -1598,6 +1617,60 @@ mod session_tests {
         assert_eq!(sink.names(), [ALERT_EVENT]);
     }
 
+    /// The length of what the ratchet carries in `event`.
+    fn sealed_len(event: &NostrEvent) -> usize {
+        let payload: crate::session::WirePayload = serde_json::from_str(&event.content).unwrap();
+        payload.ciphertext.len()
+    }
+
+    /// CE-D14: on the relay, the question, its withdrawal and both answers
+    /// weigh what a short text does (some 170 characters): nothing in the
+    /// size tells them apart.
+    #[tokio::test]
+    async fn the_question_and_the_answers_weigh_what_a_short_text_does() {
+        let mut pair = Pair::new().await;
+        // The text whose envelope, as `seal_for` sends it, takes `WIRE_STEP`.
+        let body = {
+            let ana = pair.ana.inner.lock().await;
+            let envelope = |body: &str| {
+                let plain = crate::envelope::encode_envelope(&crate::envelope::Envelope::Text {
+                    body: body.to_string(),
+                    id: crate::session::new_msg_id(),
+                });
+                crate::profile::with_caps(&ana.profiles, "Bob", &plain).len()
+            };
+            let body = "x".repeat(WIRE_STEP - envelope(""));
+            assert_eq!(envelope(&body), WIRE_STEP);
+            body
+        };
+        crate::send::send_text(&pair.ana, "Bob", body, Duration::from_secs(5))
+            .await
+            .unwrap();
+        pair.deliver(1).await;
+        let text = sealed_len(&pair.relay.events()[0]);
+
+        choose(&pair.ana, Some("Bob"), "").await.unwrap();
+        pair.deliver(1).await;
+        answer(&pair.bob, "Ana", false).await.unwrap();
+        pair.deliver(1).await;
+        choose(&pair.ana, Some("Bob"), "otra vez").await.unwrap();
+        pair.deliver(1).await;
+        answer(&pair.bob, "Ana", true).await.unwrap();
+        pair.deliver(1).await;
+        choose(&pair.ana, None, "").await.unwrap();
+        pair.deliver(1).await;
+        assert_eq!(
+            own_view(&*pair.ana.inner.lock().await),
+            None,
+            "the whole round went"
+        );
+        let events = pair.relay.events();
+        assert_eq!(events.len(), 6);
+        for (at, event) in events.iter().enumerate().skip(1) {
+            assert_eq!(sealed_len(event), text, "message {at}");
+        }
+    }
+
     /// Withdrawn ("Ninguna" or another contact): the contact's Trino stops
     /// listening, and a warning that came stays in its chat.
     #[tokio::test]
@@ -1710,6 +1783,53 @@ mod tests {
             )
             .into_bytes()
         );
+    }
+
+    /// CE-D14: the messages of the warning go through the ratchet padded
+    /// with spaces after their JSON to a multiple of `WIRE_STEP`: the
+    /// question, its withdrawal and both answers, with the relays a Trino
+    /// uses by default, weigh the same. They read as they were.
+    #[test]
+    fn the_messages_are_padded_inside_the_ratchet() {
+        let defaults: Vec<String> = crate::state::relays_to_use(&[]);
+        assert!(!defaults.is_empty());
+        let messages = [
+            Wire::Reg {
+                id: id_of(1),
+                key: key_of(2),
+            },
+            Wire::Off { id: id_of(1) },
+            Wire::Ack {
+                id: id_of(1),
+                ok: true,
+                relays: contact_relays(&defaults),
+            },
+            Wire::Ack {
+                id: id_of(1),
+                ok: false,
+                relays: vec![],
+            },
+        ];
+        for wire in messages {
+            let (json, padded) = (wire.to_bytes(), wire.padded());
+            assert_eq!(padded.len(), WIRE_STEP, "{wire:?}");
+            assert!(padded.starts_with(&json));
+            assert!(padded[json.len()..].iter().all(|&byte| byte == b' '));
+            assert_eq!(read(&padded), Read::Wire(wire.clone()), "{wire:?}");
+        }
+        // Five long relays go past it: to the next multiple.
+        let long: Vec<String> = (0..5)
+            .map(|n| format!("wss://{}{n}.example", "r".repeat(80)))
+            .collect();
+        let wide = Wire::Ack {
+            id: id_of(1),
+            ok: true,
+            relays: contact_relays(&long),
+        };
+        let (json, padded) = (wide.to_bytes(), wide.padded());
+        assert!(json.len() > 2 * WIRE_STEP);
+        assert_eq!(padded.len(), 3 * WIRE_STEP);
+        assert_eq!(read(&padded), Read::Wire(wide));
     }
 
     #[test]
