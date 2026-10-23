@@ -43,9 +43,10 @@
 //! days ahead, and as content `nonce ‖ AES-256-GCM(k_e, "trino/alert/v1" ‖
 //! alert_id ‖ time u64 BE ‖ length u16 BE ‖ message ‖ zeros)`, padded to
 //! `PADDED_LEN` and in base64. Its associated data is the label and the
-//! mailbox. The contact listens to yesterday's, today's and tomorrow's
-//! mailboxes, for clocks that are off. With P1 it becomes a 1059 like the
-//! rest (§7.4).
+//! mailbox. The contact listens to the mailboxes of the last seven days and
+//! tomorrow's (CE-D14): as long as the warning lasts on the relay, and for
+//! a clock ahead; always eight per registration. With P1 it becomes a 1059
+//! like the rest (§7.4).
 
 use crate::command_error::{CommandError, ErrorCode};
 use crate::crypto::{aes_gcm_decrypt, aes_gcm_encrypt, hkdf_expand, random_array};
@@ -79,6 +80,12 @@ const EPOCH_INFO: &[u8] = b"trino/alert/v1/epoch";
 pub const PADDED_LEN: usize = 1280;
 /// A mailbox lasts a UTC day.
 pub const EPOCH_SECS: i64 = 86_400;
+/// The days back the contact listens to, today's aside (CE-D14): a week,
+/// as long as a warning lasts on the relay (6 to 8 days).
+const LISTENED_DAYS_BACK: u32 = 6;
+/// How many mailboxes of a registration the contact listens to: the last
+/// seven days' and tomorrow's, for a clock ahead. Always as many.
+pub const LISTENED_MAILBOXES: usize = LISTENED_DAYS_BACK as usize + 2;
 /// The warning expires (NIP-40) 6 to 8 days after it is made (P1 D6).
 const MIN_EXPIRATION_SECS: i64 = 6 * EPOCH_SECS;
 const MAX_EXPIRATION_SECS: i64 = 8 * EPOCH_SECS;
@@ -515,15 +522,14 @@ impl AlertBook {
             })
     }
 
-    /// The mailboxes to listen to at `now`: yesterday's, today's and
-    /// tomorrow's of each registration accepted whose warning has not come,
-    /// from a contact `live` takes (one that is still a contact, and not
-    /// blocked: §7.6).
+    /// The mailboxes to listen to at `now`: the `LISTENED_MAILBOXES` of
+    /// each registration accepted whose warning has not come
+    /// (`listened_epochs`), from a contact `live` takes (one that is still
+    /// a contact, and not blocked: §7.6).
     pub fn mailboxes(&self, now: i64, live: impl Fn(&str) -> bool) -> Vec<String> {
-        let today = epoch_at(now);
         let mut boxes = Vec::new();
         for (_, key, _) in self.listened(&live) {
-            for epoch in [today.saturating_sub(1), today, today + 1] {
+            for epoch in listened_epochs(now) {
                 if let Some(mailbox) = mailbox(&key, epoch) {
                     boxes.push(mailbox.pubkey);
                 }
@@ -583,6 +589,14 @@ impl OwnAlert {
 /// The UTC day of `unix`.
 pub fn epoch_at(unix: i64) -> u32 {
     u32::try_from(unix.max(0) / EPOCH_SECS).unwrap_or(u32::MAX)
+}
+
+/// The days whose mailboxes the contact listens to at `now` (CE-D14): the
+/// last seven, today's included, and tomorrow, for a clock ahead. A warning
+/// sealed on any of them still opens.
+fn listened_epochs(now: i64) -> impl Iterator<Item = u32> {
+    let today = epoch_at(now);
+    today.saturating_sub(LISTENED_DAYS_BACK)..=today.saturating_add(1)
 }
 
 /// The mailbox of `key` on day `epoch`, and the key of what it carries.
@@ -671,9 +685,7 @@ pub fn open(key: &[u8], id: &[u8], event: &NostrEvent, now: i64) -> Option<Opene
         return None;
     }
     let to = event.recipient()?;
-    let today = epoch_at(now);
-    let mailbox = [today.saturating_sub(1), today, today + 1]
-        .into_iter()
+    let mailbox = listened_epochs(now)
         .filter_map(|epoch| mailbox(key, epoch))
         .find(|mailbox| mailbox.pubkey == to)?;
     let raw = base64::engine::general_purpose::STANDARD
@@ -795,6 +807,15 @@ pub fn route(events: &dyn EventSink, inner: &mut InnerState, event: &NostrEvent,
     let Some(to) = event.recipient() else {
         return false;
     };
+    // Most events go to this account's own key, never a mailbox: no need
+    // to derive the mailboxes (eight per registration) for them.
+    let own = inner
+        .identity
+        .as_ref()
+        .is_some_and(|identity| hex::encode(identity.nostr.pub_bytes) == to);
+    if own {
+        return false;
+    }
     let live = |from: &str| is_live(inner, from);
     if !inner
         .alerts
@@ -2002,9 +2023,9 @@ mod tests {
             },
         );
         assert_eq!(open(&[7u8; 32], &[3u8; 16], &changed, NOW), None);
-        // Nor a warning of days ago, past what is listened to.
+        // Nor a warning of a week ago, past what is listened to.
         assert_eq!(
-            open(&[7u8; 32], &[3u8; 16], &one, NOW + 3 * EPOCH_SECS),
+            open(&[7u8; 32], &[3u8; 16], &one, NOW + 7 * EPOCH_SECS),
             None
         );
     }
@@ -2029,7 +2050,7 @@ mod tests {
 
         book.answer(ANA, true, &["wss://mio.example".to_string()], NOW);
         let listened = book.mailboxes(NOW, live);
-        assert_eq!(listened.len(), 3, "yesterday, today and tomorrow");
+        assert_eq!(listened.len(), 8, "the last seven days and tomorrow");
         assert!(listened.contains(&event.recipient().unwrap().to_string()));
         // A contact removed or blocked is not listened to (§7.6).
         assert!(book.mailboxes(NOW, |from| from != ANA).is_empty());
@@ -2059,6 +2080,80 @@ mod tests {
             book.mailboxes(NOW, live).is_empty(),
             "nothing more to listen to"
         );
+    }
+
+    /// CE-D14: the contact listens to the mailboxes of the last seven days
+    /// (today and the six before) and tomorrow's: as long as a warning
+    /// lasts on the relay (6 to 8 days), and for a clock ahead. Always
+    /// eight per registration, whatever the day, the hour, or since when it
+    /// was accepted, so the number tells a relay nothing.
+    #[test]
+    fn the_contact_listens_to_the_last_seven_days_and_tomorrow() {
+        let mut book = AlertBook::default();
+        let live = |_: &str| true;
+        reg_from(&mut book, ANA, 1);
+        book.answer(ANA, true, &[], NOW);
+        let today = epoch_at(NOW);
+        let mut expected: Vec<String> = (today - 6..=today + 1)
+            .map(|epoch| mailbox(&[1u8; 32], epoch).unwrap().pubkey)
+            .collect();
+        expected.sort();
+        assert_eq!(book.mailboxes(NOW, live), expected);
+        assert_eq!(LISTENED_MAILBOXES, 8);
+        // Every hour of a month, and on the day it was accepted too.
+        for hour in 0..30 * 24 {
+            let now = NOW - 3 * EPOCH_SECS + hour * 3_600;
+            assert_eq!(book.mailboxes(now, live).len(), LISTENED_MAILBOXES, "{now}");
+        }
+        // Each registration adds as many.
+        reg_from(&mut book, BOB, 2);
+        book.answer(BOB, true, &[], NOW + 2 * EPOCH_SECS);
+        for hour in 0..30 * 24 {
+            let now = NOW + hour * 3_600;
+            assert_eq!(book.mailboxes(now, live).len(), 2 * LISTENED_MAILBOXES);
+        }
+    }
+
+    /// CE-D14: a warning sealed up to six days ago, or tomorrow by a clock
+    /// ahead, still opens; one of a week ago, or of two days ahead, does
+    /// not. And still once per registration, whichever day it came from.
+    #[test]
+    fn a_warning_of_up_to_six_days_ago_comes_once() {
+        let alert = shared("hola");
+        let (key, id) = ([7u8; 32], [3u8; 16]);
+        for days in [-6, -5, -3, -1, 0, 1] {
+            let event = seal(&alert, NOW + days * EPOCH_SECS).unwrap();
+            assert!(open(&key, &id, &event, NOW).is_some(), "{days}");
+        }
+        for days in [-8, -7, 2] {
+            let event = seal(&alert, NOW + days * EPOCH_SECS).unwrap();
+            assert_eq!(open(&key, &id, &event, NOW), None, "{days}");
+        }
+
+        let mut book = AlertBook::default();
+        let live = |_: &str| true;
+        book.on_wire(
+            ANA,
+            Wire::Reg {
+                id: alert.id.clone(),
+                key: alert.k.clone(),
+            },
+        );
+        book.answer(ANA, true, &[], NOW - 7 * EPOCH_SECS);
+        let old = seal(&alert, NOW - 6 * EPOCH_SECS).unwrap();
+        assert!(book
+            .mailboxes(NOW, live)
+            .contains(&old.recipient().unwrap().to_string()));
+        assert_eq!(book.on_mailbox(&old, NOW, live), Some(ANA.to_string()));
+        assert_eq!(book.on_mailbox(&old, NOW, live), None, "once");
+        let today = seal(&alert, NOW).unwrap();
+        assert_eq!(
+            book.on_mailbox(&today, NOW, live),
+            None,
+            "once per registration"
+        );
+        assert_eq!(book.watching[0].fired.as_ref().unwrap().at, NOW);
+        assert!(book.mailboxes(NOW, live).is_empty());
     }
 
     #[test]
