@@ -1787,10 +1787,19 @@ mod tests {
                 home.join(STORE_DIR)
             };
             drop(store_of(&old_at, 1));
-            let mut new = store_of(&home.join(NEW_STORE_DIR), 2);
-            new.note_new_store(None, Legacy::default(), vec![aside.clone()])
-                .unwrap();
-            drop(new);
+            let account: &[u8] = b"{\"handle\":\"x\"}";
+            drop(
+                Store::create_noting(
+                    &home.join(NEW_STORE_DIR),
+                    keys(2),
+                    RealDisk,
+                    &[(Slot::Account, account)],
+                    None,
+                    Legacy::default(),
+                    vec![aside.clone()],
+                )
+                .unwrap(),
+            );
 
             let settled = settle(&RealDisk, home, &keys(2).to_vault_app()).unwrap();
 

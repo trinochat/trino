@@ -36,7 +36,7 @@ use zeroize::Zeroizing;
 
 /// The copies of each kind kept in `aside/`; older ones are removed.
 pub const ASIDE_PER_KIND: usize = 3;
-const INDEX_FILE: &str = "index.bin";
+pub(crate) const INDEX_FILE: &str = "index.bin";
 const ASIDE_DIR: &str = "aside";
 const STICKERS_DIR: &str = "stickers";
 
@@ -454,20 +454,50 @@ impl<D: Disk> Store<D> {
         self.bump_and_save_index()
     }
 
-    /// Note, in one write of the index, what a store made for a new account
-    /// starts with (clave de emergencia, step E3): the vault's header, the
-    /// state of the migration, and the stores to remove (`deleting_stores`).
-    pub fn note_new_store(
-        &mut self,
+    /// A new store in `dir`, as `create` makes it, already holding `files`
+    /// and noting what a store made for a new account starts with
+    /// (clave de emergencia, step E3): the vault's header, the state of the
+    /// migration, and the stores to remove (`deleting_stores`). Each file
+    /// is written once and the index once, after them (RC-01: on a hard
+    /// disk every write's sync costs a hundred milliseconds or more). A cut
+    /// halfway leaves files with no index, which nothing opens and the next
+    /// unlock removes (`migrate::settle`). Never replaces a store that is
+    /// there.
+    pub fn create_noting(
+        dir: &Path,
+        keys: StoreKeys,
+        disk: D,
+        files: &[(Slot, &[u8])],
         vault: Option<VaultHeader>,
         legacy: Legacy,
         deleting_stores: Vec<String>,
-    ) -> Result<(), StoreError> {
-        self.index.vault = vault;
-        self.index.vault_pending = None;
-        self.index.legacy = legacy;
-        self.index.deleting_stores = deleting_stores;
-        self.bump_and_save_index()
+    ) -> Result<Self, StoreError> {
+        if !disk.list(dir)?.is_empty() || !disk.list(&dir.join(STICKERS_DIR))?.is_empty() {
+            return Err(StoreError::Exists);
+        }
+        let mut index = Index::new(0);
+        index.vault = vault;
+        index.legacy = legacy;
+        index.deleting_stores = deleting_stores;
+        let mut store = Store {
+            dir: dir.to_path_buf(),
+            keys,
+            disk,
+            index,
+            seq: 0,
+            index_saved: false,
+            index_trusted: true,
+            index_frozen: false,
+            waiting: BTreeMap::new(),
+            frozen: BTreeSet::new(),
+            pending: BTreeMap::new(),
+        };
+        for (slot, content) in files {
+            store.check_writable(slot)?;
+            store.write_data(slot, content)?;
+        }
+        store.bump_and_save_index()?;
+        Ok(store)
     }
 
     /// The store `name` noted in `deleting_stores` is gone: drop the note.
@@ -938,6 +968,46 @@ mod tests {
         assert!(matches!(error, StoreError::Exists));
         let (_, loaded) = reopen(&dir);
         assert_eq!(ready(&loaded, &Slot::Account).as_deref(), Some(&b"ana"[..]));
+    }
+
+    /// RC-01 (CE-8b): the store E3 makes, its files and what it notes in
+    /// one write each, opens as any store with all of it, and it never
+    /// replaces a store that is there.
+    #[test]
+    fn a_store_created_noting_opens_whole_and_never_replaces_one() {
+        let scratch = ScratchDir::new("store-create-noting");
+        let dir = dir_in(&scratch);
+        let legacy = Legacy {
+            migrated: true,
+            cleanup_pending: false,
+            prefs_imported: true,
+        };
+        let files: [(Slot, &[u8]); 2] = [(Slot::Account, b"ana"), (Slot::Prefs, b"{}")];
+
+        drop(
+            Store::create_noting(
+                &dir,
+                keys(1),
+                RealDisk,
+                &files,
+                None,
+                legacy.clone(),
+                vec!["store-aside-1".into()],
+            )
+            .unwrap(),
+        );
+
+        let mut names = RealDisk.list(&dir).unwrap();
+        names.sort();
+        assert_eq!(names, ["account.bin", INDEX_FILE, "prefs.bin"]);
+        let (store, loaded) = reopen(&dir);
+        assert!(loaded.report.is_empty(), "{:?}", loaded.report);
+        assert_eq!(ready(&loaded, &Slot::Account).as_deref(), Some(&b"ana"[..]));
+        assert_eq!(ready(&loaded, &Slot::Prefs).as_deref(), Some(&b"{}"[..]));
+        assert_eq!(store.index().legacy, legacy);
+        assert_eq!(store.index().deleting_stores, ["store-aside-1"]);
+        let again = Store::create_noting(&dir, keys(1), RealDisk, &[], None, legacy, vec![]);
+        assert!(matches!(again.err().unwrap(), StoreError::Exists));
     }
 
     #[test]

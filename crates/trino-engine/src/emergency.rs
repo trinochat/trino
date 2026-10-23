@@ -8,9 +8,9 @@
 //! | Step | What | A cut here leaves |
 //! |---|---|---|
 //! | E2 | In memory: a new identity, data key and `id_vault`; the empty account's vault (trino-core's `into_empty_account`), with the same salt, parameters and KEK, and what it inherits through the shared block | nothing changed |
-//! | E3 | The empty account's store in `store.new/`: its index (noting the vault, its migration and prefs import done, and the name `store/` will go aside under), `account.bin` and `prefs.bin` | the account whole: `store.new/` opens with nothing, and the next unlock removes it in silence (`migrate::settle`) |
+//! | E3 | The empty account's store in `store.new/`: `account.bin`, `prefs.bin` and, last, its index (noting the vault, its migration and prefs import done, and the name `store/` will go aside under), each written once (RC-01) | the account whole: `store.new/` opens with nothing, and the next unlock removes it in silence (`migrate::settle`) |
 //! | E4 | The vault, in two phases (`vault_file::write_with`). **Here the keys of before go** | before its second phase, the account whole; after, the empty account |
-//! | E5 | `store/` aside under the name noted in E3, `store.new/` in its place; the vault's temporaries and the files of earlier versions destroyed | the empty account: the next unlock finishes the move (`settle`) |
+//! | E5 | `store/` aside under the name noted in E3, `store.new/` in its place, with one move that waits for the disk; the vault's temporaries and the files of earlier versions destroyed | the empty account: the next unlock finishes the move (`settle`) |
 //! | E6 | The empty account opened as any account (`account::unlock_v3`) | the empty account |
 //!
 //! From E4 on, the empty account is the one and nothing fails the path:
@@ -123,8 +123,11 @@ pub(crate) fn take_place<D: Disk + Clone>(
 /// E3: the empty account's store in `home/store.new/`, under `keys`, as a
 /// new account's store with its preferences, noted as imported and with
 /// nothing to migrate (design §6.4, RC-05), and with the name `store/`
-/// goes aside under in E5 (RC-11). On the disk once the vault's first phase
-/// is: its write goes through to the disk, and NTFS writes in order.
+/// goes aside under in E5 (RC-11). Each file is written once, its index
+/// last, so the path syncs no more than it must (RC-01). On the disk once
+/// the vault's first phase is: each file's bytes are synced as it is
+/// written, and the move that puts the vault's first phase in place goes
+/// through to the disk, which NTFS does in order.
 fn write_new_store<D: Disk + Clone>(
     disk: &D,
     home: &Path,
@@ -141,21 +144,27 @@ fn write_new_store<D: Disk + Clone>(
     let dir = home.join(NEW_STORE_DIR);
     // A store.new/ left by a cut of an earlier try: nothing opens it.
     disk.remove_dir_all(&dir)?;
-    let mut store = Store::create(&dir, keys, disk.clone()).map_err(to_io)?;
-    store
-        .write(&Slot::Account, &json(account)?)
-        .map_err(to_io)?;
-    if !prefs.is_empty() {
-        store.write(&Slot::Prefs, &json(prefs)?).map_err(to_io)?;
+    let account = json(account)?;
+    let prefs = (!prefs.is_empty()).then(|| json(prefs)).transpose()?;
+    let mut files: Vec<(Slot, &[u8])> = vec![(Slot::Account, &account[..])];
+    if let Some(prefs) = &prefs {
+        files.push((Slot::Prefs, &prefs[..]));
     }
     let legacy = Legacy {
         migrated: true,
         cleanup_pending: false,
         prefs_imported: true,
     };
-    store
-        .note_new_store(vault, legacy, vec![aside.to_string()])
-        .map_err(to_io)?;
+    let store = Store::create_noting(
+        &dir,
+        keys,
+        disk.clone(),
+        &files,
+        vault,
+        legacy,
+        vec![aside.to_string()],
+    )
+    .map_err(to_io)?;
     if store.is_behind() {
         return Err(io::Error::other(
             "the new store's index could not be written",
@@ -171,13 +180,16 @@ fn json<T: serde::Serialize>(value: &T) -> io::Result<Zeroizing<Vec<u8>>> {
         .map_err(io::Error::other)
 }
 
-/// E5: `store/` aside under `aside`, then `store.new/` in its place, each
-/// move on the disk when it returns. An account with no `store/` only
-/// moves the new one in.
+/// E5: `store/` aside under `aside`, then `store.new/` in its place. Only
+/// the second move waits for the disk: NTFS writes its journal in order,
+/// so the first is on the disk with it, and a cut that loses both leaves
+/// the vault's store.new/ waiting, which the next unlock moves in
+/// (`settle`), as it does when only the first went (RC-01). An account
+/// with no `store/` only moves the new one in.
 fn move_in(disk: &impl Disk, home: &Path, aside: &str) -> io::Result<()> {
     let store = home.join(STORE_DIR);
     if store.exists() {
-        disk.rename_durable(&store, &home.join(aside))?;
+        disk.rename(&store, &home.join(aside))?;
     }
     disk.rename_durable(&home.join(NEW_STORE_DIR), &store)
 }
@@ -218,7 +230,7 @@ mod tests {
     use crate::store::session::{Found, Storage, StorageCell, OTHER_STORE_PREFIX, STORE_DIR};
     use crate::totp::{generate_totp_secret, totp_code, totp_now};
     use crate::vault_file::next_path;
-    use std::collections::BTreeMap;
+    use std::collections::{BTreeMap, BTreeSet};
     use std::path::{Path, PathBuf};
 
     const NOW: i64 = 1_760_000_000;
@@ -891,11 +903,11 @@ mod tests {
         let aside = steps
             .iter()
             .find_map(|step| match step {
-                Step::RenameDurable(from, to) if *from == store => Some(to.clone()),
+                Step::Rename(from, to) if *from == store => Some(to.clone()),
                 _ => None,
             })
             .expect("store/ went aside");
-        let moved_aside = at(&Step::RenameDurable(store.clone(), aside.clone()));
+        let moved_aside = at(&Step::Rename(store.clone(), aside.clone()));
         let moved_in = at(&Step::RenameDurable(new.clone(), store.clone()));
         assert!(next < overwrite && overwrite < destroyed);
         assert!(destroyed < moved_aside && moved_aside < moved_in);
@@ -911,6 +923,57 @@ mod tests {
         assert!(name.starts_with(OTHER_STORE_PREFIX), "{name}");
         assert!(!new.exists());
         assert!(aside.exists() && store.exists());
+    }
+
+    /// RC-01 (CE-8b): on a hard disk each sync costs a hundred milliseconds
+    /// or more, and a real unlock makes none, so the path makes only those
+    /// a cut needs (design §6.4): each file of the empty account's store
+    /// written once, its index last, with all it notes; the vault's two
+    /// phases; and one durable move of the stores, the last one, which puts
+    /// the move before it on the disk too (NTFS writes its journal in
+    /// order).
+    #[test]
+    fn the_emergency_path_syncs_only_what_a_cut_needs() {
+        let scratch = ScratchDir::new("emergency-syncs");
+        let ana = Ana::new(scratch.path(), false);
+        let home = ana.home().to_path_buf();
+        let (store, new) = (home.join(STORE_DIR), home.join(NEW_STORE_DIR));
+        let disk = CutDisk::whole();
+
+        take_place(&disk, &ana.files, ana.emergency_vault(), NOW).unwrap();
+
+        let steps = steps_of(&disk);
+        let writes: Vec<&PathBuf> = steps
+            .iter()
+            .filter_map(|step| match step {
+                Step::Write(path) => Some(path),
+                _ => None,
+            })
+            .collect();
+        let names: BTreeSet<_> = writes.iter().map(|path| path.file_name()).collect();
+        assert_eq!(writes.len(), 3, "{steps:?}");
+        assert_eq!(names.len(), 3, "a file written twice: {steps:?}");
+        assert!(writes.iter().all(|path| path.parent() == Some(&*new)));
+        assert_eq!(
+            writes.last().unwrap().file_name().unwrap(),
+            crate::store::files::INDEX_FILE
+        );
+        let vault = ana.files.vault.clone();
+        let synced: Vec<&Step> = steps
+            .iter()
+            .filter(|step| !matches!(step, Step::Write(_) | Step::Rename(..)))
+            .filter(|step| !matches!(step, Step::RemoveDir(dir) if *dir == new))
+            .collect();
+        assert_eq!(
+            synced,
+            [
+                &Step::WriteDurable(next_path(&vault)),
+                &Step::Overwrite(vault.clone()),
+                &Step::Destroy(next_path(&vault)),
+                &Step::RenameDurable(new.clone(), store.clone()),
+            ],
+            "{steps:?}"
+        );
     }
 
     /// What the account in `home` is after a cut and the next unlock with
