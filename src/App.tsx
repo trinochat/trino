@@ -40,6 +40,7 @@ import { installCopyGuard } from './app/copy-guard';
 import { clipboard } from './lib/clipboard';
 import type { CallGate } from './app/calls';
 import { MainScreen, type MainProps } from './app/MainScreen';
+import { isAutoLockHeld } from './app/autolock-hold';
 import { useAutoLock } from './app/useAutoLock';
 import { withAccountPrefs, type AccountPrefsApi } from './app/account-prefs';
 import { startFirstConnection } from './app/first-connection';
@@ -313,6 +314,8 @@ function App({ api: given = BACKEND, windowApi = TAURI_WINDOW, Main = MainScreen
     enabled: sessionShown,
     minutes: autolockMinutes,
     isCallBusy,
+    // RC-17: never while the emergency key is being tested.
+    isHeld: isAutoLockHeld,
     onLock: minutes => lockNow({ kind: 'idle', minutes }),
   });
 

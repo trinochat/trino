@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { act, cleanup, renderHook } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { holdAutoLock, isAutoLockHeld } from './autolock-hold';
 import { AUTOLOCK_ACTIVITY_EVENTS, AUTOLOCK_TICK_MS, useAutoLock, type AutoLockOptions } from './useAutoLock';
 
 // The auto-lock of Settings > Cuenta y seguridad. A beta tester wrote that it
@@ -23,7 +24,7 @@ afterEach(() => {
 function setup(initial: Partial<AutoLockOptions> = {}) {
   let busy = false;
   const onLock = vi.fn<(minutes: number) => void>();
-  let props: AutoLockOptions = { enabled: true, minutes: 5, isCallBusy: () => busy, onLock, ...initial };
+  let props: AutoLockOptions = { enabled: true, minutes: 5, isCallBusy: () => busy, isHeld: isAutoLockHeld, onLock, ...initial };
   const hook = renderHook((options: AutoLockOptions) => useAutoLock(options), { initialProps: props });
   return {
     onLock,
@@ -221,5 +222,37 @@ describe('useAutoLock', () => {
     wait(10 * SECOND);
     expect(onLock).not.toHaveBeenCalled();
     expect(newer).toHaveBeenCalledWith(1);
+  });
+
+  // RC-17 (clave de emergencia, design §8.4): while "Probar mi clave de
+  // emergencia" is open, the idle lock waits, so nobody goes on typing the
+  // key on the unlock screen. Once it closes, the minutes start again.
+  it('waits while the emergency key is being tested, and counts again once it closes', () => {
+    const release = holdAutoLock();
+    const { onLock } = setup({ minutes: 1 });
+    wait(10 * MINUTE);
+    hiddenFor(10 * MINUTE);
+    wait(AUTOLOCK_TICK_MS);
+    expect(onLock).not.toHaveBeenCalled();
+    release();
+    wait(MINUTE - 1);
+    expect(onLock).not.toHaveBeenCalled();
+    wait(AUTOLOCK_TICK_MS);
+    expect(onLock).toHaveBeenCalledWith(1);
+  });
+
+  it('lets a hold go once, however often it is released', () => {
+    const first = holdAutoLock();
+    const second = holdAutoLock();
+    first();
+    first();
+    expect(isAutoLockHeld()).toBe(true);
+    second();
+    expect(isAutoLockHeld()).toBe(false);
+  });
+
+  it('is held by App only through the test of the emergency key', () => {
+    const app = import.meta.glob<string>('../App.tsx', { query: '?raw', import: 'default', eager: true })['../App.tsx'];
+    expect(app).toMatch(/useAutoLock\(\{[^}]*isHeld: isAutoLockHeld/s);
   });
 });

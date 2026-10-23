@@ -8,7 +8,8 @@
  * - **Never during a call** ("Nunca se bloquea durante una llamada"). A call
  *   counts as activity: every check pushes the time back while it goes on,
  *   so the minutes start again once it is over, and the end of a call the
- *   other side hung up does not lock at once.
+ *   other side hung up does not lock at once. The test of the emergency key
+ *   holds it back the same way (`isHeld`, RC-17).
  * - **On time from the tray.** WebView2 holds back the timers of a hidden
  *   window, so a timer set for the deadline can fire late. The deadline is a
  *   time of day, checked by its own timer, on a tick, and as the window comes
@@ -28,6 +29,11 @@ export interface AutoLockOptions {
   minutes: number;
   /** A call is in progress: it counts as activity. */
   isCallBusy(): boolean;
+  /**
+   * Something else holds the lock back, as a call does: the test of the
+   * emergency key (RC-17, src/app/autolock-hold.ts).
+   */
+  isHeld?(): boolean;
   /** Lock now, after `minutes` without activity. Called once until the chats open again. */
   onLock(minutes: number): void;
 }
@@ -47,12 +53,12 @@ const CAPTURE = { capture: true, passive: true } as const;
 /** The longest a timer waits (2^31 - 1 ms, 24.8 days); past that it fires at once. */
 const MAX_TIMER_MS = 2_147_483_647;
 
-export function useAutoLock({ enabled, minutes, isCallBusy, onLock }: AutoLockOptions): void {
+export function useAutoLock({ enabled, minutes, isCallBusy, isHeld, onLock }: AutoLockOptions): void {
   // Read when a check runs, so a render with new functions neither re-arms
   // the count nor leaves an old function to be called.
-  const latest = useRef({ isCallBusy, onLock });
+  const latest = useRef({ isCallBusy, isHeld, onLock });
   useLayoutEffect(() => {
-    latest.current = { isCallBusy, onLock };
+    latest.current = { isCallBusy, isHeld, onLock };
   });
 
   useEffect(() => {
@@ -76,7 +82,7 @@ export function useAutoLock({ enabled, minutes, isCallBusy, onLock }: AutoLockOp
     function check() {
       if (stopped) return;
       const now = Date.now();
-      if (latest.current.isCallBusy()) deadline = Math.max(deadline, now + span);
+      if (latest.current.isCallBusy() || latest.current.isHeld?.()) deadline = Math.max(deadline, now + span);
       if (now < deadline) {
         clearTimeout(timer);
         timer = setTimeout(check, Math.min(deadline - now, MAX_TIMER_MS));
