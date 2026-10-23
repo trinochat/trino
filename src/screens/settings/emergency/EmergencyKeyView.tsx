@@ -11,15 +11,17 @@
  * - configuring or changing it: EmergencySetup.tsx, four steps;
  * - testing it without erasing: EmergencyTestDialog.tsx (RC-16, RC-17);
  * - removing it: EmergencyRemoveDialog.tsx, the same answer either way;
- * - the network: EmergencyNetworkView.tsx, behind the password.
+ * - the network: EmergencyNetworkView.tsx, behind the password;
+ * - "Cómo funciona", the help (CE-8): EmergencyHelpView.tsx, only text.
  */
 import { ArrowLeft, Lock } from 'lucide-react';
 import { useState } from 'react';
 import { useT } from '../../../lib/i18n';
-import { Button, iconSize, IconButton } from '../../../ui';
+import { Button, cx, FOCUS_RING, iconSize, IconButton } from '../../../ui';
 import { SettingsRows } from '../SettingsRows';
 import { SettingsSection } from '../SettingsSection';
 import type { SettingsApi, SettingsPlatform } from '../types';
+import { EmergencyHelpView } from './EmergencyHelpView';
 import { EmergencyNetworkView } from './EmergencyNetworkView';
 import { EmergencyRemoveDialog } from './EmergencyRemoveDialog';
 import { EmergencySetup } from './EmergencySetup';
@@ -50,7 +52,7 @@ export interface EmergencyKeyViewProps {
   autoFocus?: boolean;
 }
 
-type View = 'page' | 'setup' | 'network';
+type View = 'page' | 'setup' | 'network' | 'help';
 type OpenDialog = 'test' | 'remove' | null;
 
 export function EmergencyKeyView({ api, totpEnabled, platform, onBack, onOpenReinforced, isVerified, autoFocus }: EmergencyKeyViewProps) {
@@ -80,6 +82,8 @@ export function EmergencyKeyView({ api, totpEnabled, platform, onBack, onOpenRei
     );
   } else if (view === 'network') {
     content = <EmergencyNetworkView api={api} totpEnabled={totpEnabled} isVerified={isVerified} onBack={back} />;
+  } else if (view === 'help') {
+    content = <EmergencyHelpView onBack={back} />;
   } else {
     content = (
       <SettingsSection
@@ -90,6 +94,13 @@ export function EmergencyKeyView({ api, totpEnabled, platform, onBack, onOpenRei
         <div className="flex flex-col gap-2">
           <p className="m-0 text-ui-base leading-normal text-ui-ink">{t('emergency.page.what')}</p>
           <p className="m-0 text-ui-md leading-normal text-ui-muted">{t('emergency.page.totp')}</p>
+          <button
+            type="button"
+            onClick={() => setView('help')}
+            className={cx('min-h-8 self-start rounded-ui border-0 bg-transparent p-0 text-ui-md font-semibold text-ui-accent-text underline', FOCUS_RING)}
+          >
+            {t('emergency.page.help')}
+          </button>
         </div>
         <div className="flex flex-wrap gap-2">
           <Button variant="primary" className="flex-auto" onClick={() => setView('setup')}>

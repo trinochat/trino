@@ -86,6 +86,35 @@ describe('EmergencyKeyView', () => {
     expect(props.onBack).toHaveBeenCalledTimes(1);
   });
 
+  // CE-8: the help, inside the app (design §10, §3.8.7, §7.5): "Cómo
+  // funciona" on the page opens it, the same with a key or without one, and
+  // it asks the backend nothing.
+  it('opens "Cómo funciona" with the limits said plainly, and comes back', async () => {
+    const { api } = setup();
+    fireEvent.click(screen.getByRole('button', { name: 'Cómo funciona' }));
+    expect(await screen.findByRole('heading', { name: 'Cómo funciona la clave de emergencia' })).toBeTruthy();
+    for (const name of ['Qué hace', 'La cuenta vacía', 'Lo que no hace', 'El aviso a un contacto de confianza']) {
+      expect(screen.getByRole('heading', { name }), name).toBeTruthy();
+    }
+    const text = document.body.textContent ?? '';
+    // What the earlier steps left for it.
+    expect(text).toContain('así que también la abre quien la sepa. No guardes nada sensible ahí.');
+    expect(text).toContain('Tu contraseña de siempre también abre la cuenta vacía.');
+    expect(text).toMatch(/Deja de hacerlo si en ella configuras o quitas una clave de emergencia/);
+    expect(text).toMatch(/No borra las copias del disco hechas antes/);
+    expect(text).toMatch(/No borra lo que tienen tus contactos en sus equipos, ni lo que vieron los relays/);
+    expect(text).toMatch(/Un análisis forense del disco puede notar que se borraron datos/);
+    expect(text).toMatch(/si pasa más de una semana sin abrirlo, puede perder el aviso/);
+    expect(text).toMatch(/Avisar puede delatar que la usaste/);
+    expect(text).toMatch(/la huella o Face ID nunca usan la clave de emergencia/);
+    for (const call of ['setEmergencyKey', 'testEmergencyKey', 'removeEmergencyKey', 'emergencyNetwork'] as const) {
+      expect(api[call]).not.toHaveBeenCalled();
+    }
+    fireEvent.click(screen.getByRole('button', { name: 'Volver a Clave de emergencia' }));
+    expect(await screen.findByRole('button', { name: 'Configurar o cambiar' })).toBeTruthy();
+    expect(screen.getByRole('heading', { name: 'Clave de emergencia' })).toBeTruthy();
+  });
+
   it('configures the key in four steps: the limits and the box, the password, the key twice, and done', async () => {
     const { api } = setup();
     fireEvent.click(screen.getByRole('button', { name: 'Configurar o cambiar' }));

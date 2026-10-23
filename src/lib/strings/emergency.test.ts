@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { DICTS } from '../i18n';
 import { expectAreaContract, LANG_CODES } from './contract-test-utils';
 import { emergency } from './emergency';
+import { HELP } from '../../screens/settings/emergency/help';
 
 // The texts of the emergency key (CE-5, design §11), with the prefix
 // emergency: the row and the page of Settings, configuring it, testing it,
@@ -122,6 +123,39 @@ const KEYS: string[] = [
   'emergency.contact.whatToDo',
   'emergency.contact.whatToDoBody',
   'emergency.contact.notification',
+  // The help, "Cómo funciona" (CE-8, design §10, §3.8.7, §7.5).
+  'emergency.page.help',
+  'emergency.help.title',
+  'emergency.help.back',
+  'emergency.help.does',
+  'emergency.help.doesErase',
+  'emergency.help.doesDisk',
+  'emergency.help.doesKeeps',
+  'emergency.help.doesCode',
+  'emergency.help.empty',
+  'emergency.help.emptyOpens',
+  'emergency.help.emptyPassphrase',
+  'emergency.help.emptyChange',
+  'emergency.help.emptyMeans',
+  'emergency.help.emptyBack',
+  'emergency.help.limits',
+  'emergency.help.onlyUnlock',
+  'emergency.help.copies',
+  'emergency.help.leftovers',
+  'emergency.help.notTheirs',
+  'emergency.help.forensic',
+  'emergency.help.oldCopy',
+  'emergency.help.notifications',
+  'emergency.help.tor',
+  'emergency.help.otherDevices',
+  'emergency.help.phone',
+  'emergency.help.alert',
+  'emergency.help.alertOptional',
+  'emergency.help.alertTells',
+  'emergency.help.alertNetwork',
+  'emergency.help.alertWeek',
+  'emergency.help.alertWhen',
+  'emergency.help.alertFalse',
 ];
 
 /**
@@ -202,6 +236,35 @@ describe('the texts of the emergency key', () => {
       expect(emergency[lang]['emergency.net.alertSoon'], lang).toBeUndefined();
       // The contact is told a warning may be false (RC-09).
       expect(emergency[lang]['emergency.contact.whatToDoBody'], lang).toMatch(/fals/i);
+    }
+  });
+
+  // CE-8: the help is part of this area, so the words never said and the
+  // legal note left out (the test above) cover it too; and it says each
+  // limit the earlier steps left for it, in the three languages.
+  it('cover the help, which says the limits honestly in es, en and pt', () => {
+    const shown = HELP.flatMap(section => [section.title, ...section.items]);
+    expect(shown.length).toBeGreaterThan(20);
+    for (const key of shown) expect(KEYS, key).toContain(key);
+    const help = (lang: (typeof LANG_CODES)[number]) => shown.map(key => emergency[lang][key]).join(' ');
+    const says: Record<(typeof LANG_CODES)[number], RegExp[]> = {
+      es: [
+        /quien la sepa\. No guardes nada sensible/,
+        /Tu contraseña de siempre también abre la cuenta vacía/,
+        /configuras o quitas una clave de emergencia/,
+        /copias del disco hechas antes/,
+        /ni lo que vieron los relays/,
+        /análisis forense/,
+        /más de una semana/,
+        /delatar/,
+        /Face ID/,
+        /falso/,
+      ],
+      en: [/nothing sensitive/, /usual password also opens the empty account/, /set up or remove/, /made before/, /relays saw/, /forensic/, /more than a week/, /give away/, /Face ID/, /false/],
+      pt: [/nada sensível/, /senha de sempre também abre a conta vazia/, /configurar ou remover/, /feitas antes/, /relays viram/, /forense/, /mais de uma semana/, /denunciar/, /Face ID/, /falso/],
+    };
+    for (const lang of LANG_CODES) {
+      for (const pattern of says[lang]) expect(help(lang), `${lang}: ${String(pattern)}`).toMatch(pattern);
     }
   });
 

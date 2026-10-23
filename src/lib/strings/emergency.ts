@@ -3,7 +3,8 @@
  * approved mockups (PropClaveEmergencia, canvas version 45) and design
  * §11: Settings › Cuenta y seguridad › Clave de emergencia, configuring or
  * changing it, testing it without erasing, removing it, and what happens
- * on the network.
+ * on the network; the contact's side; and the help, "Cómo funciona"
+ * (CE-8, design §10, §3.8.7, §7.5).
  *
  * Honest by design (§11.7): none says it is unrecoverable, leaves no
  * trace, is safe as a promise, or gives plausible deniability, and there
@@ -137,6 +138,53 @@ export const emergency: AreaStrings = {
     'emergency.contact.whatToDoBody':
       'Puede que {name} esté en problemas o que alguien tenga su equipo. No le mandes nada sensible a esta conversación: en ese equipo ya no hay quien lo lea, y si usa Trino en otro dispositivo, puede leerlo quien lo tenga. Si tienen otra manera de comunicarse que no pase por ese equipo, úsenla. Un aviso también puede ser falso: si puedes, confírmalo por otro medio.',
     'emergency.contact.notification': '{name} usó su clave de emergencia.',
+
+    'emergency.page.help': 'Cómo funciona',
+    'emergency.help.title': 'Cómo funciona la clave de emergencia',
+    'emergency.help.back': 'Volver a Clave de emergencia',
+    'emergency.help.does': 'Qué hace',
+    'emergency.help.doesErase':
+      'Si escribes tu clave de emergencia en la pantalla de desbloqueo en lugar de tu contraseña, Trino destruye las llaves de tu cuenta en este computador, borra tus chats, tus contactos y tus grupos, y abre una cuenta nueva y vacía con tu mismo nombre.',
+    'emergency.help.doesDisk': 'Borra de este computador lo que Trino guarda. Lo que quede en el disco sigue cifrado con tu contraseña real.',
+    'emergency.help.doesKeeps':
+      'La cuenta vacía se queda con tu nombre, tu verificación en dos pasos, tus relays, tus puentes y los ajustes que no nombran a nadie, para que el computador siga igual de protegido.',
+    'emergency.help.doesCode': 'Si usas verificación en dos pasos, la clave de emergencia también pide el código de tu app, igual que tu contraseña.',
+    'emergency.help.empty': 'La cuenta vacía',
+    'emergency.help.emptyOpens': 'La clave de emergencia abre la cuenta vacía, así que también la abre quien la sepa. No guardes nada sensible ahí.',
+    'emergency.help.emptyPassphrase':
+      'Tu contraseña de siempre también abre la cuenta vacía. Deja de hacerlo si en ella configuras o quitas una clave de emergencia: desde ese momento la abre solo la contraseña que escribiste para hacerlo, y la clave nueva si configuraste una.',
+    'emergency.help.emptyChange':
+      'Cambiar la contraseña de la cuenta vacía no corta esto: tu contraseña de siempre la sigue abriendo hasta que configures o quites una clave de emergencia en ella.',
+    'emergency.help.emptyMeans': 'Una cuenta vacía con tu nombre quiere decir siempre lo mismo: alguien usó la clave de emergencia en este computador.',
+    'emergency.help.emptyBack': 'Para volver a tu cuenta, recupérala con tus 12 palabras, o crea una cuenta nueva y vuelve a agregar a tus contactos.',
+    'emergency.help.limits': 'Lo que no hace',
+    'emergency.help.onlyUnlock':
+      'Solo sirve en la pantalla de desbloqueo. Con Trino abierto no hace nada, y en esa pantalla no se puede probar: para eso está Probar, aquí en Ajustes.',
+    'emergency.help.copies':
+      'No borra las copias del disco hechas antes. Quien tenga una copia y tu clave de emergencia puede comprobar que era esa clave, y con tu contraseña real abre todo. No la entregues.',
+    'emergency.help.leftovers':
+      'En un SSD y en los puntos de restauración de Windows pueden quedar versiones viejas de tus datos. Siguen cifradas con tu contraseña real.',
+    'emergency.help.notTheirs': 'No borra lo que tienen tus contactos en sus equipos, ni lo que vieron los relays.',
+    'emergency.help.forensic':
+      'Un análisis forense del disco puede notar que se borraron datos, y a qué hora. Como el código de Trino es público, quien lo conozca sabe que esta función existe.',
+    'emergency.help.oldCopy':
+      'Quien sepa tu clave de emergencia y tenga una copia vieja del disco puede leer tu nombre, el secreto de tu verificación en dos pasos, tus relays y tus puentes, y mandarle un aviso falso a tu contacto de confianza. No puede leer tus contactos ni tus chats.',
+    'emergency.help.notifications':
+      'En Windows, la lista de notificaciones del sistema puede guardar el nombre de quien te escribió, y Trino no puede borrarla.',
+    'emergency.help.tor': 'La cuenta nueva sale a internet por la misma entrada a Tor que la de antes.',
+    'emergency.help.otherDevices': 'Si usas Trino en otro dispositivo, solo se borra este. La cuenta sigue en los demás, y quien vea los dos lo puede notar.',
+    'emergency.help.phone':
+      'En el celular, la huella o Face ID nunca usan la clave de emergencia. Si alguien puede obligarte a poner el dedo o la cara, apágalos.',
+    'emergency.help.alert': 'El aviso a un contacto de confianza',
+    'emergency.help.alertOptional': 'Es opcional. Si no lo eliges, nada sale a internet cuando usas la clave.',
+    'emergency.help.alertTells':
+      'Avisar puede delatar que la usaste: tu contacto lo sabrá, y quien lo presione o le revise el equipo también puede saberlo.',
+    'emergency.help.alertNetwork':
+      'Sale solo si Trino tiene conexión. Si no la tiene, lo reintenta mientras siga abierto, hasta por un día; si se cierra antes, no sale. Trino no te muestra si salió.',
+    'emergency.help.alertWeek':
+      'Tu contacto tiene que abrir Trino en los días siguientes: si pasa más de una semana sin abrirlo, puede perder el aviso.',
+    'emergency.help.alertWhen': 'El aviso le dice cuándo se envió, según el reloj de tu equipo, y cuándo le llegó.',
+    'emergency.help.alertFalse': 'Un aviso también puede ser falso. Si a ti te llega uno de un contacto, confírmalo por otro medio si puedes.',
   },
   en: {
     'emergency.row.title': 'Emergency key',
@@ -263,6 +311,54 @@ export const emergency: AreaStrings = {
     'emergency.contact.whatToDoBody':
       '{name} may be in trouble, or someone may have their device. Do not send anything sensitive to this conversation: on that device there is no one left to read it, and if they use Trino on another device, whoever has it can read it. If you have another way to talk that does not go through that device, use it. A warning can also be false: if you can, confirm it another way.',
     'emergency.contact.notification': '{name} used their emergency key.',
+
+    'emergency.page.help': 'How it works',
+    'emergency.help.title': 'How the emergency key works',
+    'emergency.help.back': 'Back to Emergency key',
+    'emergency.help.does': 'What it does',
+    'emergency.help.doesErase':
+      'If you type your emergency key on the unlock screen instead of your password, Trino destroys your account’s keys on this computer, erases your chats, your contacts and your groups, and opens a new, empty account with your same name.',
+    'emergency.help.doesDisk': 'It erases from this computer what Trino keeps. Whatever stays on the disk is still encrypted with your real password.',
+    'emergency.help.doesKeeps':
+      'The empty account keeps your name, your two-step verification, your relays, your bridges and the settings that name no one, so the computer stays just as protected.',
+    'emergency.help.doesCode': 'If you use two-step verification, the emergency key asks for the code from your app too, just like your password.',
+    'emergency.help.empty': 'The empty account',
+    'emergency.help.emptyOpens': 'The emergency key opens the empty account, so anyone who knows it can open it too. Keep nothing sensitive there.',
+    'emergency.help.emptyPassphrase':
+      'Your usual password also opens the empty account. It stops doing so if you set up or remove an emergency key in it: from then on, only the password you typed to do it opens it, and the new key if you set one up.',
+    'emergency.help.emptyChange':
+      'Changing the empty account’s password does not cut this: your usual password still opens it until you set up or remove an emergency key in it.',
+    'emergency.help.emptyMeans': 'An empty account with your name always means the same thing: someone used the emergency key on this computer.',
+    'emergency.help.emptyBack': 'To get back to your account, recover it with your 12 words, or create a new account and add your contacts again.',
+    'emergency.help.limits': 'What it does not do',
+    'emergency.help.onlyUnlock':
+      'It only works on the unlock screen. With Trino open it does nothing, and it cannot be tried on that screen: that is what Test, here in Settings, is for.',
+    'emergency.help.copies':
+      'It does not erase copies of the disk made before. Someone with a copy and your emergency key can check that it was that key, and with your real password opens everything. Do not hand it over.',
+    'emergency.help.leftovers':
+      'On an SSD and in Windows restore points, old versions of your data can remain. They are still encrypted with your real password.',
+    'emergency.help.notTheirs': 'It does not erase what your contacts have on their devices, or what the relays saw.',
+    'emergency.help.forensic':
+      'A forensic analysis of the disk can notice that data was erased, and at what time. Since Trino’s code is public, anyone who knows it knows this feature exists.',
+    'emergency.help.oldCopy':
+      'Someone who knows your emergency key and has an old copy of the disk can read your name, your two-step verification secret, your relays and your bridges, and send a false warning to your trusted contact. They cannot read your contacts or your chats.',
+    'emergency.help.notifications':
+      'On Windows, the system’s list of notifications can keep the name of whoever wrote to you, and Trino cannot erase it.',
+    'emergency.help.tor': 'The new account goes out to the internet through the same Tor entry as the old one.',
+    'emergency.help.otherDevices':
+      'If you use Trino on another device, only this one is erased. The account stays on the others, and someone who sees both can notice.',
+    'emergency.help.phone':
+      'On the phone, fingerprint or Face ID never use the emergency key. If someone could force you to put your finger or your face, turn them off.',
+    'emergency.help.alert': 'The warning to a trusted contact',
+    'emergency.help.alertOptional': 'It is optional. If you do not choose it, nothing goes out to the internet when you use the key.',
+    'emergency.help.alertTells':
+      'Warning someone can give away that you used it: your contact will know, and whoever pressures them or checks their device can know too.',
+    'emergency.help.alertNetwork':
+      'It only goes out if Trino has a connection. If it has none, it tries again while Trino stays open, for up to a day; if it closes before, it does not go out. Trino does not show you whether it went out.',
+    'emergency.help.alertWeek':
+      'Your contact has to open Trino in the days after: if they go more than a week without opening it, they can miss the warning.',
+    'emergency.help.alertWhen': 'The warning tells them when it was sent, by your device’s clock, and when it reached them.',
+    'emergency.help.alertFalse': 'A warning can also be false. If one from a contact reaches you, confirm it some other way if you can.',
   },
   pt: {
     'emergency.row.title': 'Chave de emergência',
@@ -389,5 +485,53 @@ export const emergency: AreaStrings = {
     'emergency.contact.whatToDoBody':
       'Pode ser que {name} esteja com problemas ou que alguém esteja com o aparelho. Não mande nada sensível nesta conversa: nesse aparelho já não há quem leia, e se a pessoa usa o Trino em outro aparelho, quem estiver com ele pode ler. Se vocês têm outra forma de se falar que não passe por esse aparelho, usem. Um aviso também pode ser falso: se puder, confirme por outro meio.',
     'emergency.contact.notification': '{name} usou a chave de emergência.',
+
+    'emergency.page.help': 'Como funciona',
+    'emergency.help.title': 'Como funciona a chave de emergência',
+    'emergency.help.back': 'Voltar para Chave de emergência',
+    'emergency.help.does': 'O que ela faz',
+    'emergency.help.doesErase':
+      'Se você digitar a sua chave de emergência na tela de desbloqueio no lugar da sua senha, o Trino destrói as chaves da sua conta neste computador, apaga os seus chats, os seus contatos e os seus grupos, e abre uma conta nova e vazia com o mesmo nome.',
+    'emergency.help.doesDisk': 'Apaga deste computador o que o Trino guarda. O que ficar no disco continua cifrado com a sua senha real.',
+    'emergency.help.doesKeeps':
+      'A conta vazia fica com o seu nome, a sua verificação em duas etapas, os seus relays, as suas pontes e os ajustes que não nomeiam ninguém, para que o computador continue protegido do mesmo jeito.',
+    'emergency.help.doesCode': 'Se você usa verificação em duas etapas, a chave de emergência também pede o código do seu app, igual à sua senha.',
+    'emergency.help.empty': 'A conta vazia',
+    'emergency.help.emptyOpens': 'A chave de emergência abre a conta vazia, então quem a souber também abre. Não guarde nada sensível lá.',
+    'emergency.help.emptyPassphrase':
+      'A sua senha de sempre também abre a conta vazia. Ela deixa de abrir se você configurar ou remover uma chave de emergência nessa conta: a partir daí, só abre a senha que você digitou para isso, e a chave nova se você configurou uma.',
+    'emergency.help.emptyChange':
+      'Mudar a senha da conta vazia não corta isso: a sua senha de sempre continua abrindo a conta até você configurar ou remover uma chave de emergência nela.',
+    'emergency.help.emptyMeans': 'Uma conta vazia com o seu nome quer dizer sempre a mesma coisa: alguém usou a chave de emergência neste computador.',
+    'emergency.help.emptyBack': 'Para voltar à sua conta, recupere-a com as suas 12 palavras, ou crie uma conta nova e adicione os seus contatos de novo.',
+    'emergency.help.limits': 'O que ela não faz',
+    'emergency.help.onlyUnlock':
+      'Só funciona na tela de desbloqueio. Com o Trino aberto não faz nada, e não dá para testar nessa tela: para isso existe Testar, aqui nos Ajustes.',
+    'emergency.help.copies':
+      'Não apaga cópias do disco feitas antes. Quem tiver uma cópia e a sua chave de emergência pode comprovar que era essa chave, e com a sua senha real abre tudo. Não a entregue.',
+    'emergency.help.leftovers':
+      'Num SSD e nos pontos de restauração do Windows podem ficar versões antigas dos seus dados. Continuam cifradas com a sua senha real.',
+    'emergency.help.notTheirs': 'Não apaga o que os seus contatos têm nos aparelhos deles, nem o que os relays viram.',
+    'emergency.help.forensic':
+      'Uma análise forense do disco pode perceber que dados foram apagados, e a que horas. Como o código do Trino é público, quem o conhece sabe que essa função existe.',
+    'emergency.help.oldCopy':
+      'Quem souber a sua chave de emergência e tiver uma cópia antiga do disco pode ler o seu nome, o segredo da sua verificação em duas etapas, os seus relays e as suas pontes, e mandar um aviso falso para o seu contato de confiança. Não pode ler os seus contatos nem os seus chats.',
+    'emergency.help.notifications':
+      'No Windows, a lista de notificações do sistema pode guardar o nome de quem escreveu para você, e o Trino não consegue apagá-la.',
+    'emergency.help.tor': 'A conta nova sai para a internet pela mesma entrada do Tor que a anterior.',
+    'emergency.help.otherDevices':
+      'Se você usa o Trino em outro dispositivo, só este é apagado. A conta continua nos outros, e quem vir os dois pode perceber.',
+    'emergency.help.phone':
+      'No celular, a digital ou o Face ID nunca usam a chave de emergência. Se alguém puder obrigar você a pôr o dedo ou o rosto, desligue-os.',
+    'emergency.help.alert': 'O aviso a um contato de confiança',
+    'emergency.help.alertOptional': 'É opcional. Se você não escolher, nada sai para a internet quando você usa a chave.',
+    'emergency.help.alertTells':
+      'Avisar pode denunciar que você a usou: o seu contato vai saber, e quem o pressionar ou revisar o aparelho dele também pode saber.',
+    'emergency.help.alertNetwork':
+      'Só sai se o Trino tiver conexão. Se não tiver, ele tenta de novo enquanto continuar aberto, por até um dia; se fechar antes, não sai. O Trino não mostra se saiu.',
+    'emergency.help.alertWeek':
+      'O seu contato precisa abrir o Trino nos dias seguintes: se ficar mais de uma semana sem abrir, pode perder o aviso.',
+    'emergency.help.alertWhen': 'O aviso diz quando foi enviado, pelo relógio do seu aparelho, e quando chegou.',
+    'emergency.help.alertFalse': 'Um aviso também pode ser falso. Se chegar um de um contato seu, confirme por outro meio se puder.',
   },
 };
