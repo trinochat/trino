@@ -1182,20 +1182,29 @@ mod tests {
     ///
     /// Not part of the suite. Run it with
     /// `cargo test -p trino-engine --lib -- --ignored measure_the_two_paths --nocapture`,
-    /// with `TMP` (or `TMPDIR`) on the disk to measure: an SSD, a hard disk.
+    /// with `TMP` (or `TMPDIR`) on the disk to measure: an SSD, a hard disk,
+    /// and `TRINO_MEASURE_RUNS` for the runs of each path (15 if unset).
     /// The tests' KDF is cheap, and the same in both paths, as Argon2id is
     /// (one derivation each, with the same parameters): what this compares
     /// is what comes after it, in the test profile (`test-kdf` refuses a
     /// release build), so the times are higher than a release's and only
-    /// the difference counts. CE-8 measures the app itself.
+    /// the difference counts. Built in release without `test-kdf` (CE-8
+    /// does it in a copy of the tree), it measures Argon2id too.
     #[test]
     #[ignore = "a measurement for CE-8, not a check"]
     fn measure_the_two_paths() {
-        const RUNS: usize = 15;
-        println!("design §6.3: {RUNS} runs each, after the key derivation");
+        let runs: usize = std::env::var("TRINO_MEASURE_RUNS")
+            .ok()
+            .and_then(|runs| runs.parse().ok())
+            .filter(|&runs| runs > 0)
+            .unwrap_or(15);
+        println!(
+            "design §6.3: {runs} runs each, in {}",
+            std::env::temp_dir().display()
+        );
         for messages in [10, 5_000] {
             let (mut real, mut emergency) = (Vec::new(), Vec::new());
-            for _ in 0..RUNS {
+            for _ in 0..runs {
                 let scratch = ScratchDir::new("emergency-measure");
                 let ana = Ana::new(scratch.path(), false);
                 with_history(&ana, messages);
