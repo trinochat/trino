@@ -693,8 +693,11 @@ describe('useCallController', () => {
       s.state('connecting', outgoing);
       s.state('connected', outgoing);
       expect(s.sounds.blipConnect).toHaveBeenCalledTimes(1);
+      // At the call's volume, as the ringback (23 Oct 2026).
+      expect(s.sounds.blipConnect).toHaveBeenCalledWith(30);
       s.state('ended', outgoing);
       expect(s.sounds.blipEnd).toHaveBeenCalledTimes(1);
+      expect(s.sounds.blipEnd).toHaveBeenCalledWith(30);
     });
 
     it('shows a camera that failed during the call, without ending it', () => {

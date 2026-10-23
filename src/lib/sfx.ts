@@ -2,7 +2,10 @@
 // files). The redesign adds a bounded volume, the message tone and the call
 // sounds David chose on 12 Oct 2026 out of nine previews: a marimba for an
 // incoming call (1A), a soft classic ringback (2A) and a falling marimba
-// when a call ends (3A).
+// when a call ends (3A). On 23 Oct 2026 he approved its mirror for when a
+// call connects, a marimba rising from C5 to G5, in place of the old
+// two-tone square beep of the previous Trino. The connect and the hang-up
+// play at the call's volume.
 
 let ctx: AudioContext | null = null;
 let ringTimer: number | null = null;
@@ -122,6 +125,11 @@ const RING_NOTES: readonly Note[] = [
   { hz: 783.99, at: 0.16 },
   { hz: 1046.5, at: 0.32 },
   { hz: 783.99, at: 0.48 },
+];
+/** When a call connects (23 Oct 2026): C5, then G5, the mirror of 3A. */
+const CONNECT_NOTES: readonly Note[] = [
+  { hz: 523.25, at: 0 },
+  { hz: 783.99, at: 0.18 },
 ];
 /** 3A: G5, then C5. */
 const HANG_UP_NOTES: readonly Note[] = [
@@ -289,11 +297,9 @@ export function stopRinging(): void {
   }
 }
 
-/** Short confirmation blip when a call connects. */
-export function blipConnect(): void {
-  const t = ac().currentTime;
-  beep(520, t, 0.08, 'square', 0.12);
-  beep(780, t + 0.1, 0.12, 'square', 0.12);
+/** When a call connects: a marimba rising from C5 to G5, at the volume (0 to 100). */
+export function blipConnect(volume = 60): void {
+  playMarimba(CONNECT_NOTES, toneGain(volume), ac().currentTime);
 }
 
 /** When a call ends (3A): a marimba falling from G5 to C5, at the volume (0 to 100). */

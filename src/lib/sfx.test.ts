@@ -359,6 +359,39 @@ describe('the ringback (2A)', () => {
   });
 });
 
+// Approved by David on 23 Oct 2026: the mirror of the hang-up.
+describe('the connect', () => {
+  it('rises from C5 to G5 on the marimba, once, within the volume', async () => {
+    vi.useFakeTimers();
+    sfx.blipConnect(60);
+    expectMarimba(started(), [
+      [523.25, 0],
+      [783.99, 0.18],
+    ]);
+    const loudest = wavePeak(started(), 0, 1.4);
+    expect(loudest).toBeLessThanOrEqual(sfx.toneGain(60) + 1e-9);
+    expect(loudest).toBeGreaterThan(sfx.toneGain(60) * 0.9);
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(started()).toHaveLength(6);
+  });
+
+  it('follows the volume it is given, and has no square wave left', () => {
+    sfx.blipConnect(100);
+    const loud = wavePeak(started(), 0, 1.4);
+    expect(loud).toBeLessThanOrEqual(sfx.MAX_TONE_GAIN + 1e-9);
+    expect(loud).toBeGreaterThan(sfx.MAX_TONE_GAIN * 0.9);
+    const before = started().length;
+    sfx.blipConnect(30);
+    const soft = started().slice(before);
+    expect(wavePeak(soft, 0, 1.4)).toBeLessThanOrEqual(sfx.toneGain(30) + 1e-9);
+    expect(wavePeak(soft, 0, 1.4)).toBeGreaterThan(sfx.toneGain(30) * 0.9);
+    expect(started().every(tone => tone.type === 'sine')).toBe(true);
+    const before0 = started().length;
+    sfx.blipConnect(0);
+    expect(wavePeak(started().slice(before0), 0, 1.4)).toBe(0);
+  });
+});
+
 describe('the hang-up (3A)', () => {
   it('falls from G5 to C5 on the marimba, once, within the volume', async () => {
     vi.useFakeTimers();

@@ -344,13 +344,15 @@ export function useCallController(deps: CallControllerDeps): CallController {
           // Once per call: an ICE restart reconnects without a second blip.
           if (call.states.indexOf('connected') === call.states.length - 1) {
             tones.stopRinging();
-            tones.blipConnect();
+            tones.blipConnect(alerts().ringtone().volume);
           }
           break;
         case 'ended':
         case 'rejected':
           tones.stopRinging();
-          if (call.states.some(x => x === 'ringing-out' || x === 'connecting' || x === 'connected')) tones.blipEnd();
+          if (call.states.some(x => x === 'ringing-out' || x === 'connecting' || x === 'connected')) {
+            tones.blipEnd(alerts().ringtone().volume);
+          }
           break;
         default:
           break;
