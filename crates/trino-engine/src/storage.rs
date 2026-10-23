@@ -69,6 +69,7 @@ pub fn account_of(inner: &InnerState) -> AccountFile {
         blocked,
         groups,
         group_invites,
+        alerts: inner.alerts.clone(),
     }
 }
 
@@ -418,6 +419,7 @@ pub fn load_legacy(files: &DataFiles, identity: &Identity) -> Result<LoadedSessi
         blocked: friends.blocked,
         groups: read_list(&files.groups),
         group_invites: read_list(&files.group_invites),
+        alerts: Default::default(),
     };
 
     let mut legacy = legacy_files(files, identity)?;
@@ -537,6 +539,8 @@ pub fn apply_loaded(
             .group_invites
             .insert(invite.roster.group_id.clone(), invite);
     }
+    inner.alerts.forget();
+    inner.alerts = account.alerts;
     inner.history.clear();
     load_history(inner, history);
     load_ratchets(inner, sessions);

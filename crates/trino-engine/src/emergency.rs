@@ -23,6 +23,7 @@
 //! `tor/` is not touched (CE-D8).
 
 use crate::account::{display_handle, DataFiles, Unlocked};
+use crate::alert::SharedAlert;
 use crate::command_error::CommandError;
 use crate::identity::create_identity;
 use crate::state::default_relays;
@@ -42,27 +43,31 @@ use zeroize::Zeroizing;
 
 /// Steps E2 to E6, once `vault` opened with the emergency key and its code
 /// (E0) and no session is open (E1): what `open_session` takes, as from a
-/// real unlock.
+/// real unlock, and the warning to a trusted contact to send in B1, if the
+/// account chose one and its contact accepted (CE-6). It lives in memory
+/// only: nothing on the disk keeps it from here on.
 pub fn run<D: Disk + Clone>(
     disk: &D,
     files: &DataFiles,
     vault: EmergencyVault,
     now: i64,
-) -> Result<Unlocked, CommandError> {
-    let vault = take_place(disk, files, vault, now)?;
+) -> Result<(Unlocked, Option<SharedAlert>), CommandError> {
+    let (vault, alert) = take_place(disk, files, vault, now)?;
     // E6: as any account opens; it writes nothing, as the shared block,
     // the TOTP hint and the prekey are as the unlock wants them.
-    crate::account::unlock_v3(files, vault, Vec::new(), now)
+    let unlocked = crate::account::unlock_v3(files, vault, Vec::new(), now)?;
+    Ok((unlocked, alert))
 }
 
 /// Steps E2 to E5: the empty account takes the place of the account on
-/// this device. Its vault, as it is now on the disk.
+/// this device. Its vault, as it is now on the disk, and the warning the
+/// account of before would send.
 pub(crate) fn take_place<D: Disk + Clone>(
     disk: &D,
     files: &DataFiles,
     vault: EmergencyVault,
     now: i64,
-) -> Result<OpenVault, CommandError> {
+) -> Result<(OpenVault, Option<SharedAlert>), CommandError> {
     // E2, in memory.
     let inherited = SharedApp::from_bytes(vault.shared_app());
     let identity = create_identity();
@@ -84,6 +89,8 @@ pub(crate) fn take_place<D: Disk + Clone>(
         .unwrap_or_default();
     // B1 (CE-6): what the network action needs is taken from `inherited`
     // here, before the vault of before goes; with no action chosen, none.
+    // The empty account's block has none.
+    let alert = inherited.as_ref().and_then(|shared| shared.alert.clone());
     let shared = SharedApp::new(&account.handle, account.created_at, &prefs, &account.relays);
     let keys = StoreKeys::generate();
     let record = keys.to_vault_app();
@@ -110,7 +117,7 @@ pub(crate) fn take_place<D: Disk + Clone>(
     // error, never a notice.
     let _ = move_in(disk, &files.home, &aside);
     destroy_small(disk, files);
-    Ok(new_vault)
+    Ok((new_vault, alert))
 }
 
 /// E3: the empty account's store in `home/store.new/`, under `keys`, as a
@@ -478,6 +485,66 @@ mod tests {
                 "{path:?}"
             );
         }
+    }
+
+    /// Ana's warning to a trusted contact, accepted by her contact: kept in
+    /// her store and, with the next seal, in the vault's shared block.
+    fn with_warning(ana: &Ana) -> crate::alert::SharedAlert {
+        let (identity, _, loaded) = ana.unlock(PASSPHRASE).unwrap();
+        let loaded = loaded.unwrap();
+        let mut inner = InnerState {
+            identity: Some(identity),
+            ..InnerState::default()
+        };
+        inner.storage.set(loaded.storage);
+        if let Some(vault) = loaded.vault {
+            inner.vault.set(vault);
+        }
+        apply_loaded(
+            &mut inner,
+            loaded.account,
+            loaded.history,
+            loaded.sessions,
+            loaded.profiles,
+            NOW,
+        );
+        inner.alerts.mine = Some(crate::alert::OwnAlert {
+            contact: "bb".repeat(32),
+            id: "cd".repeat(16),
+            key: "ab".repeat(32),
+            state: crate::alert::AlertState::Accepted,
+            relays: vec!["wss://bob.example".into()],
+            message: "Si no te escribo, ya sabes.".into(),
+        });
+        persist_account(&inner).unwrap();
+        inner.alerts.shared().unwrap()
+    }
+
+    /// B1 (CE-6, design §6.1 E2 and §7.2): the warning is taken from the
+    /// block before the vault of before goes, and only into memory: the
+    /// empty account keeps no warning, in its block or its store.
+    #[test]
+    fn the_emergency_path_takes_the_warning_and_the_empty_account_keeps_none() {
+        let scratch = ScratchDir::new("emergency-warning");
+        let ana = Ana::new(scratch.path(), true);
+        let warning = with_warning(&ana);
+
+        let disk = crate::store::disk::RealDisk;
+        let (vault, taken) = take_place(&disk, &ana.files, ana.emergency_vault(), NOW).unwrap();
+
+        assert_eq!(taken, Some(warning.clone()));
+        let block = SharedApp::from_bytes(vault.shared_app()).unwrap();
+        assert_eq!(block.alert, None);
+        // Nothing in the data folder holds the registration's key or id.
+        for (path, bytes) in snapshot(ana.home()) {
+            for secret in [&warning.k, &warning.id] {
+                let text = String::from_utf8_lossy(&bytes);
+                assert!(!text.contains(secret.as_str()), "{path:?}");
+            }
+        }
+        let (_, _, loaded) = ana.unlock(EMERGENCY).unwrap();
+        let account = loaded.unwrap().account.unwrap();
+        assert!(account.alerts.is_empty());
     }
 
     /// Design §12.2, tests 33 and 34, and §4 (K2FA): the emergency key asks

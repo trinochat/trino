@@ -1636,7 +1636,7 @@ mod tests {
             let fields: serde_json::Value = serde_json::from_slice(plain).unwrap();
             assert_eq!(
                 fields["prof"],
-                serde_json::json!({ "v": 1, "have": 7 }),
+                serde_json::json!({ "v": 1, "have": 7, "alert": 1 }),
                 "{fields}"
             );
             profile::receive(&mut bobs_profiles, "me", plain, event.created_at);

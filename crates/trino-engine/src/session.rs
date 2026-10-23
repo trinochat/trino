@@ -342,6 +342,12 @@ pub fn clear_sensitive_state(inner: &mut InnerState) {
     // -- W8 --
     inner.key_mismatch_at.clear();
     inner.profiles.forget();
+    // -- CE-6 --
+    for client in inner.alert_relays.drain(..) {
+        client.close();
+    }
+    inner.alerts.forget();
+    inner.alert_watch.notify_waiters();
 }
 
 /// The relay connections of a session `open_session` just opened: what
@@ -829,6 +835,11 @@ pub async fn handle_incoming_event(
             return;
         }
     };
+    // -- CE-6 (RC-08) -- A warning to a trusted contact is signed with a key
+    // of one use: it goes to its mailbox's handler before any sender lookup.
+    if crate::alert::route(events, &mut inner, &event, chrono::Utc::now().timestamp()) {
+        return;
+    }
     let my_pub = hex::encode(identity.nostr.pub_bytes);
     let friend = match admit_event(&mut inner, &event, &my_pub) {
         Admission::Process(friend) => *friend,
@@ -1043,6 +1054,10 @@ pub async fn handle_incoming_event(
         &plain,
         event.created_at,
     ) {
+        return;
+    }
+    // -- CE-6 -- The warning's question, answer and withdrawal end here too.
+    if crate::alert::on_message(events, &mut inner, &friend, &plain) {
         return;
     }
 

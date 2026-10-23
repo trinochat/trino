@@ -23,25 +23,29 @@ reads them, and the announcement rides in a field 0.1.0 ignores.
 Every outgoing `text`, `grp` and `file` envelope gets one more field, last:
 
 ```
-"prof":{"v":1,"have":N}
+"prof":{"v":1,"have":N,"alert":1}
 ```
 
 - `v`: the highest profile message version this Trino reads. Today `1`.
 - `have`: the revision of **the recipient's** profile this Trino holds; `0`
   when it holds none. Group messages are encrypted per member, so each copy
   carries the `have` of its own recipient.
-- `call`, `roster`, the handshake (`__trino_handshake__`) and profile
-  messages never carry it.
+- `alert`: the version of the warning to a trusted contact this Trino reads
+  (the emergency key, `alert-reg` and `alert-ack`, `crates/trino-engine/src/alert.rs`).
+  Today `1`; missing or not a whole number means none. Only a contact that
+  announces it is offered as the trusted contact.
+- `call`, `roster`, the handshake (`__trino_handshake__`), profile
+  messages and the warning's own never carry it.
 
 The field goes in before the closing brace of the compact envelope, and every
 byte before it stays as it was:
 
 ```
 in   {"ty":"text","body":"hola","id":"m1"}               (have = 7)
-out  {"ty":"text","body":"hola","id":"m1","prof":{"v":1,"have":7}}
+out  {"ty":"text","body":"hola","id":"m1","prof":{"v":1,"have":7,"alert":1}}
 
 in   {"ty":"grp","gid":"g1","ep":4,"body":"hola grupo"}  (have = 0)
-out  {"ty":"grp","gid":"g1","ep":4,"body":"hola grupo","prof":{"v":1,"have":0}}
+out  {"ty":"grp","gid":"g1","ep":4,"body":"hola grupo","prof":{"v":1,"have":0,"alert":1}}
 ```
 
 An envelope that already has `prof` goes out as it is. On the desktop, every

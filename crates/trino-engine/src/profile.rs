@@ -6,8 +6,9 @@
 //! message only ever goes to a contact whose Trino announced it reads them:
 //!
 //! - every outgoing text, group or file message announces it
-//!   (`"prof":{"v":1,"have":N}`, `with_caps`), with the revision of that
-//!   contact's profile held here. 0.1.0 ignores the extra field;
+//!   (`"prof":{"v":1,"have":N,"alert":1}`, `with_caps`), with the revision
+//!   of that contact's profile held here, and that this Trino reads the
+//!   warning to a trusted contact (alert.rs). 0.1.0 ignores the extra field;
 //! - every incoming one records what its sender announced. One without
 //!   `prof` clears it: an older version sent it, or someone went back to
 //!   one. Only the newest message counts;
@@ -88,6 +89,10 @@ pub struct ContactProfile {
     /// The revision of OUR profile they hold (`prof.have`).
     #[serde(default)]
     pub have: u64,
+    /// The version of the warning to a trusted contact their Trino reads
+    /// (`prof.alert`, clave de emergencia CE-6); 0 for none.
+    #[serde(default)]
+    pub alert: u64,
     /// `created_at` of their newest text, group or file message, so an
     /// older one arriving late never undoes it.
     #[serde(default)]
@@ -127,13 +132,15 @@ pub struct Received {
     pub resend: bool,
 }
 
-/// Read `prof`: the version announced (1 or more) and the revision held, or
+/// Read `prof`: the version announced (1 or more), the revision held and
+/// the version of the warning to a trusted contact read (0 for none), or
 /// `None` when it is no valid announcement. Fields it does not know are a
 /// newer version's own.
-fn read_announcement(prof: &Value) -> Option<(u64, u64)> {
+fn read_announcement(prof: &Value) -> Option<(u64, u64, u64)> {
     let version = prof.get("v")?.as_u64().filter(|v| *v >= 1)?;
     let have = prof.get("have")?.as_u64()?;
-    Some((version, have))
+    let alert = prof.get("alert").and_then(Value::as_u64).unwrap_or(0);
+    Some((version, have, alert))
 }
 
 fn wipe(text: &mut Option<String>) {
@@ -179,7 +186,7 @@ impl Profiles {
         prof: Option<&Value>,
         created_at: i64,
     ) -> Received {
-        let (caps, have) = prof.and_then(read_announcement).unwrap_or((0, 0));
+        let (caps, have, alert) = prof.and_then(read_announcement).unwrap_or((0, 0, 0));
         if caps == 0 && !self.contacts.contains_key(handle) {
             return Received::default();
         }
@@ -188,10 +195,11 @@ impl Profiles {
             return Received::default();
         }
         kept.seen_at = created_at;
-        let save = kept.caps != caps || kept.have != have;
+        let save = kept.caps != caps || kept.have != have || kept.alert != alert;
         let notify = (kept.caps >= 1) != (caps >= 1);
         kept.caps = caps;
         kept.have = have;
+        kept.alert = alert;
         // Anti-entropy: a contact that reads profiles but holds an older
         // revision of ours lost it (24 h catch-up window, a relay down) or
         // never had it. Once per session and revision, so a contact that
@@ -492,8 +500,9 @@ pub fn profile_message(rev: u64, name: &str, about: &str, photo: &PhotoField) ->
 /// What `seal_for` encrypts for `handle`, for every message to a contact:
 /// `plaintext` itself or, for a text, group or file envelope, the same
 /// envelope announcing that this Trino reads profile messages and which
-/// revision of `handle`'s profile it holds. Calls, rosters, handshakes and
-/// profile messages go out unchanged.
+/// revision of `handle`'s profile it holds, and that it reads the warning
+/// to a trusted contact (`"alert":1`, CE-6). Calls, rosters, handshakes,
+/// profile messages and the warning's own go out unchanged.
 pub fn with_caps(profiles: &Profiles, handle: &str, plaintext: &[u8]) -> Vec<u8> {
     let announces = matches!(
         serde_json::from_slice::<Value>(plaintext),
@@ -508,7 +517,11 @@ pub fn with_caps(profiles: &Profiles, handle: &str, plaintext: &[u8]) -> Vec<u8>
             let have = profiles.contacts.get(handle).map_or(0, |kept| kept.rev);
             let mut out = open.to_vec();
             out.extend_from_slice(
-                format!(r#","prof":{{"v":{PROFILE_V},"have":{have}}}}}"#).as_bytes(),
+                format!(
+                    r#","prof":{{"v":{PROFILE_V},"have":{have},"alert":{}}}}}"#,
+                    crate::alert::ALERT_V
+                )
+                .as_bytes(),
             );
             out
         }
@@ -1302,6 +1315,50 @@ mod tests {
         assert_eq!((ana.caps, ana.have), (2, 4));
     }
 
+    /// CE-6 (design §7.2 step 1): whether the contact's Trino reads the
+    /// warning to a trusted contact, from its newest message only.
+    #[test]
+    fn the_warning_to_a_trusted_contact_is_announced_in_prof_too() {
+        let mut profiles = Profiles::default();
+        let alert = |prof: &str| text_with(prof);
+        receive(
+            &mut profiles,
+            "ana",
+            &alert(r#","prof":{"v":1,"have":0,"alert":1}"#),
+            NOW,
+        );
+        assert_eq!(profiles.contacts["ana"].alert, 1);
+        let older = receive(
+            &mut profiles,
+            "ana",
+            &alert(r#","prof":{"v":1,"have":0}"#),
+            NOW + 1,
+        );
+        assert_eq!(profiles.contacts["ana"].alert, 0, "an older Trino again");
+        assert!(older.save);
+        for odd in [r#""alert":"1""#, r#""alert":-1"#, r#""alert":0"#] {
+            let prof = format!(r#","prof":{{"v":1,"have":0,{odd}}}"#);
+            receive(&mut profiles, "ana", &alert(&prof), NOW + 2);
+            assert_eq!(profiles.contacts["ana"].alert, 0, "{odd}");
+        }
+        // A newer version of the warning still reads version 1.
+        receive(
+            &mut profiles,
+            "ana",
+            &alert(r#","prof":{"v":1,"have":0,"alert":2}"#),
+            NOW + 3,
+        );
+        assert_eq!(profiles.contacts["ana"].alert, 2);
+        // Without a valid `prof`, nothing is read: no profiles, no warning.
+        receive(
+            &mut profiles,
+            "ana",
+            &alert(r#","prof":{"have":0,"alert":1}"#),
+            NOW + 4,
+        );
+        assert_eq!(profiles.contacts["ana"].alert, 0);
+    }
+
     // ---- On disk and in memory ----
 
     /// The profiles of the store in `home`, as the next unlock reads them.
@@ -1599,12 +1656,12 @@ mod tests {
 
         assert_eq!(
             String::from_utf8(announced).unwrap(),
-            r#"{"ty":"text","body":"hola","id":"m1","prof":{"v":1,"have":7}}"#
+            r#"{"ty":"text","body":"hola","id":"m1","prof":{"v":1,"have":7,"alert":1}}"#
         );
         let unknown = with_caps(&holding("ana", 7), "bob", &text);
         assert!(String::from_utf8(unknown)
             .unwrap()
-            .ends_with(r#","prof":{"v":1,"have":0}}"#));
+            .ends_with(r#","prof":{"v":1,"have":0,"alert":1}}"#));
     }
 
     #[test]
@@ -1652,6 +1709,8 @@ mod tests {
             receive(&mut receiver, "me", &announced, NOW);
             assert_eq!(receiver.contacts["me"].caps, PROFILE_V);
             assert_eq!(receiver.contacts["me"].have, 3);
+            // And that it reads the warning to a trusted contact (CE-6).
+            assert_eq!(receiver.contacts["me"].alert, crate::alert::ALERT_V);
         }
     }
 

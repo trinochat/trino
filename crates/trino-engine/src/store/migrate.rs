@@ -220,6 +220,7 @@ pub fn read_legacy(
             blocked,
             groups: groups.1.unwrap_or_default(),
             group_invites: invites.1.unwrap_or_default(),
+            alerts: Default::default(),
         });
     }
 
@@ -880,6 +881,7 @@ mod tests {
                 blocked: friends.blocked,
                 groups,
                 group_invites: invites,
+                alerts: Default::default(),
             },
             history,
             sessions,

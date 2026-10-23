@@ -73,6 +73,10 @@ pub struct AccountFile {
     pub groups: Vec<GroupRoster>,
     #[serde(default)]
     pub group_invites: Vec<GroupInvite>,
+    /// The warning to a trusted contact, both sides (CE-6). Left out when
+    /// there is none, as in every account from before.
+    #[serde(default, skip_serializing_if = "crate::alert::AlertBook::is_empty")]
+    pub alerts: crate::alert::AlertBook,
 }
 
 /// What a sticker's file holds. Its id is the start of the image's SHA-256,

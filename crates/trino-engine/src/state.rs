@@ -91,6 +91,17 @@ pub struct InnerState {
     /// Why the last lock happened, kept while locked so the window opened
     /// after it can say so (CL-6a). Not a secret: it never names anyone.
     pub lock_reason: Option<crate::lock::LockReason>,
+    // -- Clave de emergencia (CE-6) --
+    /// The warning to a trusted contact, both sides: the one this account
+    /// would send, and the questions and registrations of its contacts.
+    /// Persisted ENCRYPTED in the store's account file.
+    pub alerts: crate::alert::AlertBook,
+    /// The connections that listen to the warnings' mailboxes, apart from
+    /// `relays` (RC-07). Empty with no registration accepted.
+    pub alert_relays: Vec<Arc<NostrClient>>,
+    /// Told when the registrations listened to change, so their
+    /// connections follow (`alert::watch`).
+    pub alert_watch: Arc<tokio::sync::Notify>,
 }
 
 const SEEN_EVENT_CAP: usize = 4096;

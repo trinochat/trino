@@ -386,6 +386,11 @@ pub struct SharedApp {
     pub relays: Vec<String>,
     #[serde(default)]
     pub prefs: BTreeMap<String, String>,
+    /// The warning to a trusted contact, once its contact accepted (CE-6,
+    /// design §7.2 step 4): what the emergency path sends. Never who the
+    /// contact is.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub alert: Option<crate::alert::SharedAlert>,
 }
 
 impl SharedApp {
@@ -470,6 +475,7 @@ impl SharedApp {
             created_at,
             relays: kept_relays,
             prefs: kept,
+            alert: None,
         }
     }
 
@@ -507,6 +513,45 @@ impl SharedApp {
                     .collect()
             })
             .unwrap_or_default()
+    }
+
+    /// This block with `alert`, the warning accepted (CE-6), which always
+    /// finds its room: its relays and message are bounded
+    /// (`contact_relays`, `clean_message`), and to make room the rest of
+    /// the preferences yield first, the last ones first, then the last
+    /// lines of the bridges. The security ones and the consent record stay.
+    pub fn with_alert(mut self, alert: Option<crate::alert::SharedAlert>) -> Self {
+        self.alert = alert
+            .map(|alert| crate::alert::SharedAlert {
+                relays: crate::alert::contact_relays(&alert.relays),
+                msg: crate::alert::clean_message(&alert.msg),
+                ..alert
+            })
+            .filter(|alert| !alert.relays.is_empty());
+        let fixed: Vec<&str> = SECURITY_PREFS.into_iter().chain([CONSENT_PREF]).collect();
+        let len = |block: &Self| serde_json::to_vec(block).map_or(usize::MAX, |bytes| bytes.len());
+        while len(&self) > MAX_SHARED_APP_LEN {
+            let rest = self
+                .prefs
+                .keys()
+                .rev()
+                .find(|key| !fixed.contains(&key.as_str()) && *key != crate::prefs::NET_BRIDGES)
+                .cloned();
+            if let Some(key) = rest {
+                self.prefs.remove(&key);
+                continue;
+            }
+            let Some(bridges) = self.prefs.get_mut(crate::prefs::NET_BRIDGES) else {
+                break;
+            };
+            match bridges.rfind('\n') {
+                Some(at) => bridges.truncate(at),
+                None => {
+                    self.prefs.remove(crate::prefs::NET_BRIDGES);
+                }
+            }
+        }
+        self
     }
 
     pub fn to_bytes(&self) -> Vec<u8> {
@@ -597,8 +642,8 @@ impl VaultCell {
 }
 
 /// Bring the shared block of the session's vault up to date with the
-/// session's name and security preferences, after either changed (design
-/// §3.5). Best effort: the next unlock does it again.
+/// session's name, preferences, relays and warning accepted, after any
+/// changed (design §3.5). Best effort: the next unlock does it again.
 pub fn sync_shared(inner: &InnerState) {
     if !inner.vault.is_open() {
         return;
@@ -607,7 +652,9 @@ pub fn sync_shared(inner: &InnerState) {
         return;
     };
     let prefs = crate::prefs::current_map(inner);
-    let shared = SharedApp::new(name, inner.created_at, &prefs, &inner.relay_urls).to_bytes();
+    let shared = SharedApp::new(name, inner.created_at, &prefs, &inner.relay_urls)
+        .with_alert(inner.alerts.shared())
+        .to_bytes();
     if inner.vault.update_shared(&shared, &inner.storage).is_err() {
         dbg_log("the vault's shared block could not be sealed again");
     }
@@ -1048,6 +1095,115 @@ mod tests {
             .lines()
             .all(|line| line == "obfs4 192.0.2.1:443 cert=xx"));
         assert!(shared.to_bytes().len() <= MAX_SHARED_APP_LEN);
+    }
+
+    fn alert(message: &str, relays: usize) -> crate::alert::SharedAlert {
+        crate::alert::SharedAlert {
+            k: "ab".repeat(32),
+            id: "cd".repeat(16),
+            relays: (0..relays)
+                .map(|i| format!("wss://{}{i}.example", "r".repeat(80)))
+                .collect(),
+            msg: message.into(),
+        }
+    }
+
+    /// CE-6 (design §7.2 step 4): the warning accepted rides in the block,
+    /// whole, even when everything else is at its worst; what yields is
+    /// the rest of the preferences, then the last bridge lines.
+    #[test]
+    fn the_warning_always_fits_the_shared_block() {
+        let name = "\u{1}".repeat(400);
+        let mut prefs = BTreeMap::new();
+        for key in SECURITY_PREFS {
+            prefs.insert(key.to_string(), "\"".repeat(MAX_SHARED_PREF_BYTES / 2 - 30));
+        }
+        prefs.insert("trino.consent".into(), consent(&"ab".repeat(32)));
+        for i in 0..200 {
+            prefs.insert(format!("trino.pref.x{i:03}"), "\"".repeat(100));
+        }
+        prefs.insert(
+            "net.bridges".into(),
+            "obfs4 192.0.2.1:443 cert=xx\n".repeat(200),
+        );
+        let urls: Vec<String> = (0..50)
+            .map(|i| format!("wss://{}{i}.example", "r".repeat(200)))
+            .collect();
+        let warning = alert(&"\"🙂".repeat(140), 5);
+
+        let shared = SharedApp::new(&name, 0, &prefs, &urls).with_alert(Some(warning.clone()));
+
+        let bytes = shared.to_bytes();
+        assert!(bytes.len() <= MAX_SHARED_APP_LEN, "{}", bytes.len());
+        let back = SharedApp::from_bytes(&bytes).unwrap();
+        let kept = back.alert.clone().unwrap();
+        assert_eq!(kept.k, warning.k);
+        assert_eq!(kept.msg, warning.msg);
+        assert!(!kept.relays.is_empty());
+        for key in &SECURITY_PREFS[..] {
+            assert!(back.prefs.contains_key(*key), "{key}");
+        }
+        assert!(back.prefs.contains_key("trino.consent"));
+        assert!(back.prefs.contains_key("net.bridges"), "some bridges stay");
+
+        // With room, nothing yields; without the warning, there is none.
+        let small = SharedApp::new("Ana", 1, &map(&[("autolock", "5")]), &[]);
+        let with = small.clone().with_alert(Some(alert("hola", 1)));
+        assert_eq!(with.prefs, small.prefs);
+        assert_eq!(with.alert, Some(alert("hola", 1)));
+        assert_eq!(small.clone().with_alert(None), small);
+        assert!(!String::from_utf8(small.to_bytes())
+            .unwrap()
+            .contains("alert"));
+    }
+
+    /// The session puts the warning in the block once its contact accepts,
+    /// and takes it out with "Ninguna" (`sync_shared`).
+    #[test]
+    fn the_session_seals_the_warning_into_the_block_and_out_of_it() {
+        use crate::alert::{AlertState, OwnAlert};
+        let scratch = ScratchDir::new("vault-alert");
+        let path = scratch.path().join("vault.bin");
+        let mut inner = InnerState {
+            handle: Some("Ana".into()),
+            created_at: 1,
+            ..InnerState::default()
+        };
+        inner.vault.set(session_vault(&path));
+        let block =
+            |inner: &InnerState| SharedApp::from_bytes(&inner.vault.shared_app().unwrap()).unwrap();
+
+        inner.alerts.mine = Some(OwnAlert {
+            contact: "bb".repeat(32),
+            id: "cd".repeat(16),
+            key: "ab".repeat(32),
+            state: AlertState::Waiting,
+            relays: vec![],
+            message: "hola".into(),
+        });
+        sync_shared(&inner);
+        assert_eq!(block(&inner).alert, None, "not before it is accepted");
+
+        let mine = inner.alerts.mine.as_mut().unwrap();
+        mine.state = AlertState::Accepted;
+        mine.relays = vec!["wss://bob.example".into()];
+        sync_shared(&inner);
+        let sealed = block(&inner).alert.unwrap();
+        assert_eq!(sealed.relays, ["wss://bob.example"]);
+        assert_eq!(sealed.msg, "hola");
+        // On the disk too.
+        let on_disk = std::fs::read(&path).unwrap();
+        assert_eq!(
+            inner.vault.lock().as_ref().unwrap().vault.bytes(),
+            &on_disk[..]
+        );
+        // Never who the contact is.
+        let text = String::from_utf8(inner.vault.shared_app().unwrap()).unwrap();
+        assert!(!text.contains(&"bb".repeat(32)), "{text}");
+
+        inner.alerts.clear();
+        sync_shared(&inner);
+        assert_eq!(block(&inner).alert, None);
     }
 
     fn session_vault(path: &Path) -> SessionVault {

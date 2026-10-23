@@ -605,8 +605,10 @@ pub fn unlock_files(
 ) -> Result<Unlocked, CommandError> {
     match unlock_or_emergency(files, passphrase, code, session_open, now)? {
         Unlocking::Real(unlocked) => Ok(*unlocked),
+        // The warning, if any, is the caller's to send: `unseal` does.
         Unlocking::Emergency(vault) => {
             crate::emergency::run(&crate::store::disk::RealDisk, files, *vault, now)
+                .map(|(unlocked, _)| unlocked)
         }
     }
 }
@@ -650,8 +652,9 @@ pub(crate) fn unlock_v3(
     }
     if let Some(account) = &loaded.account {
         let prefs = SharedApp::prefs_of(loaded.prefs.as_ref());
-        let shared =
-            SharedApp::new(&account.handle, account.created_at, &prefs, &account.relays).to_bytes();
+        let shared = SharedApp::new(&account.handle, account.created_at, &prefs, &account.relays)
+            .with_alert(account.alerts.shared())
+            .to_bytes();
         if shared != vault.shared_app() && vault.set_shared_app(&shared).is_ok() {
             changed = true;
         }
@@ -816,8 +819,8 @@ pub async fn unseal_in(
     .await
     .map_err(|_| CommandError::internal("vault unlock worker failed"))??;
     let emergency = matches!(outcome, Unlocking::Emergency(_));
-    let (identity, totp_secret, loaded) = match outcome {
-        Unlocking::Real(unlocked) => *unlocked,
+    let ((identity, totp_secret, loaded), _alert) = match outcome {
+        Unlocking::Real(unlocked) => (*unlocked, None),
         Unlocking::Emergency(vault) => {
             if session_open {
                 // E1: nothing of the session that was open stays in memory,
