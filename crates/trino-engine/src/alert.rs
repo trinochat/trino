@@ -1008,9 +1008,12 @@ pub fn contact_view(inner: &InnerState) -> ContactAlerts {
 
 // ---- On the network ----
 
-/// How the warning is sent again while it does not go (design §7.2 B1
-/// step 3): pauses from `first`, twice as long each time, up to `max`;
-/// given up after `give_up`; each try waits `answer` for the relay's OK.
+/// How the warning is sent again while a relay does not take it (design
+/// §7.2 B1 step 3): after a refusal, or no answer in `answer`, a pause from
+/// `first`, twice as long each time, up to `max`; given up after
+/// `give_up`. A relay that is down is not one of these pauses: its client
+/// tries again at the pace of the session's relays (`FIRST_CONNECTION`,
+/// `RECONNECTION`), and the warning goes as soon as it is up (CE-8).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Retry {
     pub first: Duration,
@@ -1040,13 +1043,10 @@ pub async fn deliver(net: Arc<Net>, alert: SharedAlert, retry: Retry) -> usize {
     let start = tokio::time::Instant::now();
     let sends = alert.relays.iter().map(|url| {
         let connector = crate::nostr::relay_connector(Arc::clone(&net), session.clone(), ALERT_ISO);
-        let pauses = crate::nostr::Backoff {
-            first: retry.first,
-            max: retry.max,
-        };
+        // At the pace of the session's own relays: over Tor a relay often
+        // fails its first tries, and a pause of many minutes would hold the
+        // warning back long after it came up (CE-8).
         let options = crate::nostr::ClientOptions {
-            first_connection: pauses,
-            reconnection: pauses,
             connect_deadline: crate::nostr::relay_deadline(url),
             ready: Some(crate::nostr::ready_gate(Arc::clone(&net))),
             route: Some(net.route()),
@@ -1063,8 +1063,10 @@ pub async fn deliver(net: Arc<Net>, alert: SharedAlert, retry: Retry) -> usize {
 }
 
 /// `deliver` to the relay at `url`: until it takes the warning, or the
-/// tries are given up. Sealed again only when the day changes, so it
-/// always goes to a mailbox the contact listens to.
+/// tries are given up. It goes as soon as the socket is up, and again as
+/// soon as it comes back after a drop; a refusal, or no answer, waits its
+/// pause first. Sealed again only when the day changes, so it always goes
+/// to a mailbox the contact listens to.
 async fn deliver_to(
     url: &str,
     options: crate::nostr::ClientOptions,
@@ -1072,27 +1074,47 @@ async fn deliver_to(
     retry: Retry,
     start: tokio::time::Instant,
 ) -> bool {
+    // The socket's ups and downs, told by the client itself.
+    let (up_tx, mut up) = tokio::sync::watch::channel(false);
+    let options = crate::nostr::ClientOptions {
+        on_state: Some(Arc::new(move |is_up| {
+            let _ = up_tx.send(is_up);
+        })),
+        ..options
+    };
     let client = crate::nostr::NostrClient::start(url, Arc::new(|_| {}), options);
+    let deadline = start + retry.give_up;
     let mut pause = retry.first;
     let mut sealed: Option<(u32, NostrEvent)> = None;
     let took = loop {
-        if client.is_connected() {
-            let now = crate::session::unix_now();
-            let epoch = epoch_at(now);
-            if sealed.as_ref().is_none_or(|(day, _)| *day != epoch) {
-                sealed = seal(alert, now).map(|event| (epoch, event));
-            }
-            let Some((_, event)) = &sealed else {
-                break false;
-            };
-            if client.publish_acked(event, retry.answer).await == crate::nostr::Ack::Accepted {
-                break true;
-            }
+        // Wait for the socket, however long the relay takes to come up.
+        match tokio::time::timeout_at(deadline, up.wait_for(|is_up| *is_up)).await {
+            Ok(Ok(_)) => {}
+            // Given up, or the client is gone.
+            Ok(Err(_)) | Err(_) => break false,
         }
-        if start.elapsed() + pause > retry.give_up {
+        let now = crate::session::unix_now();
+        let epoch = epoch_at(now);
+        if sealed.as_ref().is_none_or(|(day, _)| *day != epoch) {
+            sealed = seal(alert, now).map(|event| (epoch, event));
+        }
+        let Some((_, event)) = &sealed else {
+            break false;
+        };
+        if client.publish_acked(event, retry.answer).await == crate::nostr::Ack::Accepted {
+            break true;
+        }
+        // Not taken: its pause, unless the socket drops and comes back,
+        // which is tried at once.
+        let wait = tokio::time::sleep_until((tokio::time::Instant::now() + pause).min(deadline));
+        let dropped = up.wait_for(|is_up| !*is_up);
+        tokio::select! {
+            () = wait => {}
+            _ = dropped => {}
+        }
+        if tokio::time::Instant::now() >= deadline {
             break false;
         }
-        tokio::time::sleep(pause).await;
         pause = (pause * 2).min(retry.max);
     };
     client.close();
@@ -1305,6 +1327,57 @@ mod network_tests {
             after,
             "it went on after Trino closed"
         );
+    }
+
+    /// CE-8 (David's manual test): over Tor a relay often fails its first
+    /// tries. With the real pauses, once a relay comes up the warning must
+    /// go about as soon as the session's own relays would connect (a
+    /// minute at most between their tries), not many minutes later. On
+    /// tokio's paused clock: three minutes down, then up.
+    #[tokio::test(start_paused = true)]
+    async fn the_alert_goes_soon_after_a_relay_that_was_down_comes_up() {
+        let host = TestRelay::new_host();
+        let alert = SharedAlert {
+            k: hex::encode([7u8; 32]),
+            id: hex::encode([3u8; 16]),
+            relays: vec![format!("ws://{host}")],
+            msg: "hola".into(),
+        };
+        let sending = tokio::spawn(deliver(test_relay::net(), alert, RETRY));
+        tokio::time::sleep(Duration::from_secs(180)).await;
+
+        let relay = TestRelay::start_named(&test_relay::tor(), &host, Answer::Accept, false);
+        let up = tokio::time::Instant::now();
+        while relay.events().is_empty() && up.elapsed() < Duration::from_secs(30 * 60) {
+            tokio::time::sleep(Duration::from_millis(500)).await;
+        }
+        let waited = up.elapsed();
+        assert!(!relay.events().is_empty(), "it never went");
+        assert!(
+            waited <= Duration::from_secs(75),
+            "it went {}s after the relay came up",
+            waited.as_secs()
+        );
+        assert_eq!(sending.await.unwrap(), 1);
+    }
+
+    /// The contact's relays are tried all at once: one that never comes up
+    /// does not hold the warning back from the others.
+    #[tokio::test]
+    async fn a_relay_that_never_comes_up_does_not_hold_the_others_back() {
+        let up = TestRelay::start(Answer::Accept).await;
+        let alert = SharedAlert {
+            k: hex::encode([7u8; 32]),
+            id: hex::encode([3u8; 16]),
+            relays: vec![format!("ws://{}", TestRelay::new_host()), up.url.clone()],
+            msg: String::new(),
+        };
+        let sending = tokio::spawn(deliver(test_relay::net(), alert, RETRY));
+        wait_until("the warning on the relay that is up", || {
+            !up.events().is_empty()
+        })
+        .await;
+        sending.abort();
     }
 
     /// RC-13: with Tor stopped by a lock, the warning waits in memory, and

@@ -1051,10 +1051,20 @@ pub mod test_relay {
 
         /// A relay reached through `tor`.
         pub fn start_on(tor: &Mock, answer: Answer, serving: bool) -> Self {
-            let host = format!(
+            Self::start_named(tor, &Self::new_host(), answer, serving)
+        }
+
+        /// A host no test relay has had: one to start a relay on later.
+        pub fn new_host() -> String {
+            format!(
                 "relay-{}.trino.invalid",
                 RELAYS.fetch_add(1, Ordering::SeqCst)
-            );
+            )
+        }
+
+        /// A relay at `host`, reached through `tor`: one that comes up late.
+        pub fn start_named(tor: &Mock, host: &str, answer: Answer, serving: bool) -> Self {
+            let host = host.to_string();
             let mut listener = tor.listen(&host, 80);
             let url = format!("ws://{host}");
             let shared = Shared {

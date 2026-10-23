@@ -614,6 +614,133 @@ mod tests {
         net.stop();
     }
 
+    /// CE-8, David's manual test, end to end with the engines and one
+    /// simulated relay: Ana (her real store and vault, opened by `unseal_in`
+    /// with her relays connected) asks Bob, whose session listens; the
+    /// question and the answer go through the relay; Ana locks as the app
+    /// does, types the emergency key, and Bob's chat gets the warning.
+    #[tokio::test]
+    async fn the_warning_reaches_the_contact_end_to_end() {
+        use crate::alert::{self, AlertState};
+        use crate::events::RecordingSink;
+        use crate::nostr::test_relay::{self, wait_until, Answer, TestRelay};
+        use crate::session::tests::{add_session_read_by, sending_state};
+        use std::sync::Arc;
+
+        let scratch = ScratchDir::new("emergency-e2e");
+        let relay = TestRelay::serving(Answer::Accept).await;
+        let ana = Ana::new(scratch.path(), false);
+        let engine = crate::Engine::with_net(test_relay::net());
+        let ana_sink = RecordingSink::new();
+        let connect = |engine: &crate::Engine, sink: Arc<RecordingSink>| {
+            let (inner, url) = (Arc::clone(&engine.inner), relay.url.clone());
+            move |start: crate::account::RelayStart| {
+                tokio::spawn(crate::session::connect_relays(
+                    sink,
+                    Arc::new(|_| {}),
+                    inner,
+                    test_relay::connector(),
+                    crate::nostr::ready_gate(test_relay::net()),
+                    test_relay::net(),
+                    vec![url],
+                    start.nostr_pub,
+                    start.handle,
+                ));
+            }
+        };
+        unseal_in(
+            &engine,
+            ana.files.clone(),
+            connect(&engine, ana_sink.clone()),
+            || {},
+            PASSPHRASE.into(),
+            None,
+        )
+        .await
+        .unwrap();
+
+        // Bob, a contact whose Trino reads the warning, with his session
+        // open and listening on the same relay.
+        let bob = crate::identity::create_identity();
+        let bob_engine = sending_state(&bob, vec![]).await;
+        let bob_sink = RecordingSink::new();
+        {
+            let mut a = engine.inner.lock().await;
+            let mut b = bob_engine.inner.lock().await;
+            let me = a.identity.clone().unwrap();
+            let (ratchet, ad) = add_session_read_by(&mut a, &me, &bob, "Bob");
+            a.profiles.contacts.insert(
+                "Bob".into(),
+                crate::profile::ContactProfile {
+                    caps: 1,
+                    alert: alert::ALERT_V,
+                    ..Default::default()
+                },
+            );
+            persist_account(&a).unwrap();
+            b.handle = Some("Bob".into());
+            b.relay_urls = vec![relay.url.clone()];
+            b.friends.insert("Ana".into(), friend(&me, "Ana"));
+            b.ratchets.insert("Ana".into(), ratchet);
+            b.associated_data.insert("Ana".into(), ad);
+        }
+        crate::session::connect_relays(
+            bob_sink.clone(),
+            Arc::new(|_| {}),
+            Arc::clone(&bob_engine.inner),
+            test_relay::connector(),
+            crate::nostr::ready_gate(test_relay::net()),
+            test_relay::net(),
+            vec![relay.url.clone()],
+            hex::encode(bob.nostr.pub_bytes),
+            "Bob".into(),
+        )
+        .await;
+        wait_until("both sessions on the relay", || relay.reqs().len() >= 2).await;
+
+        // Ana asks; Bob's Trino asks him, and he accepts.
+        alert::choose(&engine, Some("Bob"), "ya sabes")
+            .await
+            .unwrap();
+        let asked = || bob_sink.names().contains(&alert::ALERT_EVENT.to_string());
+        wait_until("Bob's question", asked).await;
+        alert::answer(&bob_engine, "Ana", true).await.unwrap();
+        let answered = || ana_sink.names().contains(&alert::ALERT_EVENT.to_string());
+        wait_until("Ana's answer", answered).await;
+        assert_eq!(
+            alert::own_view(&*engine.inner.lock().await).unwrap().state,
+            AlertState::Accepted
+        );
+
+        // Ana locks as the app does, and types her emergency key.
+        {
+            let _gate = engine.session_gate.lock().await;
+            let mut inner = engine.inner.lock().await;
+            inner.storage.flush_for_lock();
+            crate::session::forget_session(&mut inner, &engine.turn);
+        }
+        unseal_in(
+            &engine,
+            ana.files.clone(),
+            connect(&engine, RecordingSink::new()),
+            || {},
+            EMERGENCY.into(),
+            None,
+        )
+        .await
+        .unwrap();
+
+        let warned = || {
+            bob_sink
+                .events()
+                .iter()
+                .any(|(name, json)| name == alert::ALERT_EVENT && json.contains("warned"))
+        };
+        wait_until("the warning in Bob's chat", warned).await;
+        let view = alert::contact_view(&*bob_engine.inner.lock().await);
+        assert_eq!(view.warnings[0].message, "ya sabes");
+    }
+
     /// Point the accepted warning of Ana's store, and of her vault's block,
     /// at `relay`.
     fn set_warning_relays(ana: &Ana, relay: &str) {
