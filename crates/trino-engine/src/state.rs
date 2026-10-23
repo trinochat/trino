@@ -104,6 +104,9 @@ pub struct InnerState {
     pub alert_watch: Arc<tokio::sync::Notify>,
     /// Which `alert::watch` is the session's: one started later replaces it.
     pub alert_watcher: u64,
+    /// Until when (unix seconds) Settings' "Qué pasa en la red" stays open
+    /// after the passphrase opened it; 0 for closed. Memory only.
+    pub alert_settings_until: i64,
 }
 
 const SEEN_EVENT_CAP: usize = 4096;

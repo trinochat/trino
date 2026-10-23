@@ -12,33 +12,66 @@
 //! code, with TOTP on), and writes it in two phases noted in the store. The
 //! emergency key is never taken for the passphrase here: typed as the
 //! passphrase, it opens nothing (`wrong_passphrase`), as in every setting.
+//!
+//! The warning to a trusted contact (CE-6, trino-engine's alert.rs): "Qué
+//! pasa en la red" shows what was chosen once the passphrase opened it, and
+//! for `SECTION_OPEN_SECS` after, saving needs no passphrase again, so the
+//! person can pick a contact and write the message without the code of the
+//! authenticator running out. A lock closes it. The contact's side, the
+//! question and the warnings that came, is the chats' (`emergency_alerts`,
+//! `answer_emergency_alert`).
 
-use crate::command_error::CommandError;
+use crate::command_error::{CommandError, ErrorCode};
 use crate::commands::submitted_code;
 use crate::passphrase::{check_emergency_key, validate_passphrase};
 use crate::security_cmds::{noting, open_any, require_session, run_blocking, write_v3, Resealed};
-use crate::state::{vault_path, AppState};
-use serde::Serialize;
+use crate::state::{vault_path, AppState, InnerState};
+use serde::{Deserialize, Serialize};
 use std::path::Path;
 use tauri::State;
 use trino_core::vault_v3::OpenVault;
+use trino_engine::alert::{self, AlertState, ContactAlerts};
 use trino_engine::vault_file::OpenedVault;
+use trino_engine::Engine;
 use zeroize::Zeroizing;
 
 /// What Trino does on the network when the emergency key is used (design
-/// §7, CE-D11): today only nothing. Sent as `{"action": "none"}`.
-///
-/// CE-6 adds `Alert`, the warning to a trusted contact: its registration
-/// (`alert_key`, `alert_id`, the contact's relays and the optional message
-/// of up to 280 characters) lives in the shared block (design §7.2 step 4),
-/// and needs the contact to accept first (`alert-reg`, `alert-ack`), so it
-/// cannot be saved before CE-6 exists. Absent from the block means none,
-/// so an account that never chose looks like one that chose "Ninguna".
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+/// §7, CE-D11): nothing (`{"action":"none"}`), the default, or the warning
+/// to a trusted contact, with where its answer stands
+/// (`{"action":"alert","contact":…,"state":"waiting"|"accepted"|"declined",
+/// "message":…}`). What the emergency path sends lives in the vault's
+/// shared block once the contact accepted; who the contact is, in the
+/// store.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case", tag = "action")]
 pub enum EmergencyNetwork {
     None,
+    Alert {
+        contact: String,
+        state: AlertState,
+        message: String,
+    },
 }
+
+/// "Qué pasa en la red", open: what is chosen, and the contacts the
+/// warning can go to (those whose Trino reads it).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub struct NetworkView {
+    #[serde(flatten)]
+    pub choice: EmergencyNetwork,
+    pub candidates: Vec<String>,
+}
+
+/// What "Guardar" saves: nothing, or the warning to `contact`.
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "snake_case", tag = "action")]
+pub enum NetworkChoice {
+    None,
+    Alert { contact: String, message: String },
+}
+
+/// How long "Qué pasa en la red" stays open after the passphrase opened it.
+pub const SECTION_OPEN_SECS: i64 = 10 * 60;
 
 /// Configure or change the emergency key (design §8.2): `key` must pass the
 /// passphrase policy and be neither `current` nor like it; then `current`
@@ -94,7 +127,8 @@ pub async fn test_emergency_key(
 
 /// "Quitar" (design §8.5): with the passphrase (and the code, with TOTP
 /// on), the emergency slot is filled with random bytes. The same answer
-/// and the same write whether there was a key or not.
+/// and the same write whether there was a key or not. The warning to a
+/// trusted contact goes with it, and its contact is told (`withdraw`).
 #[tauri::command]
 pub async fn remove_emergency_key(
     state: State<'_, AppState>,
@@ -113,17 +147,20 @@ pub async fn remove_emergency_key(
             .keep_in(&mut session, &vault);
         Ok(())
     })
-    .await
+    .await?;
+    withdraw(&state.engine).await;
+    Ok(())
 }
 
 /// "Qué pasa en la red" (design §8.1, §8.5): what is chosen, only once the
-/// passphrase (and the code, with TOTP on) opened the vault. Writes nothing.
+/// passphrase (and the code, with TOTP on) opened the vault, which opens
+/// the section for `SECTION_OPEN_SECS`. Writes nothing.
 #[tauri::command]
 pub async fn emergency_network(
     state: State<'_, AppState>,
     passphrase: String,
     totp_code: Option<String>,
-) -> Result<EmergencyNetwork, CommandError> {
+) -> Result<NetworkView, CommandError> {
     let passphrase = Zeroizing::new(passphrase);
     let totp_code = totp_code.map(Zeroizing::new);
     let _gate = state.session_gate.lock().await;
@@ -133,7 +170,50 @@ pub async fn emergency_network(
         let code = totp_code.as_deref().map(String::as_str);
         network_of(&vault, &passphrase, code)
     })
-    .await
+    .await?;
+    let mut inner = state.inner.lock().await;
+    open_section(&mut inner, trino_engine::session::unix_now());
+    Ok(view_of(&inner))
+}
+
+/// "Guardar" in "Qué pasa en la red": nothing, or the warning to a contact
+/// with its message (design §7.2). A contact the warning cannot go to is
+/// `not_found`. With the section closed (never opened, more than
+/// `SECTION_OPEN_SECS` ago, or a lock since), `wrong_passphrase`: the
+/// password is asked again.
+#[tauri::command]
+pub async fn save_emergency_network(
+    state: State<'_, AppState>,
+    choice: NetworkChoice,
+) -> Result<NetworkView, CommandError> {
+    {
+        let inner = state.inner.lock().await;
+        require_session(&inner)?;
+        section_is_open(&inner, trino_engine::session::unix_now())?;
+    }
+    save(&state.engine, choice).await?;
+    Ok(view_of(&*state.inner.lock().await))
+}
+
+/// The chats (design §7.2, §11.6): the questions of contacts waiting for
+/// an answer, and the warnings that came. Not behind the passphrase: they
+/// are this account's own chats.
+#[tauri::command]
+pub async fn emergency_alerts(state: State<'_, AppState>) -> Result<ContactAlerts, CommandError> {
+    let inner = state.inner.lock().await;
+    require_session(&inner)?;
+    Ok(alert::contact_view(&inner))
+}
+
+/// "Aceptar" or "No, gracias" to the question of `handle` (CE-D4).
+#[tauri::command]
+pub async fn answer_emergency_alert(
+    state: State<'_, AppState>,
+    handle: String,
+    accept: bool,
+) -> Result<(), CommandError> {
+    require_session(&*state.inner.lock().await)?;
+    alert::answer(&state.engine, &handle, accept).await
 }
 
 /// Write the emergency slot of the vault at `vault` with `key`, once the
@@ -187,23 +267,69 @@ fn is_key(vault: &OpenVault, candidate: &str) -> Result<bool, CommandError> {
     Ok(vault.is_emergency_key(candidate)?)
 }
 
-/// The network choice of the vault at `vault`, once `passphrase` opened it.
-fn network_of(
-    vault: &Path,
-    passphrase: &str,
-    code: Option<&str>,
-) -> Result<EmergencyNetwork, CommandError> {
+/// Whether `passphrase` (and `code`) open the vault at `vault`, which only
+/// reads it.
+fn network_of(vault: &Path, passphrase: &str, code: Option<&str>) -> Result<(), CommandError> {
     open_any(vault, passphrase, submitted_code(code))?;
-    // CE-6: read the alert's registration from the opened vault's shared
-    // block here (design §7.2 step 4). Until then nothing can be chosen
-    // but "Ninguna", so the block never holds one.
-    Ok(EmergencyNetwork::None)
+    Ok(())
+}
+
+/// Open "Qué pasa en la red" from `now` on.
+fn open_section(inner: &mut InnerState, now: i64) {
+    inner.alert_settings_until = now + SECTION_OPEN_SECS;
+}
+
+/// `wrong_passphrase` unless the section is open at `now`.
+fn section_is_open(inner: &InnerState, now: i64) -> Result<(), CommandError> {
+    if now < inner.alert_settings_until {
+        Ok(())
+    } else {
+        Err(CommandError::new(
+            ErrorCode::WrongPassphrase,
+            "the network section is closed: the passphrase opens it",
+        ))
+    }
+}
+
+/// What the section shows.
+fn view_of(inner: &InnerState) -> NetworkView {
+    let choice = match alert::own_view(inner) {
+        Some(own) => EmergencyNetwork::Alert {
+            contact: own.contact,
+            state: own.state,
+            message: own.message,
+        },
+        None => EmergencyNetwork::None,
+    };
+    NetworkView {
+        choice,
+        candidates: alert::candidates(inner),
+    }
+}
+
+/// Save `choice` (`alert::choose`).
+async fn save(engine: &Engine, choice: NetworkChoice) -> Result<(), CommandError> {
+    match choice {
+        NetworkChoice::None => alert::choose(engine, None, "").await,
+        NetworkChoice::Alert { contact, message } => {
+            alert::choose(engine, Some(&contact), &message).await
+        }
+    }
+}
+
+/// "Quitar" (design §8.5): with the key gone, so is the warning, and its
+/// contact is told that it no longer holds. As well as it can be: the key
+/// is removed either way.
+async fn withdraw(engine: &Engine) {
+    if alert::choose(engine, None, "").await.is_err() {
+        trino_engine::session::dbg_log("the warning could not be withdrawn");
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::command_error::ErrorCode;
+
     use crate::fsutil::{self, scratch::ScratchDir};
     use crate::identity::create_identity;
     use crate::totp::{generate_totp_secret, totp_now};
@@ -418,14 +544,162 @@ mod tests {
             let error = network_of(&vault, typed, None).unwrap_err();
             assert_eq!(error.code, ErrorCode::WrongPassphrase, "{typed}");
         }
-        assert_eq!(
-            network_of(&vault, PASSPHRASE, None).unwrap(),
-            EmergencyNetwork::None
-        );
-        assert_eq!(
-            serde_json::to_value(EmergencyNetwork::None).unwrap(),
-            serde_json::json!({ "action": "none" })
-        );
+        network_of(&vault, PASSPHRASE, None).unwrap();
         assert_eq!(bytes_of(&vault), before);
+    }
+
+    // ---- CE-6: the warning to a trusted contact ----
+
+    fn bob(inner: &mut InnerState, reads_it: bool) -> String {
+        let id = create_identity();
+        let nostr = hex::encode(id.nostr.pub_bytes);
+        inner.friends.insert(
+            "Bob".into(),
+            trino_engine::state::FriendRecord {
+                handle: "Bob".into(),
+                bundle: trino_engine::identity::public_bundle_for(&id),
+                added_at: 0,
+                avatar: None,
+                previous_fingerprint: None,
+                key_changed_at: None,
+                via_group: None,
+            },
+        );
+        inner.profiles.contacts.insert(
+            "Bob".into(),
+            trino_engine::profile::ContactProfile {
+                caps: 1,
+                alert: u64::from(reads_it),
+                ..Default::default()
+            },
+        );
+        nostr
+    }
+
+    /// The section shows what is chosen, where its answer stands, and the
+    /// contacts the warning can go to.
+    #[test]
+    fn the_network_section_shows_the_choice_and_who_it_can_go_to() {
+        let mut inner = InnerState::default();
+        assert_eq!(
+            serde_json::to_value(view_of(&inner)).unwrap(),
+            serde_json::json!({ "action": "none", "candidates": [] })
+        );
+        let nostr = bob(&mut inner, true);
+        assert_eq!(view_of(&inner).candidates, ["Bob"]);
+        inner.alerts.choose(&nostr, "Si no te escribo, ya sabes.");
+        assert_eq!(
+            serde_json::to_value(view_of(&inner)).unwrap(),
+            serde_json::json!({
+                "action": "alert",
+                "contact": "Bob",
+                "state": "waiting",
+                "message": "Si no te escribo, ya sabes.",
+                "candidates": ["Bob"],
+            })
+        );
+        // A contact whose Trino stopped reading it still shows as chosen,
+        // but is not offered again.
+        inner.profiles.contacts.get_mut("Bob").unwrap().alert = 0;
+        let view = view_of(&inner);
+        assert!(view.candidates.is_empty());
+        assert!(matches!(view.choice, EmergencyNetwork::Alert { .. }));
+    }
+
+    /// "Guardar" needs the section opened with the passphrase, for ten
+    /// minutes at most, and a lock closes it.
+    #[test]
+    fn saving_needs_the_section_opened_with_the_passphrase() {
+        let mut inner = InnerState::default();
+        let code = |result: Result<(), CommandError>| result.map_err(|error| error.code);
+        assert_eq!(
+            code(section_is_open(&inner, 1_000)),
+            Err(ErrorCode::WrongPassphrase)
+        );
+        open_section(&mut inner, 1_000);
+        assert_eq!(code(section_is_open(&inner, 1_000)), Ok(()));
+        assert_eq!(
+            code(section_is_open(&inner, 1_000 + SECTION_OPEN_SECS - 1)),
+            Ok(())
+        );
+        assert_eq!(
+            code(section_is_open(&inner, 1_000 + SECTION_OPEN_SECS)),
+            Err(ErrorCode::WrongPassphrase)
+        );
+        open_section(&mut inner, 2_000);
+        trino_engine::session::forget_session(&mut inner, &Default::default());
+        assert_eq!(
+            code(section_is_open(&inner, 2_000)),
+            Err(ErrorCode::WrongPassphrase)
+        );
+    }
+
+    #[test]
+    fn a_choice_reads_none_or_a_contact_with_its_message() {
+        let none: NetworkChoice = serde_json::from_str(r#"{"action":"none"}"#).unwrap();
+        assert_eq!(none, NetworkChoice::None);
+        let alert: NetworkChoice =
+            serde_json::from_str(r#"{"action":"alert","contact":"Bob","message":"hola"}"#).unwrap();
+        assert_eq!(
+            alert,
+            NetworkChoice::Alert {
+                contact: "Bob".into(),
+                message: "hola".into()
+            }
+        );
+        assert!(serde_json::from_str::<NetworkChoice>(r#"{"action":"relays"}"#).is_err());
+    }
+
+    /// Saving goes through the engine: a contact that does not read the
+    /// warning is refused, and "Ninguna" leaves nothing chosen.
+    #[tokio::test]
+    async fn saving_refuses_a_contact_the_warning_cannot_go_to() {
+        let engine = Engine::default();
+        {
+            let mut inner = engine.inner.lock().await;
+            inner.identity = Some(create_identity());
+            bob(&mut inner, false);
+        }
+        let choice = NetworkChoice::Alert {
+            contact: "Bob".into(),
+            message: String::new(),
+        };
+        assert_eq!(
+            save(&engine, choice).await.unwrap_err().code,
+            ErrorCode::NotFound
+        );
+        save(&engine, NetworkChoice::None).await.unwrap();
+        assert!(engine.inner.lock().await.alerts.is_empty());
+    }
+
+    /// "Quitar" withdraws the warning once the key is gone, and only then:
+    /// a wrong passphrase withdraws nothing.
+    #[test]
+    fn removing_the_key_withdraws_the_warning_after_the_key_is_gone() {
+        let source = include_str!("emergency_cmds.rs").replace("\r\n", "\n");
+        let command = &source[source.find("pub async fn remove_emergency_key").unwrap()..];
+        let command = &command[..command.find("\n}\n").unwrap()];
+        let removed = command.find("remove_key(").expect("the key is removed");
+        let withdrawn = command
+            .find("withdraw(&state.engine)")
+            .expect("the warning is withdrawn");
+        assert!(removed < withdrawn);
+        assert!(
+            command[removed..withdrawn].contains(".await?;"),
+            "only once it worked"
+        );
+    }
+
+    #[tokio::test]
+    async fn withdrawing_clears_the_warning() {
+        let engine = Engine::default();
+        {
+            let mut inner = engine.inner.lock().await;
+            inner.identity = Some(create_identity());
+            let nostr = bob(&mut inner, true);
+            inner.alerts.choose(&nostr, "hola");
+        }
+        withdraw(&engine).await;
+        assert!(engine.inner.lock().await.alerts.mine.is_none());
     }
 }

@@ -348,6 +348,7 @@ pub fn clear_sensitive_state(inner: &mut InnerState) {
     }
     inner.alerts.forget();
     inner.alert_watch.notify_waiters();
+    inner.alert_settings_until = 0;
 }
 
 /// The relay connections of a session `open_session` just opened: what
