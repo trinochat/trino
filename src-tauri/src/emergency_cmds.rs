@@ -195,6 +195,19 @@ pub async fn save_emergency_network(
     Ok(view_of(&*state.inner.lock().await))
 }
 
+/// "Qué pasa en la red" again, while the passphrase keeps it open (CE-6b):
+/// the view follows the contact's answer (`emergency-alert`) without
+/// asking for the passphrase again. Closed, `wrong_passphrase`, and
+/// nothing shows. Writes nothing.
+#[tauri::command]
+pub async fn refresh_emergency_network(
+    state: State<'_, AppState>,
+) -> Result<NetworkView, CommandError> {
+    let inner = state.inner.lock().await;
+    require_session(&inner)?;
+    refreshed(&inner, trino_engine::session::unix_now())
+}
+
 /// The chats (design §7.2, §11.6): the questions of contacts waiting for
 /// an answer, and the warnings that came. Not behind the passphrase: they
 /// are this account's own chats.
@@ -289,6 +302,12 @@ fn section_is_open(inner: &InnerState, now: i64) -> Result<(), CommandError> {
             "the network section is closed: the passphrase opens it",
         ))
     }
+}
+
+/// What the section shows at `now`, if it is open.
+fn refreshed(inner: &InnerState, now: i64) -> Result<NetworkView, CommandError> {
+    section_is_open(inner, now)?;
+    Ok(view_of(inner))
 }
 
 /// What the section shows.
@@ -632,6 +651,48 @@ mod tests {
             code(section_is_open(&inner, 2_000)),
             Err(ErrorCode::WrongPassphrase)
         );
+    }
+
+    /// CE-6b: while the passphrase keeps the section open, it reads again
+    /// without it, and shows the contact's answer as it comes; closed (time
+    /// or a lock), nothing.
+    #[test]
+    fn the_open_section_reads_the_answer_again_and_a_closed_one_shows_nothing() {
+        let mut inner = InnerState::default();
+        let nostr = bob(&mut inner, true);
+        inner.alerts.choose(&nostr, "hola");
+        let state = |view: NetworkView| match view.choice {
+            EmergencyNetwork::Alert { state, .. } => state,
+            EmergencyNetwork::None => panic!("nothing chosen"),
+        };
+        let code = |result: Result<NetworkView, CommandError>| result.map(drop).unwrap_err().code;
+        assert_eq!(code(refreshed(&inner, 1_000)), ErrorCode::WrongPassphrase);
+
+        open_section(&mut inner, 1_000);
+        assert_eq!(
+            state(refreshed(&inner, 1_000).unwrap()),
+            AlertState::Waiting
+        );
+        let id = inner.alerts.mine.as_ref().unwrap().id.clone();
+        inner.alerts.on_wire(
+            &nostr,
+            alert::Wire::Ack {
+                id,
+                ok: true,
+                relays: vec!["wss://bob.example".into()],
+            },
+        );
+        let view = refreshed(&inner, 1_000 + SECTION_OPEN_SECS - 1).unwrap();
+        assert_eq!(view.candidates, ["Bob"]);
+        assert_eq!(state(view), AlertState::Accepted);
+
+        assert_eq!(
+            code(refreshed(&inner, 1_000 + SECTION_OPEN_SECS)),
+            ErrorCode::WrongPassphrase
+        );
+        open_section(&mut inner, 2_000);
+        trino_engine::session::forget_session(&mut inner, &Default::default());
+        assert_eq!(code(refreshed(&inner, 2_000)), ErrorCode::WrongPassphrase);
     }
 
     #[test]

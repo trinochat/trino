@@ -665,6 +665,9 @@ export const api = {
   // for a contact the warning cannot go to.
   saveEmergencyNetwork: (choice: EmergencyNetworkChoice): Promise<EmergencyNetworkView> =>
     invoke('save_emergency_network', { choice }),
+  // The same section again while it is open, to follow the contact's answer
+  // (CE-6b); `wrong_passphrase` once it closed.
+  refreshEmergencyNetwork: (): Promise<EmergencyNetworkView> => invoke('refresh_emergency_network'),
   // The chats (CE-6): the questions waiting, and the warnings that came.
   emergencyAlerts: (): Promise<EmergencyAlerts> => invoke('emergency_alerts'),
   // "Aceptar" or "No, gracias" to a contact's question (CE-D4).
@@ -833,11 +836,12 @@ export async function onCallLogged(cb: (entry: CallLogWire) => void): Promise<Un
   return await listen<CallLogWire>('call-logged', e => cb(e.payload));
 }
 
-// A contact's shared profile changed (K12).
+// A contact asked, answered, withdrew, or its warning came (CE-6).
 export async function onEmergencyAlert(cb: (event: EmergencyAlertEvent) => void): Promise<UnlistenFn> {
   return await listen<EmergencyAlertEvent>('emergency-alert', e => cb(e.payload));
 }
 
+// A contact's shared profile changed (K12).
 export async function onProfileUpdated(cb: (event: ProfileUpdatedEvent) => void): Promise<UnlistenFn> {
   return await listen<ProfileUpdatedEvent>('profile-updated', e => cb(e.payload));
 }

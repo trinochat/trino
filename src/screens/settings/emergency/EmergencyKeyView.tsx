@@ -28,7 +28,14 @@ import { EmergencyTestDialog } from './EmergencyTestDialog';
 export interface EmergencyKeyViewProps {
   api: Pick<
     SettingsApi,
-    'setEmergencyKey' | 'testEmergencyKey' | 'removeEmergencyKey' | 'emergencyNetwork' | 'saveEmergencyNetwork' | 'listNodes'
+    | 'setEmergencyKey'
+    | 'testEmergencyKey'
+    | 'removeEmergencyKey'
+    | 'emergencyNetwork'
+    | 'saveEmergencyNetwork'
+    | 'refreshEmergencyNetwork'
+    | 'onEmergencyAlert'
+    | 'listNodes'
   >;
   /** Two-step verification is on: each password asked here takes a code too. */
   totpEnabled: boolean;

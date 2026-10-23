@@ -40,6 +40,8 @@ export interface SecuritySectionProps {
     | 'removeEmergencyKey'
     | 'emergencyNetwork'
     | 'saveEmergencyNetwork'
+    | 'refreshEmergencyNetwork'
+    | 'onEmergencyAlert'
     | 'listNodes'
   >;
   prefs: Prefs;

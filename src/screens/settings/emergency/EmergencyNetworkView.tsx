@@ -17,9 +17,14 @@
  * written without the code running out; after that, or after a lock,
  * "Guardar" brings the password back. What was typed lives in this
  * component's state only.
+ *
+ * While it is open, the contact's answer shows as it comes (CE-6b): each
+ * `emergency-alert` that says a contact answered reads the section again,
+ * without the password while the backend keeps it open, and leaves what
+ * is being typed as it is. Once it closed, what shows stays.
  */
 import { ArrowLeft } from 'lucide-react';
-import { useState, type FormEvent } from 'react';
+import { useEffect, useState, type FormEvent } from 'react';
 import { isCommandError, type EmergencyNetworkView as NetworkView } from '../../../lib/api';
 import { useT } from '../../../lib/i18n';
 import { Button, Checkbox, Field, iconSize, IconButton, RadioCardGroup, Textarea } from '../../../ui';
@@ -33,7 +38,10 @@ import { cleanCode, credentialsProblem, type Problem } from './problems';
 const MESSAGE_MAX = 280;
 
 export interface EmergencyNetworkViewProps {
-  api: Pick<SettingsApi, 'emergencyNetwork' | 'saveEmergencyNetwork' | 'listNodes'>;
+  api: Pick<
+    SettingsApi,
+    'emergencyNetwork' | 'saveEmergencyNetwork' | 'refreshEmergencyNetwork' | 'onEmergencyAlert' | 'listNodes'
+  >;
   totpEnabled: boolean;
   /** Whether you verified the contact `handle` with its code `fingerprint` (`prefs.isVerified`). */
   isVerified(handle: string, fingerprint: string): boolean;
@@ -68,6 +76,36 @@ export function EmergencyNetworkView({ api, totpEnabled, isVerified, onBack }: E
     setView(next);
     setDraft(draftOf(next));
   };
+
+  // Open, it follows the contact's answer.
+  const opened = view !== null;
+  useEffect(() => {
+    if (!opened) return;
+    let live = true;
+    let stop: (() => void) | undefined;
+    api
+      .onEmergencyAlert(event => {
+        if (event.what !== 'answered') return;
+        api.refreshEmergencyNetwork().then(
+          next => {
+            if (live) setView(next);
+          },
+          // Closed: what shows stays, and "Guardar" asks again.
+          () => {},
+        );
+      })
+      .then(
+        unlisten => {
+          if (live) stop = unlisten;
+          else unlisten();
+        },
+        () => {},
+      );
+    return () => {
+      live = false;
+      stop?.();
+    };
+  }, [api, opened]);
 
   const open = async (event: FormEvent) => {
     event.preventDefault();

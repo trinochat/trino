@@ -4,7 +4,7 @@
  * SettingsScreen in the shell's main pane with these.
  */
 import { getVersion } from '@tauri-apps/api/app';
-import { api, onRelayEvent } from '../lib/api';
+import { api, onEmergencyAlert, onRelayEvent } from '../lib/api';
 import type { ContactsApi } from '../screens/contacts';
 import type { SettingsApi, SettingsPlatform } from '../screens/settings';
 import { appWindow } from './capture-protection';
@@ -27,6 +27,8 @@ export const settingsBackend: SettingsBackend = {
   removeEmergencyKey: api.removeEmergencyKey,
   emergencyNetwork: api.emergencyNetwork,
   saveEmergencyNetwork: api.saveEmergencyNetwork,
+  refreshEmergencyNetwork: api.refreshEmergencyNetwork,
+  onEmergencyAlert,
   wipe: api.wipe,
   getAutostart: api.getAutostart,
   setAutostart: api.setAutostart,

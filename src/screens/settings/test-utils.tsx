@@ -70,6 +70,8 @@ export function fakeApi(overrides: Partial<SettingsApi> = {}): SettingsApi {
     removeEmergencyKey: vi.fn(async () => {}),
     emergencyNetwork: vi.fn(async () => ({ action: 'none' as const, candidates: [] })),
     saveEmergencyNetwork: vi.fn(async () => ({ action: 'none' as const, candidates: [] })),
+    refreshEmergencyNetwork: vi.fn(async () => ({ action: 'none' as const, candidates: [] })),
+    onEmergencyAlert: vi.fn(async () => () => {}),
     wipe: vi.fn(async () => {}),
     getAutostart: vi.fn(async () => false),
     setAutostart: vi.fn(async () => {}),

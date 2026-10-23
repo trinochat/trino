@@ -6,6 +6,7 @@
  */
 import type {
   ConnectionStatus,
+  EmergencyAlertEvent,
   EmergencyNetworkChoice,
   EmergencyNetworkView,
   NodeInfo,
@@ -39,6 +40,10 @@ export interface SettingsApi {
   emergencyNetwork(passphrase: string, totpCode?: string | null): Promise<EmergencyNetworkView>;
   /** "Guardar" there (CE-6): `wrong_passphrase` once it closed. */
   saveEmergencyNetwork(choice: EmergencyNetworkChoice): Promise<EmergencyNetworkView>;
+  /** The same again while it is open, without the password (CE-6b): `wrong_passphrase` once it closed. */
+  refreshEmergencyNetwork(): Promise<EmergencyNetworkView>;
+  /** A contact asked, answered, withdrew, or its warning came. Resolves to the function that stops listening. */
+  onEmergencyAlert(cb: (event: EmergencyAlertEvent) => void): Promise<() => void>;
   wipe(): Promise<void>;
   getAutostart(): Promise<boolean>;
   setAutostart(enable: boolean): Promise<void>;

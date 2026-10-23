@@ -1,9 +1,9 @@
 // @vitest-environment jsdom
-import { cleanup, fireEvent, screen, waitFor, within } from '@testing-library/react';
+import { act, cleanup, fireEvent, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { isAutoLockHeld } from '../../../app/autolock-hold';
 import { commandError, fakeApi, renderEs } from '../test-utils';
-import type { EmergencyNetworkView, NodeInfo } from '../../../lib/api';
+import type { EmergencyAlertEvent, EmergencyNetworkView, NodeInfo } from '../../../lib/api';
 import type { SettingsApi } from '../types';
 import { EmergencyKeyView, type EmergencyKeyViewProps } from './EmergencyKeyView';
 
@@ -439,6 +439,68 @@ describe('EmergencyKeyView', () => {
         'Pasó un rato desde que escribiste tu contraseña. Escríbela otra vez para guardar.',
       );
       expect(screen.queryByRole('checkbox')).toBeNull();
+    });
+
+    /** A backend that tells `emergency-alert` when the test says, and how many listen. */
+    function alerts() {
+      let listeners: ((event: EmergencyAlertEvent) => void)[] = [];
+      const onEmergencyAlert = vi.fn(async (cb: (event: EmergencyAlertEvent) => void) => {
+        listeners.push(cb);
+        return () => {
+          listeners = listeners.filter(other => other !== cb);
+        };
+      });
+      const tell = (event: EmergencyAlertEvent) => act(() => listeners.forEach(cb => cb(event)));
+      return { onEmergencyAlert, tell, listening: () => listeners.length };
+    }
+
+    it('follows the contact’s answer while it is open, without asking for the password again', async () => {
+      const { onEmergencyAlert, tell, listening } = alerts();
+      const saved = (state: 'waiting' | 'accepted' | 'declined') =>
+        view({ action: 'alert', contact: 'Ana Torres', state, message: 'hola' });
+      const refreshEmergencyNetwork = vi
+        .fn<SettingsApi['refreshEmergencyNetwork']>()
+        .mockResolvedValueOnce(saved('accepted'))
+        .mockResolvedValueOnce(saved('declined'));
+      const { api } = await open(saved('waiting'), { onEmergencyAlert, refreshEmergencyNetwork });
+      expect(screen.getByText('Esperando a que Ana Torres acepte.')).toBeTruthy();
+      // What is being typed meanwhile stays.
+      const message = screen.getByLabelText('Mensaje (opcional)') as HTMLTextAreaElement;
+      fireEvent.change(message, { target: { value: 'hola, soy yo' } });
+      await waitFor(() => expect(listening()).toBe(1));
+
+      // Another contact's question is not this section's.
+      await tell({ handle: 'Diego', what: 'asked' });
+      expect(refreshEmergencyNetwork).not.toHaveBeenCalled();
+
+      await tell({ handle: 'Ana Torres', what: 'answered' });
+      expect(await screen.findByText('Ana Torres aceptó.')).toBeTruthy();
+      expect(message.value).toBe('hola, soy yo');
+      await tell({ handle: 'Ana Torres', what: 'answered' });
+      expect(await screen.findByText('Ana Torres no aceptó.')).toBeTruthy();
+      expect(api.emergencyNetwork).toHaveBeenCalledTimes(1);
+    });
+
+    it('listens only while it is open, and shows nothing new once the section closed', async () => {
+      const { onEmergencyAlert, tell, listening } = alerts();
+      const refreshEmergencyNetwork = vi.fn(async () => Promise.reject(commandError('wrong_passphrase')));
+      setup({ api: { onEmergencyAlert, refreshEmergencyNetwork } });
+      fireEvent.click(screen.getByRole('button', { name: /Qué pasa en la red/ }));
+      await screen.findByLabelText('Tu contraseña');
+      expect(listening()).toBe(0);
+
+      type('Tu contraseña', PASS);
+      fireEvent.click(screen.getByRole('button', { name: 'Seguir' }));
+      await screen.findByRole('checkbox', { name: 'Ninguna' });
+      await waitFor(() => expect(listening()).toBe(1));
+      await tell({ handle: 'Ana Torres', what: 'answered' });
+      await waitFor(() => expect(refreshEmergencyNetwork).toHaveBeenCalledTimes(1));
+      // Closed: what shows stays, with no error; "Guardar" asks again.
+      expect(screen.getByRole('checkbox', { name: 'Ninguna' })).toBeTruthy();
+      expect(screen.queryByRole('alert')).toBeNull();
+
+      cleanup();
+      expect(listening()).toBe(0);
     });
 
     it('says when it could not save', async () => {

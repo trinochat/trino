@@ -303,6 +303,7 @@ pub fn run() {
             emergency_cmds::remove_emergency_key,
             emergency_cmds::emergency_network,
             emergency_cmds::save_emergency_network,
+            emergency_cmds::refresh_emergency_network,
             emergency_cmds::emergency_alerts,
             emergency_cmds::answer_emergency_alert,
             call_log::record_call,
