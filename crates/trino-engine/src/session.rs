@@ -423,6 +423,8 @@ pub async fn connect_relays(
         drop(inner);
         // The UI learns how many relays there are before any is up.
         changes.poke();
+        // -- CE-6 -- The warnings' mailboxes, on connections of their own.
+        crate::alert::watch(events, state_inner, net, expected_nostr_pub);
     } else {
         drop(inner);
         for client in clients {

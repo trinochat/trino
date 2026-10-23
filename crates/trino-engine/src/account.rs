@@ -819,7 +819,7 @@ pub async fn unseal_in(
     .await
     .map_err(|_| CommandError::internal("vault unlock worker failed"))??;
     let emergency = matches!(outcome, Unlocking::Emergency(_));
-    let ((identity, totp_secret, loaded), _alert) = match outcome {
+    let ((identity, totp_secret, loaded), alert) = match outcome {
         Unlocking::Real(unlocked) => (*unlocked, None),
         Unlocking::Emergency(vault) => {
             if session_open {
@@ -848,11 +848,19 @@ pub async fn unseal_in(
         });
     let opened = open_session(&state.inner, identity, totp_secret, loaded, start_relays).await?;
 
-    // After the answer, in silence (design §6.1). B1, the network action the
-    // user chose, goes here (CE-6); with none, nothing goes out. B2: a store
-    // noted for removal, the emergency path's or one a lock or a cut left,
-    // goes on a thread of its own, without `session_gate` (RC-13). B3: the
-    // host clears what the WebView kept.
+    // After the answer, in silence (design §6.1). B1: the warning to a
+    // trusted contact, if the account chose one and the contact accepted
+    // (CE-6), on its own connections and session, from memory; with none,
+    // nothing goes out. B2: a store noted for removal, the emergency path's
+    // or one a lock or a cut left, goes on a thread of its own, without
+    // `session_gate` (RC-13). B3: the host clears what the WebView kept.
+    if let Some(alert) = alert {
+        tokio::spawn(crate::alert::deliver(
+            Arc::clone(&state.net),
+            alert,
+            crate::alert::RETRY,
+        ));
+    }
     if let Some(cleanup) = cleanup {
         let storage = state.inner.lock().await.storage.clone();
         std::thread::spawn(move || cleanup.run(&storage));

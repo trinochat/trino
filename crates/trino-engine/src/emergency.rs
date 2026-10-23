@@ -547,6 +547,98 @@ mod tests {
         assert!(account.alerts.is_empty());
     }
 
+    /// The emergency key typed through `unseal_in`, on an engine whose
+    /// network is a fake Tor that is ready: the connections it asked for
+    /// within a while, by the kind of their token.
+    async fn kinds_after_the_emergency_key(
+        ana: &Ana,
+        tor: &std::sync::Arc<trino_net::mock::Mock>,
+        net: std::sync::Arc<trino_net::Net>,
+    ) -> Vec<&'static str> {
+        let engine = crate::Engine::with_net(net);
+        unseal_in(
+            &engine,
+            ana.files.clone(),
+            |_| {},
+            || {},
+            EMERGENCY.into(),
+            ana.code(),
+        )
+        .await
+        .unwrap();
+        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+        tor.connections()
+            .into_iter()
+            .map(|(_, iso)| iso.kind().name())
+            .collect()
+    }
+
+    /// Design §12.3, test 36, and B1 (§6.1, §7.2): with no warning chosen
+    /// nothing goes to the network; with one, it goes to the contact's
+    /// relay after the answer, through its own tokens.
+    #[tokio::test]
+    async fn the_emergency_path_sends_the_warning_only_when_there_is_one() {
+        use crate::nostr::test_relay::{wait_until, Answer, TestRelay};
+        let scratch = ScratchDir::new("emergency-b1");
+        let (net, fake, tor) = crate::testing::fake_tor(&scratch.path().join("tor"));
+        net.start();
+        fake.ready();
+        net.ready(std::time::Duration::from_secs(10)).await.unwrap();
+
+        let without = Ana::new(&scratch.path().join("sin"), false);
+        let kinds =
+            kinds_after_the_emergency_key(&without, &tor, std::sync::Arc::clone(&net)).await;
+        assert!(kinds.is_empty(), "{kinds:?}");
+
+        let relay = TestRelay::start_on(&tor, Answer::Accept, false);
+        let with = Ana::new(&scratch.path().join("con"), false);
+        let mut warning = with_warning(&with);
+        // Her contact's relay, reached through this test's Tor.
+        warning.relays = vec![relay.url.clone()];
+        set_warning_relays(&with, &relay.url);
+        let kinds = kinds_after_the_emergency_key(&with, &tor, std::sync::Arc::clone(&net)).await;
+        wait_until("the warning", || relay.events().len() == 1).await;
+        assert!(
+            kinds
+                .iter()
+                .all(|kind| *kind == crate::alert::ALERT_ISO.name()),
+            "{kinds:?}"
+        );
+        let opened = crate::alert::open(
+            &[0xab; 32],
+            &[0xcd; 16],
+            &relay.events()[0],
+            crate::session::unix_now(),
+        );
+        assert_eq!(opened.unwrap().message, warning.msg);
+        net.stop();
+    }
+
+    /// Point the accepted warning of Ana's store, and of her vault's block,
+    /// at `relay`.
+    fn set_warning_relays(ana: &Ana, relay: &str) {
+        let (identity, _, loaded) = ana.unlock(PASSPHRASE).unwrap();
+        let loaded = loaded.unwrap();
+        let mut inner = InnerState {
+            identity: Some(identity),
+            ..InnerState::default()
+        };
+        inner.storage.set(loaded.storage);
+        if let Some(vault) = loaded.vault {
+            inner.vault.set(vault);
+        }
+        apply_loaded(
+            &mut inner,
+            loaded.account,
+            loaded.history,
+            loaded.sessions,
+            loaded.profiles,
+            NOW,
+        );
+        inner.alerts.mine.as_mut().unwrap().relays = vec![relay.to_string()];
+        persist_account(&inner).unwrap();
+    }
+
     /// Design §12.2, tests 33 and 34, and §4 (K2FA): the emergency key asks
     /// for the same code; without it, or with a wrong one, it answers as the
     /// passphrase does and nothing on the disk changes, however many times.

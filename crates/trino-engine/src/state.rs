@@ -102,6 +102,8 @@ pub struct InnerState {
     /// Told when the registrations listened to change, so their
     /// connections follow (`alert::watch`).
     pub alert_watch: Arc<tokio::sync::Notify>,
+    /// Which `alert::watch` is the session's: one started later replaces it.
+    pub alert_watcher: u64,
 }
 
 const SEEN_EVENT_CAP: usize = 4096;

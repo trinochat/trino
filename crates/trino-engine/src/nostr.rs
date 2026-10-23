@@ -351,6 +351,10 @@ pub struct ClientOptions {
     /// keeps a socket whatever the mode.
     pub route: Option<watch::Receiver<Mode>>,
     pub on_state: Option<StateHandler>,
+    /// Writes no line of the diagnostic log: the warning to a trusted
+    /// contact's, so the emergency path leaves the notes of a real unlock
+    /// only (clave de emergencia RC-03).
+    pub quiet: bool,
 }
 
 impl ClientOptions {
@@ -364,6 +368,7 @@ impl ClientOptions {
             ready: None,
             route: None,
             on_state,
+            quiet: false,
         }
     }
 }
@@ -410,6 +415,8 @@ pub struct NostrClient {
     pending_ok: PendingOks,
     /// Events published and not yet taken by the connection task.
     queued: Arc<AtomicUsize>,
+    /// `ClientOptions::quiet`.
+    quiet: bool,
 }
 
 /// What a relay answered to an event (NIP-01 `OK`).
@@ -499,6 +506,7 @@ impl NostrClient {
         let connected = Arc::new(AtomicBool::new(false));
         let pending_ok = PendingOks::default();
         let queued = Arc::new(AtomicUsize::new(0));
+        let quiet = options.quiet;
         let connection = Connection {
             url: url.to_string(),
             on_event,
@@ -516,6 +524,7 @@ impl NostrClient {
             closed,
             pending_ok,
             queued,
+            quiet,
         })
     }
 
@@ -599,7 +608,9 @@ impl NostrClient {
         let mut c = self.sub_counter.write().await;
         *c += 1;
         let sub_id = format!("trino-{}", c);
-        dlog("SUBSCRIBE");
+        if !self.quiet {
+            dlog("SUBSCRIBE");
+        }
         // The connection task keeps it, so it is re-sent after every drop.
         self.sender
             .send(ClientCommand::Subscribe(Subscription {
@@ -632,6 +643,17 @@ struct Connection {
 }
 
 impl Connection {
+    /// A line of the log, unless the client is quiet.
+    fn note(&self, text: &'static str) {
+        self.note_with(text, &[]);
+    }
+
+    fn note_with(&self, text: &'static str, fields: &[(&'static str, &dyn crate::diag::Plain)]) {
+        if !self.options.quiet {
+            crate::diag::note_with(text, fields);
+        }
+    }
+
     /// A single task owns the connection: it drives read + write + keepalive
     /// via select!, and RECONNECTS with backoff when the socket drops (mobile
     /// networks kill idle sockets when the screen turns off). A messaging
@@ -730,21 +752,20 @@ impl Connection {
                     let now = route.as_mut().map(|r| *r.borrow_and_update());
                     if now != opened {
                         // Opened the old way: dropped, and opened again now.
-                        dlog("WS opened the old way, opening it again");
+                        self.note("WS opened the old way, opening it again");
                         drop(ws);
                         wait = false;
                         continue;
                     }
-                    dlog("WS connected");
+                    self.note("WS connected");
                     return Some((ws, opened));
                 }
                 Ok(Err(_)) => {
-                    crate::diag::note_with("WS connection failed", &[("retry_s", &pause.as_secs())])
+                    self.note_with("WS connection failed", &[("retry_s", &pause.as_secs())])
                 }
-                Err(_) => crate::diag::note_with(
-                    "WS connection timed out",
-                    &[("retry_s", &pause.as_secs())],
-                ),
+                Err(_) => {
+                    self.note_with("WS connection timed out", &[("retry_s", &pause.as_secs())])
+                }
             }
         }
     }
@@ -771,21 +792,21 @@ impl Connection {
                 incoming = read.next() => match incoming {
                     Some(Ok(Message::Text(text))) => {
                         book.on_frame(Some(&text), unix_now());
-                        handle_relay_message(&text, &self.on_event, &self.pending_ok);
+                        handle_relay_message(&text, &self.on_event, &self.pending_ok, self.options.quiet);
                     }
                     Some(Ok(Message::Ping(payload))) => {
                         book.on_frame(None, unix_now());
                         let _ = write.send(Message::Pong(payload)).await;
                     }
                     Some(Ok(Message::Close(_))) | None => {
-                        dlog("WS dropped, reconnecting");
+                        self.note("WS dropped, reconnecting");
                         return Served::Dropped;
                     }
                     // Pong / Binary / Frame: nothing to do, but the relay is
                     // evidently still there.
                     Some(Ok(_)) => book.on_frame(None, unix_now()),
                     Some(Err(_)) => {
-                        dlog("WS read error, reconnecting");
+                        self.note("WS read error, reconnecting");
                         return Served::Dropped;
                     }
                 },
@@ -811,7 +832,7 @@ impl Connection {
                 },
                 () = route_moved(route, opened) => {
                     // The socket goes, and nothing more is sent the old way.
-                    dlog("WS route changed, opening it again");
+                    self.note("WS route changed, opening it again");
                     return Served::Moved;
                 }
                 _ = ping.tick() => {
@@ -881,7 +902,12 @@ fn relay_message_note(msg_type: &str) -> &'static str {
     }
 }
 
-fn handle_relay_message(text: &str, on_event: &EventHandler, pending: &PendingOks) {
+fn handle_relay_message(text: &str, on_event: &EventHandler, pending: &PendingOks, quiet: bool) {
+    let dlog = |text: &'static str| {
+        if !quiet {
+            dlog(text);
+        }
+    };
     let Ok(msg) = serde_json::from_str::<Vec<Value>>(text) else {
         dlog("WS recv: a message that is not an array");
         return;
@@ -910,7 +936,9 @@ fn handle_relay_message(text: &str, on_event: &EventHandler, pending: &PendingOk
         match serde_json::from_value::<NostrEvent>(msg[2].clone()) {
             Ok(event) => {
                 let ok = verify_event(&event);
-                crate::diag::note_with("WS EVENT", &[("kind", &event.kind), ("verified", &ok)]);
+                if !quiet {
+                    crate::diag::note_with("WS EVENT", &[("kind", &event.kind), ("verified", &ok)]);
+                }
                 if ok {
                     on_event(event);
                 } else {
@@ -958,6 +986,16 @@ pub mod test_relay {
         relay_connector(Arc::clone(&TOR.1), TOR.1.session(), IsoKind::RELAY)
     }
 
+    /// The tests' `Net`, in Tor mode and ready.
+    pub fn net() -> Arc<Net> {
+        Arc::clone(&TOR.1)
+    }
+
+    /// The tests' Tor: every connection asked of it, with its token.
+    pub fn tor() -> Arc<Mock> {
+        Arc::clone(&TOR.0)
+    }
+
     /// How the relay answers an EVENT.
     #[derive(Clone, Debug)]
     pub enum Answer {
@@ -979,33 +1017,80 @@ pub mod test_relay {
 
     pub struct TestRelay {
         pub url: String,
+        /// Its host, as the tests' Tor records the connections to it.
+        pub host: String,
         events: Arc<StdMutex<Vec<NostrEvent>>>,
+        reqs: Arc<StdMutex<Vec<(usize, Value)>>>,
         kicks: Arc<Notify>,
     }
 
+    /// What every connection of one relay shares.
+    #[derive(Clone)]
+    struct Shared {
+        answer: Answer,
+        events: Arc<StdMutex<Vec<NostrEvent>>>,
+        reqs: Arc<StdMutex<Vec<(usize, Value)>>>,
+        kicks: Arc<Notify>,
+        /// Whether it hands its events to the subscriptions that match.
+        serving: bool,
+        live: tokio::sync::broadcast::Sender<NostrEvent>,
+    }
+
     impl TestRelay {
+        /// A relay that keeps what it gets and answers, and gives nothing to
+        /// any subscription but its EOSE.
         pub async fn start(answer: Answer) -> Self {
+            Self::start_on(&TOR.0, answer, false)
+        }
+
+        /// A relay that also hands each subscription the events it keeps,
+        /// and the ones that come later, that match its kinds and `#p`.
+        pub async fn serving(answer: Answer) -> Self {
+            Self::start_on(&TOR.0, answer, true)
+        }
+
+        /// A relay reached through `tor`.
+        pub fn start_on(tor: &Mock, answer: Answer, serving: bool) -> Self {
             let host = format!(
                 "relay-{}.trino.invalid",
                 RELAYS.fetch_add(1, Ordering::SeqCst)
             );
-            let mut listener = TOR.0.listen(&host, 80);
+            let mut listener = tor.listen(&host, 80);
             let url = format!("ws://{host}");
-            let events = Arc::new(StdMutex::new(Vec::new()));
-            let kicks = Arc::new(Notify::new());
-            let (log, kicked) = (Arc::clone(&events), Arc::clone(&kicks));
+            let shared = Shared {
+                answer,
+                events: Arc::default(),
+                reqs: Arc::default(),
+                kicks: Arc::new(Notify::new()),
+                serving,
+                live: tokio::sync::broadcast::channel(64).0,
+            };
+            let relay = TestRelay {
+                url,
+                host,
+                events: Arc::clone(&shared.events),
+                reqs: Arc::clone(&shared.reqs),
+                kicks: Arc::clone(&shared.kicks),
+            };
             tokio::spawn(async move {
+                let mut connections = 0;
                 while let Some(io) = listener.accept().await {
-                    let (log, kicked) = (Arc::clone(&log), Arc::clone(&kicked));
-                    tokio::spawn(serve(io, answer.clone(), log, kicked));
+                    connections += 1;
+                    tokio::spawn(serve(io, shared.clone(), connections));
                 }
             });
-            TestRelay { url, events, kicks }
+            relay
         }
 
         /// The events it received, in order.
         pub fn events(&self) -> Vec<NostrEvent> {
             self.events.lock().unwrap().clone()
+        }
+
+        /// Every REQ it received, in order: the number of its connection,
+        /// counted from 1, and its filter.
+        pub fn reqs(&self) -> Vec<(usize, Value)> {
+            self.reqs.lock().unwrap().clone()
         }
 
         /// Close every connection it has, as a relay restarting would.
@@ -1021,15 +1106,32 @@ pub mod test_relay {
         }
     }
 
-    async fn serve(
-        io: impl AsyncRead + AsyncWrite + Unpin,
-        answer: Answer,
-        events: Arc<StdMutex<Vec<NostrEvent>>>,
-        kicks: Arc<Notify>,
-    ) {
+    /// Whether `event` matches `filter`, by its kinds and `#p` only.
+    fn matches(filter: &Value, event: &NostrEvent) -> bool {
+        let listed = |field: &str, wanted: Value| {
+            filter
+                .get(field)
+                .and_then(Value::as_array)
+                .is_none_or(|values| values.contains(&wanted))
+        };
+        listed("kinds", Value::from(event.kind))
+            && listed("#p", Value::from(event.recipient().unwrap_or_default()))
+    }
+
+    async fn serve(io: impl AsyncRead + AsyncWrite + Unpin, shared: Shared, connection: usize) {
         let Ok(ws) = tokio_tungstenite::accept_async(io).await else {
             return;
         };
+        let Shared {
+            answer,
+            events,
+            reqs,
+            kicks,
+            serving,
+            live,
+        } = shared;
+        let mut later = live.subscribe();
+        let mut subs: Vec<(Value, Value)> = Vec::new();
         let (mut write, mut read) = ws.split();
         loop {
             let message = tokio::select! {
@@ -1037,6 +1139,17 @@ pub mod test_relay {
                 () = kicks.notified() => {
                     let _ = write.close().await;
                     return;
+                }
+                Ok(event) = later.recv(), if serving => {
+                    for (id, filter) in &subs {
+                        if matches(filter, &event) {
+                            let frame = serde_json::json!(["EVENT", id, event]).to_string();
+                            if write.send(Message::Text(frame)).await.is_err() {
+                                return;
+                            }
+                        }
+                    }
+                    continue;
                 }
             };
             let Some(Ok(message)) = message else {
@@ -1057,6 +1170,9 @@ pub mod test_relay {
                         continue;
                     };
                     events.lock().unwrap().push(event.clone());
+                    if serving {
+                        let _ = live.send(event.clone());
+                    }
                     let (ok, message) = match &answer {
                         Answer::Accept => (true, ""),
                         Answer::Reject => (false, "blocked: test"),
@@ -1075,7 +1191,22 @@ pub mod test_relay {
                     };
                     Some(serde_json::json!(["OK", event.id, ok, message]))
                 }
-                Some("REQ") => frame.get(1).map(|id| serde_json::json!(["EOSE", id])),
+                Some("REQ") => {
+                    let id = frame.get(1).cloned().unwrap_or_default();
+                    let filter = frame.get(2).cloned().unwrap_or_default();
+                    reqs.lock().unwrap().push((connection, filter.clone()));
+                    if serving {
+                        let kept = events.lock().unwrap().clone();
+                        for event in kept.iter().filter(|event| matches(&filter, event)) {
+                            let frame = serde_json::json!(["EVENT", id, event]).to_string();
+                            if write.send(Message::Text(frame)).await.is_err() {
+                                return;
+                            }
+                        }
+                        subs.push((id.clone(), filter));
+                    }
+                    Some(serde_json::json!(["EOSE", id]))
+                }
                 _ => None,
             };
             if let Some(reply) = reply {
@@ -1103,6 +1234,7 @@ pub mod test_relay {
             ready: None,
             route: None,
             on_state,
+            quiet: false,
         }
     }
 
@@ -1388,6 +1520,54 @@ mod tests {
         Arc::new(|_| {})
     }
 
+    /// The lines a client of a test relay logs while it connects,
+    /// subscribes, publishes and closes, on a runtime of this thread (the
+    /// capture is the thread's).
+    fn lines_of_a_client(quiet: bool) -> Vec<String> {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let ((), lines) = crate::diag::capture::lines(|| {
+            runtime.block_on(async {
+                let relay = TestRelay::start(Answer::Accept).await;
+                let options = ClientOptions {
+                    quiet,
+                    ..quick_options(None)
+                };
+                let client = NostrClient::start(&relay.url, ignore_events(), options);
+                wait_until("the client to connect", || client.is_connected()).await;
+                client.subscribe(&NostrFilter::default()).await.unwrap();
+                let me = crate::identity::create_identity();
+                let event = build_and_sign_event(
+                    &me.nostr.priv_bytes,
+                    &me.nostr.pub_bytes,
+                    TRINO_KIND,
+                    "x",
+                    vec![],
+                    None,
+                )
+                .unwrap();
+                assert_eq!(
+                    client.publish_acked(&event, Duration::from_secs(5)).await,
+                    Ack::Accepted
+                );
+                client.close();
+                tokio::time::sleep(Duration::from_millis(50)).await;
+            })
+        });
+        lines
+    }
+
+    /// Clave de emergencia RC-03: the warning's connection writes no line
+    /// of the log, so the emergency path leaves a real unlock's notes only.
+    #[test]
+    fn a_quiet_client_writes_no_line_of_the_log() {
+        assert!(!lines_of_a_client(false).is_empty(), "the capture works");
+        let lines = lines_of_a_client(true);
+        assert!(lines.is_empty(), "{lines:?}");
+    }
+
     /// A state handler, and what it heard.
     fn recorder() -> (StateHandler, Arc<StdMutex<Vec<bool>>>) {
         let heard = Arc::new(StdMutex::new(Vec::new()));
@@ -1578,6 +1758,7 @@ mod tests {
             ready: Some(ready_gate(Arc::clone(&net))),
             route: None,
             on_state: None,
+            quiet: false,
         };
 
         let client = NostrClient::start("ws://relay.trino.invalid", ignore_events(), options);
@@ -2013,11 +2194,16 @@ mod tests {
         pending.lock().unwrap().insert("e1".to_string(), tx);
         let handler: EventHandler = Arc::new(|_| panic!("an OK is not an event"));
 
-        handle_relay_message(r#"["OK","other",true,""]"#, &handler, &pending);
+        handle_relay_message(r#"["OK","other",true,""]"#, &handler, &pending, false);
         assert!(rx.try_recv().is_err(), "an OK for another event");
-        handle_relay_message(r#"["OK","e1","yes",""]"#, &handler, &pending);
+        handle_relay_message(r#"["OK","e1","yes",""]"#, &handler, &pending, false);
         assert!(rx.try_recv().is_err(), "a malformed OK");
-        handle_relay_message(r#"["OK","e1",false,"blocked: spam"]"#, &handler, &pending);
+        handle_relay_message(
+            r#"["OK","e1",false,"blocked: spam"]"#,
+            &handler,
+            &pending,
+            false,
+        );
 
         assert_eq!(
             rx.try_recv(),

@@ -55,6 +55,10 @@ use crate::state::{FriendRecord, InnerState};
 use crate::Engine;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
+use std::sync::Arc;
+use std::time::Duration;
+use tokio::sync::Mutex;
+use trino_net::Net;
 use zeroize::{Zeroize, Zeroizing};
 
 /// The version of the warning's messages this Trino reads and sends, and
@@ -951,6 +955,425 @@ pub fn contact_view(inner: &InnerState) -> ContactAlerts {
         })
         .collect();
     ContactAlerts { asks, warnings }
+}
+
+// ---- On the network ----
+
+/// How the warning is sent again while it does not go (design §7.2 B1
+/// step 3): pauses from `first`, twice as long each time, up to `max`;
+/// given up after `give_up`; each try waits `answer` for the relay's OK.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Retry {
+    pub first: Duration,
+    pub max: Duration,
+    pub give_up: Duration,
+    pub answer: Duration,
+}
+
+/// While Trino stays open, for up to 24 h.
+pub const RETRY: Retry = Retry {
+    first: Duration::from_secs(5),
+    max: Duration::from_secs(30 * 60),
+    give_up: Duration::from_secs(24 * 60 * 60),
+    answer: Duration::from_secs(30),
+};
+
+/// B1 (design §6.1, §7.2): send `alert` to each of its contact's relays,
+/// through `net` with a session and tokens of its own (`ALERT_ISO`), never
+/// the empty account's connections, which a lock drops (RC-13). It waits
+/// for the network to be ready, Tor included: if a lock stopped Tor, until
+/// the next unlock starts it again, and it never starts or wakes it on its
+/// own. It lives in memory only: if Trino closes, it does not go. Nothing
+/// on the screen says whether it went, and it writes no line of the log
+/// (RC-03). How many relays took it.
+pub async fn deliver(net: Arc<Net>, alert: SharedAlert, retry: Retry) -> usize {
+    let session = net.session();
+    let start = tokio::time::Instant::now();
+    let sends = alert.relays.iter().map(|url| {
+        let connector = crate::nostr::relay_connector(Arc::clone(&net), session.clone(), ALERT_ISO);
+        let pauses = crate::nostr::Backoff {
+            first: retry.first,
+            max: retry.max,
+        };
+        let options = crate::nostr::ClientOptions {
+            first_connection: pauses,
+            reconnection: pauses,
+            connect_deadline: crate::nostr::relay_deadline(url),
+            ready: Some(crate::nostr::ready_gate(Arc::clone(&net))),
+            route: Some(net.route()),
+            quiet: true,
+            ..crate::nostr::ClientOptions::new(connector, None)
+        };
+        deliver_to(url, options, &alert, retry, start)
+    });
+    futures_util::future::join_all(sends)
+        .await
+        .into_iter()
+        .filter(|took| *took)
+        .count()
+}
+
+/// `deliver` to the relay at `url`: until it takes the warning, or the
+/// tries are given up. Sealed again only when the day changes, so it
+/// always goes to a mailbox the contact listens to.
+async fn deliver_to(
+    url: &str,
+    options: crate::nostr::ClientOptions,
+    alert: &SharedAlert,
+    retry: Retry,
+    start: tokio::time::Instant,
+) -> bool {
+    let client = crate::nostr::NostrClient::start(url, Arc::new(|_| {}), options);
+    let mut pause = retry.first;
+    let mut sealed: Option<(u32, NostrEvent)> = None;
+    let took = loop {
+        if client.is_connected() {
+            let now = crate::session::unix_now();
+            let epoch = epoch_at(now);
+            if sealed.as_ref().is_none_or(|(day, _)| *day != epoch) {
+                sealed = seal(alert, now).map(|event| (epoch, event));
+            }
+            let Some((_, event)) = &sealed else {
+                break false;
+            };
+            if client.publish_acked(event, retry.answer).await == crate::nostr::Ack::Accepted {
+                break true;
+            }
+        }
+        if start.elapsed() + pause > retry.give_up {
+            break false;
+        }
+        tokio::time::sleep(pause).await;
+        pause = (pause * 2).min(retry.max);
+    };
+    client.close();
+    took
+}
+
+/// The contact's side (design §7.2, RC-07): while the session of
+/// `nostr_pub` is open, listen to the mailboxes of the registrations it
+/// accepted, on its own relays, through connections of their own: a
+/// session and tokens apart (`ALERT_ISO`), never the connection its Nostr
+/// key subscribes on, so no relay can join a mailbox to that key. Their
+/// events go to the warning (`route`). It follows the registrations as
+/// they change (`InnerState::alert_watch`), and the mailboxes as the days
+/// change; a lock ends it.
+pub fn watch(
+    events: Arc<dyn EventSink>,
+    inner: Arc<Mutex<InnerState>>,
+    net: Arc<Net>,
+    nostr_pub: String,
+) {
+    tokio::spawn(async move {
+        let me = {
+            let mut guard = inner.lock().await;
+            guard.alert_watcher += 1;
+            guard.alert_watcher
+        };
+        let mut listened: Vec<String> = Vec::new();
+        loop {
+            let (wanted, relays, changed) = {
+                let mut guard = inner.lock().await;
+                let mine = guard
+                    .identity
+                    .as_ref()
+                    .is_some_and(|identity| hex::encode(identity.nostr.pub_bytes) == nostr_pub);
+                if !mine || guard.alert_watcher != me {
+                    return;
+                }
+                let now = crate::session::unix_now();
+                let wanted = guard.alerts.mailboxes(now, |from| is_live(&guard, from));
+                if wanted != listened {
+                    for client in guard.alert_relays.drain(..) {
+                        client.close();
+                    }
+                }
+                let relays = crate::state::relays_to_use(&guard.relay_urls);
+                (wanted, relays, Arc::clone(&guard.alert_watch))
+            };
+            if wanted != listened {
+                let clients = listen(&events, &inner, &net, &relays, &wanted).await;
+                let mut guard = inner.lock().await;
+                if guard.alert_watcher != me || guard.identity.is_none() {
+                    for client in clients {
+                        client.close();
+                    }
+                    return;
+                }
+                guard.alert_relays.extend(clients);
+                listened = wanted;
+            }
+            // The mailboxes move at midnight UTC.
+            let now = crate::session::unix_now();
+            let to_midnight = EPOCH_SECS - now.rem_euclid(EPOCH_SECS) + 60;
+            let pause = Duration::from_secs(to_midnight.clamp(60, 600) as u64);
+            tokio::select! {
+                () = changed.notified() => {}
+                () = tokio::time::sleep(pause) => {}
+            }
+        }
+    });
+}
+
+/// Connections to `relays` that listen to `mailboxes`, each with a token of
+/// its own in a session of its own: none, with no mailbox.
+async fn listen(
+    events: &Arc<dyn EventSink>,
+    inner: &Arc<Mutex<InnerState>>,
+    net: &Arc<Net>,
+    relays: &[String],
+    mailboxes: &[String],
+) -> Vec<Arc<crate::nostr::NostrClient>> {
+    if mailboxes.is_empty() {
+        return Vec::new();
+    }
+    let session = net.session();
+    let mut clients = Vec::new();
+    for url in relays {
+        let on_event: Arc<dyn Fn(NostrEvent) + Send + Sync> = {
+            let (events, inner) = (Arc::clone(events), Arc::clone(inner));
+            Arc::new(move |event: NostrEvent| {
+                let (events, inner) = (Arc::clone(&events), Arc::clone(&inner));
+                tokio::spawn(async move {
+                    let mut guard = inner.lock().await;
+                    route(&*events, &mut guard, &event, crate::session::unix_now());
+                });
+            })
+        };
+        let connector = crate::nostr::relay_connector(Arc::clone(net), session.clone(), ALERT_ISO);
+        let options = crate::nostr::ClientOptions {
+            connect_deadline: crate::nostr::relay_deadline(url),
+            ready: Some(crate::nostr::ready_gate(Arc::clone(net))),
+            route: Some(net.route()),
+            ..crate::nostr::ClientOptions::new(connector, None)
+        };
+        let client = crate::nostr::NostrClient::start(url, on_event, options);
+        let filter = crate::nostr::NostrFilter {
+            kinds: Some(vec![TRINO_KIND]),
+            p_tag: Some(mailboxes.to_vec()),
+            ..Default::default()
+        };
+        let _ = client.subscribe(&filter).await;
+        clients.push(client);
+    }
+    clients
+}
+
+#[cfg(test)]
+mod network_tests {
+    use super::*;
+    use crate::events::RecordingSink;
+    use crate::identity::create_identity;
+    use crate::nostr::test_relay::{self, wait_until, Answer, TestRelay};
+    use crate::session::tests::friend;
+
+    const QUICK: Retry = Retry {
+        first: Duration::from_millis(20),
+        max: Duration::from_millis(80),
+        give_up: Duration::from_millis(600),
+        answer: Duration::from_millis(200),
+    };
+
+    fn warning_to(relays: &[&TestRelay], message: &str) -> SharedAlert {
+        SharedAlert {
+            k: hex::encode([7u8; 32]),
+            id: hex::encode([3u8; 16]),
+            relays: relays.iter().map(|relay| relay.url.clone()).collect(),
+            msg: message.into(),
+        }
+    }
+
+    /// The kinds of the tokens of every connection to `relay` so far.
+    fn kinds_to(tor: &trino_net::mock::Mock, relay: &TestRelay) -> Vec<&'static str> {
+        tor.connections()
+            .into_iter()
+            .filter(|(target, _)| target.host == relay.host)
+            .map(|(_, iso)| iso.kind().name())
+            .collect()
+    }
+
+    /// Test 38: the warning goes through its own tokens, to every relay of
+    /// the contact, and opens with the registration.
+    #[tokio::test]
+    async fn the_alert_goes_through_its_own_iso() {
+        let (one, two) = (
+            TestRelay::start(Answer::Accept).await,
+            TestRelay::start(Answer::Accept).await,
+        );
+        let alert = warning_to(&[&one, &two], "hola");
+
+        assert_eq!(deliver(test_relay::net(), alert, QUICK).await, 2);
+
+        let now = crate::session::unix_now();
+        for relay in [&one, &two] {
+            let events = relay.events();
+            assert_eq!(events.len(), 1);
+            assert_eq!(
+                open(&[7u8; 32], &[3u8; 16], &events[0], now)
+                    .unwrap()
+                    .message,
+                "hola"
+            );
+            let kinds = kinds_to(&test_relay::tor(), relay);
+            assert!(!kinds.is_empty());
+            assert!(
+                kinds.iter().all(|kind| *kind == ALERT_ISO.name()),
+                "{kinds:?}"
+            );
+        }
+    }
+
+    /// Test 39: a relay that refuses is tried again, with pauses, until it
+    /// is given up; and a warning whose Trino closed goes no further.
+    #[tokio::test]
+    async fn the_alert_retries_in_memory_and_is_lost_if_trino_quits() {
+        let refusing = TestRelay::start(Answer::Reject).await;
+        assert_eq!(
+            deliver(test_relay::net(), warning_to(&[&refusing], ""), QUICK).await,
+            0
+        );
+        let tries = refusing.events().len();
+        assert!(tries >= 2, "tried {tries} times");
+
+        let refusing = TestRelay::start(Answer::Reject).await;
+        let long = Retry {
+            give_up: Duration::from_secs(600),
+            ..QUICK
+        };
+        let sending = tokio::spawn(deliver(
+            test_relay::net(),
+            warning_to(&[&refusing], ""),
+            long,
+        ));
+        wait_until("a first try", || !refusing.events().is_empty()).await;
+        // Trino closes: the task goes with it.
+        sending.abort();
+        let _ = sending.await;
+        let after = refusing.events().len();
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        assert_eq!(
+            refusing.events().len(),
+            after,
+            "it went on after Trino closed"
+        );
+    }
+
+    /// RC-13: with Tor stopped by a lock, the warning waits in memory, and
+    /// goes once Tor is back; it starts nothing on its own.
+    #[tokio::test]
+    async fn the_alert_waits_for_tor_and_never_starts_it() {
+        let scratch = crate::fsutil::scratch::ScratchDir::new("alert-tor");
+        let (net, fake, tor) = crate::testing::fake_tor(&scratch.path().join("tor"));
+        let relay = TestRelay::start_on(&tor, Answer::Accept, false);
+        let long = Retry {
+            give_up: Duration::from_secs(600),
+            ..QUICK
+        };
+        let sending = tokio::spawn(deliver(
+            Arc::clone(&net),
+            warning_to(&[&relay], "hola"),
+            long,
+        ));
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        assert!(fake.log().is_empty(), "it touched Tor: {:?}", fake.log());
+        assert!(tor.connections().is_empty());
+        assert!(relay.events().is_empty());
+
+        // The next unlock starts Tor again.
+        net.start();
+        fake.ready();
+        assert_eq!(sending.await.unwrap(), 1);
+        assert_eq!(relay.events().len(), 1);
+        net.stop();
+    }
+
+    /// Test 54 (RC-07), and the warning end to end: the contact listens to
+    /// its mailboxes on a connection apart from the one its key subscribes
+    /// on, and the warning sent through the relay reaches its chat.
+    #[tokio::test]
+    async fn the_alert_mailbox_is_never_subscribed_on_the_identity_connection() {
+        let relay = TestRelay::serving(Answer::Accept).await;
+        let (ana, bob) = (create_identity(), create_identity());
+        let bob_pub = hex::encode(bob.nostr.pub_bytes);
+        let alert = warning_to(&[&relay], "Si no te escribo, ya sabes.");
+        let engine = crate::session::tests::sending_state(&bob, vec![]).await;
+        {
+            let mut inner = engine.inner.lock().await;
+            inner.handle = Some("Bob".into());
+            inner.relay_urls = vec![relay.url.clone()];
+            inner.friends.insert("Ana".into(), friend(&ana, "Ana"));
+            let from = hex::encode(ana.nostr.pub_bytes);
+            inner.alerts.on_wire(
+                &from,
+                Wire::Reg {
+                    id: alert.id.clone(),
+                    key: alert.k.clone(),
+                },
+            );
+            inner.alerts.answer(&from, true, &[], 0);
+        }
+        let sink = RecordingSink::new();
+        crate::session::connect_relays(
+            sink.clone(),
+            Arc::new(|_| {}),
+            Arc::clone(&engine.inner),
+            test_relay::connector(),
+            crate::nostr::ready_gate(test_relay::net()),
+            test_relay::net(),
+            vec![relay.url.clone()],
+            bob_pub.clone(),
+            "Bob".into(),
+        )
+        .await;
+        let mailboxes = engine
+            .inner
+            .lock()
+            .await
+            .alerts
+            .mailboxes(crate::session::unix_now(), |_| true);
+        let names = |filter: &Value, key: &str| {
+            filter["#p"]
+                .as_array()
+                .is_some_and(|keys| keys.iter().any(|k| k == key))
+        };
+        wait_until("both subscriptions", || {
+            let reqs = relay.reqs();
+            reqs.iter().any(|(_, f)| names(f, &bob_pub))
+                && reqs.iter().any(|(_, f)| names(f, &mailboxes[0]))
+        })
+        .await;
+        for (connection, filter) in relay.reqs() {
+            let key = names(&filter, &bob_pub);
+            let boxes = mailboxes.iter().any(|mailbox| names(&filter, mailbox));
+            assert!(!(key && boxes), "one REQ names both: {filter}");
+            if boxes {
+                let same_socket = relay
+                    .reqs()
+                    .iter()
+                    .any(|(other, f)| *other == connection && names(f, &bob_pub));
+                assert!(!same_socket, "the mailboxes went on the key's connection");
+            }
+        }
+        let kinds = kinds_to(&test_relay::tor(), &relay);
+        assert!(
+            kinds.contains(&"relay") && kinds.contains(&ALERT_ISO.name()),
+            "{kinds:?}"
+        );
+
+        // Ana's emergency key: the warning reaches Bob's chat.
+        assert_eq!(deliver(test_relay::net(), alert, QUICK).await, 1);
+        wait_until("the warning", || {
+            sink.names().contains(&ALERT_EVENT.to_string())
+        })
+        .await;
+        let view = contact_view(&*engine.inner.lock().await);
+        assert_eq!(view.warnings[0].handle, "Ana");
+        assert_eq!(view.warnings[0].message, "Si no te escribo, ya sabes.");
+
+        // A lock ends the listening.
+        crate::session::forget_session(&mut *engine.inner.lock().await, &engine.turn);
+        assert!(engine.inner.lock().await.alert_relays.is_empty());
+    }
 }
 
 #[cfg(test)]
