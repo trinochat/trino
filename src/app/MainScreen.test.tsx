@@ -112,6 +112,7 @@ const ALL: Capabilities = {
   deleteForMe: true,
   totp: true,
   changePassphrase: true,
+  emergencyKey: true,
   groupMembers: true,
   manageGroups: true,
   diagnosticLog: false,
@@ -616,10 +617,19 @@ describe('MainScreen: Settings in the main pane', () => {
   });
 
   it('shows in Settings what this build’s backend can do, and nothing it cannot', async () => {
-    setup({ capabilities: { ...ALL, changePassphrase: false } });
+    setup({ capabilities: { ...ALL, changePassphrase: false, emergencyKey: false } });
     await openSettings();
     await goTo('Cuenta y seguridad');
     expect(screen.queryByRole('button', { name: 'Cambiar contraseña' })).toBeNull();
+    expect(screen.queryByRole('button', { name: /^Clave de emergencia/ })).toBeNull();
     expect(await screen.findByRole('button', { name: 'Activar' })).toBeTruthy();
+  });
+
+  it('opens the emergency key from Cuenta y seguridad when this build has it', async () => {
+    setup();
+    await openSettings();
+    await goTo('Cuenta y seguridad');
+    fireEvent.click(await screen.findByRole('button', { name: /^Clave de emergencia/ }));
+    expect(await screen.findByRole('heading', { level: 2, name: 'Clave de emergencia' })).toBeTruthy();
   });
 });

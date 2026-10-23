@@ -72,8 +72,11 @@ export function PasswordStep({ state, send, headingId, headingRef, passRef, pass
   );
 }
 
-/** Four bars, as many full as the level, and the level in words. */
-function StrengthMeter({ strength, label }: { strength: Strength; label: string }) {
+/**
+ * Four bars, as many full as the level, and the level in words. Settings'
+ * emergency key (CE-5) shows the same meter.
+ */
+export function StrengthMeter({ strength, label }: { strength: Strength; label: string }) {
   const full = STRENGTH_BARS[strength];
   return (
     <span className="flex flex-col gap-1.5">

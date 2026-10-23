@@ -6,6 +6,7 @@
  */
 import type {
   ConnectionStatus,
+  EmergencyNetwork,
   NodeInfo,
   NotificationTest,
   ProfileResponse,
@@ -27,6 +28,14 @@ export interface SettingsApi {
   totpEnable(passphrase: string): Promise<void>;
   totpDisable(passphrase: string, code: string): Promise<void>;
   changePassphrase(current: string, next: string, totpCode?: string | null): Promise<void>;
+  /** The emergency key (CE-5): configure or change it, with your password (and code). */
+  setEmergencyKey(current: string, key: string, totpCode?: string | null): Promise<void>;
+  /** "Probar sin borrar": whether `candidate` is the key. Writes and counts nothing. */
+  testEmergencyKey(candidate: string): Promise<boolean>;
+  /** "Quitar": the same answer with a key or without one. */
+  removeEmergencyKey(current: string, totpCode?: string | null): Promise<void>;
+  /** "Qué pasa en la red", only once your password (and code) opened it. */
+  emergencyNetwork(passphrase: string, totpCode?: string | null): Promise<EmergencyNetwork>;
   wipe(): Promise<void>;
   getAutostart(): Promise<boolean>;
   setAutostart(enable: boolean): Promise<void>;
@@ -59,6 +68,8 @@ export interface SettingsCapabilities {
   totp: boolean;
   /** Changing the passphrase (K6). */
   changePassphrase: boolean;
+  /** The emergency key's page of Cuenta y seguridad (CE-5). Left out, it is not there. */
+  emergencyKey?: boolean;
   /** The real state of each relay (K3). */
   relayStatus: boolean;
   /** Your profile reaches your contacts (K12): "Sobre mí" and its honest line. */

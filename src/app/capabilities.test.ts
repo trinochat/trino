@@ -15,6 +15,7 @@ describe('capabilities', () => {
       'changePassphrase',
       'deleteForMe',
       'diagnosticLog',
+      'emergencyKey',
       'groupMembers',
       'inviteLinks',
       'manageGroups',
@@ -53,6 +54,11 @@ describe('capabilities', () => {
     expect(capabilities.relayStatus).toBe(true);
     expect(capabilities.totp).toBe(true);
     expect(capabilities.changePassphrase).toBe(true);
+  });
+
+  // The emergency key's page of Cuenta y seguridad (CE-5): its commands are in.
+  it('turns on the emergency key, which came in with CE-5', () => {
+    expect(capabilities.emergencyKey).toBe(true);
   });
 
   // After T3 (W7) only a debug build writes trino-gui-debug.log, and `tauri dev`

@@ -246,6 +246,8 @@ export function SettingsScreen({
             onLockNow={onLockNow}
             onIdentityWiped={onIdentityWiped}
             onAutolockChanged={onAutolockChanged}
+            platform={platform}
+            onOpenReinforced={() => open('privacy', { focus: true })}
           />
         );
       case 'appearance':

@@ -22,6 +22,11 @@ export interface Capabilities {
   /** K6: a new password for the vault (Settings > Cuenta y seguridad). */
   changePassphrase: boolean;
   /**
+   * CE-5: the emergency key's page of Settings > Cuenta y seguridad
+   * (configure, test, remove, and the network behind the password).
+   */
+  emergencyKey: boolean;
+  /**
    * K9: the members of a group, matched to your contacts by key (the group's
    * details), and so whom "Invitar" can offer.
    */
@@ -51,6 +56,7 @@ export const capabilities: Readonly<Capabilities> = Object.freeze({
   deleteForMe: true,
   totp: true,
   changePassphrase: true,
+  emergencyKey: true,
   groupMembers: true,
   manageGroups: true,
   diagnosticLog: import.meta.env.DEV,

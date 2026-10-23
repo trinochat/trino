@@ -10,11 +10,11 @@ afterEach(cleanup);
 function setup(
   {
     totpEnabled = false,
-    capabilities = { totp: true, changePassphrase: true },
+    capabilities = { totp: true, changePassphrase: true, emergencyKey: true },
     api: overrides = {},
   }: {
     totpEnabled?: boolean;
-    capabilities?: Pick<SettingsCapabilities, 'totp' | 'changePassphrase'>;
+    capabilities?: Pick<SettingsCapabilities, 'totp' | 'changePassphrase' | 'emergencyKey'>;
     api?: Partial<SettingsApi>;
   } = {},
 ) {
@@ -45,6 +45,8 @@ function setup(
     onLockNow: vi.fn(),
     onIdentityWiped: vi.fn(),
     onAutolockChanged: vi.fn(),
+    platform: 'windows',
+    onOpenReinforced: vi.fn(),
   };
   renderEs(<SecuritySection {...props} />);
   return { api, prefs, props };
@@ -232,8 +234,44 @@ describe('SecuritySection', () => {
     expect(props.onIdentityWiped).not.toHaveBeenCalled();
   });
 
+  // CE-5 (design §8.1, CE-D6): one row, the same for everyone, that opens
+  // the page of the emergency key; back from it, the section again.
+  it('opens the emergency key from its row, which never says whether one is set', async () => {
+    const { api, props } = setup({ totpEnabled: true });
+    await screen.findByText(/^Activada\./);
+    const row = screen.getByRole('button', { name: /^Clave de emergencia/ });
+    expect(row.textContent).toBe('Clave de emergenciaPara cuando alguien te obligue a abrir Trino.');
+    fireEvent.click(row);
+    expect(await screen.findByRole('heading', { name: 'Clave de emergencia' })).toBe(document.activeElement);
+    expect(api.testEmergencyKey).not.toHaveBeenCalled();
+
+    // Two-step verification reaches the page: removing asks for the code.
+    fireEvent.click(screen.getByRole('button', { name: 'Quitar' }));
+    const dialog = await screen.findByRole('alertdialog');
+    expect(within(dialog).getByLabelText('Código de tu app autenticadora')).toBeTruthy();
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Cancelar' }));
+
+    // Protección reforzada is Privacidad's: the setup's suggestion goes there.
+    fireEvent.click(screen.getByRole('button', { name: 'Configurar o cambiar' }));
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Entiendo que no se puede deshacer.' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Seguir' }));
+    type('Tu contraseña', 'una frase bastante larga');
+    type('Código de tu app autenticadora', '123456');
+    fireEvent.click(screen.getByRole('button', { name: 'Seguir' }));
+    type('Clave de emergencia', 'lluvia sobre el puente');
+    type('Repite la clave de emergencia', 'lluvia sobre el puente');
+    fireEvent.click(screen.getByRole('button', { name: 'Guardar' }));
+    fireEvent.click(await screen.findByRole('button', { name: /Protección reforzada/ }));
+    expect(props.onOpenReinforced).toHaveBeenCalledTimes(1);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Listo' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Volver a Cuenta y seguridad' }));
+    expect(await screen.findByRole('heading', { name: 'Cuenta y seguridad' })).toBeTruthy();
+  });
+
   it('hides the buttons the backend cannot do yet', async () => {
     const { api } = setup({ capabilities: { totp: false, changePassphrase: false } });
+    expect(screen.queryByRole('button', { name: /^Clave de emergencia/ })).toBeNull();
     await waitFor(() => expect(api.status).toHaveBeenCalled());
     expect(screen.queryByRole('button', { name: 'Cambiar contraseña' })).toBeNull();
     expect(screen.queryByRole('button', { name: 'Activar' })).toBeNull();

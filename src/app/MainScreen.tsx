@@ -291,6 +291,7 @@ export function MainScreen({ intent, onLock, onAutolockChanged, onWiped, onCallG
         capabilities={{
           totp: caps.totp,
           changePassphrase: caps.changePassphrase,
+          emergencyKey: caps.emergencyKey,
           relayStatus: caps.relayStatus,
           profileSync: caps.profileSync,
           diagnosticLog: caps.diagnosticLog,

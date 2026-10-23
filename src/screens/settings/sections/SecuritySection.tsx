@@ -7,22 +7,45 @@
  * there is no "Cambiar contraseña", and without K5 two-step verification
  * only says whether it is on. "Nunca se bloquea durante una llamada" and
  * Ctrl + L hold because the shell keeps them (useAutoLock, the shortcut).
+ *
+ * "Clave de emergencia" (CE-5, design §8) is a row that opens its own page
+ * (src/screens/settings/emergency/), the same for everyone (CE-D6): it
+ * never says whether a key is set.
  */
-import { Lock } from 'lucide-react';
+import { KeyRound, Lock } from 'lucide-react';
 import { useCallback, useEffect, useId, useState } from 'react';
 import { useT } from '../../../lib/i18n';
 import type { Prefs } from '../../../lib/prefs';
 import { Button, iconSize, Select } from '../../../ui';
 import { ChangePassphraseDialog } from '../ChangePassphraseDialog';
+import { EmergencyKeyView } from '../emergency/EmergencyKeyView';
+import { SettingsRows } from '../SettingsRows';
 import { SettingsSection } from '../SettingsSection';
 import { TotpDialog } from '../TotpDialog';
-import type { SettingsApi, SettingsCapabilities } from '../types';
+import type { SettingsApi, SettingsCapabilities, SettingsPlatform } from '../types';
 import { WipeDialog } from '../WipeDialog';
 
 export interface SecuritySectionProps {
-  api: Pick<SettingsApi, 'status' | 'totpBegin' | 'totpVerify' | 'totpEnable' | 'totpDisable' | 'changePassphrase' | 'wipe'>;
+  api: Pick<
+    SettingsApi,
+    | 'status'
+    | 'totpBegin'
+    | 'totpVerify'
+    | 'totpEnable'
+    | 'totpDisable'
+    | 'changePassphrase'
+    | 'wipe'
+    | 'setEmergencyKey'
+    | 'testEmergencyKey'
+    | 'removeEmergencyKey'
+    | 'emergencyNetwork'
+  >;
   prefs: Prefs;
-  capabilities: Pick<SettingsCapabilities, 'totp' | 'changePassphrase'>;
+  capabilities: Pick<SettingsCapabilities, 'totp' | 'changePassphrase' | 'emergencyKey'>;
+  /** Protección reforzada, suggested by the emergency key, is on Windows only. */
+  platform?: SettingsPlatform;
+  /** Opens Settings › Privacidad, where Protección reforzada is. */
+  onOpenReinforced?(): void;
   /** Your name, for the account in the authenticator app. */
   identityName: string;
   onLockNow(): void;
@@ -49,6 +72,8 @@ export function SecuritySection({
   onLockNow,
   onIdentityWiped,
   onAutolockChanged,
+  platform = 'windows',
+  onOpenReinforced,
   autoFocus,
 }: SecuritySectionProps) {
   const t = useT();
@@ -57,6 +82,9 @@ export function SecuritySection({
   const [dialog, setDialog] = useState<OpenDialog>(null);
   const [autolock, setAutolock] = useState(() => prefs.getAutolockMinutes());
   const [passphraseChanged, setPassphraseChanged] = useState(false);
+  const [emergencyOpen, setEmergencyOpen] = useState(false);
+  // Back from the emergency key's page, the focus goes to this section's heading.
+  const [moved, setMoved] = useState(false);
   const autolockId = useId();
 
   const readStatus = useCallback(async () => {
@@ -92,8 +120,24 @@ export function SecuritySection({
         : ''
       : t(totpEnabled ? 'settings2.security.totpOn' : 'settings2.security.totpOff');
 
+  if (emergencyOpen) {
+    return (
+      <EmergencyKeyView
+        autoFocus
+        api={api}
+        totpEnabled={totpEnabled === true}
+        platform={platform}
+        onBack={() => {
+          setMoved(true);
+          setEmergencyOpen(false);
+        }}
+        {...(onOpenReinforced && { onOpenReinforced })}
+      />
+    );
+  }
+
   return (
-    <SettingsSection title={t('settings2.security.title')} autoFocus={autoFocus}>
+    <SettingsSection title={t('settings2.security.title')} autoFocus={autoFocus || moved}>
       <div className="flex flex-col">
         <div className={ROW}>
           <span className={ROW_TEXT}>
@@ -164,6 +208,21 @@ export function SecuritySection({
           </Button>
         </div>
       </div>
+
+      {capabilities.emergencyKey ? (
+        <SettingsRows
+          label={t('emergency.row.title')}
+          items={[
+            {
+              id: 'emergency',
+              icon: KeyRound,
+              label: t('emergency.row.title'),
+              body: t('emergency.row.body'),
+              onSelect: () => setEmergencyOpen(true),
+            },
+          ]}
+        />
+      ) : null}
 
       <p role="status" className="m-0 text-ui-md text-ui-muted">
         {passphraseChanged ? t('settings2.security.passphraseChanged') : ''}
