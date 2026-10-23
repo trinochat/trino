@@ -4,7 +4,7 @@
 //! English for the log. The older commands still fail with a plain string.
 
 use crate::blossom::{BlossomError, ServerFailure};
-use crate::passphrase::PassphraseError;
+use crate::passphrase::{EmergencyKeyError, PassphraseError};
 use crate::vault::VaultError;
 use serde::Serialize;
 
@@ -63,6 +63,16 @@ pub enum ErrorCode {
     /// Tor is still connecting: nothing was sent, and nothing went direct.
     /// Never a reason to offer going without Tor (Tor design §2.4, R-11).
     TorNotReady,
+    // -- Clave de emergencia (CE-5) --
+    /// An emergency key that is the passphrase (design §8.3).
+    SameAsPassphrase,
+    /// An emergency key too like the passphrase: one could be typed for
+    /// the other (design §8.3).
+    LikePassphrase,
+    /// A new passphrase, or an emergency key, that another slot of the
+    /// vault takes already: choose another (design §11.4). Its message
+    /// never says which slot.
+    ChooseAnother,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
@@ -148,10 +158,9 @@ impl From<VaultError> for CommandError {
             | VaultError::UnsupportedFlags(_)
             | VaultError::UnsupportedKdf(_) => ErrorCode::UnsupportedVault,
             // A new passphrase that is the emergency key, or an emergency
-            // key that is the passphrase: refused as any other passphrase
-            // the user has to change.
+            // key that another slot takes: "choose another" (design §11.4).
             VaultError::PassphraseOpensEmergencySlot | VaultError::EmergencyKeyOpensAnotherSlot => {
-                ErrorCode::PassphraseTooCommon
+                ErrorCode::ChooseAnother
             }
             // A damaged file or a failure in the crypto: nothing the user
             // can fix by typing something else.
@@ -183,6 +192,16 @@ impl From<BlossomError> for CommandError {
             // server did.
             other => CommandError::internal(other.to_string()),
         }
+    }
+}
+
+impl From<EmergencyKeyError> for CommandError {
+    fn from(error: EmergencyKeyError) -> Self {
+        let code = match error {
+            EmergencyKeyError::SameAsPassphrase => ErrorCode::SameAsPassphrase,
+            EmergencyKeyError::LikePassphrase => ErrorCode::LikePassphrase,
+        };
+        CommandError::new(code, error.to_string())
     }
 }
 
@@ -266,12 +285,13 @@ mod tests {
             assert_eq!(code_of(error), ErrorCode::Internal);
         }
         // A new passphrase that is the emergency key, or an emergency key
-        // that is the passphrase: "choose another", as any refused one.
+        // that is the passphrase: "choose another", with a code of its own
+        // (CE-5), not "too common", which would not be true.
         for error in [
             VaultError::PassphraseOpensEmergencySlot,
             VaultError::EmergencyKeyOpensAnotherSlot,
         ] {
-            assert_eq!(code_of(error), ErrorCode::PassphraseTooCommon);
+            assert_eq!(code_of(error), ErrorCode::ChooseAnother);
         }
         for error in [
             VaultError::UnsupportedKdf(0xf1),
@@ -303,6 +323,18 @@ mod tests {
         assert_eq!(
             (common.code, common.min),
             (ErrorCode::PassphraseTooCommon, None)
+        );
+    }
+
+    #[test]
+    fn an_emergency_key_like_the_passphrase_has_its_own_code() {
+        assert_eq!(
+            code_of(EmergencyKeyError::SameAsPassphrase),
+            ErrorCode::SameAsPassphrase
+        );
+        assert_eq!(
+            code_of(EmergencyKeyError::LikePassphrase),
+            ErrorCode::LikePassphrase
         );
     }
 
@@ -346,6 +378,9 @@ mod tests {
             ErrorCode::MessageTooLong,
             ErrorCode::NoSession,
             ErrorCode::UploadFailed,
+            ErrorCode::SameAsPassphrase,
+            ErrorCode::LikePassphrase,
+            ErrorCode::ChooseAnother,
         ]
         .iter()
         .map(|code| serde_json::to_value(code).unwrap())
@@ -369,6 +404,9 @@ mod tests {
                 "message_too_long",
                 "no_session",
                 "upload_failed",
+                "same_as_passphrase",
+                "like_passphrase",
+                "choose_another",
             ]
         );
     }

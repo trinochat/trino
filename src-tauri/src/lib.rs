@@ -26,6 +26,8 @@ mod call_log;
 mod connection;
 mod diag;
 mod security_cmds;
+// -- clave de emergencia CE-5 --
+mod emergency_cmds;
 // -- cifrado local CL-6a --
 mod system_events;
 // -- cifrado local CL-6b --
@@ -296,6 +298,10 @@ pub fn run() {
             security_cmds::totp_enable,
             security_cmds::totp_disable,
             security_cmds::change_passphrase,
+            emergency_cmds::set_emergency_key,
+            emergency_cmds::test_emergency_key,
+            emergency_cmds::remove_emergency_key,
+            emergency_cmds::emergency_network,
             call_log::record_call,
             call_log::list_call_history,
             // -- W8 --

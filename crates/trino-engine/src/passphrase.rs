@@ -140,6 +140,65 @@ fn runs_along(chars: &[char], sequence: &[char]) -> bool {
         })
 }
 
+/// Why an emergency key is refused against the passphrase it sits beside
+/// (clave de emergencia, design §8.3).
+#[derive(Clone, Copy, Debug, Error, PartialEq, Eq)]
+pub enum EmergencyKeyError {
+    #[error("the key is the passphrase")]
+    SameAsPassphrase,
+    #[error("the key is too like the passphrase")]
+    LikePassphrase,
+}
+
+/// Check an emergency key against `passphrase`, the one it must never be
+/// typed for by mistake (design §8.3, the lesson of the Panic Button, S22).
+/// The key must pass `validate_passphrase` as well; this checks only how
+/// close the two are.
+///
+/// Refused as the same when the two are equal, and as too like it when,
+/// with case and spaces ignored, one holds the other or they are at most
+/// `MAX_KEY_EDITS` edits apart (insertions, deletions or changes of one
+/// character).
+pub fn check_emergency_key(passphrase: &str, key: &str) -> Result<(), EmergencyKeyError> {
+    if passphrase == key {
+        return Err(EmergencyKeyError::SameAsPassphrase);
+    }
+    let real = normalize(passphrase);
+    let other = normalize(key);
+    if holds(&real, &other) || holds(&other, &real) || within_edits(&real, &other, MAX_KEY_EDITS) {
+        return Err(EmergencyKeyError::LikePassphrase);
+    }
+    Ok(())
+}
+
+/// How many edits apart an emergency key and the passphrase must be, at
+/// least, beyond this (design §8.3).
+const MAX_KEY_EDITS: usize = 2;
+
+/// Whether `outer` holds `inner` as a run of characters.
+fn holds(outer: &[char], inner: &[char]) -> bool {
+    inner.is_empty() || outer.windows(inner.len()).any(|window| window == inner)
+}
+
+/// Whether `a` and `b` are at most `max` edits apart (Levenshtein, by
+/// characters). Lengths further apart than that are, without counting.
+fn within_edits(a: &[char], b: &[char], max: usize) -> bool {
+    if a.len().abs_diff(b.len()) > max {
+        return false;
+    }
+    let mut before: Vec<usize> = (0..=b.len()).collect();
+    let mut row = vec![0; b.len() + 1];
+    for (i, ca) in a.iter().enumerate() {
+        row[0] = i + 1;
+        for (j, cb) in b.iter().enumerate() {
+            let change = before[j] + usize::from(ca != cb);
+            row[j + 1] = change.min(before[j + 1] + 1).min(row[j] + 1);
+        }
+        std::mem::swap(&mut before, &mut row);
+    }
+    before[b.len()] <= max
+}
+
 fn is_listed(chars: &[char]) -> bool {
     COMMON_PASSPHRASES
         .iter()
@@ -311,5 +370,62 @@ mod tests {
             );
             assert!(seen.insert(entry), "{entry:?} is listed twice");
         }
+    }
+
+    // ---- The emergency key beside the passphrase (design §8.3) ----
+
+    const REAL: &str = "Lluvia sobre el puente";
+
+    #[test]
+    fn an_emergency_key_that_is_the_passphrase_is_refused_as_the_same() {
+        assert_eq!(
+            check_emergency_key(REAL, REAL),
+            Err(EmergencyKeyError::SameAsPassphrase)
+        );
+    }
+
+    #[test]
+    fn a_key_like_the_passphrase_is_refused() {
+        for like in [
+            // Only case or spaces apart.
+            "lluvia sobre el puente",
+            "LluviaSobreElPuente",
+            "  LLUVIA SOBRE EL PUENTE ",
+            // One holds the other.
+            "Lluvia sobre el puente 2",
+            "sobre el puente",
+            "mi Lluvia sobre el puente de siempre",
+            // Two edits or fewer away.
+            "Lluvia sobre el puento",
+            "Lluvia sobre el puentes!",
+            "Llvia sobre l puente",
+            "Lluvai sobre el puente",
+        ] {
+            assert_eq!(
+                check_emergency_key(REAL, like),
+                Err(EmergencyKeyError::LikePassphrase),
+                "{like:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_key_three_edits_away_or_unlike_the_passphrase_passes() {
+        for unlike in [
+            "Lluvia sobre al puanto",
+            "caballo correcto bateria",
+            "el puente bajo la lluvia",
+        ] {
+            assert_eq!(check_emergency_key(REAL, unlike), Ok(()), "{unlike:?}");
+        }
+    }
+
+    #[test]
+    fn the_likeness_counts_characters_not_bytes() {
+        // "ñ" for "n" is one edit, not two bytes' worth.
+        assert_eq!(
+            check_emergency_key("montaña rusa de noche", "montana rusa de nocha"),
+            Err(EmergencyKeyError::LikePassphrase)
+        );
     }
 }

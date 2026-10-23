@@ -33,15 +33,15 @@ use zeroize::{Zeroize, Zeroizing};
 /// How a settings command writes the vault it sealed again: noted in the
 /// open session's store, with the signed prekey the vault holds (a re-seal
 /// here never rotates it).
-struct NotedWrite {
+pub(crate) struct NotedWrite {
     storage: StorageCell,
     spk: u32,
     /// The session's version 3 vault, held while the settings seal theirs.
-    vault: VaultCell,
+    pub(crate) vault: VaultCell,
 }
 
 impl NotedWrite {
-    fn write(&self, vault: &Path, bytes: &[u8]) -> std::io::Result<()> {
+    pub(crate) fn write(&self, vault: &Path, bytes: &[u8]) -> std::io::Result<()> {
         write_vault_noted_in(&self.storage, vault, bytes, self.spk)
     }
 }
@@ -49,7 +49,7 @@ impl NotedWrite {
 /// What a settings command sealed: a version 3 vault, which the session
 /// keeps from then on in place of its own, or nothing to keep (a vault of
 /// version 2, which the session does not keep, or nothing changed).
-struct Resealed(Option<Box<OpenVault>>);
+pub(crate) struct Resealed(Option<Box<OpenVault>>);
 
 impl std::fmt::Debug for Resealed {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -62,8 +62,13 @@ impl std::fmt::Debug for Resealed {
 }
 
 impl Resealed {
+    /// Nothing sealed: the session keeps the vault it has.
+    pub(crate) fn nothing() -> Self {
+        Resealed(None)
+    }
+
     /// Put the vault sealed at `path` in the session, if there is one.
-    fn keep_in(self, session: &mut Option<SessionVault>, path: &Path) {
+    pub(crate) fn keep_in(self, session: &mut Option<SessionVault>, path: &Path) {
         if let Some(vault) = self.0 {
             *session = Some(SessionVault {
                 path: path.to_path_buf(),
@@ -74,7 +79,7 @@ impl Resealed {
 }
 
 /// The open session's `NotedWrite`; `no_vault` while it is locked.
-fn noting(inner: &InnerState) -> Result<NotedWrite, CommandError> {
+pub(crate) fn noting(inner: &InnerState) -> Result<NotedWrite, CommandError> {
     require_session(inner)?;
     let spk = inner
         .identity
@@ -194,7 +199,7 @@ fn confirmed_secret(inner: &InnerState) -> Result<Zeroizing<Vec<u8>>, CommandErr
     ))
 }
 
-fn require_session(inner: &InnerState) -> Result<(), CommandError> {
+pub(crate) fn require_session(inner: &InnerState) -> Result<(), CommandError> {
     match inner.identity {
         Some(_) => Ok(()),
         None => Err(CommandError::new(ErrorCode::NoVault, "the vault is locked")),
@@ -210,7 +215,7 @@ fn replace_secret(inner: &mut InnerState, secret: Option<Vec<u8>>) {
 }
 
 /// Run `work`, a key derivation, off the async workers, as `unseal` does.
-async fn run_blocking<T: Send + 'static>(
+pub(crate) async fn run_blocking<T: Send + 'static>(
     work: impl FnOnce() -> Result<T, CommandError> + Send + 'static,
 ) -> Result<T, CommandError> {
     tokio::task::spawn_blocking(work)
@@ -301,7 +306,7 @@ fn reseal_with_new_passphrase(
 
 /// Open the vault at `vault`, of any version, finishing a write a cut
 /// stopped (the engine's vault_file.rs).
-fn open_any(
+pub(crate) fn open_any(
     vault: &Path,
     passphrase: &str,
     code: Option<&str>,
@@ -311,7 +316,7 @@ fn open_any(
 
 /// Save the version 3 vault the settings sealed again, for the session to
 /// keep.
-fn write_v3(
+pub(crate) fn write_v3(
     fresh: Box<OpenVault>,
     write: impl FnOnce(&[u8]) -> std::io::Result<()>,
 ) -> Result<Resealed, CommandError> {
