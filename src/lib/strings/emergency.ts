@@ -128,6 +128,10 @@ export const emergency: AreaStrings = {
     'emergency.contact.accepted': 'Aceptaste. Si {name} usa su clave de emergencia, verás un aviso en este chat.',
     'emergency.contact.answerFailed': 'No se pudo enviar tu respuesta. Inténtalo de nuevo.',
     'emergency.contact.warning': '{name} usó su clave de emergencia en uno de sus equipos. El aviso llegó el {date} a las {time}.',
+    'emergency.contact.warningSent':
+      '{name} usó su clave de emergencia en uno de sus equipos. El aviso se envió el {sentDate} a las {sentTime} y llegó el {date} a las {time}.',
+    'emergency.contact.warningSentSameDay':
+      '{name} usó su clave de emergencia en uno de sus equipos. El aviso se envió el {sentDate} a las {sentTime} y llegó a las {time}.',
     'emergency.contact.quote': '«{message}»',
     'emergency.contact.whatToDo': 'Qué puedes hacer',
     'emergency.contact.whatToDoBody':
@@ -250,6 +254,10 @@ export const emergency: AreaStrings = {
     'emergency.contact.accepted': 'You accepted. If {name} uses their emergency key, you will see a warning in this chat.',
     'emergency.contact.answerFailed': 'Your answer could not be sent. Try again.',
     'emergency.contact.warning': '{name} used their emergency key on one of their devices. The warning arrived on {date} at {time}.',
+    'emergency.contact.warningSent':
+      '{name} used their emergency key on one of their devices. The warning was sent on {sentDate} at {sentTime} and arrived on {date} at {time}.',
+    'emergency.contact.warningSentSameDay':
+      '{name} used their emergency key on one of their devices. The warning was sent on {sentDate} at {sentTime} and arrived at {time}.',
     'emergency.contact.quote': '“{message}”',
     'emergency.contact.whatToDo': 'What you can do',
     'emergency.contact.whatToDoBody':
@@ -372,6 +380,10 @@ export const emergency: AreaStrings = {
     'emergency.contact.accepted': 'Você aceitou. Se {name} usar a chave de emergência, você vai ver um aviso neste chat.',
     'emergency.contact.answerFailed': 'Não foi possível enviar a sua resposta. Tente de novo.',
     'emergency.contact.warning': '{name} usou a chave de emergência em um dos aparelhos. O aviso chegou em {date} às {time}.',
+    'emergency.contact.warningSent':
+      '{name} usou a chave de emergência em um dos aparelhos. O aviso foi enviado em {sentDate} às {sentTime} e chegou em {date} às {time}.',
+    'emergency.contact.warningSentSameDay':
+      '{name} usou a chave de emergência em um dos aparelhos. O aviso foi enviado em {sentDate} às {sentTime} e chegou às {time}.',
     'emergency.contact.quote': '“{message}”',
     'emergency.contact.whatToDo': 'O que você pode fazer',
     'emergency.contact.whatToDoBody':

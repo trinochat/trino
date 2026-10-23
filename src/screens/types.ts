@@ -192,7 +192,7 @@ export interface ChatPaneProps {
    * CE-6 (design §7.2, §11.6): the warning of this contact's emergency key
    * came. The chat shows it in a strip under the header, for good.
    */
-  emergencyWarning?: { at: number; message: string };
+  emergencyWarning?: { at: number; sent: number | null; message: string };
   /**
    * CE-6 (CE-D4): this contact asks to warn you if it ever uses its
    * emergency key. The chat asks; the answer goes through here.

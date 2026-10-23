@@ -115,6 +115,9 @@ const KEYS: string[] = [
   'emergency.contact.accepted',
   'emergency.contact.answerFailed',
   'emergency.contact.warning',
+  // CE-D15: when it was sent, besides when it came.
+  'emergency.contact.warningSent',
+  'emergency.contact.warningSentSameDay',
   'emergency.contact.quote',
   'emergency.contact.whatToDo',
   'emergency.contact.whatToDoBody',
@@ -161,6 +164,8 @@ describe('the texts of the emergency key', () => {
         'emergency.contact.askNote': ['name'],
         'emergency.contact.accepted': ['name'],
         'emergency.contact.warning': ['name', 'date', 'time'],
+        'emergency.contact.warningSent': ['name', 'sentDate', 'sentTime', 'date', 'time'],
+        'emergency.contact.warningSentSameDay': ['name', 'sentDate', 'sentTime', 'time'],
         'emergency.contact.quote': ['message'],
         'emergency.contact.whatToDoBody': ['name'],
         'emergency.contact.notification': ['name'],

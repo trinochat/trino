@@ -164,7 +164,9 @@ export type EmergencyNetworkChoice = { action: 'none' } | { action: 'alert'; con
 // whose question waits for an answer, and the warnings that came.
 export interface EmergencyAlerts {
   asks: string[];
-  warnings: { handle: string; at: number; message: string }[];
+  // `sent`: when it was sent, by the sender's clock (CE-D15); null for one
+  // kept before Trino kept that.
+  warnings: { handle: string; at: number; sent: number | null; message: string }[];
 }
 // `emergency-alert`: a contact asked, answered, withdrew, or its warning came.
 export interface EmergencyAlertEvent {

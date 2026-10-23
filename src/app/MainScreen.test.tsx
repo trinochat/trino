@@ -403,7 +403,7 @@ describe('MainScreen: the chats', () => {
 describe('MainScreen: the warning to a trusted contact', () => {
   function alertsOf(asks: string[]) {
     let heard: ((event: EmergencyAlertEvent) => void) | null = null;
-    let state = { asks, warnings: [] as { handle: string; at: number; message: string }[] };
+    let state = { asks, warnings: [] as { handle: string; at: number; sent: number | null; message: string }[] };
     const backend: EmergencyAlertsBackend = {
       emergencyAlerts: vi.fn(async () => state),
       answerEmergencyAlert: vi.fn(async (handle: string) => {
@@ -416,7 +416,7 @@ describe('MainScreen: the warning to a trusted contact', () => {
     };
     const warn = (handle: string) =>
       act(async () => {
-        state = { ...state, warnings: [{ handle, at: NOW, message: 'ya sabes' }] };
+        state = { ...state, warnings: [{ handle, at: NOW, sent: NOW - 60, message: 'ya sabes' }] };
         heard?.({ handle, what: 'warned' });
       });
     return { backend, warn };

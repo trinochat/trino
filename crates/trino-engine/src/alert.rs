@@ -324,10 +324,14 @@ pub struct Watched {
     pub fired: Option<Fired>,
 }
 
-/// A warning that came: when, and its message.
+/// A warning that came: when, when it was sent, and its message.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Fired {
     pub at: i64,
+    /// CE-D15: the hour the warning carries, by the sender's clock, never
+    /// after `at`. None for one kept before Trino kept it (CE-6).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sent: Option<i64>,
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub message: String,
 }
@@ -573,6 +577,8 @@ impl AlertBook {
         let watched = &mut self.watching[at];
         watched.fired = Some(Fired {
             at: now,
+            // A clock ahead never puts it after it came.
+            sent: Some(opened.sent_at.min(now)),
             message: opened.message,
         });
         Some(watched.from.clone())
@@ -964,6 +970,8 @@ pub fn own_view(inner: &InnerState) -> Option<OwnView> {
 pub struct Warning {
     pub handle: String,
     pub at: i64,
+    /// When it was sent (CE-D15), or null.
+    pub sent: Option<i64>,
     pub message: String,
 }
 
@@ -990,6 +998,7 @@ pub fn contact_view(inner: &InnerState) -> ContactAlerts {
             Some(Warning {
                 handle: handle_of(inner, &watched.from)?,
                 at: fired.at,
+                sent: fired.sent,
                 message: fired.message.clone(),
             })
         })
@@ -1595,7 +1604,8 @@ mod session_tests {
         answer(&pair.bob, "Ana", true).await.unwrap();
         pair.deliver(1).await;
         let shared = pair.ana.inner.lock().await.alerts.shared().unwrap();
-        let warning = seal(&shared, crate::session::unix_now()).unwrap();
+        let sent = crate::session::unix_now() - 3_600;
+        let warning = seal(&shared, sent).unwrap();
 
         let resend: crate::profile::Resend = Arc::new(|_| {});
         let sink = RecordingSink::new();
@@ -1612,6 +1622,11 @@ mod session_tests {
         assert_eq!(view.warnings.len(), 1);
         assert_eq!(view.warnings[0].handle, "Ana");
         assert_eq!(view.warnings[0].message, "hola");
+        // CE-D15: the chats get when it was sent, besides when it came.
+        assert_eq!(view.warnings[0].sent, Some(sent));
+        assert!(view.warnings[0].at >= sent + 3_600);
+        let json = serde_json::to_string(&view).unwrap();
+        assert!(json.contains(&format!(r#""sent":{sent}"#)), "{json}");
         // Once: the same again tells nothing, and is no stranger's either.
         handle_incoming_event(&*sink, &resend, Arc::clone(&pair.bob.inner), warning).await;
         assert_eq!(sink.names(), [ALERT_EVENT]);
@@ -2185,6 +2200,7 @@ mod tests {
             fired,
             Fired {
                 at: NOW + 5,
+                sent: Some(NOW),
                 message: "hola".into()
             }
         );
@@ -2274,6 +2290,52 @@ mod tests {
         );
         assert_eq!(book.watching[0].fired.as_ref().unwrap().at, NOW);
         assert!(book.mailboxes(NOW, live).is_empty());
+    }
+
+    /// CE-D15: the warning keeps when it was sent, the hour it carries,
+    /// besides when it came: with seven days of mailboxes it can come days
+    /// after. It comes from the sender's clock: one ahead never puts it
+    /// after it came. It goes to the store with the book, and a warning
+    /// kept before it had this (CE-6) reads without it.
+    #[test]
+    fn the_warning_keeps_when_it_was_sent() {
+        let alert = shared("hola");
+        let live = |_: &str| true;
+        let accepted = || {
+            let mut book = AlertBook::default();
+            book.on_wire(
+                ANA,
+                Wire::Reg {
+                    id: alert.id.clone(),
+                    key: alert.k.clone(),
+                },
+            );
+            book.answer(ANA, true, &[], NOW - 7 * EPOCH_SECS);
+            book
+        };
+
+        let mut book = accepted();
+        let sent = NOW - 3 * EPOCH_SECS - 4_000;
+        let old = seal(&alert, sent).unwrap();
+        assert_eq!(book.on_mailbox(&old, NOW, live), Some(ANA.to_string()));
+        let fired = book.watching[0].fired.clone().unwrap();
+        assert_eq!((fired.at, fired.sent), (NOW, Some(sent)));
+
+        // The store keeps it.
+        let json = serde_json::to_string(&book).unwrap();
+        assert!(json.contains(&format!(r#""sent":{sent}"#)), "{json}");
+        assert_eq!(serde_json::from_str::<AlertBook>(&json).unwrap(), book);
+
+        // A clock ahead: sealed "tomorrow", it still came now.
+        let mut book = accepted();
+        let ahead = seal(&alert, NOW + EPOCH_SECS).unwrap();
+        assert_eq!(book.on_mailbox(&ahead, NOW, live), Some(ANA.to_string()));
+        assert_eq!(book.watching[0].fired.as_ref().unwrap().sent, Some(NOW));
+
+        // A warning kept by CE-6, before this, has no hour of sending.
+        let before: Fired = serde_json::from_str(r#"{"at":5,"message":"hola"}"#).unwrap();
+        assert_eq!(before.sent, None);
+        assert!(!serde_json::to_string(&before).unwrap().contains("sent"));
     }
 
     #[test]

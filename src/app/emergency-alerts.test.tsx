@@ -33,11 +33,11 @@ const ana = { kind: 'contact' as const, handle: 'Ana' };
 // The chats' side of the warning (CE-6): what each chat with a contact gets.
 describe('useEmergencyAlerts', () => {
   it('gives a chat its question and its warning, and nothing to a group', async () => {
-    const { fake } = backend({ asks: ['Ana'], warnings: [{ handle: 'Bea', at: 10, message: 'hola' }] });
+    const { fake } = backend({ asks: ['Ana'], warnings: [{ handle: 'Bea', at: 10, sent: 7, message: 'hola' }] });
     const { result } = renderHook(() => useEmergencyAlerts(fake, vi.fn()));
     await waitFor(() => expect(result.current(ana).onEmergencyAnswer).toBeTypeOf('function'));
     expect(result.current(ana).emergencyWarning).toBeUndefined();
-    expect(result.current({ kind: 'contact', handle: 'Bea' })).toEqual({ emergencyWarning: { at: 10, message: 'hola' } });
+    expect(result.current({ kind: 'contact', handle: 'Bea' })).toEqual({ emergencyWarning: { at: 10, sent: 7, message: 'hola' } });
     expect(result.current({ kind: 'group', gid: 'g1' })).toEqual({});
   });
 
@@ -59,10 +59,10 @@ describe('useEmergencyAlerts', () => {
     await emit({ handle: 'Ana', what: 'asked' });
     await waitFor(() => expect(result.current(ana).onEmergencyAnswer).toBeTypeOf('function'));
     expect(onWarned).not.toHaveBeenCalled();
-    set({ asks: [], warnings: [{ handle: 'Ana', at: 20, message: '' }] });
+    set({ asks: [], warnings: [{ handle: 'Ana', at: 20, sent: null, message: '' }] });
     await emit({ handle: 'Ana', what: 'warned' });
     expect(onWarned).toHaveBeenCalledWith('Ana');
-    await waitFor(() => expect(result.current(ana).emergencyWarning).toEqual({ at: 20, message: '' }));
+    await waitFor(() => expect(result.current(ana).emergencyWarning).toEqual({ at: 20, sent: null, message: '' }));
   });
 
   it('stops listening when it goes, and does nothing without a backend', async () => {

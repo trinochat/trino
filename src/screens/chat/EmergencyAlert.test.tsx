@@ -83,7 +83,7 @@ describe('the warning to a trusted contact, in the chat', () => {
   it('shows the strip of a warning that came, its message, and what you can do', () => {
     renderIn(
       <ChatPane
-        {...props({ emergencyWarning: { at: at(2026, 10, 17, 10, 42), message: 'Si no te escribo en dos días, ya sabes qué hacer.' } })}
+        {...props({ emergencyWarning: { at: at(2026, 10, 17, 10, 42), sent: null, message: 'Si no te escribo en dos días, ya sabes qué hacer.' } })}
       />,
     );
     const strip = screen.getByRole('note');
@@ -99,8 +99,35 @@ describe('the warning to a trusted contact, in the chat', () => {
     expect(strip.textContent).toContain('Un aviso también puede ser falso: si puedes, confírmalo por otro medio.');
   });
 
+  // CE-D15: with seven days of mailboxes the warning can come days after
+  // it was sent, so the strip says both: when it was sent (the hour the
+  // warning carries) and when it came.
+  it('says when the warning was sent and when it came, on another day', () => {
+    renderIn(
+      <ChatPane {...props({ emergencyWarning: { at: at(2026, 10, 19, 8, 15), sent: at(2026, 10, 17, 10, 42), message: '' } })} />,
+    );
+    expect(screen.getByRole('note').textContent).toContain(
+      'Ana Torres usó su clave de emergencia en uno de sus equipos. El aviso se envió el 17 de octubre a las 10:42 y llegó el 19 de octubre a las 08:15.',
+    );
+  });
+
+  it('names the day once when it was sent and came the same day', () => {
+    renderIn(
+      <ChatPane {...props({ emergencyWarning: { at: at(2026, 10, 17, 10, 43), sent: at(2026, 10, 17, 10, 42), message: '' } })} />,
+    );
+    expect(screen.getByRole('note').textContent).toContain(
+      'Ana Torres usó su clave de emergencia en uno de sus equipos. El aviso se envió el 17 de octubre a las 10:42 y llegó a las 10:43.',
+    );
+  });
+
+  it('says only when it came for a warning kept without its hour of sending', () => {
+    renderIn(<ChatPane {...props({ emergencyWarning: { at: at(2026, 10, 17, 10, 42), sent: null, message: '' } })} />);
+    expect(screen.getByRole('note').textContent).toContain('El aviso llegó el 17 de octubre a las 10:42.');
+    expect(screen.getByRole('note').textContent).not.toContain('se envió');
+  });
+
   it('leaves the quote out of a warning with no message', () => {
-    renderIn(<ChatPane {...props({ emergencyWarning: { at: at(2026, 10, 17, 10, 42), message: '' } })} />);
+    renderIn(<ChatPane {...props({ emergencyWarning: { at: at(2026, 10, 17, 10, 42), sent: null, message: '' } })} />);
     expect(screen.getByRole('note').textContent).not.toContain('«');
   });
 });

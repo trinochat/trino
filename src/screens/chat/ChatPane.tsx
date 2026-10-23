@@ -231,7 +231,12 @@ export function ChatPane(props: ChatPaneProps) {
         <KeyChangeBanner name={header.name} onVerify={props.onVerify} onAcknowledge={props.onAcknowledgeKeyChange} />
       )}
       {header.kind === 'contact' && props.emergencyWarning ? (
-        <EmergencyWarningStrip name={header.name} at={props.emergencyWarning.at} message={props.emergencyWarning.message} />
+        <EmergencyWarningStrip
+          name={header.name}
+          at={props.emergencyWarning.at}
+          sent={props.emergencyWarning.sent}
+          message={props.emergencyWarning.message}
+        />
       ) : null}
       <MessageList
         messages={props.messages}

@@ -71,7 +71,7 @@ export function useEmergencyAlerts(
       if (!backend || convo.kind !== 'contact') return {};
       const out: ChatAlerts = {};
       const warning = alerts.warnings.find(item => item.handle === convo.handle);
-      if (warning) out.emergencyWarning = { at: warning.at, message: warning.message };
+      if (warning) out.emergencyWarning = { at: warning.at, sent: warning.sent, message: warning.message };
       if (alerts.asks.includes(convo.handle)) {
         out.onEmergencyAnswer = async (accept: boolean) => {
           await backend.answerEmergencyAlert(convo.handle, accept);
