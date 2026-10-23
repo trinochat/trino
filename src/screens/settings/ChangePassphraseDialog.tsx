@@ -2,7 +2,9 @@
  * Changing your password (Settings:176-179, K6): the current one, the new
  * one twice and, with two-step verification on, a code of the app. The
  * policy lives in Rust (passphrase.rs), so its answers come back as
- * errors: too short, with the minimum, or too common.
+ * errors: too short, with the minimum, or too common; or "choose another"
+ * when the emergency key's slot takes it (CE-5, design §11.4). A line for
+ * everyone asks it not to be like the emergency key (RC-15).
  */
 import { useState, type FormEvent } from 'react';
 import { isCommandError } from '../../lib/api';
@@ -34,6 +36,10 @@ function problemOf(cause: unknown): Problem {
       return { key: 'settings2.passphrase.errShort', vars: { min: cause.min ?? DEFAULT_MIN } };
     case 'passphrase_too_common':
       return { key: 'settings2.passphrase.errCommon' };
+    // Another slot of the vault takes it (the emergency key, CE-5); the text
+    // never says which.
+    case 'choose_another':
+      return { key: 'settings2.passphrase.errAnother' };
     case 'wrong_passphrase':
       return { key: 'settings2.passphrase.errWrong' };
     case 'invalid_totp':
@@ -98,6 +104,8 @@ export function ChangePassphraseDialog({ api, totpEnabled, onClose, onDone }: Ch
             onChange={event => setRepeat(event.target.value)}
           />
         </Field>
+        {/* For everyone, with an emergency key or without one (RC-15): Trino cannot tell the likeness without the key. */}
+        <p className="m-0 text-ui-md text-ui-muted">{t('settings2.passphrase.emergencyHint')}</p>
         {totpEnabled ? (
           <Field label={t('settings2.passphrase.code')}>
             <Input

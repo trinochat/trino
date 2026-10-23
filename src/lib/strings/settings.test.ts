@@ -209,6 +209,10 @@ const SECURITY = [
   'settings2.passphrase.errWrong',
   'settings2.passphrase.errCode',
   'settings2.passphrase.errGeneric',
+  // CE-5: a new password another slot takes (design §11.4), and the line
+  // for everyone, with an emergency key or without one (RC-15).
+  'settings2.passphrase.errAnother',
+  'settings2.passphrase.emergencyHint',
   'settings2.wipe.title',
   'settings2.wipe.body',
   'settings2.wipe.confirm',

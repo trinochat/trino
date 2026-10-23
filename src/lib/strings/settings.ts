@@ -218,6 +218,8 @@ export const settings: AreaStrings = {
     'settings2.passphrase.errWrong': 'La contraseña actual no es correcta.',
     'settings2.passphrase.errCode': 'El código no es correcto.',
     'settings2.passphrase.errGeneric': 'No se pudo cambiar la contraseña. Inténtalo de nuevo.',
+    'settings2.passphrase.errAnother': 'Elige otra contraseña.',
+    'settings2.passphrase.emergencyHint': 'Que no se parezca a tu clave de emergencia, si tienes una.',
     'settings2.wipe.title': '¿Borrar todo de este equipo?',
     'settings2.wipe.body':
       'Se borran tu identidad, tus contactos y tus chats, y no se puede deshacer. Lo que tus contactos ya recibieron se queda en sus equipos.',
@@ -564,6 +566,8 @@ export const settings: AreaStrings = {
     'settings2.passphrase.errWrong': 'The current password is not right.',
     'settings2.passphrase.errCode': 'The code is not right.',
     'settings2.passphrase.errGeneric': 'The password couldn’t be changed. Try again.',
+    'settings2.passphrase.errAnother': 'Choose another password.',
+    'settings2.passphrase.emergencyHint': 'Make it unlike your emergency key, if you have one.',
     'settings2.wipe.title': 'Erase everything from this device?',
     'settings2.wipe.body':
       'Your identity, your contacts and your chats are erased, and it can’t be undone. What your contacts already received stays on their devices.',
@@ -905,6 +909,8 @@ export const settings: AreaStrings = {
     'settings2.passphrase.errWrong': 'A senha atual não está certa.',
     'settings2.passphrase.errCode': 'O código não está certo.',
     'settings2.passphrase.errGeneric': 'Não foi possível mudar a senha. Tente novamente.',
+    'settings2.passphrase.errAnother': 'Escolha outra senha.',
+    'settings2.passphrase.emergencyHint': 'Que não se pareça com a sua chave de emergência, se você tiver uma.',
     'settings2.wipe.title': 'Apagar tudo deste dispositivo?',
     'settings2.wipe.body':
       'Sua identidade, seus contatos e suas conversas são apagados, e não dá para desfazer. O que seus contatos já receberam continua nos dispositivos deles.',

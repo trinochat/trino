@@ -148,6 +148,22 @@ describe('SecuritySection', () => {
     expect(await screen.findByText('Contraseña cambiada.')).toBeTruthy();
   });
 
+  // CE-5 (design §8.3, §11.4, RC-15): a new password that another slot of
+  // the vault takes says "choose another", not "too common"; and everyone,
+  // with an emergency key or without one, reads the same line about it.
+  it('asks for another password when the new one cannot be used, and says the same line to everyone', async () => {
+    const changePassphrase = vi.fn<SettingsApi['changePassphrase']>().mockRejectedValueOnce(commandError('choose_another'));
+    setup({ api: { changePassphrase } });
+    fireEvent.click(screen.getByRole('button', { name: 'Cambiar contraseña' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Cambiar contraseña' });
+    expect(within(dialog).getByText('Que no se parezca a tu clave de emergencia, si tienes una.')).toBeTruthy();
+    type('Contraseña actual', 'vieja frase larga');
+    type('Contraseña nueva', 'nueva frase larga');
+    type('Repite la contraseña nueva', 'nueva frase larga');
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Cambiar contraseña' }));
+    expect((await within(dialog).findByRole('alert')).textContent).toBe('Elige otra contraseña.');
+  });
+
   it('asks for a code of the authenticator app to change the password when 2FA is on', async () => {
     const { api } = setup({ totpEnabled: true });
     await screen.findByText(/^Activada\./);

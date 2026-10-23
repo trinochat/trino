@@ -98,6 +98,11 @@ describe('command errors', () => {
       'profile_invalid',
       'invalid_name',
       'tor_not_ready',
+      // The emergency key (CE-5): a key that is the password or too like
+      // it, and a password or key another slot takes.
+      'same_as_passphrase',
+      'like_passphrase',
+      'choose_another',
     ]);
   });
 
@@ -106,7 +111,7 @@ describe('command errors', () => {
   // came after it.
   it('keep the code of the shared profile after the codes before it', () => {
     expect(COMMAND_ERROR_CODES.indexOf('profile_invalid')).toBe(21);
-    expect(COMMAND_ERROR_CODES[COMMAND_ERROR_CODES.length - 3]).toBe('profile_invalid');
+    expect(COMMAND_ERROR_CODES[COMMAND_ERROR_CODES.length - 6]).toBe('profile_invalid');
     expect(isCommandError({ code: 'profile_invalid', message: 'about is longer than 140' })).toBe(true);
   });
 
@@ -116,16 +121,24 @@ describe('command errors', () => {
   // code moves.
   it('keep the code of a name a contact cannot have after the codes before it', () => {
     expect(COMMAND_ERROR_CODES.indexOf('invalid_name')).toBe(22);
-    expect(COMMAND_ERROR_CODES[COMMAND_ERROR_CODES.length - 2]).toBe('invalid_name');
+    expect(COMMAND_ERROR_CODES[COMMAND_ERROR_CODES.length - 5]).toBe('invalid_name');
     expect(isCommandError({ code: 'invalid_name', message: 'that name is a group' })).toBe(true);
   });
 
   // Tor design §2.4 and §9.3: Tor is still connecting, which the UI tells
   // apart from a server that did not answer and which never leads to an
-  // offer to go without Tor. Added at the end, so no earlier code moves.
-  it('end with the code of Tor still connecting', () => {
-    expect(COMMAND_ERROR_CODES[COMMAND_ERROR_CODES.length - 1]).toBe('tor_not_ready');
+  // offer to go without Tor. Added at the end, so no earlier code moved;
+  // only the emergency key's came after it.
+  it('keep the code of Tor still connecting after the codes before it', () => {
+    expect(COMMAND_ERROR_CODES.indexOf('tor_not_ready')).toBe(23);
     expect(isCommandError({ code: 'tor_not_ready', message: 'Tor is not ready yet' })).toBe(true);
+  });
+
+  // The emergency key (CE-5, design §8.3 and §11.4). Added at the end, so
+  // no earlier code moves.
+  it('end with the codes of the emergency key', () => {
+    expect(COMMAND_ERROR_CODES.slice(-3)).toEqual(['same_as_passphrase', 'like_passphrase', 'choose_another']);
+    expect(isCommandError({ code: 'choose_another', message: 'choose another passphrase' })).toBe(true);
   });
 
   it('are recognised with their extra fields', () => {
@@ -155,6 +168,15 @@ describe('the new commands', () => {
       'change_passphrase',
       { current: 'a', next: 'b', totpCode: '123456' },
     ],
+    [
+      'setEmergencyKey',
+      () => api.setEmergencyKey('a', 'k', '123456'),
+      'set_emergency_key',
+      { current: 'a', key: 'k', totpCode: '123456' },
+    ],
+    ['testEmergencyKey', () => api.testEmergencyKey('k'), 'test_emergency_key', { candidate: 'k' }],
+    ['removeEmergencyKey', () => api.removeEmergencyKey('a'), 'remove_emergency_key', { current: 'a', totpCode: null }],
+    ['emergencyNetwork', () => api.emergencyNetwork('a', null), 'emergency_network', { passphrase: 'a', totpCode: null }],
     ['previewContact', () => api.previewContact('{}'), 'preview_contact', { bundleJson: '{}' }],
     ['acknowledgeKeyChange', () => api.acknowledgeKeyChange('Ana'), 'acknowledge_key_change', { handle: 'Ana' }],
     ['groupMembers', () => api.groupMembers('g1'), 'group_members', { gid: 'g1' }],

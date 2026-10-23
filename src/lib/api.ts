@@ -147,6 +147,10 @@ export interface ForgeResponse extends UnsealResponse {
   bundle_json: string;
 }
 
+// What Trino does on the network when the emergency key is used (CE-5,
+// design §7): today only nothing. CE-6 adds the warning to a contact.
+export type EmergencyNetwork = { action: 'none' };
+
 // A new TOTP secret to add to an authenticator app, as a QR code or typed in.
 export interface TotpBeginResponse {
   otpauth_uri: string;
@@ -195,6 +199,12 @@ export const COMMAND_ERROR_CODES = [
   // "the server did not answer", and never a reason to offer going without
   // Tor (Tor design §2.4, §9.3).
   'tor_not_ready',
+  // The emergency key (CE-5, design §8.3 and §11.4): a key that is the
+  // password, or too like it; and a new password, or a key, that another
+  // slot of the vault takes ("choose another").
+  'same_as_passphrase',
+  'like_passphrase',
+  'choose_another',
 ] as const;
 
 export type CommandErrorCode = (typeof COMMAND_ERROR_CODES)[number];
@@ -615,6 +625,20 @@ export const api = {
   // K6: re-seals the vault with a new passphrase and keeps the TOTP secret.
   changePassphrase: (current: string, next: string, totpCode?: string | null): Promise<void> =>
     invoke('change_passphrase', { current, next, totpCode: totpCode ?? null }),
+  // The emergency key (CE-5, design §8). Configure or change it: the key's
+  // rules first, then the password (and the code, with 2FA on). Rejects with
+  // `same_as_passphrase`, `like_passphrase`, `choose_another`, the policy's
+  // codes, `wrong_passphrase`, `totp_required` or `invalid_totp`.
+  setEmergencyKey: (current: string, key: string, totpCode?: string | null): Promise<void> =>
+    invoke('set_emergency_key', { current, key, totpCode: totpCode ?? null }),
+  // "Probar sin borrar": whether it is the key. Writes and counts nothing (RC-16).
+  testEmergencyKey: (candidate: string): Promise<boolean> => invoke('test_emergency_key', { candidate }),
+  // "Quitar": the same answer with a key or without one.
+  removeEmergencyKey: (current: string, totpCode?: string | null): Promise<void> =>
+    invoke('remove_emergency_key', { current, totpCode: totpCode ?? null }),
+  // "Qué pasa en la red", behind the password: what is chosen.
+  emergencyNetwork: (passphrase: string, totpCode?: string | null): Promise<EmergencyNetwork> =>
+    invoke('emergency_network', { passphrase, totpCode: totpCode ?? null }),
   // K8: checks a pasted code and reports a clash, without saving anything.
   previewContact: (bundleJson: string): Promise<ContactPreview> =>
     invoke('preview_contact', { bundleJson }),

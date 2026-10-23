@@ -7,6 +7,7 @@ import { call } from './call';
 import { chat } from './chat';
 import { common } from './common';
 import { contacts } from './contacts';
+import { emergency } from './emergency';
 import { net } from './net';
 import { settings } from './settings';
 import { shell } from './shell';
@@ -14,7 +15,7 @@ import type { AreaStrings } from './types';
 
 export type { AreaStrings } from './types';
 
-export const AREAS = { common, auth, shell, chat, contacts, settings, call, net } as const;
+export const AREAS = { common, auth, shell, chat, contacts, settings, call, net, emergency } as const;
 
 export type AreaName = keyof typeof AREAS;
 
@@ -32,6 +33,8 @@ export const NAMESPACES: Readonly<Record<AreaName, readonly string[]>> = {
   call: ['call2', 'verify'],
   // Tor in the app (TOR-6): the first run's step, the inbox's line, the panels and Ajustes › Conexión.
   net: ['net'],
+  // The emergency key (CE-5): its page of Settings, its dialogs and the network.
+  emergency: ['emergency'],
 };
 
 /** One dictionary per language with the keys of every area. Areas never share a key. */

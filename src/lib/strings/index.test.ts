@@ -19,8 +19,9 @@ const entries = (lang: Lang) =>
 describe('the string areas', () => {
   // The old screens' area (legacy) went once I6 had removed its last texts (I7).
   // net: Tor in the app (TOR-6), every screen of it in one area.
-  it('are the shared words, one area per unit of the redesign, and Tor', () => {
-    expect(AREA_NAMES).toEqual(['common', 'auth', 'shell', 'chat', 'contacts', 'settings', 'call', 'net']);
+  // emergency: the emergency key (CE-5), its page of Settings and its dialogs.
+  it('are the shared words, one area per unit of the redesign, Tor and the emergency key', () => {
+    expect(AREA_NAMES).toEqual(['common', 'auth', 'shell', 'chat', 'contacts', 'settings', 'call', 'net', 'emergency']);
     expect(Object.keys(NAMESPACES).sort()).toEqual([...AREA_NAMES].sort());
   });
 
@@ -62,6 +63,7 @@ describe('the string areas', () => {
     expect(NAMESPACES.settings).toEqual(['settings2', 'contactInfo']);
     expect(NAMESPACES.call).toEqual(['call2', 'verify']);
     expect(NAMESPACES.net).toEqual(['net']);
+    expect(NAMESPACES.emergency).toEqual(['emergency']);
   });
 });
 
