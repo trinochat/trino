@@ -679,6 +679,12 @@ pub fn settle<D: Disk + Clone>(disk: &D, home: &Path, record: &[u8]) -> io::Resu
                 .push(finding(NEW_STORE_DIR, What::OtherAccount, Action::SetAside));
         }
     }
+    // CE-8b: what a cut left of an unlock's evening out
+    // (`emergency::even_out`), whichever key opens. In silence.
+    let evened = home.join(crate::emergency::EVEN_OUT_DIR);
+    if evened.exists() {
+        let _ = disk.remove_dir_all(&evened);
+    }
     let pending = peek_index(disk, &store, &keys).is_some_and(|index| index.legacy.cleanup_pending);
     if pending {
         // M4. A file held by another program now is destroyed at the next

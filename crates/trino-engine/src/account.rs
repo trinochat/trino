@@ -578,6 +578,11 @@ pub fn unlock_or_emergency(
         Unsealed::Vault(opened) => opened,
         Unsealed::Emergency(vault) => return Ok(Unlocking::Emergency(vault)),
     };
+    // CE-8b: the disk work of the emergency path, so both take as long on
+    // any disk. Only a version 3 vault can hold an emergency key.
+    if let OpenedVault::V3(vault) = &opened {
+        crate::emergency::even_out(&crate::store::disk::RealDisk, &files.home, vault, now);
+    }
     if session_open {
         let totp_secret = opened
             .totp_secret()

@@ -25,7 +25,7 @@
 use crate::account::{display_handle, DataFiles, Unlocked};
 use crate::alert::SharedAlert;
 use crate::command_error::CommandError;
-use crate::identity::create_identity;
+use crate::identity::{create_identity, Identity};
 use crate::state::default_relays;
 use crate::store::disk::Disk;
 use crate::store::envelope::Slot;
@@ -71,22 +71,7 @@ pub(crate) fn take_place<D: Disk + Clone>(
     // E2, in memory.
     let inherited = SharedApp::from_bytes(vault.shared_app());
     let identity = create_identity();
-    let nostr_pub = hex::encode(identity.nostr.pub_bytes);
-    let account = AccountFile {
-        handle: display_handle(inherited.as_ref().map_or("", |shared| &shared.name)),
-        nostr_pub,
-        relays: inherited
-            .as_ref()
-            .map(|shared| shared.relays.clone())
-            .filter(|relays| !relays.is_empty())
-            .unwrap_or_else(default_relays),
-        created_at: inherited.as_ref().map_or(now, |shared| shared.created_at),
-        ..AccountFile::default()
-    };
-    let prefs = inherited
-        .as_ref()
-        .map(|shared| shared.prefs_for(&account.nostr_pub))
-        .unwrap_or_default();
+    let (account, prefs) = empty_account(inherited.as_ref(), &identity, now);
     // B1 (CE-6): what the network action needs is taken from `inherited`
     // here, before the vault of before goes; with no action chosen, none.
     // The empty account's block has none.
@@ -118,6 +103,102 @@ pub(crate) fn take_place<D: Disk + Clone>(
     let _ = move_in(disk, &files.home, &aside);
     destroy_small(disk, files);
     Ok((new_vault, alert))
+}
+
+/// E2: the empty account's `account.bin` and preferences for `identity`,
+/// with what it inherits through the shared block of the vault of before.
+fn empty_account(
+    inherited: Option<&SharedApp>,
+    identity: &Identity,
+    now: i64,
+) -> (AccountFile, BTreeMap<String, String>) {
+    let account = AccountFile {
+        handle: display_handle(inherited.map_or("", |shared| &shared.name)),
+        nostr_pub: hex::encode(identity.nostr.pub_bytes),
+        relays: inherited
+            .map(|shared| shared.relays.clone())
+            .filter(|relays| !relays.is_empty())
+            .unwrap_or_else(default_relays),
+        created_at: inherited.map_or(now, |shared| shared.created_at),
+        ..AccountFile::default()
+    };
+    let prefs = inherited
+        .map(|shared| shared.prefs_for(&account.nostr_pub))
+        .unwrap_or_default();
+    (account, prefs)
+}
+
+#[cfg(test)]
+thread_local! {
+    /// How many times an unlock on this thread evened out (`even_out`).
+    pub(crate) static EVENED_OUT: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// Where a real unlock does the disk work of the emergency path
+/// (`even_out`), in the data folder. Nothing stays in it.
+pub const EVEN_OUT_DIR: &str = "unlock.tmp";
+
+/// CE-8b, design §6.3: a real unlock of a version 3 vault does the disk
+/// work of steps E3 to E5 too, in `home/unlock.tmp/`, and removes it, so
+/// on any disk both paths take about as long, a hard disk's syncs and all,
+/// with no fixed wait and without telling one disk from another: the same
+/// files, of the same sizes, written and synced the same way and in the
+/// same order (the empty account's store, made from what `vault`'s shared
+/// block holds, under keys nobody keeps; a file of the vault's size,
+/// written over in two phases with bytes nobody can open), and the same
+/// moves, as E2 makes a new identity for it. It runs whether the account
+/// has an emergency key or not, since nothing may tell (CE-D6), and with
+/// a session open, as the path does.
+///
+/// In silence, as the path: it writes no note, and nothing it fails
+/// changes the unlock. What a cut leaves of it goes at the next unlock,
+/// with either key (here, or `migrate::settle`), or with "Borrar todo".
+pub(crate) fn even_out<D: Disk + Clone>(disk: &D, home: &Path, vault: &OpenVault, now: i64) {
+    #[cfg(test)]
+    EVENED_OUT.with(|count| count.set(count.get() + 1));
+    let dir = home.join(EVEN_OUT_DIR);
+    if dir.exists() {
+        let _ = disk.remove_dir_all(&dir);
+    }
+    let _ = even_out_in(disk, &dir, vault, now);
+    let _ = disk.remove_dir_all(&dir);
+}
+
+/// `even_out` in `dir`, step by step as `take_place`.
+fn even_out_in<D: Disk + Clone>(
+    disk: &D,
+    dir: &Path,
+    vault: &OpenVault,
+    now: i64,
+) -> io::Result<()> {
+    // E2.
+    let inherited = SharedApp::from_bytes(vault.shared_app());
+    let identity = create_identity();
+    let (account, prefs) = empty_account(inherited.as_ref(), &identity, now);
+    let header = vault_header(vault.bytes(), identity.signed_prekey.id);
+    let aside = other_store_name();
+    // E3.
+    let keys = StoreKeys::generate();
+    write_new_store(disk, dir, keys, &account, &prefs, header, &aside)?;
+    // E4, over a file that is there, as over vault.bin.
+    let len = vault.bytes().len();
+    let file = DataFiles::in_home(dir.to_path_buf()).vault;
+    std::fs::write(&file, random_bytes(len))?;
+    crate::vault_file::write_with(disk, &file, &random_bytes(len))?;
+    // E5, with a store/ to move aside.
+    std::fs::create_dir_all(dir.join(STORE_DIR))?;
+    move_in(disk, dir, &aside)
+}
+
+/// `len` random bytes.
+fn random_bytes(len: usize) -> Vec<u8> {
+    let mut bytes = Vec::with_capacity(len + 32);
+    while bytes.len() < len {
+        let block: [u8; 32] = crate::crypto::random_array();
+        bytes.extend_from_slice(&block);
+    }
+    bytes.truncate(len);
+    bytes
 }
 
 /// E3: the empty account's store in `home/store.new/`, under `keys`, as a
@@ -226,6 +307,7 @@ mod tests {
     use crate::storage::{apply_loaded, import_sticker_into, load_session, persist_account};
     use crate::store::cleanup::Cleanup;
     use crate::store::disk::cut::{CutDisk, Step};
+    use crate::store::disk::RealDisk;
     use crate::store::migrate::NEW_STORE_DIR;
     use crate::store::session::{Found, Storage, StorageCell, OTHER_STORE_PREFIX, STORE_DIR};
     use crate::totp::{generate_totp_secret, totp_code, totp_now};
@@ -1331,6 +1413,175 @@ mod tests {
         assert!(gone.is_ok(), "the old store is still there");
     }
 
+    // ---- CE-8b, design §6.3: a real unlock does the same disk work ----
+
+    /// A real disk that notes each change that reaches it and costs: its
+    /// kind and the bytes it writes (for a destroyed file, its length).
+    #[derive(Default)]
+    struct Noted(std::cell::RefCell<Vec<(&'static str, usize)>>);
+
+    impl Noted {
+        fn note(&self, kind: &'static str, len: usize) {
+            self.0.borrow_mut().push((kind, len));
+        }
+    }
+
+    impl Disk for std::rc::Rc<Noted> {
+        fn read(&self, path: &Path) -> io::Result<Vec<u8>> {
+            RealDisk.read(path)
+        }
+        fn write(&self, path: &Path, bytes: &[u8]) -> io::Result<()> {
+            self.note("write", bytes.len());
+            RealDisk.write(path, bytes)
+        }
+        fn remove(&self, path: &Path) -> io::Result<()> {
+            RealDisk.remove(path)
+        }
+        fn rename(&self, from: &Path, to: &Path) -> io::Result<()> {
+            self.note("rename", 0);
+            RealDisk.rename(from, to)
+        }
+        fn list(&self, dir: &Path) -> io::Result<Vec<String>> {
+            RealDisk.list(dir)
+        }
+        fn write_durable(&self, path: &Path, bytes: &[u8]) -> io::Result<()> {
+            self.note("write durable", bytes.len());
+            RealDisk.write_durable(path, bytes)
+        }
+        fn rename_durable(&self, from: &Path, to: &Path) -> io::Result<()> {
+            self.note("rename durable", 0);
+            RealDisk.rename_durable(from, to)
+        }
+        fn overwrite_durable(&self, path: &Path, bytes: &[u8]) -> io::Result<()> {
+            self.note("overwrite", bytes.len());
+            RealDisk.overwrite_durable(path, bytes)
+        }
+        fn destroy(&self, path: &Path) -> io::Result<()> {
+            let len = std::fs::metadata(path).map_or(0, |meta| meta.len() as usize);
+            self.note("destroy", len);
+            RealDisk.destroy(path)
+        }
+        fn remove_dir_all(&self, dir: &Path) -> io::Result<()> {
+            RealDisk.remove_dir_all(dir)
+        }
+    }
+
+    /// Ana's vault as her passphrase opens it.
+    fn real_vault(ana: &Ana) -> OpenVault {
+        let code = ana.code();
+        match crate::vault_file::open_for_unlock(&ana.files.vault, PASSPHRASE, code.as_deref()) {
+            Ok(crate::vault_file::Unsealed::Vault(crate::vault_file::OpenedVault::V3(vault))) => {
+                *vault
+            }
+            _ => panic!("the passphrase did not open a version 3 vault"),
+        }
+    }
+
+    /// CE-8b: what a real unlock writes to even out the time is what the
+    /// emergency path writes from E3 to E5: as many files, of the same
+    /// sizes (an index's prekey id may take a digit more or less), synced
+    /// the same way and in the same order, and the same moves.
+    #[test]
+    fn a_real_unlock_does_the_disk_work_of_the_emergency_path() {
+        let scratch = ScratchDir::new("emergency-even-out");
+        let ana = Ana::new(scratch.path(), false);
+        let evened = std::rc::Rc::new(Noted::default());
+        let emergency = std::rc::Rc::new(Noted::default());
+
+        even_out(&evened, ana.home(), &real_vault(&ana), NOW);
+        take_place(&emergency, &ana.files, ana.emergency_vault(), NOW).unwrap();
+
+        let (evened, emergency) = (evened.0.borrow(), emergency.0.borrow());
+        let kinds = |noted: &[(&'static str, usize)]| -> Vec<&'static str> {
+            noted.iter().map(|(kind, _)| *kind).collect()
+        };
+        assert_eq!(kinds(&evened), kinds(&emergency));
+        assert!(emergency.len() >= 8, "{emergency:?}");
+        for ((kind, a), (_, b)) in evened.iter().zip(emergency.iter()) {
+            assert!(a.abs_diff(*b) <= 8, "{kind}: {a} and {b} bytes");
+        }
+        assert!(!ana.home().join(EVEN_OUT_DIR).exists());
+    }
+
+    /// The names in `home`, its folders and files, not what is in them.
+    fn names_in(home: &Path) -> BTreeSet<String> {
+        std::fs::read_dir(home)
+            .unwrap()
+            .flatten()
+            .map(|entry| entry.file_name().to_string_lossy().into_owned())
+            .collect()
+    }
+
+    /// CE-8b: every real unlock of a version 3 vault evens out, whether the
+    /// account has an emergency key or not (CE-D6: nothing tells it) and
+    /// with a session open, and leaves nothing of it in the data folder.
+    /// The emergency path does not do it twice.
+    #[test]
+    fn every_real_unlock_evens_out_and_leaves_nothing() {
+        let scratch = ScratchDir::new("emergency-even-out-every");
+        let ana = Ana::new(scratch.path(), false);
+        let before = names_in(ana.home());
+        let unlock = |passphrase: &str, session_open: bool| {
+            let evened = EVENED_OUT.with(std::cell::Cell::get);
+            unlock_files(&ana.files, passphrase, None, session_open, NOW).unwrap();
+            EVENED_OUT.with(std::cell::Cell::get) - evened
+        };
+
+        assert_eq!(unlock(PASSPHRASE, false), 1);
+        assert_eq!(unlock(PASSPHRASE, true), 1);
+        assert_eq!(names_in(ana.home()), before);
+
+        let other = ScratchDir::new("emergency-even-out-no-key");
+        let files = DataFiles::in_home(other.path().to_path_buf());
+        create_account_vault(&files, "Bea", PASSPHRASE, None, crate::vault_file::write).unwrap();
+        let evened = EVENED_OUT.with(std::cell::Cell::get);
+        unlock_files(&files, PASSPHRASE, None, false, NOW).unwrap();
+        assert_eq!(EVENED_OUT.with(std::cell::Cell::get) - evened, 1);
+        assert!(!other.path().join(EVEN_OUT_DIR).exists());
+
+        assert_eq!(unlock(EMERGENCY, false), 0);
+        assert!(!ana.home().join(EVEN_OUT_DIR).exists());
+    }
+
+    /// CE-8b: a cut at any step of the evening out, with what the disk had
+    /// not made durable lost or not, leaves nothing after the next unlock,
+    /// with either key, and no notice.
+    #[test]
+    fn what_a_cut_leaves_of_the_evening_out_goes_at_the_next_unlock() {
+        let steps = {
+            let scratch = ScratchDir::new("emergency-even-cut-count");
+            let ana = Ana::new(scratch.path(), false);
+            let disk = CutDisk::whole();
+            even_out(&disk, ana.home(), &real_vault(&ana), NOW);
+            steps_of(&disk)
+        };
+        assert!(steps.len() >= 8, "{steps:?}");
+        // Before its first write, a cut leaves nothing to remove.
+        let first = 1 + steps
+            .iter()
+            .position(|step| matches!(step, Step::Write(_)))
+            .unwrap();
+        for at in first..steps.len() {
+            for lose in [false, true] {
+                for passphrase in [PASSPHRASE, EMERGENCY] {
+                    let scratch = ScratchDir::new("emergency-even-cut");
+                    let ana = Ana::new(scratch.path(), false);
+                    let disk = CutDisk::cut_at(at);
+                    even_out(&disk, ana.home(), &real_vault(&ana), NOW);
+                    if lose {
+                        disk.lose_last(disk.unflushed());
+                    }
+                    let context = format!("cut at {at}, lost {lose}, {passphrase}");
+                    assert!(ana.home().join(EVEN_OUT_DIR).exists(), "{context}");
+
+                    check_after_cut(&ana, passphrase, &context);
+
+                    assert!(!ana.home().join(EVEN_OUT_DIR).exists(), "{context}");
+                }
+            }
+        }
+    }
+
     // ---- Design §6.3 and §12.5: the time of the two paths (CE-8) ----
 
     /// Ana's account with `messages` messages in its history, as she would
@@ -1366,9 +1617,10 @@ mod tests {
         (ms(times.len() / 2), ms(times.len() * 9 / 10))
     }
 
-    /// Design §6.3 and §12.5 (CE-D9: measure first; nothing is evened out
-    /// yet): how long each path takes to open the account, a real unlock
-    /// against the emergency path, with a small and a large history.
+    /// Design §6.3 and §12.5 (CE-D9: measure first; CE-8b evened the two
+    /// out with the same disk work, `even_out`): how long each path takes
+    /// to open the account, a real unlock against the emergency path, with
+    /// a small and a large history.
     ///
     /// Not part of the suite. Run it with
     /// `cargo test -p trino-engine --lib -- --ignored measure_the_two_paths --nocapture`,

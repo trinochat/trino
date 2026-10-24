@@ -698,6 +698,11 @@ pub fn wipe_home(home: &Path, ops: &mut dyn WipeOps) -> Vec<String> {
     }
     remove_dir_with(ops, &home.join(STORE_DIR), &mut failures);
     remove_dir_with(ops, &home.join(NEW_STORE_DIR), &mut failures);
+    remove_dir_with(
+        ops,
+        &home.join(crate::emergency::EVEN_OUT_DIR),
+        &mut failures,
+    );
     let mut others: Vec<PathBuf> = std::fs::read_dir(home)
         .map(|entries| {
             entries
@@ -1733,6 +1738,27 @@ mod tests {
         assert_eq!(ops.0[1], "remove store");
         assert!(ops.0.contains(&format!("remove {OTHER_STORE_PREFIX}0001")));
         assert_eq!(names_in(home), ["notes.txt"]);
+    }
+
+    /// CE-8b: what a cut left of an unlock's evening out
+    /// (`emergency::even_out`) goes with everything else.
+    #[test]
+    fn wipe_removes_what_a_cut_left_of_the_evening_out() {
+        let scratch = ScratchDir::new("wipe-even-out");
+        let home = scratch.path();
+        let files = data_files_in(home.to_path_buf());
+        let (_, _) = new_account(&files, "ana");
+        let left = home
+            .join(crate::emergency::EVEN_OUT_DIR)
+            .join(NEW_STORE_DIR);
+        std::fs::create_dir_all(&left).unwrap();
+        std::fs::write(left.join("index.bin"), b"sealed with keys nobody keeps").unwrap();
+        let mut ops = Recording::default();
+
+        let failures = wipe_home(home, &mut ops);
+
+        assert!(failures.is_empty(), "{failures:?}");
+        assert!(names_in(home).is_empty(), "{:?}", names_in(home));
     }
 
     /// A vault waiting in `vault.bin.next` (a two-phase write a cut
