@@ -430,7 +430,7 @@ pub(super) fn node_info(inner: &InnerState, friend: &FriendRecord) -> NodeInfo {
         has_session: inner.ratchets.contains_key(&friend.handle),
         added_at: friend.added_at,
         avatar,
-        blocked: inner.blocked.contains(&friend.bundle.nostr_pub),
+        blocked: trino_engine::block::friend_blocked(inner, friend),
         identity_digest: keys
             .map(|(ik_sign, ik_dh, nostr)| identity_digest(&ik_sign, &ik_dh, &nostr)),
         previous_fingerprint: friend.previous_fingerprint.clone(),

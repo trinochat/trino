@@ -1047,6 +1047,12 @@ pub async fn handle_incoming_event(
         dbg_log("  OK: handshake message decrypted (no UI emit)");
         return;
     }
+    // -- UR-2 (R-04) -- Of someone blocked, only the rosters of a group
+    // they administer and you are in; before the profile's hook, so nothing
+    // of theirs is read or answered.
+    if crate::block::on_message(events, &mut inner, &identity, &friend, &plain) {
+        return;
+    }
     // -- W8 (K12) -- A profile message ends here, never as text; text, group
     // and file messages say whether their sender reads profiles.
     if profile::on_message(

@@ -499,7 +499,8 @@ pub async fn block_node(
         .map(|f| f.bundle.nostr_pub.clone());
     if let Some(pk) = pubkey {
         if blocked {
-            inner.blocked.insert(pk);
+            let entry = trino_engine::block::BlockedIdentity::before_ur2(pk, None, 0);
+            inner.blocked.insert(entry);
         } else {
             inner.blocked.remove(&pk);
         }

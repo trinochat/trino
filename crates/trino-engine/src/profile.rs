@@ -568,7 +568,7 @@ pub fn targets(inner: &mut InnerState) -> Vec<String> {
     let mut handles: Vec<String> = inner
         .friends
         .values()
-        .filter(|friend| !inner.blocked.contains(&friend.bundle.nostr_pub))
+        .filter(|friend| !crate::block::friend_blocked(inner, friend))
         .filter(|friend| {
             inner
                 .profiles
@@ -1799,7 +1799,13 @@ mod tests {
         let mut carol = friend("carol");
         carol.via_group = Some("g1".into());
         let dan = friend("dan");
-        inner.blocked.insert(dan.bundle.nostr_pub.clone());
+        inner
+            .blocked
+            .insert(crate::block::BlockedIdentity::before_ur2(
+                dan.bundle.nostr_pub.clone(),
+                None,
+                0,
+            ));
         for contact in [friend("ana"), friend("bob"), carol, dan, friend("eva")] {
             inner.friends.insert(contact.handle.clone(), contact);
         }

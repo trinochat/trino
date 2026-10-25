@@ -17,6 +17,7 @@ pub use trino_core::{
 
 pub mod account;
 pub mod alert;
+pub mod block;
 pub mod blossom;
 pub mod bridges;
 pub mod call_log;

@@ -67,8 +67,14 @@ pub struct AccountFile {
     pub avatar: Option<String>,
     #[serde(default)]
     pub friends: Vec<FriendRecord>,
+    /// The Nostr keys of `blocked_ids`, as a Trino of before UR-2 reads
+    /// them, so it still drops their events.
     #[serde(default)]
     pub blocked: Vec<String>,
+    /// Whom you blocked, by identity (uso responsable UR-2, `block.rs`).
+    /// Left out when nobody is, as in every account from before.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub blocked_ids: Vec<crate::block::BlockedIdentity>,
     #[serde(default)]
     pub groups: Vec<GroupRoster>,
     #[serde(default)]

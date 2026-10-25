@@ -6,6 +6,7 @@
 //! Nothing here changes the protocol: every change is a roster signed the
 //! way 0.1.0 already checks and applies.
 
+use crate::block::BlockList;
 use crate::command_error::{CommandError, ErrorCode};
 use crate::contacts::{check_local_handle, not_found, sealed};
 use crate::envelope::{encode_envelope, Envelope};
@@ -120,6 +121,11 @@ pub enum Admission {
 /// 2. blocked sender, then contact lookup: the dedup cache is bounded, so
 ///    letting strangers' events in would let anyone flush it and replay a
 ///    contact's old events past it.
+///
+/// Blocked means by identity (UR-2, `block.rs`): a blocked Nostr key, or a
+/// contact whose identity is blocked. A blocked contact who administers a
+/// group you are in still gets in, for that group's rosters only (R-04);
+/// `handle_incoming_event` reads nothing else of theirs.
 pub fn admit_event(inner: &mut InnerState, event: &NostrEvent, my_pub: &str) -> Admission {
     if event.kind != TRINO_KIND {
         return Admission::Drop("not a trino event");
@@ -127,15 +133,22 @@ pub fn admit_event(inner: &mut InnerState, event: &NostrEvent, my_pub: &str) -> 
     if event.recipient() != Some(my_pub) {
         return Admission::Drop("addressed to someone else");
     }
-    if inner.blocked.contains(&event.pubkey) {
-        return Admission::Drop("sender is blocked");
-    }
-    let Some(friend) = inner
+    let friend = inner
         .friends
         .values()
         .find(|f| f.bundle.nostr_pub == event.pubkey)
-        .cloned()
-    else {
+        .cloned();
+    let blocked = inner.blocked.blocks_nostr(&event.pubkey)
+        || friend
+            .as_ref()
+            .is_some_and(|f| crate::block::friend_blocked(inner, f));
+    let their_rosters = friend
+        .as_ref()
+        .is_some_and(|f| crate::block::administers_a_group(inner, &f.bundle.ik_sign_pub));
+    if blocked && !their_rosters {
+        return Admission::Drop("sender is blocked");
+    }
+    let Some(friend) = friend else {
         return Admission::Stranger;
     };
     if !inner.remember_event(event.id.clone()) {
@@ -276,7 +289,8 @@ pub fn ingest_incoming_roster(
         return match group::evaluate_incoming_roster(Some(current), &roster, sender_ik, my_ik) {
             RosterDecision::Accept => {
                 let roster = sanitize_roster(roster);
-                let notes = merge_group_members(&mut inner.friends, &roster, my_ik, now);
+                let notes =
+                    merge_group_members(&mut inner.friends, &inner.blocked, &roster, my_ik, now);
                 inner.groups.insert(gid.clone(), roster);
                 RosterOutcome::Applied { gid, notes }
             }
@@ -294,6 +308,12 @@ pub fn ingest_incoming_roster(
             }
             RosterDecision::Reject(why) => RosterOutcome::Dropped(why.to_string()),
         };
+    }
+    // UR-2: nothing of someone blocked waits as an invitation.
+    if inner.blocked.blocks_identity(sender_ik) {
+        return RosterOutcome::Dropped(
+            "roster of someone blocked, for a group we are not in".into(),
+        );
     }
     let pending = inner.group_invites.get(&gid).map(|i| &i.roster);
     let is_new = pending.is_none();
@@ -338,6 +358,10 @@ pub fn take_group_invite(
     if inner.groups.contains_key(gid) {
         return Err("already a member of this group".into());
     }
+    // One kept from before its admin was blocked (UR-2).
+    if inner.blocked.blocks_identity(&invite.roster.admin_pub) {
+        return Err("the admin of this group is blocked".into());
+    }
     // Check again: group_invites.json on disk is not authenticated.
     let roster = invite.roster;
     match group::evaluate_incoming_roster(None, &roster, &roster.admin_pub, my_ik) {
@@ -345,7 +369,7 @@ pub fn take_group_invite(
         RosterDecision::Reject(why) => return Err(why.to_string()),
         RosterDecision::Accept => return Err("unexpected roster state".into()),
     }
-    let notes = merge_group_members(&mut inner.friends, &roster, my_ik, now);
+    let notes = merge_group_members(&mut inner.friends, &inner.blocked, &roster, my_ik, now);
     inner.groups.insert(gid.to_string(), roster.clone());
     Ok((roster, notes))
 }
@@ -425,13 +449,15 @@ pub fn accept_incoming_roster(
 ///
 /// Never replaces or edits an existing contact. A member is skipped when its
 /// own identity key did not sign its keys; when its identity key is already a
-/// contact with different DH/Nostr keys (the pinned ones win); when its DH or
+/// contact with different DH/Nostr keys (the pinned ones win); when it is
+/// someone you blocked, by any key they proved they hold (UR-2); when its DH or
 /// Nostr key already belongs to another contact (incoming events are matched
 /// to contacts by Nostr key); or when no free handle is left for it. A name
 /// that cannot name a contact here (`check_local_handle`) is
 /// left out of its handle.
 pub fn merge_group_members(
     friends: &mut HashMap<String, FriendRecord>,
+    blocked: &BlockList,
     roster: &GroupRoster,
     my_ik: &str,
     now: i64,
@@ -457,6 +483,10 @@ pub fn merge_group_members(
                     known.handle
                 ));
             }
+            continue;
+        }
+        if blocked.blocks_member(m) {
+            notes.push(format!("skip member {who}: blocked"));
             continue;
         }
         if friends
@@ -1048,7 +1078,7 @@ mod tests {
         let roster = roster_of(&admin, &[(&me, "me"), (&ana, "ana")]);
         let mut friends = HashMap::from([("admin".to_string(), friend(&admin, "admin"))]);
 
-        merge_group_members(&mut friends, &roster, &ik(&me), NOW);
+        merge_group_members(&mut friends, &BlockList::default(), &roster, &ik(&me), NOW);
 
         assert_eq!(
             friends["ana"].via_group.as_deref(),
@@ -1076,7 +1106,13 @@ mod tests {
             .friends
             .insert("admin".into(), friend(&admin, "admin"));
         inner.friends.insert("bob".into(), friend(&bob, "bob"));
-        merge_group_members(&mut inner.friends, &roster, &ik(&me), NOW);
+        merge_group_members(
+            &mut inner.friends,
+            &BlockList::default(),
+            &roster,
+            &ik(&me),
+            NOW,
+        );
         inner.groups.insert(gid.clone(), roster);
 
         let members = members_of(&inner, &gid, &ik(&me)).unwrap();
@@ -1730,7 +1766,13 @@ mod tests {
         let roster = signed_raw(&mallory2, vec![fake_alice]);
         let mut friends = HashMap::new();
 
-        let notes = merge_group_members(&mut friends, &roster, "not-a-member", NOW);
+        let notes = merge_group_members(
+            &mut friends,
+            &BlockList::default(),
+            &roster,
+            "not-a-member",
+            NOW,
+        );
 
         assert!(friends.is_empty());
         assert_eq!(notes.len(), 1, "{notes:?}");
@@ -1744,11 +1786,14 @@ mod tests {
 
         // Same identity, same keys: nothing to do, nothing to report.
         let same = signed_raw(&alice, vec![member(&alice, "alice")]);
-        assert!(merge_group_members(&mut friends, &same, "me", NOW).is_empty());
+        assert!(
+            merge_group_members(&mut friends, &BlockList::default(), &same, "me", NOW).is_empty()
+        );
 
         // Same identity key, different transport keys: keep what we have.
         let other_keys = signed_raw(&alice, vec![member(&rekeyed(&alice), "alice-new")]);
-        let notes = merge_group_members(&mut friends, &other_keys, "me", NOW);
+        let notes =
+            merge_group_members(&mut friends, &BlockList::default(), &other_keys, "me", NOW);
 
         assert_eq!(friends.len(), 1);
         assert_eq!(friends["alice"].bundle.ik_dh_pub, stored.bundle.ik_dh_pub);
@@ -1765,7 +1810,7 @@ mod tests {
         let roster = signed_raw(&shadow, vec![member(&shadow, "alice2")]);
         let mut friends = HashMap::from([("alice".to_string(), friend(&alice, "alice"))]);
 
-        let notes = merge_group_members(&mut friends, &roster, "me", NOW);
+        let notes = merge_group_members(&mut friends, &BlockList::default(), &roster, "me", NOW);
 
         assert_eq!(friends.len(), 1);
         assert_eq!(notes.len(), 1, "{notes:?}");
@@ -1781,7 +1826,7 @@ mod tests {
         ]);
         let roster = signed_raw(&carol, vec![member(&carol, "bob")]);
 
-        let notes = merge_group_members(&mut friends, &roster, "me", NOW);
+        let notes = merge_group_members(&mut friends, &BlockList::default(), &roster, "me", NOW);
 
         assert_eq!(friends.len(), 2);
         assert_eq!(friends[&taken].bundle.ik_sign_pub, ik(&dave));
@@ -1813,7 +1858,8 @@ mod tests {
         );
         let mut friends = HashMap::new();
 
-        let notes = merge_group_members(&mut friends, &roster, &ik(&me), NOW);
+        let notes =
+            merge_group_members(&mut friends, &BlockList::default(), &roster, &ik(&me), NOW);
 
         assert!(notes.is_empty(), "{notes:?}");
         let handle_of = |id: &Identity| {
@@ -1949,7 +1995,13 @@ mod tests {
     fn blocked_contacts_events_never_enter_the_seen_cache() {
         let (me, alice) = (create_identity(), create_identity());
         let mut inner = state_with(&[friend(&alice, "alice")]);
-        inner.blocked.insert(nostr_hex(&alice));
+        inner
+            .blocked
+            .insert(crate::block::BlockedIdentity::before_ur2(
+                nostr_hex(&alice),
+                None,
+                NOW,
+            ));
         let event = event_to(&alice, &nostr_hex(&me), TRINO_KIND, NOW);
 
         let out = admit_event(&mut inner, &event, &nostr_hex(&me));

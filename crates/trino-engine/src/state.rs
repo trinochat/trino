@@ -63,8 +63,9 @@ pub struct InnerState {
     pub relay_urls: Vec<String>,
     /// When this account was created, in unix seconds.
     pub created_at: i64,
-    /// Blocked senders, by nostr pubkey. Their events are dropped on arrival.
-    pub blocked: HashSet<String>,
+    /// Whom you blocked, by identity (uso responsable UR-2, `block.rs`).
+    /// Persisted ENCRYPTED with the account.
+    pub blocked: crate::block::BlockList,
     /// Last time (unix secs) we auto-healed a desynced session per handle, to
     /// rate-limit re-handshakes and avoid storms. In-memory only.
     pub resync_at: HashMap<String, i64>,

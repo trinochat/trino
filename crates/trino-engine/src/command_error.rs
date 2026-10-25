@@ -73,6 +73,12 @@ pub enum ErrorCode {
     /// vault takes already: choose another (design §11.4). Its message
     /// never says which slot.
     ChooseAnother,
+    // -- Uso responsable (UR-2) --
+    /// A key the person to block proved they hold is another contact's:
+    /// nothing was blocked (design §3.1, P1 R-14).
+    KeyClash,
+    /// Someone you blocked: nothing goes to them (design §3.2).
+    Blocked,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]

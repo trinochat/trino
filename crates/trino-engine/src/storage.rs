@@ -13,6 +13,7 @@
 //! (`legacy_files_preview`, `_import` and `_remove` in the app).
 
 use crate::account::{display_handle, totp_hint, DataFiles, StatusResponse};
+use crate::block::BlockList;
 use crate::command_error::CommandError;
 use crate::fsutil::{self, destroy_file};
 use crate::group::GroupRoster;
@@ -49,8 +50,6 @@ use zeroize::{Zeroize, Zeroizing};
 pub fn account_of(inner: &InnerState) -> AccountFile {
     let mut friends: Vec<FriendRecord> = inner.friends.values().cloned().collect();
     friends.sort_by(|a, b| a.handle.cmp(&b.handle));
-    let mut blocked: Vec<String> = inner.blocked.iter().cloned().collect();
-    blocked.sort();
     let mut groups: Vec<GroupRoster> = inner.groups.values().cloned().collect();
     groups.sort_by(|a, b| a.group_id.cmp(&b.group_id));
     let mut group_invites: Vec<GroupInvite> = inner.group_invites.values().cloned().collect();
@@ -66,7 +65,8 @@ pub fn account_of(inner: &InnerState) -> AccountFile {
         created_at: inner.created_at,
         avatar: inner.avatar.clone(),
         friends,
-        blocked,
+        blocked: inner.blocked.nostr_keys(),
+        blocked_ids: inner.blocked.entries().to_vec(),
         groups,
         group_invites,
         alerts: inner.alerts.clone(),
@@ -108,9 +108,7 @@ pub fn zeroize_names(inner: &mut InnerState) {
         zeroize_roster(&mut invite.roster);
         invite.from_handle.zeroize();
     }
-    for mut key in inner.blocked.drain() {
-        key.zeroize();
-    }
+    inner.blocked.clear();
 }
 
 pub const MAX_STICKER_BYTES: usize = 5 * 1024 * 1024;
@@ -417,6 +415,7 @@ pub fn load_legacy(files: &DataFiles, identity: &Identity) -> Result<LoadedSessi
         avatar: cfg.avatar,
         friends: friends.friends,
         blocked: friends.blocked,
+        blocked_ids: Vec::new(),
         groups: read_list(&files.groups),
         group_invites: read_list(&files.group_invites),
         alerts: Default::default(),
@@ -526,7 +525,8 @@ pub fn apply_loaded(
         friend.avatar = sanitized_inline_raster(friend.avatar.take());
         inner.friends.insert(friend.handle.clone(), friend);
     }
-    inner.blocked = account.blocked.into_iter().collect();
+    inner.blocked =
+        BlockList::from_saved(account.blocked_ids, account.blocked, &inner.friends, now);
     inner.groups.clear();
     for roster in account.groups {
         let roster = sanitize_roster(roster);
@@ -904,7 +904,9 @@ pub fn merge_account(inner: &mut InnerState, account: AccountFile) {
         friend.avatar = sanitized_inline_raster(friend.avatar.take());
         inner.friends.entry(friend.handle.clone()).or_insert(friend);
     }
-    inner.blocked.extend(account.blocked);
+    let now = chrono::Utc::now().timestamp();
+    let blocked = BlockList::from_saved(account.blocked_ids, account.blocked, &inner.friends, now);
+    inner.blocked.merge(blocked);
     for roster in account.groups {
         let roster = sanitize_roster(roster);
         inner
@@ -1595,7 +1597,13 @@ mod tests {
                 received_at: NOW,
             },
         );
-        inner.blocked.insert("ab".repeat(32));
+        inner
+            .blocked
+            .insert(crate::block::BlockedIdentity::before_ur2(
+                "ab".repeat(32),
+                None,
+                0,
+            ));
 
         zeroize_names(&mut inner);
 

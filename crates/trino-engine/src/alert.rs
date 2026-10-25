@@ -753,7 +753,7 @@ pub fn candidates(inner: &InnerState) -> Vec<String> {
     let mut handles: Vec<String> = inner
         .friends
         .values()
-        .filter(|friend| !inner.blocked.contains(&friend.bundle.nostr_pub))
+        .filter(|friend| !crate::block::friend_blocked(inner, friend))
         .filter(|friend| {
             inner
                 .profiles
@@ -778,11 +778,10 @@ fn handle_of(inner: &InnerState, nostr_pub: &str) -> Option<String> {
 
 /// Whether `nostr_pub` is a contact still, and not blocked (§7.6).
 fn is_live(inner: &InnerState, nostr_pub: &str) -> bool {
-    !inner.blocked.contains(nostr_pub)
-        && inner
-            .friends
-            .values()
-            .any(|friend| friend.bundle.nostr_pub == nostr_pub)
+    !inner.blocked.blocks_nostr(nostr_pub)
+        && inner.friends.values().any(|friend| {
+            friend.bundle.nostr_pub == nostr_pub && !crate::block::friend_blocked(inner, friend)
+        })
 }
 
 /// Keep the book with the account, its warning in the vault's shared block
@@ -1603,7 +1602,13 @@ mod session_tests {
                 .profiles
                 .contacts
                 .insert("Dan".into(), announcing(ALERT_V));
-            inner.blocked.insert(hex::encode(dan.nostr.pub_bytes));
+            inner
+                .blocked
+                .insert(crate::block::BlockedIdentity::before_ur2(
+                    hex::encode(dan.nostr.pub_bytes),
+                    None,
+                    0,
+                ));
             assert_eq!(candidates(&inner), ["Bob"]);
         }
         for refused in ["Carol", "Dan", "Nadie"] {
