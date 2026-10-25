@@ -362,6 +362,36 @@ describe('hanging up before anything was sent', () => {
     expect(getUserMedia).not.toHaveBeenCalled();
   });
 
+  // UR-2, design test 9: an offer from someone you blocked does not ring, and nothing is
+  // answered, not even a busy: they cannot tell it from a call nobody picks up.
+  it('never rings for an offer from someone blocked, and answers nothing', async () => {
+    vi.resetModules();
+    const call = await import('./call');
+    current = call;
+    const onState = vi.fn();
+    call.initCall({
+      onState,
+      onLocalStream: vi.fn(),
+      onRemoteStream: vi.fn(),
+      onError: vi.fn(),
+      onMedia: vi.fn(),
+      onConnectionMode: vi.fn(),
+      onDirectConsent: vi.fn(),
+      onSasInputs: vi.fn(),
+      isBlocked: from => from === PEER,
+    });
+
+    call.handleSignal(PEER, offerFrom());
+    await settle();
+
+    expect(onState).not.toHaveBeenCalled();
+    expect(call.isCallBusy()).toBe(false);
+    expect(api.sendCallSignal).not.toHaveBeenCalled();
+    // Someone else still rings.
+    call.handleSignal('bruno', offerFrom('d'.repeat(32)));
+    expect(onState).toHaveBeenLastCalledWith('ringing-in', expect.objectContaining({ peer: 'bruno' }));
+  });
+
   it('says bye once the offer has gone out', async () => {
     api.getTurnServers.mockResolvedValue(turnOk());
     const { call } = await setup();

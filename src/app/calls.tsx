@@ -87,6 +87,7 @@ export function useCalls(options: CallsOptions): Calls {
         avatar: node.avatar ?? null,
         verified: prefs.isVerified(node.handle, node.fingerprint),
         identityDigest: node.identity_digest ?? null,
+        blocked: node.blocked === true,
       };
     },
     me: { identityDigest: options.myIdentityDigest },

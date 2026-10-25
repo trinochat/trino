@@ -119,6 +119,8 @@ export interface CallCallbacks {
   // Tor is still connecting: the call keeps ringing meanwhile (true), and
   // stops waiting (false) once Tor answered, or the call is over.
   onWaitingForTor?: (waiting: boolean) => void;
+  // Whether `peer` is someone you blocked (UR-2): their offer never rings.
+  isBlocked?: (peer: string) => boolean;
 }
 
 interface Signal {
@@ -1092,6 +1094,7 @@ function handleNewOffer(from: string, s: Signal): void {
     from,
     offerCallId: s.callId,
     alreadyEnded: endedCalls.has(callKey(from, s.callId)),
+    blocked: cbs?.isBlocked?.(from) === true,
   });
   api.devLog(`new offer -> ${decision}`);
   switch (decision) {

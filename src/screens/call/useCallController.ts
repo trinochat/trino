@@ -79,6 +79,8 @@ export interface CallPeer {
   verified: boolean;
   /** The identity digest saved for the contact (K7); null until the backend gives it. */
   identityDigest: string | null;
+  /** Someone you blocked (UR-2): their offer never rings. */
+  blocked?: boolean;
 }
 
 /** The call alerts of Settings > Notificaciones (W5), read when a call rings. */
@@ -675,6 +677,8 @@ export function useCallController(deps: CallControllerDeps): CallController {
       onWaitingForTor: waiting => {
         if (!disposed) setWaitingForTor(waiting);
       },
+      // UR-2: an offer of someone you blocked never rings (the backend drops it first).
+      isBlocked: handle => latest.current.deps.peer(handle)?.blocked === true,
     });
     let unlisten: (() => void) | null = null;
     latest.current.deps.events

@@ -147,6 +147,16 @@ afterEach(() => {
 
 describe('useCallController', () => {
   describe('wiring', () => {
+    // UR-2: call.ts asks who is blocked, as the contacts say it now.
+    it('tells call.ts who is blocked, from the contact as it is now', () => {
+      const s = setup({}, { blocked: true });
+      const isBlocked = s.cb().isBlocked;
+      expect(isBlocked?.(PEER)).toBe(true);
+      expect(isBlocked?.('nadie')).toBe(false);
+      s.rerender();
+      expect(s.deps.peer).toHaveBeenCalledWith(PEER);
+    });
+
     it('drives call.ts with the call signals while it is mounted, and tears the call down after', async () => {
       const s = setup();
       expect(s.engine.initCall).toHaveBeenCalledTimes(1);

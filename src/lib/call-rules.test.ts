@@ -115,6 +115,14 @@ describe('decideIncomingOffer', () => {
     }
   });
 
+  // UR-2: the backend drops what someone blocked sends; this is the second guard (design §3.2).
+  it('never rings for someone you blocked, whatever the call state', () => {
+    for (const state of ['idle', 'ended', 'ringing-in', 'connected'] as CallState[]) {
+      expect(decideIncomingOffer({ ...base, state, blocked: true })).toBe('ignore');
+    }
+    expect(decideIncomingOffer({ ...base, blocked: false })).toBe('ring');
+  });
+
   it('does not ring for a late offer whose call already ended', () => {
     expect(decideIncomingOffer({ ...base, alreadyEnded: true })).toBe('ignore');
   });

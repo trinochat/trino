@@ -84,6 +84,12 @@ export interface OfferContext {
   offerCallId: string;
   /** The offer's call already ended (its bye or our reject came first). */
   alreadyEnded: boolean;
+  /**
+   * It comes from someone you blocked (UR-2). The backend drops their signals
+   * already; this is the second guard (design §3.2), and it answers nothing,
+   * not even busy, so they cannot tell it from a call nobody picks up.
+   */
+  blocked?: boolean;
 }
 
 export type OfferDecision =
@@ -96,7 +102,7 @@ export type OfferDecision =
 
 /** What to do with a new (non-renegotiation) offer. */
 export function decideIncomingOffer(ctx: OfferContext): OfferDecision {
-  if (ctx.alreadyEnded || ctx.offerCallId === ctx.callId) return 'ignore';
+  if (ctx.blocked || ctx.alreadyEnded || ctx.offerCallId === ctx.callId) return 'ignore';
   if (!isBusy(ctx.state)) return 'ring';
   if (ctx.from !== ctx.peer) return 'busy';
   if (ctx.outgoing && (ctx.state === 'starting' || ctx.state === 'ringing-out')) {
