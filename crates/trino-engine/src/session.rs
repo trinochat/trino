@@ -592,6 +592,10 @@ pub async fn connect(state: &Engine, handle: String) -> Result<(), String> {
     let mut inner = state.inner.lock().await;
     let identity = inner.identity.as_ref().ok_or("vault sealed")?.clone();
     let friend = inner.friends.get(&handle).ok_or("unknown node")?.clone();
+    // UR-2: no handshake goes to someone you blocked.
+    if crate::block::friend_blocked(&inner, &friend) {
+        return Err(crate::send::SendError::Blocked.to_string());
+    }
 
     if inner.ratchets.contains_key(&handle) {
         inner.current_peer = Some(handle);
@@ -628,6 +632,10 @@ pub async fn resync(state: &Engine, handle: String) -> Result<(), String> {
     let mut inner = state.inner.lock().await;
     let identity = inner.identity.as_ref().ok_or("vault sealed")?.clone();
     let friend = inner.friends.get(&handle).ok_or("unknown node")?.clone();
+    // UR-2: no handshake goes to someone you blocked.
+    if crate::block::friend_blocked(&inner, &friend) {
+        return Err(crate::send::SendError::Blocked.to_string());
+    }
 
     inner.ratchets.remove(&handle);
     inner.associated_data.remove(&handle);

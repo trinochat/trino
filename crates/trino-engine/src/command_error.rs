@@ -496,6 +496,21 @@ mod tests {
     }
 
     #[test]
+    fn the_codes_of_blocking_have_the_names_the_ui_maps() {
+        // Uso responsable (UR-2): also listed, last, in `COMMAND_ERROR_CODES`
+        // (src/lib/api.ts).
+        for (code, name) in [
+            (ErrorCode::KeyClash, "key_clash"),
+            (ErrorCode::Blocked, "blocked"),
+        ] {
+            assert_eq!(serde_json::to_value(code).unwrap(), name);
+        }
+        let blocked = CommandError::from(crate::send::SendError::Blocked);
+        assert_eq!(blocked.code, ErrorCode::Blocked);
+        assert_eq!(blocked.message, "blocked");
+    }
+
+    #[test]
     fn already_contact_says_which_contact_has_the_keys() {
         assert_eq!(
             serde_json::to_value(CommandError::already_contact("ana")).unwrap(),

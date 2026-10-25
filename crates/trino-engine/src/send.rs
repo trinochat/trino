@@ -44,6 +44,8 @@ pub enum SendError {
     Offline,
     NotAccepted,
     TooLong,
+    /// To someone you blocked (UR-2).
+    Blocked,
     /// The X3DH, the ratchet or the signature failed; for the log.
     Failed(String),
 }
@@ -61,6 +63,7 @@ impl std::fmt::Display for SendError {
             SendError::Offline => "no relay is connected",
             SendError::NotAccepted => "no relay accepted the message",
             SendError::TooLong => "the message is too large for the relays",
+            SendError::Blocked => "blocked",
             SendError::Failed(reason) => reason,
         })
     }
@@ -74,6 +77,7 @@ impl From<SendError> for CommandError {
             SendError::NoRelays | SendError::Offline => ErrorCode::Offline,
             SendError::NotAccepted => ErrorCode::NotAccepted,
             SendError::TooLong => ErrorCode::MessageTooLong,
+            SendError::Blocked => ErrorCode::Blocked,
             SendError::UnknownContact
             | SendError::UnknownGroup
             | SendError::Empty
@@ -142,7 +146,11 @@ pub async fn send_text(
         body: text.to_string(),
         id: id.clone(),
     }));
-    let session = session_key(&*state.inner.lock().await).ok_or(SendError::Sealed)?;
+    let session = {
+        let inner = state.inner.lock().await;
+        refuse_blocked(&inner, handle)?;
+        session_key(&inner).ok_or(SendError::Sealed)?
+    };
     let sent = send_acked(state, handle, &env, unix_now(), wait).await;
     let mut inner = same_session(state, session).await?;
     let receipt = sent?;
@@ -322,7 +330,14 @@ pub async fn announce_file(
         gid: None,
         body: None,
     }));
-    let session = session_key(&*state.inner.lock().await).ok_or(SendError::Sealed)?;
+    let session = {
+        let inner = state.inner.lock().await;
+        if let Err(blocked) = refuse_blocked(&inner, handle) {
+            zeroize_file_ref(&mut file);
+            return Err(blocked);
+        }
+        session_key(&inner).ok_or(SendError::Sealed)?
+    };
     let sent = match ensure_session(state, handle).await {
         Ok(()) => send_acked(state, handle, &env, unix_now(), wait).await,
         Err(error) => Err(error),
@@ -422,6 +437,7 @@ pub async fn forward_to(
             let handles = member_handles(&inner, roster, &my_ik, None);
             (handles, group_convo(target))
         } else {
+            refuse_blocked(&inner, target)?;
             (vec![target.to_string()], target.to_string())
         }
     };
@@ -571,7 +587,10 @@ pub async fn any_relay_up(state: &Engine) -> bool {
 }
 
 /// The handles of `roster`'s members other than us that are contacts, in
-/// roster order; with `only`, just the ones it names.
+/// roster order; with `only`, just the ones it names. Never someone you
+/// blocked (UR-2, decision U5): your messages and files of the group do not
+/// reach them. Your rosters do (`groups::contacts_of`), so the group does
+/// not break for them (R-25).
 pub fn member_handles(
     inner: &InnerState,
     roster: &GroupRoster,
@@ -587,6 +606,7 @@ pub fn member_handles(
                 .friends
                 .values()
                 .find(|f| f.bundle.ik_sign_pub == m.ik_sign_pub)
+                .filter(|f| !crate::block::friend_blocked(inner, f))
                 .map(|f| f.handle.clone())
         })
         .filter(|handle| only.is_none_or(|only| only.contains(handle)))
@@ -664,6 +684,21 @@ pub fn group_receipt(
     }
 }
 
+/// `Blocked` when the contact `handle` is someone you blocked (UR-2, design
+/// §3.2): no text, file, forward, call or handshake goes to them. Rosters
+/// do, and they open a session with `ensure_session`, which does not ask.
+pub fn refuse_blocked(inner: &InnerState, handle: &str) -> Result<(), SendError> {
+    match inner.friends.get(handle) {
+        Some(friend) if crate::block::friend_blocked(inner, friend) => Err(SendError::Blocked),
+        _ => Ok(()),
+    }
+}
+
+/// `refuse_blocked`, before a file to `handle` is uploaded.
+pub async fn check_not_blocked(state: &Engine, handle: &str) -> Result<(), SendError> {
+    refuse_blocked(&*state.inner.lock().await, handle)
+}
+
 /// Buffer a just-sent text envelope so it can be replayed after an auto-heal.
 /// Capped to the last 20 messages / 10 minutes per peer.
 pub fn remember_outgoing(inner: &mut InnerState, handle: &str, id: String, env: Vec<u8>) {
@@ -681,6 +716,9 @@ pub fn remember_outgoing(inner: &mut InnerState, handle: &str, id: String, env: 
 pub async fn resend_buffered(state: &Engine, handle: &str) -> usize {
     let items: Vec<Vec<u8>> = {
         let inner = state.inner.lock().await;
+        if refuse_blocked(&inner, handle).is_err() {
+            return 0;
+        }
         inner
             .outbox
             .get(handle)
@@ -723,6 +761,9 @@ pub async fn fetch_file(
 /// `handle`, E2E-encrypted, over a session started first if there is none.
 pub async fn call_signal(state: &Engine, handle: &str, payload: String) -> Result<(), String> {
     validate_call_signal(&payload).map_err(str::to_string)?;
+    check_not_blocked(state, handle)
+        .await
+        .map_err(|e| e.to_string())?;
     ensure_session_inner(state, handle).await?;
     let env = encode_envelope(&Envelope::Call { call: payload });
     send_cipher_inner(state, handle, &env, None).await
@@ -1643,5 +1684,97 @@ mod tests {
             assert_eq!(bobs_profiles.contacts["me"].caps, profile::PROFILE_V);
             assert_eq!(bobs_profiles.contacts["me"].have, 7);
         }
+    }
+
+    // ---- UR-2: nothing goes to someone blocked (design tests 5 and 6) ----
+
+    /// A call signal the core takes: a hang-up.
+    const BYE: &str = r#"{"t":"bye","callId":"0123456789abcdef"}"#;
+
+    fn block_contact(inner: &mut InnerState, handle: &str) {
+        let target = crate::block::BlockTarget::Contact(handle.to_string());
+        crate::block::block(inner, &target, crate::block::BlockOrigin::Contact, NOW).unwrap();
+    }
+
+    #[tokio::test]
+    async fn ur2_5_no_text_file_forward_call_handshake_or_resend_goes_to_someone_blocked() {
+        let relay = TestRelay::start(Answer::Accept).await;
+        let (me, bob) = (create_identity(), create_identity());
+        let state = sending_state(&me, vec![relay.client().await]).await;
+        {
+            let mut inner = state.inner.lock().await;
+            add_session(&mut inner, &me, &bob, "bob");
+            remember_outgoing(&mut inner, "bob", "m1".into(), b"{}".to_vec());
+            block_contact(&mut inner, "bob");
+        }
+
+        let text = send_text(&state, "bob", "hola".into(), SHORT_WAIT).await;
+        let Err(file) = announce_file(&state, "bob", sample_file(), SHORT_WAIT).await else {
+            panic!("a file went to someone blocked");
+        };
+        let forward = forward_to(&state, "bob", false, sample_file()).await;
+        for error in [text.unwrap_err(), file, forward.unwrap_err()] {
+            assert_eq!(error, SendError::Blocked);
+            assert_eq!(CommandError::from(error).code, ErrorCode::Blocked);
+        }
+        assert_eq!(
+            call_signal(&state, "bob", BYE.into()).await.unwrap_err(),
+            "blocked"
+        );
+        let connect = crate::session::connect(&state, "bob".into()).await;
+        let resync = crate::session::resync(&state, "bob".into()).await;
+        assert_eq!(connect.unwrap_err(), "blocked");
+        assert_eq!(resync.unwrap_err(), "blocked");
+        assert_eq!(resend_buffered(&state, "bob").await, 0);
+
+        assert!(relay.events().is_empty(), "something was published");
+        assert_eq!(sent_so_far(&state, "bob").await, 0, "the session moved on");
+        let inner = state.inner.lock().await;
+        assert!(!inner.history.contains_key("bob"));
+        assert!(
+            inner.ratchets.contains_key("bob"),
+            "resync dropped the session"
+        );
+    }
+
+    #[tokio::test]
+    async fn ur2_6_a_group_message_skips_someone_blocked_and_your_rosters_still_reach_them() {
+        use crate::nostr::test_relay::wait_until;
+        let me = create_identity();
+        let others = [create_identity(), create_identity(), create_identity()];
+        let relay = TestRelay::start(Answer::Accept).await;
+        let state = sending_state(&me, vec![relay.client().await]).await;
+        let gid = group_of_three(&state, &me, &others).await;
+        block_contact(&mut *state.inner.lock().await, "carol");
+
+        let text = send_group_text(&state, &gid, "hola".into(), None, SHORT_WAIT).await;
+        let file = announce_group_file(&state, &gid, sample_file(), None, SHORT_WAIT).await;
+        let Ok(file) = file else {
+            panic!("the group file went to nobody");
+        };
+        forward_to(&state, &gid, true, sample_file()).await.unwrap();
+
+        for receipt in [text.unwrap(), file.receipt] {
+            assert_eq!(receipt.accepted, ["bob", "dave"]);
+            assert!(receipt.failed.is_empty(), "{:?}", receipt.failed);
+        }
+        wait_until("the forwards", || relay.events().len() == 6).await;
+        let carol = pub_hex(&others[1]);
+        assert!(relay
+            .events()
+            .iter()
+            .all(|event| event.recipient() != Some(carol.as_str())));
+        // As admin, the roster of a change reaches her too, so the group
+        // does not break (R-25).
+        crate::groups::rename(&state, gid.clone(), "otro".into())
+            .await
+            .unwrap();
+        wait_until("the rosters", || relay.events().len() == 9).await;
+        let to_carol = relay
+            .events()
+            .iter()
+            .filter(|event| event.recipient() == Some(carol.as_str()))
+            .count();
+        assert_eq!(to_carol, 1);
     }
 }

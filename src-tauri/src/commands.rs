@@ -65,6 +65,9 @@ pub(crate) mod links_cmds;
 // Cifrado local (CL-6b): copying without the clipboard history.
 #[path = "clipboard_cmds.rs"]
 pub(crate) mod clipboard_cmds;
+// Uso responsable (UR-2): blocking by identity.
+#[path = "block_cmds.rs"]
+pub(crate) mod block_cmds;
 
 #[derive(Serialize)]
 pub struct NodeInfo {
@@ -396,6 +399,8 @@ pub async fn send_file(
     data_b64: String,
     thumb: Option<String>,
 ) -> Result<SentFile, CommandError> {
+    // Nothing is uploaded for someone you blocked (UR-2).
+    check_not_blocked(&state, &handle).await?;
     let file = prepare_file(&state, &name, &mime, &data_b64, thumb, None).await?;
     Ok(announce_file(&state, &handle, file, ACK_WAIT).await?)
 }
@@ -484,29 +489,27 @@ pub async fn rename_node(
     Ok(())
 }
 
-/// Block or unblock a contact (by their nostr pubkey). Blocked senders' events
-/// are dropped on arrival.
+/// Block or unblock a contact, by identity (UR-2; `block_cmds` for the
+/// rest). As before, a name that is no contact does nothing.
 #[tauri::command]
 pub async fn block_node(
     state: State<'_, AppState>,
     handle: String,
     blocked: bool,
 ) -> Result<(), String> {
+    use trino_engine::block::{self, BlockOrigin, BlockTarget};
     let mut inner = state.inner.lock().await;
-    let pubkey = inner
-        .friends
-        .get(&handle)
-        .map(|f| f.bundle.nostr_pub.clone());
-    if let Some(pk) = pubkey {
-        if blocked {
-            let entry = trino_engine::block::BlockedIdentity::before_ur2(pk, None, 0);
-            inner.blocked.insert(entry);
-        } else {
-            inner.blocked.remove(&pk);
-        }
-        persist_account(&inner)?;
+    if !inner.friends.contains_key(&handle) {
+        return Ok(());
     }
-    Ok(())
+    let now = chrono::Utc::now().timestamp();
+    if blocked {
+        let target = BlockTarget::Contact(handle);
+        block::block(&mut inner, &target, BlockOrigin::Contact, now).map_err(|e| e.message)?;
+    } else {
+        block::unblock_contact(&mut inner, &handle, now).map_err(|e| e.message)?;
+    }
+    persist_account(&inner)
 }
 
 /// Delete self-destructed (expired) messages from history on disk. The TTL is

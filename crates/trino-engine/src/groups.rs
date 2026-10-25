@@ -63,6 +63,9 @@ pub struct GroupInfo {
     /// The admin removed me, or deleted the group (K10): the newest roster
     /// does not list me. The chat stays readable.
     pub ended: bool,
+    /// Someone you blocked is a member (UR-2): the chat says that you do
+    /// not see their messages. Only `list_groups` tells.
+    pub has_blocked: bool,
 }
 
 /// The notes of `merge_group_members` name members and prefixes of their
@@ -98,6 +101,7 @@ pub fn group_info(roster: &GroupRoster, my_ik: &str) -> GroupInfo {
         member_count: roster.members.len(),
         members: roster.members.iter().map(|m| m.handle.clone()).collect(),
         ended: !group::is_member(roster, my_ik),
+        has_blocked: false,
     }
 }
 
@@ -580,7 +584,13 @@ pub fn list(inner: &InnerState) -> Vec<GroupInfo> {
     let mut out: Vec<GroupInfo> = inner
         .groups
         .values()
-        .map(|r| group_info(r, &my_ik))
+        .map(|r| GroupInfo {
+            has_blocked: r
+                .members
+                .iter()
+                .any(|m| m.ik_sign_pub != my_ik && inner.blocked.blocks_member(m)),
+            ..group_info(r, &my_ik)
+        })
         .collect();
     out.sort_by(|a, b| a.name.cmp(&b.name));
     out
@@ -635,6 +645,8 @@ pub struct GroupMember {
     pub is_self: bool,
     /// The group whose roster brought that contact (`FriendRecord.via_group`).
     pub via_group: Option<String>,
+    /// Someone you blocked (UR-2).
+    pub blocked: bool,
 }
 
 /// The fingerprint of the keys a roster gives a member.
@@ -677,6 +689,7 @@ pub fn members_of(
                 is_admin: member.ik_sign_pub == roster.admin_pub,
                 is_self,
                 via_group: contact.and_then(|f| f.via_group.clone()),
+                blocked: !is_self && inner.blocked.blocks_member(member),
             }
         })
         .collect())

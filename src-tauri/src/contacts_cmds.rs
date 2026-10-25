@@ -42,6 +42,9 @@ pub struct ExistingContact {
     /// It has exactly the code's keys. Otherwise it has the code's name, or
     /// shares only some of its keys.
     pub same_keys: bool,
+    /// It is someone you blocked (UR-2): the confirmation to replace its
+    /// keys says that the identity it had stays blocked.
+    pub blocked: bool,
 }
 
 /// What `add_contact` did.
@@ -205,11 +208,13 @@ pub(crate) fn preview(inner: &InnerState, code: &ContactCode) -> ContactPreview 
         .map(|f| ExistingContact {
             handle: f.handle.clone(),
             same_keys: same_keys(&f.bundle, &code.bundle),
+            blocked: trino_engine::block::friend_blocked(inner, f),
         })
         .or_else(|| {
             inner.friends.get(&code.handle).map(|f| ExistingContact {
                 handle: f.handle.clone(),
                 same_keys: false,
+                blocked: trino_engine::block::friend_blocked(inner, f),
             })
         });
     ContactPreview {
@@ -647,7 +652,8 @@ mod tests {
             same.existing,
             Some(ExistingContact {
                 handle: "ana".into(),
-                same_keys: true
+                same_keys: true,
+                blocked: false,
             })
         );
 
@@ -657,7 +663,8 @@ mod tests {
             name.existing,
             Some(ExistingContact {
                 handle: "ana".into(),
-                same_keys: false
+                same_keys: false,
+                blocked: false,
             })
         );
 
@@ -1174,5 +1181,41 @@ mod tests {
             (json["about"].clone(), json["sync"].clone()),
             ("Sobre mí".into(), 1.into())
         );
+    }
+
+    // ---- UR-2: a blocked contact's keys replaced (design test 3) ----
+
+    #[test]
+    fn ur2_3_replacing_a_blocked_contacts_keys_asks_and_keeps_the_old_identity_blocked() {
+        use trino_engine::block::{block, BlockOrigin, BlockTarget};
+        let (me, ana, new_ana) = (create_identity(), create_identity(), create_identity());
+        let mut inner = InnerState {
+            identity: Some(me),
+            ..InnerState::default()
+        };
+        inner.friends.insert("ana".into(), friend(&ana, "ana"));
+        let target = BlockTarget::Contact("ana".into());
+        block(&mut inner, &target, BlockOrigin::Contact, NOW).unwrap();
+        assert!(node_info(&inner, &inner.friends["ana"]).blocked);
+
+        // The confirmation knows the name is someone blocked.
+        let code = code_of(&new_ana, "ana");
+        let shown = preview(&inner, &code).existing.unwrap();
+        assert_eq!(
+            (shown.handle.as_str(), shown.same_keys, shown.blocked),
+            ("ana", false, true)
+        );
+        let refused = add_contact(&mut inner, code.clone(), "ana", false, NOW).unwrap_err();
+        assert_eq!(refused.code, ErrorCode::NameTaken);
+        add_contact(&mut inner, code, "ana", true, NOW).unwrap();
+
+        // Other keys are someone else: not blocked. The old identity still is,
+        // whatever its keys: her old code again comes back blocked.
+        assert!(!node_info(&inner, &inner.friends["ana"]).blocked);
+        assert!(inner
+            .blocked
+            .blocks_identity(&public_bundle_for(&ana).ik_sign_pub));
+        add_contact(&mut inner, code_of(&ana, "ana"), "ana-vieja", false, NOW).unwrap();
+        assert!(node_info(&inner, &inner.friends["ana-vieja"]).blocked);
     }
 }

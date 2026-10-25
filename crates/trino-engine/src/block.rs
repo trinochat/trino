@@ -381,6 +381,29 @@ pub fn unblock(inner: &mut InnerState, key: &str, now: i64) -> Result<BlockedVie
     Ok(view(inner, &entry))
 }
 
+/// Unblock the contact `handle`: every entry that blocks it, a Nostr key
+/// of before UR-2 included (`block_node` with `blocked: false`).
+pub fn unblock_contact(
+    inner: &mut InnerState,
+    handle: &str,
+    now: i64,
+) -> Result<Vec<BlockedView>, CommandError> {
+    let friend = inner
+        .friends
+        .get(handle)
+        .cloned()
+        .ok_or_else(|| not_found("unknown contact"))?;
+    let b = &friend.bundle;
+    let keys: Vec<String> = inner
+        .blocked
+        .entries()
+        .iter()
+        .filter(|entry| entry.blocks(&b.ik_sign_pub, &b.ik_dh_pub, &b.nostr_pub))
+        .map(|entry| entry.key().to_string())
+        .collect();
+    keys.iter().map(|key| unblock(inner, key, now)).collect()
+}
+
 /// Everyone blocked, the latest first.
 pub fn list(inner: &InnerState) -> Vec<BlockedView> {
     let mut shown: Vec<BlockedView> = inner
@@ -1089,6 +1112,66 @@ mod tests {
         // Blocking again keeps when it was first.
         block(&mut inner, &contact("bob"), BlockOrigin::Contact, NOW + 60).unwrap();
         assert_eq!(list(&inner)[0].blocked_at, NOW + 5);
+    }
+
+    #[test]
+    fn ur2_unblocking_a_contact_by_name_takes_every_entry_that_blocks_it() {
+        let (me, ana, bob) = (create_identity(), create_identity(), create_identity());
+        let mut inner = me_with(&me, &[(&ana, "ana"), (&bob, "bob")]);
+        wrote(&mut inner, "ana");
+        block(&mut inner, &contact("ana"), BlockOrigin::Contact, NOW).unwrap();
+        // A Nostr key of hers blocked before UR-2, kept apart.
+        inner
+            .blocked
+            .insert(BlockedIdentity::before_ur2(nostr_hex(&ana), None, NOW));
+        block(&mut inner, &contact("bob"), BlockOrigin::Contact, NOW).unwrap();
+
+        let gone = unblock_contact(&mut inner, "ana", NOW).unwrap();
+
+        assert_eq!(gone.len(), 2);
+        assert!(!friend_blocked(&inner, &inner.friends["ana"]));
+        assert!(friend_blocked(&inner, &inner.friends["bob"]));
+        assert_eq!(
+            unblock_contact(&mut inner, "nadie", NOW).unwrap_err().code,
+            ErrorCode::NotFound
+        );
+        assert!(unblock_contact(&mut inner, "ana", NOW).unwrap().is_empty());
+    }
+
+    #[test]
+    fn ur2_the_group_says_who_is_blocked_in_it() {
+        let (me, admin, juan, ana) = (
+            create_identity(),
+            create_identity(),
+            create_identity(),
+            create_identity(),
+        );
+        let with_juan = roster_of(&admin, &[(&me, "me"), (&juan, "juan")]);
+        let without = roster_of(&admin, &[(&me, "me"), (&ana, "ana")]);
+        let mut inner = me_with(&me, &[(&admin, "admin"), (&ana, "ana")]);
+        for roster in [&with_juan, &without] {
+            inner.groups.insert(roster.group_id.clone(), roster.clone());
+        }
+        let target = BlockTarget::Member {
+            gid: with_juan.group_id.clone(),
+            ik_sign: ik(&juan),
+        };
+        block(&mut inner, &target, BlockOrigin::Group, NOW).unwrap();
+
+        let members = crate::groups::members_of(&inner, &with_juan.group_id, &ik(&me)).unwrap();
+        let blocked: Vec<&str> = members
+            .iter()
+            .filter(|m| m.blocked)
+            .map(|m| m.roster_handle.as_str())
+            .collect();
+        assert_eq!(blocked, ["juan"]);
+        let groups = crate::groups::list(&inner);
+        let flagged: Vec<&str> = groups
+            .iter()
+            .filter(|g| g.has_blocked)
+            .map(|g| g.gid.as_str())
+            .collect();
+        assert_eq!(flagged, [with_juan.group_id.as_str()]);
     }
 
     #[test]
