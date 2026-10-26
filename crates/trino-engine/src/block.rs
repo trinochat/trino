@@ -11,9 +11,10 @@
 //!   blocking them must never silence that stranger.
 //! - **A proven key another contact holds is a clash**: nothing is blocked,
 //!   and the UI says to compare the fingerprints (P1 R-14).
-//! - Anyone can be blocked, not only a contact: a member of a group, and
-//!   later whoever sends a request (UR-4) or is reported (UR-5).
-//! - Blocking drops their pending group invitations; the chat stays, and
+//! - Anyone can be blocked, not only a contact: a member of a group,
+//!   whoever sent a request (UR-4), and later whoever is reported (UR-5).
+//! - Blocking drops their pending group invitations and their request;
+//!   the chat stays, and
 //!   they are told nothing. Unblocking runs the merge of the groups you
 //!   share again (R-24); what they sent meanwhile does not come back.
 //!
@@ -169,6 +170,15 @@ impl BlockList {
         self.blocks_keys(&member.ik_sign_pub, &member.ik_dh_pub, &member.nostr_pub)
     }
 
+    /// Whether `nostr` is a key of someone blocked that nothing proved
+    /// (R-02): it blocks nothing, but its events are no stranger's either,
+    /// so they give no "intentó escribirte".
+    pub fn names_unproven(&self, nostr: &str) -> bool {
+        self.entries
+            .iter()
+            .any(|entry| entry.unproven.iter().any(|key| key == nostr))
+    }
+
     /// The proven Nostr keys, sorted: what `account.bin` keeps in `blocked`
     /// too, so a Trino of before UR-2 still drops their events.
     pub fn nostr_keys(&self) -> Vec<String> {
@@ -247,6 +257,8 @@ pub enum BlockTarget {
     Contact(String),
     /// A member of the group `gid`, by its identity key: a contact or not.
     Member { gid: String, ik_sign: String },
+    /// Whoever sent the request of this identity key (UR-4).
+    Request(String),
 }
 
 /// A group you share with someone, for the confirmation (U5).
@@ -356,7 +368,8 @@ pub fn block(
     inner
         .group_invites
         .retain(|_, invite| invite.roster.admin_pub != who.ik_sign);
-    // UR-4: their request goes too, once there are requests.
+    // Their request goes too, and a deletion of it is no longer needed.
+    inner.requests.forget_identity(&who.ik_sign);
     Ok(view(inner, &entry))
 }
 
@@ -497,6 +510,34 @@ fn resolve(inner: &InnerState, target: &BlockTarget) -> Result<Who, CommandError
                 contact: None,
             })
         }
+        BlockTarget::Request(ik_sign) => {
+            let request = inner
+                .requests
+                .get(ik_sign)
+                .ok_or_else(|| not_found("no such request"))?;
+            let bundle = &request.bundle;
+            // What came in the request proves what its caller said (R-02).
+            let who = match inner
+                .friends
+                .values()
+                .find(|friend| friend.bundle.ik_sign_pub == *ik_sign)
+            {
+                // A contact of a group (UR-3): blocked as that contact,
+                // with what its request proved (`of_contact`).
+                Some(friend) => of_contact(inner, friend),
+                None => Who {
+                    ik_sign: bundle.ik_sign_pub.clone(),
+                    ik_dh: bundle.ik_dh_pub.clone(),
+                    nostr: bundle.nostr_pub.clone(),
+                    dh_proven: request.dh_proven,
+                    nostr_proven: request.nostr_proven,
+                    label: request.name.clone(),
+                    fingerprint: bundle_fingerprint(bundle),
+                    contact: None,
+                },
+            };
+            Ok(who)
+        }
     }
 }
 
@@ -507,15 +548,20 @@ const LABEL_MAX_CHARS: usize = 64;
 fn of_contact(inner: &InnerState, friend: &FriendRecord) -> Who {
     let bundle = &friend.bundle;
     let read = read_from(inner, &friend.handle);
+    // What came in a request of theirs proves what its caller said (UR-4).
+    let request = inner.requests.get(&bundle.ik_sign_pub);
+    let asked = |proven: fn(&crate::requests::Request) -> bool| request.is_some_and(proven);
     Who {
         ik_sign: bundle.ik_sign_pub.clone(),
         ik_dh: bundle.ik_dh_pub.clone(),
         nostr: bundle.nostr_pub.clone(),
         // A message of theirs we read: the X3DH it came over took their
         // DH key, and their Nostr key signed it.
-        dh_proven: read,
+        dh_proven: read || asked(|r| r.dh_proven),
         // A handshake we took was signed with it too.
-        nostr_proven: read || inner.handshake_marks.contains_key(&bundle.nostr_pub),
+        nostr_proven: read
+            || inner.handshake_marks.contains_key(&bundle.nostr_pub)
+            || asked(|r| r.nostr_proven),
         label: friend.handle.clone(),
         fingerprint: bundle_fingerprint(bundle),
         contact: Some(friend.handle.clone()),
@@ -635,6 +681,7 @@ mod tests {
     };
     use crate::identity::{create_identity, Identity};
     use crate::nostr::{build_and_sign_event, TRINO_KIND};
+    use crate::requests::{self, Incoming, Via};
     use crate::session::fp;
     use crate::session::tests::{friend, ik, member, roster_of, NOW};
     use crate::state::{GroupInvite, HandshakeMark, HistItem};
@@ -1024,6 +1071,132 @@ mod tests {
                 .code,
             ErrorCode::NotFound
         );
+    }
+
+    // ---- Design test 11, from Solicitudes (UR-4) ----
+
+    fn request_from(inner: &mut InnerState, id: &Identity, name: &str, via: Via) {
+        let got = requests::receive(
+            inner,
+            Incoming {
+                bundle: crate::identity::public_bundle_for(id),
+                name: name.into(),
+                via,
+                item: requests::Item::Text {
+                    text: "hola".into(),
+                    at: NOW,
+                },
+                nostr_proven: true,
+                dh_proven: false,
+            },
+            NOW,
+        );
+        assert_eq!(got, requests::Received::New);
+    }
+
+    #[test]
+    fn ur4_11_someone_is_blocked_from_their_request_and_it_goes() {
+        let (me, ana) = (create_identity(), create_identity());
+        let mut inner = me_with(&me, &[]);
+        request_from(&mut inner, &ana, "ana", Via::Name);
+        let target = BlockTarget::Request(ik(&ana));
+
+        let shown = preview(&inner, &target).unwrap();
+        assert_eq!(shown.label, "ana");
+        assert_eq!(shown.contact, None);
+        assert_eq!(shown.fingerprint, fingerprint_of(&ana));
+        assert!(!shown.clash && !shown.blocked);
+        let view = block(&mut inner, &target, BlockOrigin::Request, NOW).unwrap();
+
+        assert_eq!(view.key, ik(&ana));
+        assert_eq!(view.from, BlockOrigin::Request);
+        assert!(inner.requests.is_empty(), "the request goes");
+        // What the request proved blocks; what it did not, does not (R-02).
+        let entry = &inner.blocked.entries()[0];
+        assert_eq!(entry.nostr_pub, Some(nostr_hex(&ana)));
+        assert_eq!(entry.ik_dh, None);
+        assert_eq!(entry.unproven, [dh_hex(&ana)]);
+        // What she sends then is no request, and her events are dropped.
+        let again = requests::receive(
+            &mut inner,
+            Incoming {
+                bundle: crate::identity::public_bundle_for(&ana),
+                name: "ana".into(),
+                via: Via::Name,
+                item: requests::Item::Call {
+                    video: false,
+                    at: NOW,
+                },
+                nostr_proven: true,
+                dh_proven: true,
+            },
+            NOW,
+        );
+        assert!(matches!(again, requests::Received::Dropped(_)));
+        let out = admit_event(&mut inner, &event_from(&ana, &me), &nostr_hex(&me));
+        assert!(matches!(out, Admission::Drop(_)), "{out:?}");
+        // A request that is not there.
+        let nobody = BlockTarget::Request(ik(&create_identity()));
+        assert_eq!(
+            preview(&inner, &nobody).unwrap_err().code,
+            ErrorCode::NotFound
+        );
+    }
+
+    #[test]
+    fn ur4_blocking_a_contact_of_a_group_drops_its_request_too() {
+        let (me, mara) = (create_identity(), create_identity());
+        let mut inner = me_with(&me, &[(&mara, "mara")]);
+        let via = Via::Group {
+            gid: "g1".into(),
+            group: "Familia".into(),
+        };
+        request_from(&mut inner, &mara, "mara", via);
+
+        // From the request: blocked as the contact she is.
+        let shown = preview(&inner, &BlockTarget::Request(ik(&mara))).unwrap();
+        assert_eq!(shown.contact.as_deref(), Some("mara"));
+        block(&mut inner, &contact("mara"), BlockOrigin::Contact, NOW).unwrap();
+
+        assert!(inner.requests.is_empty());
+        assert!(friend_blocked(&inner, &inner.friends["mara"]));
+        // Her Nostr key signed what came in her request: proven.
+        assert!(inner.blocked.blocks_nostr(&nostr_hex(&mara)));
+    }
+
+    // ---- "Intentó escribirte" (UR-2 pending, R-30) ----
+
+    #[test]
+    fn ur4_no_notice_from_someone_blocked_or_whose_request_you_deleted() {
+        let (me, admin, juan, ana, nadie) = (
+            create_identity(),
+            create_identity(),
+            create_identity(),
+            create_identity(),
+            create_identity(),
+        );
+        let roster = roster_of(&admin, &[(&me, "me"), (&juan, "juan")]);
+        let gid = roster.group_id.clone();
+        let mut inner = me_with(&me, &[(&admin, "admin")]);
+        inner.groups.insert(gid.clone(), roster);
+        // Juan, known only from the roster: his Nostr key is not proven.
+        let juan_target = BlockTarget::Member {
+            gid,
+            ik_sign: ik(&juan),
+        };
+        block(&mut inner, &juan_target, BlockOrigin::Group, NOW).unwrap();
+        assert!(!inner.blocked.blocks_nostr(&nostr_hex(&juan)));
+        // Ana's request, deleted.
+        request_from(&mut inner, &ana, "ana", Via::Name);
+        requests::delete(&mut inner, &ik(&ana), NOW).unwrap();
+
+        let mine = nostr_hex(&me);
+        for (who, name) in [(&juan, "juan"), (&ana, "ana")] {
+            let out = admit_event(&mut inner, &event_from(who, &me), &mine);
+            assert!(matches!(out, Admission::Drop(_)), "{name}: {out:?}");
+        }
+        let out = admit_event(&mut inner, &event_from(&nadie, &me), &mine);
+        assert!(matches!(out, Admission::Stranger), "{out:?}");
     }
 
     #[test]

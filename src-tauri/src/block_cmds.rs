@@ -4,7 +4,8 @@
 //!
 //! - `block_preview`: what the confirmation says (the groups you share, who
 //!   administers them, a key clash) before anything changes;
-//! - `block_identity`: a contact, or a member of a group who is not one;
+//! - `block_identity`: a contact, a member of a group who is not one, or
+//!   whoever sent a request (UR-4), whose request goes with it;
 //! - `unblock_identity` and `list_blocked`: Ajustes › Privacidad ›
 //!   Bloqueados.
 //!
@@ -24,8 +25,17 @@ use trino_engine::contacts::sealed;
 #[derive(Clone, Debug, Deserialize, PartialEq)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum TargetWire {
-    Contact { handle: String },
-    Member { gid: String, ik_sign_pub: String },
+    Contact {
+        handle: String,
+    },
+    Member {
+        gid: String,
+        ik_sign_pub: String,
+    },
+    /// Whoever sent a request (UR-4), by its identity key.
+    Request {
+        ik_sign_pub: String,
+    },
 }
 
 impl TargetWire {
@@ -40,6 +50,9 @@ impl TargetWire {
                 },
                 BlockOrigin::Group,
             ),
+            TargetWire::Request { ik_sign_pub } => {
+                (BlockTarget::Request(ik_sign_pub), BlockOrigin::Request)
+            }
         }
     }
 }
@@ -76,6 +89,8 @@ pub async fn block_identity(
     let now = chrono::Utc::now().timestamp();
     let blocked = block::block(&mut inner, &target, origin, now)?;
     save(&inner)?;
+    // Their request went with the block.
+    trino_engine::requests::save(&inner);
     Ok(blocked)
 }
 
@@ -130,6 +145,16 @@ mod tests {
                 },
                 BlockOrigin::Group
             )
+        );
+        // From Solicitudes (UR-4), by the request's identity key.
+        let request: TargetWire = serde_json::from_value(serde_json::json!({
+            "kind": "request",
+            "ik_sign_pub": "bb",
+        }))
+        .unwrap();
+        assert_eq!(
+            request.target(),
+            (BlockTarget::Request("bb".into()), BlockOrigin::Request)
         );
         let extra = serde_json::json!({ "kind": "contact", "handle": "ana", "from": "report" });
         assert!(serde_json::from_value::<TargetWire>(extra).is_err());

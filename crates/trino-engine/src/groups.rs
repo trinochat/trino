@@ -153,6 +153,14 @@ pub fn admit_event(inner: &mut InnerState, event: &NostrEvent, my_pub: &str) -> 
         return Admission::Drop("sender is blocked");
     }
     let Some(friend) = friend else {
+        // Someone blocked by a key nothing proved, or whose request you
+        // deleted: dropped as a stranger's, but without "intentó
+        // escribirte" (UR-2, UR-4).
+        if inner.blocked.names_unproven(&event.pubkey)
+            || inner.requests.deleted_nostr(&event.pubkey)
+        {
+            return Admission::Drop("blocked or a deleted request: no notice");
+        }
         return Admission::Stranger;
     };
     if !inner.remember_event(event.id.clone()) {
