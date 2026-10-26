@@ -29,6 +29,7 @@ pub mod emergency;
 mod engine;
 pub mod events;
 pub mod fsutil;
+pub mod group_contacts;
 pub mod groups;
 pub mod lock;
 pub mod nostr;

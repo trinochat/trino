@@ -1062,6 +1062,12 @@ pub async fn handle_incoming_event(
     if crate::block::on_message(events, &mut inner, &identity, &friend, &plain) {
         return;
     }
+    // -- UR-3 -- Of a contact a group made and you did not accept, what is
+    // of the group goes on; what they send apart goes to Solicitudes, and
+    // their profile and warnings are not read.
+    if crate::group_contacts::on_message(events, &mut inner, &friend, &plain, event.created_at) {
+        return;
+    }
     // -- W8 (K12) -- A profile message ends here, never as text; text, group
     // and file messages say whether their sender reads profiles.
     if profile::on_message(
@@ -1422,6 +1428,7 @@ pub(crate) mod tests {
             previous_fingerprint: None,
             key_changed_at: None,
             via_group: None,
+            accepted_at: Some(0),
         }
     }
 
@@ -1493,7 +1500,7 @@ pub(crate) mod tests {
         state
     }
 
-    fn state_with(friends: &[FriendRecord]) -> InnerState {
+    pub(crate) fn state_with(friends: &[FriendRecord]) -> InnerState {
         let mut inner = InnerState::default();
         for f in friends {
             inner.friends.insert(f.handle.clone(), f.clone());
@@ -1662,7 +1669,7 @@ pub(crate) mod tests {
     use crate::events::RecordingSink;
 
     /// A resend that only keeps whom it was asked to send the profile to.
-    fn recording_resend() -> (profile::Resend, Arc<std::sync::Mutex<Vec<Vec<String>>>>) {
+    pub(crate) fn recording_resend() -> (profile::Resend, Arc<std::sync::Mutex<Vec<Vec<String>>>>) {
         let asked = Arc::new(std::sync::Mutex::new(Vec::new()));
         let resend: profile::Resend = {
             let asked = Arc::clone(&asked);
@@ -1674,7 +1681,7 @@ pub(crate) mod tests {
     /// The unlocked session of `me`, with `contact` as `handle` and no
     /// session with them yet. No storage, so nothing is written to the real
     /// data directory.
-    fn receiving(me: &Identity, contact: &Identity, handle: &str) -> InnerState {
+    pub(crate) fn receiving(me: &Identity, contact: &Identity, handle: &str) -> InnerState {
         let mut inner = state_with(&[friend(contact, handle)]);
         inner.identity = Some(me.clone());
         inner.handle = Some("me".to_string());
@@ -1683,7 +1690,7 @@ pub(crate) mod tests {
 
     /// `receiving`, holding the responder's side of a session `contact`
     /// started; with the contact's side, to write to `me` with.
-    fn receiving_in_session(
+    pub(crate) fn receiving_in_session(
         me: &Identity,
         contact: &Identity,
         handle: &str,
@@ -1699,7 +1706,7 @@ pub(crate) mod tests {
 
     /// `plain` as `sender`'s Trino sends it to `to`: encrypted with
     /// `ratchet` and `ad`, with `handshake`, signed and dated `created_at`.
-    fn sealed_event(
+    pub(crate) fn sealed_event(
         sender: &Identity,
         to: &Identity,
         ratchet: &mut RatchetState,
@@ -1732,7 +1739,7 @@ pub(crate) mod tests {
 
     /// `handle_incoming_event` on `event`, for `inner`: what the UI heard,
     /// and whom the profile was sent to again.
-    async fn heard(
+    pub(crate) async fn heard(
         inner: InnerState,
         event: NostrEvent,
     ) -> (Vec<(String, String)>, Vec<Vec<String>>, InnerState) {
@@ -1745,7 +1752,7 @@ pub(crate) mod tests {
         (sink.events(), asked, inner)
     }
 
-    fn named(name: &str, json: &str) -> (String, String) {
+    pub(crate) fn named(name: &str, json: &str) -> (String, String) {
         (name.to_string(), json.to_string())
     }
 

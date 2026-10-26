@@ -208,6 +208,22 @@ pub struct FriendRecord {
     /// with its code.
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub via_group: Option<String>,
+    /// When you accepted this contact, in unix seconds (uso responsable
+    /// UR-3, `group_contacts.rs`). `None` only for one a group's roster
+    /// made, until you accept it: "Agregar a contactos", its request or its
+    /// code. Always written, `null` included: a record of before UR-3 has
+    /// none, and reads as accepted (U6, `ACCEPTED_BEFORE_UR3`).
+    #[serde(default = "accepted_before_ur3")]
+    pub accepted_at: Option<i64>,
+}
+
+/// What `accepted_at` says of a contact kept before UR-3: accepted, at a
+/// moment nobody wrote down (U6: the contacts of a group of before stay as
+/// they were, so no conversation is cut).
+pub const ACCEPTED_BEFORE_UR3: i64 = 0;
+
+fn accepted_before_ur3() -> Option<i64> {
+    Some(ACCEPTED_BEFORE_UR3)
 }
 
 /// Debug without the message's text or its file (TRN-CORE-05): the file's

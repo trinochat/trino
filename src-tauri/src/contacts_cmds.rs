@@ -14,6 +14,7 @@ use serde::Serialize;
 use std::collections::HashMap;
 use tauri::State;
 pub(crate) use trino_engine::contacts::{check_local_handle, not_found, sealed};
+use trino_engine::group_contacts::{self, is_limited};
 
 /// A contact code whose keys its identity key signed (K8).
 #[derive(Clone, Debug)]
@@ -57,6 +58,10 @@ pub(crate) enum Added {
     /// Other keys under that name, after the user confirmed it. The session
     /// with the old keys is gone.
     Replaced,
+    /// The code of a contact a group made and you had not accepted (UR-3):
+    /// accepted now, under the name chosen if it was free, with what its
+    /// request held in its chat.
+    Accepted,
 }
 
 fn invalid_code(message: &str) -> CommandError {
@@ -204,7 +209,11 @@ pub(crate) fn parse_contact_code(bundle_json: &str) -> Result<ContactCode, Comma
 /// Who the code is, and who already has its keys or its name. Reads only.
 pub(crate) fn preview(inner: &InnerState, code: &ContactCode) -> ContactPreview {
     let (ik_sign, ik_dh, nostr) = &code.keys;
+    // A contact a group made with these keys is no contact of yours yet:
+    // adding the code accepts them (UR-3).
+    let limited = limited_holder(inner, &code.bundle);
     let existing = holder_of_keys(inner, &code.bundle, None)
+        .filter(|friend| Some(&friend.handle) != limited.as_ref())
         .map(|f| ExistingContact {
             handle: f.handle.clone(),
             same_keys: same_keys(&f.bundle, &code.bundle),
@@ -247,6 +256,9 @@ pub(crate) fn add_contact(
     now: i64,
 ) -> Result<(String, Added), CommandError> {
     let handle = handle.trim().to_string();
+    if let Some(limited) = limited_holder(inner, &code.bundle) {
+        return accept_from_code(inner, code, &limited, &handle, now);
+    }
     if !inner.friends.contains_key(&handle) {
         check_local_handle(&handle)?;
     }
@@ -266,6 +278,7 @@ pub(crate) fn add_contact(
                 previous_fingerprint: None,
                 key_changed_at: None,
                 via_group: None,
+                accepted_at: Some(now),
             },
         );
         return Ok((handle, Added::New));
@@ -295,6 +308,43 @@ pub(crate) fn add_contact(
     // What the old keys shared (K12) is not what the new ones share.
     inner.profiles.remove(&handle);
     Ok((handle, Added::Replaced))
+}
+
+/// The contact a group made, not accepted, that has exactly these keys.
+fn limited_holder(inner: &InnerState, bundle: &PublicBundle) -> Option<String> {
+    inner
+        .friends
+        .values()
+        .find(|friend| is_limited(friend) && same_keys(&friend.bundle, bundle))
+        .map(|friend| friend.handle.clone())
+}
+
+/// The code of `limited`, a contact a group made (UR-3): adding it is
+/// accepting them, under `handle` if that name is free and can name a
+/// contact, else under the one they have. The code's newer prekey and its
+/// photo are kept, as a refresh keeps them.
+fn accept_from_code(
+    inner: &mut InnerState,
+    code: ContactCode,
+    limited: &str,
+    handle: &str,
+    now: i64,
+) -> Result<(String, Added), CommandError> {
+    let free = !inner.friends.contains_key(handle) && check_local_handle(handle).is_ok();
+    let name = if handle != limited && free {
+        rename_contact(inner, limited, handle)?;
+        handle.to_string()
+    } else {
+        limited.to_string()
+    };
+    let name = group_contacts::accept(inner, &name, now)?;
+    if let Some(friend) = inner.friends.get_mut(&name) {
+        friend.bundle = code.bundle;
+        if code.avatar.is_some() {
+            friend.avatar = code.avatar;
+        }
+    }
+    Ok((name, Added::Accepted))
 }
 
 /// Remove the contact `handle` and everything kept here under its name
@@ -416,6 +466,20 @@ pub(crate) fn bundle_keys(bundle: &PublicBundle) -> Option<([u8; 32], [u8; 32], 
     ))
 }
 
+/// The contacts `list_nodes` gives, the latest first: not those a group
+/// made and you did not accept (UR-3). They are no chat of yours; the
+/// group's members (`group_members`) still name them.
+pub(super) fn listed(inner: &InnerState) -> Vec<NodeInfo> {
+    let mut out: Vec<NodeInfo> = inner
+        .friends
+        .values()
+        .filter(|friend| !is_limited(friend))
+        .map(|friend| node_info(inner, friend))
+        .collect();
+    out.sort_by_key(|item| std::cmp::Reverse(item.added_at));
+    out
+}
+
 /// What `list_nodes` and `probe_node` say about one contact.
 pub(super) fn node_info(inner: &InnerState, friend: &FriendRecord) -> NodeInfo {
     let keys = bundle_keys(&friend.bundle);
@@ -471,6 +535,7 @@ mod tests {
             previous_fingerprint: None,
             key_changed_at: None,
             via_group: None,
+            accepted_at: Some(0),
         }
     }
 
@@ -593,6 +658,70 @@ mod tests {
         let spk = decode_array_32(&public_bundle_for(peer).spk_pub).unwrap();
         let ratchet = crate::ratchet::init_initiator(init.master_secret, spk).unwrap();
         (ratchet, init.associated_data)
+    }
+
+    /// Mara, whom the group g1 made a contact of and you did not accept.
+    fn mara_from_a_group(inner: &mut InnerState, mara: &Identity) {
+        let mut record = friend(mara, "mara-1a2b");
+        record.added_at = NOW - 10;
+        record.via_group = Some("g1".into());
+        record.accepted_at = None;
+        inner.friends.insert(record.handle.clone(), record);
+    }
+
+    #[test]
+    fn ur3_a_contact_a_group_made_is_not_listed_until_accepted() {
+        let (ana, mara) = (create_identity(), create_identity());
+        let mut inner = InnerState::default();
+        inner.friends.insert("ana".into(), friend(&ana, "ana"));
+        mara_from_a_group(&mut inner, &mara);
+        let names = |inner: &InnerState| {
+            listed(inner)
+                .into_iter()
+                .map(|node| node.handle)
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(names(&inner), ["ana"]);
+        trino_engine::group_contacts::accept(&mut inner, "mara-1a2b", NOW).unwrap();
+        assert_eq!(names(&inner), ["mara-1a2b", "ana"], "the latest first");
+    }
+
+    #[test]
+    fn ur3_adding_the_code_of_a_contact_a_group_made_accepts_them() {
+        let mara = create_identity();
+        let mut inner = InnerState::default();
+        mara_from_a_group(&mut inner, &mara);
+        inner.history.insert("grp:g1".into(), vec![]);
+
+        // The preview does not take her for a contact of yours.
+        let preview = preview(&inner, &code_of(&mara, "Mara"));
+        assert_eq!(preview.existing, None);
+
+        let added = add_contact(&mut inner, code_of(&mara, "Mara"), "Mara", false, NOW).unwrap();
+
+        assert_eq!(added, ("Mara".to_string(), Added::Accepted));
+        assert!(!inner.friends.contains_key("mara-1a2b"));
+        let record = &inner.friends["Mara"];
+        assert_eq!(record.accepted_at, Some(NOW));
+        assert_eq!(record.via_group.as_deref(), Some("g1"), "still the group's");
+        assert_eq!(inner.friends.len(), 1);
+    }
+
+    #[test]
+    fn ur3_under_a_name_taken_she_keeps_hers() {
+        let (ana, mara) = (create_identity(), create_identity());
+        let mut inner = InnerState::default();
+        inner.friends.insert("Mara".into(), friend(&ana, "Mara"));
+        mara_from_a_group(&mut inner, &mara);
+
+        let added = add_contact(&mut inner, code_of(&mara, "Mara"), "Mara", false, NOW).unwrap();
+
+        assert_eq!(added, ("mara-1a2b".to_string(), Added::Accepted));
+        assert_eq!(inner.friends["mara-1a2b"].accepted_at, Some(NOW));
+        assert_eq!(
+            inner.friends["Mara"].bundle.ik_sign_pub,
+            public_bundle_for(&ana).ik_sign_pub
+        );
     }
 
     #[test]

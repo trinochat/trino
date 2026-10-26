@@ -582,6 +582,7 @@ mod tests {
                 previous_fingerprint: None,
                 key_changed_at: None,
                 via_group: None,
+                accepted_at: Some(0),
             },
         );
         inner.profiles.contacts.insert(

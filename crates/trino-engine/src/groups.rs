@@ -66,6 +66,10 @@ pub struct GroupInfo {
     /// Someone you blocked is a member (UR-2): the chat says that you do
     /// not see their messages. Only `list_groups` tells.
     pub has_blocked: bool,
+    /// The members a group made contacts of and you did not accept (UR-3),
+    /// by their name here: the chat names them "~name" and fetches none of
+    /// their files by itself. Only `list_groups` tells.
+    pub limited: Vec<String>,
 }
 
 /// The notes of `merge_group_members` name members and prefixes of their
@@ -102,6 +106,7 @@ pub fn group_info(roster: &GroupRoster, my_ik: &str) -> GroupInfo {
         members: roster.members.iter().map(|m| m.handle.clone()).collect(),
         ended: !group::is_member(roster, my_ik),
         has_blocked: false,
+        limited: Vec::new(),
     }
 }
 
@@ -327,6 +332,12 @@ pub fn ingest_incoming_roster(
             "roster of someone blocked, for a group we are not in".into(),
         );
     }
+    // UR-3 (R-08): nor of a contact a group made and you did not accept.
+    if crate::group_contacts::identity_is_limited(inner, sender_ik) {
+        return RosterOutcome::Dropped(
+            "roster of a contact a group made, for a group we are not in".into(),
+        );
+    }
     let pending = inner.group_invites.get(&gid).map(|i| &i.roster);
     let is_new = pending.is_none();
     match group::evaluate_incoming_roster(pending, &roster, sender_ik, my_ik) {
@@ -539,6 +550,8 @@ pub fn merge_group_members(
                 // K9: the group panel tells these apart from contacts the
                 // user added with a code.
                 via_group: Some(roster.group_id.clone()),
+                // UR-3: limited until you accept them (`group_contacts.rs`).
+                accepted_at: None,
             },
         );
     }
@@ -597,6 +610,7 @@ pub fn list(inner: &InnerState) -> Vec<GroupInfo> {
                 .members
                 .iter()
                 .any(|m| m.ik_sign_pub != my_ik && inner.blocked.blocks_member(m)),
+            limited: crate::group_contacts::limited_members(inner, r),
             ..group_info(r, &my_ik)
         })
         .collect();
@@ -655,6 +669,9 @@ pub struct GroupMember {
     pub via_group: Option<String>,
     /// Someone you blocked (UR-2).
     pub blocked: bool,
+    /// A contact the group made that you did not accept (UR-3): "~name",
+    /// and "Agregar a contactos" in place of "Escribirle".
+    pub limited: bool,
 }
 
 /// The fingerprint of the keys a roster gives a member.
@@ -698,6 +715,7 @@ pub fn members_of(
                 is_self,
                 via_group: contact.and_then(|f| f.via_group.clone()),
                 blocked: !is_self && inner.blocked.blocks_member(member),
+                limited: contact.is_some_and(crate::group_contacts::is_limited),
             }
         })
         .collect())
@@ -1046,6 +1064,7 @@ mod tests {
             previous_fingerprint: None,
             key_changed_at: None,
             via_group: None,
+            accepted_at: Some(0),
         }
     }
 

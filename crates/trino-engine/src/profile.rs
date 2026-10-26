@@ -561,14 +561,17 @@ pub fn apply_update(
 }
 
 /// The contacts this identity's profile goes to: every contact whose Trino
-/// reads profile messages, those a group brought included, but not blocked
-/// ones. Each is marked as sent at this revision.
+/// reads profile messages, those a group brought and you accepted
+/// included, but not blocked ones nor those a group brought and you did not
+/// accept (UR-3, R-09). Each is marked as sent at this revision.
 pub fn targets(inner: &mut InnerState) -> Vec<String> {
     let rev = inner.profiles.rev;
     let mut handles: Vec<String> = inner
         .friends
         .values()
         .filter(|friend| !crate::block::friend_blocked(inner, friend))
+        // Nor to a contact a group made and you did not accept (UR-3, R-09).
+        .filter(|friend| !crate::group_contacts::is_limited(friend))
         .filter(|friend| {
             inner
                 .profiles
@@ -879,7 +882,8 @@ pub fn on_message(
             },
         );
     }
-    if received.resend {
+    // A contact a group made and you did not accept never gets it (UR-3).
+    if received.resend && !crate::group_contacts::handle_is_limited(inner, handle) {
         resend(vec![handle.to_string()]);
     }
     received.consumed
@@ -1790,6 +1794,7 @@ mod tests {
             previous_fingerprint: None,
             key_changed_at: None,
             via_group: None,
+            accepted_at: Some(0),
         }
     }
 

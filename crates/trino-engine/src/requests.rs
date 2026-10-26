@@ -562,8 +562,13 @@ pub fn accept(inner: &mut InnerState, key: &str, now: i64) -> Result<String, Com
         .find(|friend| friend.bundle.ik_sign_pub == key)
         .map(|friend| friend.handle.clone());
     let handle = match known {
-        // UR-3: a contact of a group gets its `accepted_at` here.
-        Some(handle) => handle,
+        // A contact of a group (UR-3): accepted from now on.
+        Some(handle) => {
+            if let Some(friend) = inner.friends.get_mut(&handle) {
+                friend.accepted_at.get_or_insert(now);
+            }
+            handle
+        }
         None => {
             let request = &inner.requests.requests[at];
             if holds_a_contacts_key(inner, &request.bundle) {
@@ -581,6 +586,7 @@ pub fn accept(inner: &mut InnerState, key: &str, now: i64) -> Result<String, Com
                     previous_fingerprint: None,
                     key_changed_at: None,
                     via_group: None,
+                    accepted_at: Some(now),
                 },
             );
             handle
@@ -1059,6 +1065,7 @@ mod tests {
         // Mara, a contact the group made, wrote apart (UR-3).
         let mut maras = friend(&mara, "mara");
         maras.via_group = Some("g1".into());
+        maras.accepted_at = None;
         inner.friends.insert("mara".into(), maras);
         receive(
             &mut inner,
@@ -1072,6 +1079,7 @@ mod tests {
         assert_eq!(other, format!("ana-{}", &ik(&ana2)[..4]));
         assert_eq!(inner.friends[&other].bundle.ik_sign_pub, ik(&ana2));
         assert_eq!(same, "mara");
+        assert_eq!(inner.friends["mara"].accepted_at, Some(NOW), "accepted now");
         assert_eq!(inner.friends.len(), 3);
         assert_eq!(inner.history["mara"].len(), 1);
     }

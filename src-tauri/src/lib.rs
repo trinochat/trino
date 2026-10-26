@@ -272,6 +272,7 @@ pub fn run() {
             commands::block_cmds::list_blocked,
             commands::requests_cmds::list_requests,
             commands::requests_cmds::accept_request,
+            commands::requests_cmds::accept_group_contact,
             commands::requests_cmds::delete_request,
             commands::requests_cmds::list_deleted_requests,
             commands::requests_cmds::undo_deleted_request,

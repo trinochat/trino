@@ -288,6 +288,10 @@ pub async fn probe_node(
         save_history(&inner);
         profile::save(&inner);
     }
+    if added == contacts_cmds::Added::Accepted {
+        // What their request held is in their chat now (UR-3).
+        trino_engine::requests::save(&inner);
+    }
     let friend = inner
         .friends
         .get(&handle)
@@ -298,13 +302,7 @@ pub async fn probe_node(
 #[tauri::command]
 pub async fn list_nodes(state: State<'_, AppState>) -> Result<Vec<NodeInfo>, String> {
     let inner = state.inner.lock().await;
-    let mut out: Vec<NodeInfo> = inner
-        .friends
-        .values()
-        .map(|f| contacts_cmds::node_info(&inner, f))
-        .collect();
-    out.sort_by_key(|item| std::cmp::Reverse(item.added_at));
-    Ok(out)
+    Ok(contacts_cmds::listed(&inner))
 }
 
 #[tauri::command]
@@ -881,6 +879,7 @@ mod tests {
             previous_fingerprint: None,
             key_changed_at: None,
             via_group: None,
+            accepted_at: Some(0),
         }
     }
 
