@@ -22,6 +22,15 @@ const contact = (handle: string, fingerprint: string, extra: Partial<NodeInfo> =
 const never = () => false;
 
 describe('buildMemberViews', () => {
+  // UR-3 (R-10): a contact the group made, not accepted, goes by the name the admin wrote, with "~".
+  it('names a contact the group made and you did not accept with "~"', () => {
+    const views = buildMemberViews(
+      [member('k-mara', 'mara', { local_handle: 'mara', via_group: 'g1', limited: true })],
+      never,
+    );
+    expect(views.map(v => [v.name, v.localHandle, v.limited, v.trust])).toEqual([['~mara', 'mara', true, 'viaGroup']]);
+  });
+
   // App.tsx:2253 matched the roster to contacts by name, so two people with
   // one name got each other's chat. The backend matches by key (K9).
   it('takes the contact the backend matched by key, not the name in the roster', () => {

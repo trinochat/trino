@@ -215,6 +215,7 @@ describe('the new commands', () => {
     ],
     ['listRequests', () => api.listRequests(), 'list_requests', undefined],
     ['acceptRequest', () => api.acceptRequest('ab12'), 'accept_request', { key: 'ab12' }],
+    ['acceptGroupContact', () => api.acceptGroupContact('mara'), 'accept_group_contact', { handle: 'mara' }],
     ['deleteRequest', () => api.deleteRequest('ab12'), 'delete_request', { key: 'ab12' }],
     ['listDeletedRequests', () => api.listDeletedRequests(), 'list_deleted_requests', undefined],
     ['undoDeletedRequest', () => api.undoDeletedRequest('ab12'), 'undo_deleted_request', { key: 'ab12' }],

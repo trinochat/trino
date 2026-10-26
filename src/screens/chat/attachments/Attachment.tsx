@@ -103,10 +103,19 @@ export interface AttachmentProps {
   fetchFile(f: FileRef, maxBytes?: number): Promise<string>;
   /** The card's actions, for the message's menu; a sticker leaves it empty. */
   ref?: Ref<AttachmentHandle | null>;
+  /**
+   * From a contact a group made and you did not accept (UR-3, R-09): no
+   * preview, and nothing fetched by itself, a sticker included; only
+   * Descargar.
+   */
+  guarded?: boolean;
 }
 
-export function Attachment({ file, mine, fetchFile, ref }: AttachmentProps) {
+export function Attachment({ file, mine, fetchFile, ref, guarded = false }: AttachmentProps) {
   const kind = fileKind(file);
+  if (guarded) {
+    return <FileCard file={file} kind={kind === 'sticker' ? 'image' : kind} mine={mine} fetchFile={fetchFile} ref={ref} guarded />;
+  }
   return kind === 'sticker' ? (
     <StickerPicture file={file} fetchFile={fetchFile} />
   ) : (
@@ -174,14 +183,21 @@ type Problem = 'download' | 'unsafe';
  * each with its size and Descargar. A picture without a safe preview is
  * saved, not shown.
  */
-function FileCard({ file, kind, mine, fetchFile, ref }: AttachmentProps & { kind: Exclude<FileKind, 'sticker'> }) {
+function FileCard({
+  file,
+  kind,
+  mine,
+  fetchFile,
+  ref,
+  guarded = false,
+}: AttachmentProps & { kind: Exclude<FileKind, 'sticker'> }) {
   const t = useT();
   const { lang } = useLang();
   const [busy, setBusy] = useState(false);
   const [problem, setProblem] = useState<Problem | null>(null);
   const [viewing, setViewing] = useState<string | null>(null);
   const full = useRef<Promise<string> | null>(null);
-  const preview = kind === 'file' ? undefined : safeInlineRasterSrc(file.thumb);
+  const preview = kind === 'file' || guarded ? undefined : safeInlineRasterSrc(file.thumb);
   const muted = mine ? 'text-ui-bubble-me-muted' : 'text-ui-muted';
   // Shown and saved without bidi or control characters, with the real
   // extension on its own beside the size (TRN-APP-03).

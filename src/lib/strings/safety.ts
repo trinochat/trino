@@ -3,7 +3,8 @@
  * list of whom you blocked (PropBloquear, PropAjustes › Privacidad ›
  * Bloqueados; `research_notes/Uso responsable/diseno.md` §12.1); and
  * Solicitudes (UR-4, PropSolicitudes and PropMovilSolicitudes, §12.2),
- * under `requests`. Reports (UR-5) add their own prefix here.
+ * under `requests`; the contacts of a group you did not accept (UR-3),
+ * under `groupContact`. Reports (UR-5) add their own prefix here.
  */
 import type { AreaStrings } from './types';
 
@@ -79,6 +80,11 @@ export const safety: AreaStrings = {
     'requests.undoA11y': 'Deshacer: {name}',
     'requests.undone': '{name} ya te puede volver a escribir. Lo que mandó antes no vuelve.',
     'requests.undoFailed': 'No se pudo deshacer con {name}. Inténtalo de nuevo.',
+    // Contacts of a group, limited (UR-3, PropSolicitudes card 3).
+    'groupContact.add': 'Agregar a contactos',
+    'groupContact.addTo': 'Agregar a {name} a tus contactos',
+    'groupContact.added': 'Agregaste a {name} a tus contactos.',
+    'groupContact.failed': 'No se pudo agregar. Inténtalo de nuevo.',
   },
   en: {
     'block.title': 'Block {name}?',
@@ -151,6 +157,10 @@ export const safety: AreaStrings = {
     'requests.undoA11y': 'Undo: {name}',
     'requests.undone': '{name} can write to you again. What they sent before doesn’t come back.',
     'requests.undoFailed': 'Couldn’t undo it for {name}. Try again.',
+    'groupContact.add': 'Add to contacts',
+    'groupContact.addTo': 'Add {name} to your contacts',
+    'groupContact.added': 'You added {name} to your contacts.',
+    'groupContact.failed': 'Couldn’t add them. Try again.',
   },
   pt: {
     'block.title': 'Bloquear {name}?',
@@ -223,5 +233,9 @@ export const safety: AreaStrings = {
     'requests.undoA11y': 'Desfazer: {name}',
     'requests.undone': '{name} já pode voltar a te escrever. O que mandou antes não volta.',
     'requests.undoFailed': 'Não foi possível desfazer com {name}. Tente novamente.',
+    'groupContact.add': 'Adicionar aos contatos',
+    'groupContact.addTo': 'Adicionar {name} aos seus contatos',
+    'groupContact.added': 'Você adicionou {name} aos seus contatos.',
+    'groupContact.failed': 'Não foi possível adicionar. Tente novamente.',
   },
 };

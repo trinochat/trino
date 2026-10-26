@@ -40,6 +40,22 @@ function show(file: FileRef, fetchFile = vi.fn(async (_f: FileRef) => FULL_JPEG)
 }
 
 describe('Attachment', () => {
+  // UR-3 (R-09): of a contact a group made and you did not accept, nothing
+  // shows or downloads by itself: no preview, no sticker fetched.
+  it('shows no preview and fetches nothing of someone you did not accept', async () => {
+    const fetchFile = vi.fn(async (_f: FileRef) => FULL_JPEG);
+    renderIn(<Attachment file={fileRef({ size: 1_200_000 })} mine={false} fetchFile={fetchFile} guarded />);
+    expect(document.querySelector('img')).toBeNull();
+    expect(screen.getByRole('button', { name: 'Descargar foto.jpg' })).toBeTruthy();
+    cleanup();
+    renderIn(
+      <Attachment file={fileRef({ name: 'sticker::gato.webp', mime: 'image/webp', thumb: WEBP, size: 2048 })} mine={false} fetchFile={fetchFile} guarded />,
+    );
+    expect(document.querySelector('img')).toBeNull();
+    await new Promise(resolve => setTimeout(resolve, 0));
+    expect(fetchFile).not.toHaveBeenCalled();
+  });
+
   it('shows the preview of a picture and opens the picture when asked', async () => {
     const fetchFile = show(fileRef());
     const view = screen.getByRole('button', { name: 'Ver foto.jpg' });

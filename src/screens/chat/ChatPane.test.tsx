@@ -144,6 +144,25 @@ describe('ChatPane', () => {
     expect(items()).toEqual(['Copiar', 'Reenviar', 'Borrar para mí']);
   });
 
+  // UR-3 (PropSolicitudes card 3): in the group, a contact it made and you did not accept.
+  it('names a contact the group made "~name" and shows no preview of her photo', () => {
+    const photo = { url: 'u', key: 'k', sha256: 's', mime: 'image/jpeg', name: 'torta.jpg', size: 1_200_000, thumb: 'data:image/jpeg;base64,/9j/4AAQSkZJRgABAQ==' };
+    show({
+      convo: { kind: 'group', gid: 'g1' },
+      header: { ...FAMILIA, limited: ['mara'] },
+      onCall: undefined,
+      messages: [
+        message('k1', at(2026, 10, 11, 19, 31), { from: 'mara', text: undefined, file: photo }),
+        message('k2', at(2026, 10, 11, 19, 33), { from: 'Papá', text: '¡Se ve deliciosa!' }),
+      ],
+    });
+    expect(screen.getByText('~mara')).toBeTruthy();
+    expect(screen.getByText('Papá')).toBeTruthy();
+    expect(document.querySelector('[data-attachment] img')).toBeNull();
+    expect(screen.getByRole('button', { name: 'Descargar torta.jpg' })).toBeTruthy();
+    cleanup();
+  });
+
   // UR-2 (PropBloquear card 5): one grey line, and the details, where "Salir del grupo" is.
   it('says in a group that someone you blocked is in it', () => {
     const onOpenDetails = vi.fn();

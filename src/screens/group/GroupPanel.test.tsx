@@ -61,6 +61,8 @@ function mount({ members = AS_MEMBER, group = {}, props = {}, membersFail = fals
     renameGroup: vi.fn(async (_gid: string, name: string) => ({ ...GROUP, name })),
     leaveGroup: vi.fn(async (_gid: string) => {}),
     deleteGroup: vi.fn(async (_gid: string) => {}),
+    // UR-3: "Agregar a contactos".
+    acceptGroupContact: vi.fn(async (handle: string) => ({ handle })),
     // UR-2: blocking a member, a contact or not.
     blockPreview: vi.fn(async (target: BlockTarget) => ({
       label: 'Ximena',
@@ -185,6 +187,22 @@ describe('GroupPanel', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Escribirle a Lucía' }));
     expect(onOpenContact).toHaveBeenCalledWith('Lucía');
     expect(screen.queryByRole('button', { name: 'Escribirle a Papá' })).toBeNull();
+  });
+
+  // UR-3 (PropSolicitudes card 3): a contact the group made, not accepted.
+  it('names a contact the group made with "~", and offers to add them in place of a chat', async () => {
+    const mara = member('k-mara', 'mara', { via_group: 'g1', limited: true });
+    const { api, onOpenContact } = mount({ members: [...AS_MEMBER, mara] });
+    const items = await rows();
+    const row = items.find(item => item.textContent?.includes('~mara'))!;
+    expect(row.textContent).toContain('nombre que puso el admin');
+    expect(within(row).queryByRole('button', { name: /Escribirle/ })).toBeNull();
+    fireEvent.click(within(row).getByRole('button', { name: 'Agregar a mara a tus contactos' }));
+    await waitFor(() => expect(api.acceptGroupContact).toHaveBeenCalledWith('mara'));
+    expect(onOpenContact).not.toHaveBeenCalled();
+    // The members are read again, now that she is a contact of yours.
+    await waitFor(() => expect(api.groupMembers).toHaveBeenCalledTimes(2));
+    expect(await screen.findByText('Agregaste a mara a tus contactos.')).toBeTruthy();
   });
 
   it('says a member is not in your contacts, and offers no chat with them', async () => {

@@ -88,10 +88,13 @@ const REQUEST_KEYS: string[] = [
   'requests.undoFailed',
 ];
 
+// Contacts of a group, limited (UR-3, PropSolicitudes card 3; design §12.2).
+const GROUP_CONTACT_KEYS: string[] = ['groupContact.add', 'groupContact.addTo', 'groupContact.added', 'groupContact.failed'];
+
 describe('the texts of blocking', () => {
   it('have the same keys and placeholders in es, en and pt', () => {
     expectAreaContract(safety, {
-      keys: [...KEYS, ...REQUEST_KEYS],
+      keys: [...KEYS, ...REQUEST_KEYS, ...GROUP_CONTACT_KEYS],
       placeholders: {
         'block.title': ['name'],
         'block.iAdminister': ['group'],
@@ -123,13 +126,15 @@ describe('the texts of blocking', () => {
         'requests.undoA11y': ['name'],
         'requests.undone': ['name'],
         'requests.undoFailed': ['name'],
+        'groupContact.addTo': ['name'],
+        'groupContact.added': ['name'],
       },
     });
   });
 
   it('reach the app', () => {
     for (const lang of LANG_CODES) {
-      for (const key of [...KEYS, ...REQUEST_KEYS]) expect(DICTS[lang][key], `${lang}: ${key}`).toBe(safety[lang][key]);
+      for (const key of [...KEYS, ...REQUEST_KEYS, ...GROUP_CONTACT_KEYS]) expect(DICTS[lang][key], `${lang}: ${key}`).toBe(safety[lang][key]);
     }
   });
 
@@ -172,6 +177,8 @@ describe('the texts of blocking', () => {
     expect(safety.es['requests.groupLine']).toBe('{name} está en «{group}» contigo, pero no es tu contacto.');
     expect(safety.es['requests.linkLine']).toBe('Antes de aceptar, confirma con {label} por otro medio que lo usó.');
     expect(safety.es['requests.deletedTitle']).toBe('Solicitudes eliminadas');
+    // UR-3: "Agregar a contactos", as card 3 says it.
+    expect(safety.es['groupContact.add']).toBe('Agregar a contactos');
   });
 
   // Trino cannot take anyone off the network, and the person is not told (R-13, R-34).

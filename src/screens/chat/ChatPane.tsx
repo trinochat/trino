@@ -247,7 +247,9 @@ export function ChatPane(props: ChatPaneProps) {
       <MessageList
         messages={props.messages}
         now={props.now}
-        peer={header.kind === 'contact' ? { kind: 'contact', name: header.name } : { kind: 'group' }}
+        peer={
+          header.kind === 'contact' ? { kind: 'contact', name: header.name } : { kind: 'group', limited: header.limited }
+        }
         actions={actions}
         onCall={call}
       />

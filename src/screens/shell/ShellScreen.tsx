@@ -646,6 +646,7 @@ export function ShellScreen(props: ShellScreenProps) {
             ended: group?.ended ?? false,
             ttlSeconds: prefs.getTtl(key),
             hasBlocked: group?.has_blocked === true,
+            limited: group?.limited ?? [],
           };
     const chatProps: ChatPaneProps = {
       convo: ref,

@@ -161,6 +161,12 @@ export type ChatHeaderInfo =
       ttlSeconds: number;
       /** Someone you blocked is a member (UR-2): the chat says you do not see their messages. */
       hasBlocked?: boolean;
+      /**
+       * The members the group made contacts of and you did not accept (UR-3),
+       * by their name here: "~name", and none of their files shown or fetched
+       * by itself.
+       */
+      limited?: readonly string[];
     };
 export interface StickerApi {
   list(): Promise<StickerInfo[]>;

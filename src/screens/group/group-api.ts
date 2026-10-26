@@ -17,4 +17,6 @@ export interface GroupApi extends BlockDialogApi {
   /** Local: no tombstone, so a later roster comes back as an invitation (K10). */
   leaveGroup(gid: string): Promise<void>;
   deleteGroup(gid: string): Promise<void>;
+  /** "Agregar a contactos" for a contact the group made (UR-3); answers its name. */
+  acceptGroupContact?(handle: string): Promise<{ handle: string }>;
 }

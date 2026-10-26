@@ -68,6 +68,11 @@ export interface MessageItemProps {
   sender?: string;
   /** Who sent their message, as you call them: the contact, or the group member. */
   authorName: string;
+  /**
+   * Of a contact a group made and you did not accept (UR-3, R-09): its file
+   * shows no preview and nothing of it is fetched by itself.
+   */
+  guarded?: boolean;
   actions: MessageActions;
 }
 
@@ -141,7 +146,7 @@ function secondsLeft(msg: Msg, now: number): number | undefined {
   return undefined;
 }
 
-export function MessageItem({ msg, now, sender, authorName, actions }: MessageItemProps) {
+export function MessageItem({ msg, now, sender, authorName, actions, guarded = false }: MessageItemProps) {
   const t = useT();
   const { lang } = useLang();
   const row = useRef<HTMLDivElement>(null);
@@ -232,7 +237,9 @@ export function MessageItem({ msg, now, sender, authorName, actions }: MessageIt
           {msg.reply && (
             <ReplyQuote author={quoteAuthor ?? ''} preview={msg.reply.preview} mine={mine} yours={mine && quotesItsAuthor} />
           )}
-          {msg.file && <Attachment ref={attachment} file={msg.file} mine={mine} fetchFile={actions.fetchFile} />}
+          {msg.file && (
+            <Attachment ref={attachment} file={msg.file} mine={mine} fetchFile={actions.fetchFile} guarded={guarded} />
+          )}
           {text && (
             <p className="whitespace-pre-wrap text-ui-base [overflow-wrap:anywhere]">
               <Linkify text={text} onOpenLink={actions.onOpenLink} />

@@ -111,6 +111,8 @@ export function GroupPanel({
   const [members, setMembers] = useState<Members>({ status: capabilities.members ? 'loading' : 'off' });
   const [muted, setMuted] = useState(() => groupPrefs.isMuted(group.gid));
   const [ttl, setTtl] = useState(() => groupPrefs.getTtl(group.gid));
+  /** What "Agregar a contactos" did (UR-3), said under the members. */
+  const [added, setAdded] = useState<{ ok: boolean; name: string } | null>(null);
 
   const gid = group.gid;
   // The members are read again for another group, a new roster or a retry,
@@ -178,6 +180,18 @@ export function GroupPanel({
     onChanged();
     setReload(n => n + 1);
   };
+  /** "Agregar a contactos" (UR-3): a contact of yours now, with what their request held. */
+  const addContact = async (accept: (handle: string) => Promise<{ handle: string }>, handle: string) => {
+    setAdded(null);
+    try {
+      const { handle: name } = await accept(handle);
+      setAdded({ ok: true, name });
+      refresh();
+    } catch {
+      setAdded({ ok: false, name: handle });
+    }
+  };
+  const accept = api.acceptGroupContact;
   // A time stored by another screen that is not among the options still shows as it is.
   const ttlOptions: readonly number[] = (GROUP_TTL_OPTIONS as readonly number[]).includes(ttl)
     ? GROUP_TTL_OPTIONS
@@ -283,9 +297,15 @@ export function GroupPanel({
                   onWrite={onOpenContact}
                   onRemove={canRemove ? member => setOpen({ kind: 'remove', member }) : undefined}
                   onBlock={member => setOpen({ kind: 'block', member })}
+                  onAdd={accept ? handle => void addContact(accept, handle) : undefined}
                 />
               ))}
             </ul>
+          )}
+          {added && (
+            <p role={added.ok ? 'status' : 'alert'} className="m-0 text-ui-md text-ui-muted">
+              {added.ok ? t('groupContact.added', { name: added.name }) : t('groupContact.failed')}
+            </p>
           )}
         </section>
       )}

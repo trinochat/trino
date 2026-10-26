@@ -24,7 +24,8 @@ export interface MessageListProps {
   /** Epoch seconds: the day separators and the clocks of disappearing messages count from here. */
   now: number;
   /** A contact's chat, by the contact's name, or a group's, whose messages say who sent them. */
-  peer: { kind: 'contact'; name: string } | { kind: 'group' };
+  /** In a group, `limited` are the members it made contacts of and you did not accept (UR-3). */
+  peer: { kind: 'contact'; name: string } | { kind: 'group'; limited?: readonly string[] };
   actions: MessageActions;
   /** Calls the contact back from a missed call; without it, no "Devolver llamada". */
   onCall?(video: boolean): void;
@@ -58,7 +59,10 @@ export function MessageList({ messages, now, peer, actions, onCall }: MessageLis
     const run = sameRun(before, msg);
     before = msg;
     if (msg.call) return <CallEventItem key={msg.key} call={msg.call} ts={msg.ts} onCall={onCall} />;
-    const author = peer.kind === 'contact' ? peer.name : (msg.from ?? t('msg2.someone'));
+    // UR-3 (R-10): someone you did not accept goes by "~name", and shows nothing by itself.
+    const guarded =
+      peer.kind === 'group' && msg.side === 'them' && msg.from !== undefined && !!peer.limited?.includes(msg.from);
+    const author = peer.kind === 'contact' ? peer.name : guarded ? `~${msg.from}` : (msg.from ?? t('msg2.someone'));
     return (
       <MessageItem
         key={msg.key}
@@ -67,6 +71,7 @@ export function MessageList({ messages, now, peer, actions, onCall }: MessageLis
         sender={peer.kind === 'group' && msg.side === 'them' && !run ? author : undefined}
         authorName={author}
         actions={actions}
+        guarded={guarded}
       />
     );
   });

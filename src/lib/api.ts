@@ -339,6 +339,10 @@ export interface GroupInfo {
   ended?: boolean;
   // Someone you blocked is a member (UR-2); only `listGroups` tells.
   has_blocked?: boolean;
+  // The members a group made contacts of and you did not accept (UR-3), by
+  // their name here: "~name" in the chat, and none of their files fetched
+  // by itself. Only `listGroups` tells.
+  limited?: string[];
 }
 
 export interface IncomingGroupMessageEvent {
@@ -581,6 +585,9 @@ export interface GroupMember {
   via_group?: string | null;
   // Someone you blocked (UR-2).
   blocked?: boolean;
+  // A contact the group made and you did not accept (UR-3): "~name", and
+  // "Agregar a contactos" in place of "Escribirle".
+  limited?: boolean;
 }
 
 export interface ContactKeyMismatchEvent {
@@ -805,6 +812,8 @@ export const api = {
   // each rejects with `not_found` for a request that is gone.
   listRequests: (): Promise<RequestsView> => invoke('list_requests'),
   acceptRequest: (key: string): Promise<{ handle: string }> => invoke('accept_request', { key }),
+  // UR-3: "Agregar a contactos" for a contact a group made; answers its name.
+  acceptGroupContact: (handle: string): Promise<{ handle: string }> => invoke('accept_group_contact', { handle }),
   deleteRequest: (key: string): Promise<void> => invoke('delete_request', { key }),
   listDeletedRequests: (): Promise<DeletedRequestView[]> => invoke('list_deleted_requests'),
   undoDeletedRequest: (key: string): Promise<void> => invoke('undo_deleted_request', { key }),

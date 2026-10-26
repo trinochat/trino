@@ -30,6 +30,11 @@ export interface GroupMemberView {
   trust: MemberTrust;
   /** Someone you blocked (UR-2). */
   blocked: boolean;
+  /**
+   * A contact the group made and you did not accept (UR-3): named "~name",
+   * the name the admin wrote (R-10), with "Agregar a contactos".
+   */
+  limited: boolean;
 }
 
 function trustOf(member: GroupMember, isVerified: (handle: string, fingerprint: string) => boolean): MemberTrust {
@@ -56,16 +61,18 @@ export function buildMemberViews(
   return members
     .map(member => {
       const localHandle = member.is_self ? null : (member.local_handle ?? null);
-      const name = localHandle ?? member.roster_handle;
+      const limited = !member.is_self && member.limited === true;
+      const name = limited ? `~${member.roster_handle}` : (localHandle ?? member.roster_handle);
       return {
         key: member.ik_sign_pub,
         name,
         localHandle,
-        initials: identityInitials(name),
+        initials: identityInitials(limited ? member.roster_handle : name),
         isSelf: member.is_self,
         isAdmin: member.is_admin,
         trust: trustOf(member, isVerified),
         blocked: member.blocked === true,
+        limited,
       };
     })
     .sort((a, b) => rank(a) - rank(b) || collator.compare(a.name, b.name) || (a.key < b.key ? -1 : 1));
