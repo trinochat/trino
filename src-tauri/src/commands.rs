@@ -68,6 +68,9 @@ pub(crate) mod clipboard_cmds;
 // Uso responsable (UR-2): blocking by identity.
 #[path = "block_cmds.rs"]
 pub(crate) mod block_cmds;
+// Uso responsable (UR-4): Solicitudes.
+#[path = "requests_cmds.rs"]
+pub(crate) mod requests_cmds;
 
 #[derive(Serialize)]
 pub struct NodeInfo {

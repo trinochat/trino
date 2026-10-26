@@ -1330,6 +1330,54 @@ mod tests {
         );
     }
 
+    /// The shape src/lib/api.ts reads (`RequestsView`).
+    #[test]
+    fn ur4_the_list_reaches_the_frontend_as_api_ts_reads_it() {
+        let mut inner = me();
+        let ana = create_identity();
+        receive(&mut inner, by_name(&ana, "hola", NOW), NOW);
+        let call = Item::Call {
+            video: true,
+            at: NOW + 1,
+        };
+        receive(&mut inner, from(&ana, "ana", Via::Name, call), NOW + 1);
+
+        let json = serde_json::to_value(list(&inner, NOW + 2)).unwrap();
+
+        assert_eq!(
+            json,
+            serde_json::json!({
+                "requests": [{
+                    "key": ik(&ana),
+                    "name": "ana",
+                    "by_admin": false,
+                    "fingerprint": bundle_fingerprint(&public_bundle_for(&ana)),
+                    "via": { "kind": "name" },
+                    "received_at": NOW,
+                    "last_at": NOW + 1,
+                    "items": [
+                        { "kind": "text", "text": "hola", "at": NOW },
+                        { "kind": "call", "video": true, "at": NOW + 1 },
+                    ],
+                    "dropped": 0,
+                    "looks_like": null,
+                }],
+                "overflow": 0,
+            })
+        );
+        delete(&mut inner, &ik(&ana), NOW + 3).unwrap();
+        let json = serde_json::to_value(list_deleted(&inner, NOW + 3)).unwrap();
+        assert_eq!(
+            json,
+            serde_json::json!([{
+                "key": ik(&ana),
+                "label": "ana",
+                "fingerprint": bundle_fingerprint(&public_bundle_for(&ana)),
+                "deleted_at": NOW + 3,
+            }])
+        );
+    }
+
     #[test]
     fn ur4_names_that_resemble() {
         for (a, b) in [
