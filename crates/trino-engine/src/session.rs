@@ -335,6 +335,7 @@ pub fn clear_sensitive_state(inner: &mut InnerState) {
     inner.groups.clear();
     inner.group_invites.clear();
     inner.blocked.clear();
+    inner.requests.forget();
     inner.current_peer = None;
     inner.resync_at.clear();
     inner.handshake_marks.clear();

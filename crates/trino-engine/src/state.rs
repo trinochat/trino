@@ -66,6 +66,10 @@ pub struct InnerState {
     /// Whom you blocked, by identity (uso responsable UR-2, `block.rs`).
     /// Persisted ENCRYPTED with the account.
     pub blocked: crate::block::BlockList,
+    /// Requests of people who are not contacts, and the identities whose
+    /// request you deleted (uso responsable UR-4, `requests.rs`). Persisted
+    /// ENCRYPTED to the store's requests.bin.
+    pub requests: crate::requests::RequestBook,
     /// Last time (unix secs) we auto-healed a desynced session per handle, to
     /// rate-limit re-handshakes and avoid storms. In-memory only.
     pub resync_at: HashMap<String, i64>,

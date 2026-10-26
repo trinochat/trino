@@ -35,6 +35,7 @@ pub mod nostr;
 pub mod passphrase;
 pub mod prefs;
 pub mod profile;
+pub mod requests;
 pub mod send;
 pub mod session;
 pub mod state;

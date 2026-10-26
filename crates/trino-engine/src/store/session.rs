@@ -142,6 +142,9 @@ pub struct SessionStore {
     prefs: Option<Zeroizing<Vec<u8>>>,
     /// The stickers, by their name on disk.
     stickers: BTreeMap<String, StickerFile>,
+    /// `requests.bin` (uso responsable UR-4), until the session takes it
+    /// (`take_requests`).
+    requests: Found,
 }
 
 /// Whether the vault's header is the one the index noted (design §4.9).
@@ -316,6 +319,7 @@ impl SessionStore {
         let history = found(Slot::History);
         let sessions = found(Slot::Sessions);
         let profiles = found(Slot::Profiles);
+        let requests = found(Slot::Requests);
         let prefs = match found(Slot::Prefs) {
             Found::Ready(bytes) => Some(bytes),
             _ => None,
@@ -327,6 +331,7 @@ impl SessionStore {
             report,
             prefs,
             stickers: BTreeMap::new(),
+            requests,
         };
         for (slot, bytes) in std::mem::take(&mut loaded.ready) {
             let Slot::Sticker(name) = &slot else { continue };
@@ -349,6 +354,12 @@ impl SessionStore {
     /// What the store found at unlock, less the choices already made.
     pub fn report(&self) -> IntegrityReport {
         self.report.clone()
+    }
+
+    /// What the store found in `requests.bin` at unlock, once: the session
+    /// takes it as it opens (`requests::load`), and afterwards it is absent.
+    pub fn take_requests(&mut self) -> Found {
+        std::mem::replace(&mut self.requests, Found::Absent)
     }
 
     /// The verified `prefs.bin`, if there is one.
@@ -654,6 +665,26 @@ impl StorageCell {
 
     pub fn write_profiles(&self, json: &[u8]) -> io::Result<()> {
         self.write_part(Slot::Profiles, json)
+    }
+
+    /// The requests (UR-4). An account the migration has not moved yet has
+    /// nowhere sealed to keep them: they last this session only.
+    pub fn write_requests(&self, json: &[u8]) -> io::Result<()> {
+        self.with(|storage| match storage {
+            Storage::Store(store) => store.write(&Slot::Requests, json),
+            Storage::Legacy(_) => Err(io::Error::other(NOT_MOVED)),
+        })
+        .unwrap_or(Ok(()))
+    }
+
+    /// What unlocking found in `requests.bin`, once; absent with no session
+    /// or for an account not moved to the store yet.
+    pub fn take_requests(&self) -> Found {
+        self.with(|storage| match storage {
+            Storage::Store(store) => store.take_requests(),
+            Storage::Legacy(_) => Found::Absent,
+        })
+        .unwrap_or(Found::Absent)
     }
 
     /// The account's preferences (CL-2a). An account the migration has not

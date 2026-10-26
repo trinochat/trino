@@ -132,6 +132,9 @@ pub fn action_for(slot: &Slot, what: What) -> Action {
         (_, Slot::Sessions) => Action::NewSessions,
         (What::OlderCopy, Slot::Sticker(_)) => Action::SetAside,
         (What::Unverified | What::Behind, Slot::Sticker(_)) => Action::Use,
+        // Requests (UR-4) hold what strangers sent: never worth a question.
+        (What::OlderCopy, Slot::Requests) => Action::SetAside,
+        (What::Unverified | What::Behind, Slot::Requests) => Action::Use,
         (What::OlderCopy | What::Unverified | What::Behind, _) => Action::Ask,
         (What::Altered | What::Unlisted, _) => Action::SetAside,
         (What::Missing, Slot::Prefs) => Action::Defaults,
@@ -183,6 +186,25 @@ mod tests {
         }
         assert_eq!(action_for(&Slot::Account, What::Unreadable), KeepForLater);
         assert_eq!(action_for(&Slot::Index, What::Altered), Notice);
+    }
+
+    /// Requests (UR-4) hold what strangers sent: an older or unverified
+    /// copy never asks. The older one is set aside, the unverified one used.
+    #[test]
+    fn ur4_requests_never_ask() {
+        use Action::*;
+        let rows = [
+            (What::OlderCopy, SetAside),
+            (What::Unverified, Use),
+            (What::Behind, Use),
+            (What::Altered, SetAside),
+            (What::Unlisted, SetAside),
+            (What::Missing, Empty),
+            (What::Unreadable, KeepForLater),
+        ];
+        for (what, action) in rows {
+            assert_eq!(action_for(&Slot::Requests, what), action, "{what:?}");
+        }
     }
 
     #[test]

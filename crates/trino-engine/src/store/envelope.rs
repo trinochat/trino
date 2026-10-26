@@ -4,7 +4,8 @@
 //!  6  "TRDAT\0"
 //!  1  format version: 1
 //!  1  kind: 1 account, 2 prefs, 3 history, 4 sessions, 5 profiles,
-//!     6 sticker, 7 index, 8 a file of an earlier version kept aside
+//!     6 sticker, 7 index, 8 a file of an earlier version kept aside,
+//!     9 requests (uso responsable UR-4)
 //!  4  key_gen (u32 LE)
 //! 16  id_vault
 //! 12  nonce
@@ -45,6 +46,8 @@ pub enum Slot {
     History,
     Sessions,
     Profiles,
+    /// The requests of people who are not contacts (UR-4, `requests.rs`).
+    Requests,
     /// A sticker, by its name on disk (`StoreKeys::sticker_disk_name`).
     Sticker(String),
     Index,
@@ -56,12 +59,13 @@ pub enum Slot {
 
 impl Slot {
     /// The data files with a fixed name, in the order they are checked.
-    pub const FIXED: [Slot; 5] = [
+    pub const FIXED: [Slot; 6] = [
         Slot::Account,
         Slot::Prefs,
         Slot::History,
         Slot::Sessions,
         Slot::Profiles,
+        Slot::Requests,
     ];
 
     fn kind_byte(&self) -> u8 {
@@ -74,6 +78,7 @@ impl Slot {
             Slot::Sticker(_) => 6,
             Slot::Index => 7,
             Slot::Legacy(_) => 8,
+            Slot::Requests => 9,
         }
     }
 
@@ -87,6 +92,7 @@ impl Slot {
             Slot::Sticker(_) => KeyLabel::Stickers,
             Slot::Index => KeyLabel::Index,
             Slot::Legacy(_) => KeyLabel::Legacy,
+            Slot::Requests => KeyLabel::Requests,
         }
     }
 
@@ -101,6 +107,7 @@ impl Slot {
             Slot::Sticker(name) => format!("sticker:{name}"),
             Slot::Index => "index".into(),
             Slot::Legacy(name) => format!("legacy:{name}"),
+            Slot::Requests => "requests".into(),
         }
     }
 
@@ -113,6 +120,7 @@ impl Slot {
             "history" => Some(Slot::History),
             "sessions" => Some(Slot::Sessions),
             "profiles" => Some(Slot::Profiles),
+            "requests" => Some(Slot::Requests),
             "index" => Some(Slot::Index),
             _ => name
                 .strip_prefix("sticker:")
@@ -132,6 +140,7 @@ impl Slot {
             Slot::Sticker(_) => "sticker",
             Slot::Index => "index",
             Slot::Legacy(_) => "legacy",
+            Slot::Requests => "requests",
         }
     }
 

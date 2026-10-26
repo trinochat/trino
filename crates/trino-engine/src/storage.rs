@@ -109,6 +109,7 @@ pub fn zeroize_names(inner: &mut InnerState) {
         invite.from_handle.zeroize();
     }
     inner.blocked.clear();
+    inner.requests.forget();
 }
 
 pub const MAX_STICKER_BYTES: usize = 5 * 1024 * 1024;
@@ -546,6 +547,9 @@ pub fn apply_loaded(
     load_ratchets(inner, sessions);
     // -- W8 (K12) --
     crate::profile::load_found(inner, profiles, now);
+    // -- Uso responsable (UR-4) --
+    let requests = inner.storage.take_requests();
+    crate::requests::load(inner, requests, now);
 }
 
 /// What the unlock screen gets. Before unlocking it reads nothing in clear
