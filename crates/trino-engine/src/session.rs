@@ -350,6 +350,9 @@ pub fn clear_sensitive_state(inner: &mut InnerState) {
     inner.alerts.forget();
     inner.alert_watch.notify_waiters();
     inner.alert_settings_until = 0;
+    // -- UR-5 -- The watcher of the reports ends with the session.
+    inner.reports.forget();
+    inner.report_watch.notify_waiters();
 }
 
 /// The relay connections of a session `open_session` just opened: what
@@ -426,7 +429,15 @@ pub async fn connect_relays(
         // The UI learns how many relays there are before any is up.
         changes.poke();
         // -- CE-6 -- The warnings' mailboxes, on connections of their own.
-        crate::alert::watch(events, state_inner, net, expected_nostr_pub);
+        crate::alert::watch(
+            Arc::clone(&events),
+            state_inner.clone(),
+            Arc::clone(&net),
+            expected_nostr_pub.clone(),
+        );
+        // -- UR-5 -- The reports made, sent by Tor as they come due.
+        let reports = Arc::new(crate::report::ReportClient::configured(net));
+        crate::report::watch(events, state_inner, reports, expected_nostr_pub);
     } else {
         drop(inner);
         for client in clients {

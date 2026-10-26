@@ -70,6 +70,14 @@ pub struct InnerState {
     /// request you deleted (uso responsable UR-4, `requests.rs`). Persisted
     /// ENCRYPTED to the store's requests.bin.
     pub requests: crate::requests::RequestBook,
+    /// The reports you made (uso responsable UR-5, `report.rs`): sealed
+    /// while they wait, then only their code and day, for 30 days.
+    /// Persisted ENCRYPTED with the account.
+    pub reports: crate::report::ReportBook,
+    /// Told when a report is made, so `report::watch` sends it now.
+    pub report_watch: Arc<tokio::sync::Notify>,
+    /// Which `report::watch` is the session's: one started later replaces it.
+    pub report_watcher: u64,
     /// Last time (unix secs) we auto-healed a desynced session per handle, to
     /// rate-limit re-handshakes and avoid storms. In-memory only.
     pub resync_at: HashMap<String, i64>,

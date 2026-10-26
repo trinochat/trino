@@ -458,19 +458,20 @@ pub fn key_clash() -> CommandError {
     )
 }
 
-/// Whom a target names, and what proves their keys.
-struct Who {
-    ik_sign: String,
-    ik_dh: String,
-    nostr: String,
-    dh_proven: bool,
-    nostr_proven: bool,
-    label: String,
-    fingerprint: String,
-    contact: Option<String>,
+/// Whom a target names, and what proves their keys. A report (UR-5) names
+/// them the same way.
+pub(crate) struct Who {
+    pub(crate) ik_sign: String,
+    pub(crate) ik_dh: String,
+    pub(crate) nostr: String,
+    pub(crate) dh_proven: bool,
+    pub(crate) nostr_proven: bool,
+    pub(crate) label: String,
+    pub(crate) fingerprint: String,
+    pub(crate) contact: Option<String>,
 }
 
-fn resolve(inner: &InnerState, target: &BlockTarget) -> Result<Who, CommandError> {
+pub(crate) fn resolve(inner: &InnerState, target: &BlockTarget) -> Result<Who, CommandError> {
     match target {
         BlockTarget::Contact(handle) => {
             let friend = inner

@@ -70,6 +70,7 @@ pub fn account_of(inner: &InnerState) -> AccountFile {
         groups,
         group_invites,
         alerts: inner.alerts.clone(),
+        reports: inner.reports.clone(),
     }
 }
 
@@ -420,6 +421,7 @@ pub fn load_legacy(files: &DataFiles, identity: &Identity) -> Result<LoadedSessi
         groups: read_list(&files.groups),
         group_invites: read_list(&files.group_invites),
         alerts: Default::default(),
+        reports: Default::default(),
     };
 
     let mut legacy = legacy_files(files, identity)?;
@@ -542,6 +544,8 @@ pub fn apply_loaded(
     }
     inner.alerts.forget();
     inner.alerts = account.alerts;
+    inner.reports.forget();
+    inner.reports = account.reports;
     inner.history.clear();
     load_history(inner, history);
     load_ratchets(inner, sessions);

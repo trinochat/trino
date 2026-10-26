@@ -83,6 +83,10 @@ pub struct AccountFile {
     /// there is none, as in every account from before.
     #[serde(default, skip_serializing_if = "crate::alert::AlertBook::is_empty")]
     pub alerts: crate::alert::AlertBook,
+    /// The reports made (UR-5), sealed while they wait. Left out when there
+    /// is none, as in every account from before.
+    #[serde(default, skip_serializing_if = "crate::report::ReportBook::is_empty")]
+    pub reports: crate::report::ReportBook,
 }
 
 /// What a sticker's file holds. Its id is the start of the image's SHA-256,

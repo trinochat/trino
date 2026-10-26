@@ -40,7 +40,7 @@ pub enum TargetWire {
 
 impl TargetWire {
     /// The engine's target, and where the block was made.
-    fn target(self) -> (BlockTarget, BlockOrigin) {
+    pub(crate) fn target(self) -> (BlockTarget, BlockOrigin) {
         match self {
             TargetWire::Contact { handle } => (BlockTarget::Contact(handle), BlockOrigin::Contact),
             TargetWire::Member { gid, ik_sign_pub } => (

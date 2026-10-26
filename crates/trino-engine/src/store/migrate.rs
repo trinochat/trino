@@ -222,6 +222,7 @@ pub fn read_legacy(
             groups: groups.1.unwrap_or_default(),
             group_invites: invites.1.unwrap_or_default(),
             alerts: Default::default(),
+            reports: Default::default(),
         });
     }
 
@@ -891,6 +892,7 @@ mod tests {
                 groups,
                 group_invites: invites,
                 alerts: Default::default(),
+                reports: Default::default(),
             },
             history,
             sessions,
