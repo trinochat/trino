@@ -45,6 +45,9 @@ describe('settingsBackend', () => {
       'relayInspectStop',
       'listNodes',
       'blockNode',
+      // Privacidad › Bloqueados (UR-2).
+      'listBlocked',
+      'unblockIdentity',
       'shareBundle',
       'testNotification',
     ] as const;

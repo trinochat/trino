@@ -333,6 +333,7 @@ export function MainScreen({ intent, onLock, onAutolockChanged, onWiped, onCallG
       <ShellScreen
         me={me}
         api={d.api}
+        block={d.api}
         events={d.events}
         slots={slots}
         call={calls.slot}

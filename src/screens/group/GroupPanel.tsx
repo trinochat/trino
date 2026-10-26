@@ -28,6 +28,7 @@ import { GROUP_TTL_OPTIONS, groupPrefs as deviceGroupPrefs, type GroupPrefs } fr
 import { GroupMemberRow } from './GroupMemberRow';
 import { InviteMembersDialog } from './InviteMembersDialog';
 import { RenameGroupDialog } from './RenameGroupDialog';
+import { BlockDialog } from '../block/BlockDialog';
 
 export type { GroupApi } from './group-api';
 
@@ -83,7 +84,8 @@ type Open =
   | { kind: 'rename' }
   | { kind: 'leave' }
   | { kind: 'delete' }
-  | { kind: 'remove'; member: GroupMemberView };
+  | { kind: 'remove'; member: GroupMemberView }
+  | { kind: 'block'; member: GroupMemberView };
 
 type Members = { status: 'off' } | { status: 'loading' } | { status: 'failed' } | { status: 'ready'; list: GroupMember[] };
 
@@ -280,6 +282,7 @@ export function GroupPanel({
                   member={view}
                   onWrite={onOpenContact}
                   onRemove={canRemove ? member => setOpen({ kind: 'remove', member }) : undefined}
+                  onBlock={member => setOpen({ kind: 'block', member })}
                 />
               ))}
             </ul>
@@ -367,6 +370,25 @@ export function GroupPanel({
               await api.removeGroupMember(gid, current.member.key);
               close();
               refresh();
+            }}
+          />
+        );
+      // UR-2: the same confirmation as from a contact's details.
+      case 'block':
+        return (
+          <BlockDialog
+            target={{ kind: 'member', gid, ik_sign_pub: current.member.key }}
+            name={current.member.name}
+            api={api}
+            onClose={close}
+            onBlocked={() => {
+              close();
+              refresh();
+            }}
+            onLeftGroup={left => {
+              if (left !== gid) return onChanged();
+              close();
+              onLeft();
             }}
           />
         );

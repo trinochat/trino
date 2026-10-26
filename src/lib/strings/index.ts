@@ -9,13 +9,14 @@ import { common } from './common';
 import { contacts } from './contacts';
 import { emergency } from './emergency';
 import { net } from './net';
+import { safety } from './safety';
 import { settings } from './settings';
 import { shell } from './shell';
 import type { AreaStrings } from './types';
 
 export type { AreaStrings } from './types';
 
-export const AREAS = { common, auth, shell, chat, contacts, settings, call, net, emergency } as const;
+export const AREAS = { common, auth, shell, chat, contacts, settings, call, net, emergency, safety } as const;
 
 export type AreaName = keyof typeof AREAS;
 
@@ -35,6 +36,8 @@ export const NAMESPACES: Readonly<Record<AreaName, readonly string[]>> = {
   net: ['net'],
   // The emergency key (CE-5): its page of Settings, its dialogs and the network.
   emergency: ['emergency'],
+  // Uso responsable (UR-2…): blocking by identity; requests and reports later.
+  safety: ['block'],
 };
 
 /** One dictionary per language with the keys of every area. Areas never share a key. */

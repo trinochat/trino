@@ -262,6 +262,9 @@ pub struct SharedGroup {
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct BlockPreview {
     pub label: String,
+    /// Their identity key: what removing them from a group you administer
+    /// takes (`remove_group_member`).
+    pub ik_sign_pub: String,
     pub fingerprint: String,
     /// Their name among your contacts, if they are one.
     pub contact: Option<String>,
@@ -291,6 +294,7 @@ pub fn preview(inner: &InnerState, target: &BlockTarget) -> Result<BlockPreview,
     let who = resolve(inner, target)?;
     Ok(BlockPreview {
         label: who.label.clone(),
+        ik_sign_pub: who.ik_sign.clone(),
         fingerprint: who.fingerprint.clone(),
         contact: who.contact.clone(),
         shared_groups: shared_groups(inner, &who.ik_sign),
@@ -989,6 +993,7 @@ mod tests {
 
         let shown = preview(&inner, &target).unwrap();
         assert_eq!(shown.label, "juan");
+        assert_eq!(shown.ik_sign_pub, ik(&juan), "to remove him from a group");
         assert_eq!(shown.contact, None);
         assert_eq!(shown.fingerprint, fingerprint_of(&juan));
         assert_eq!(shown.shared_groups.len(), 1);

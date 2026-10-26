@@ -153,7 +153,15 @@ export interface UnlockScreenProps {
 /* Chat (W3) */
 export type ChatHeaderInfo =
   | { kind: 'contact'; name: string; avatarSrc?: string; trust: Trust; ttlSeconds: number; blocked: boolean }
-  | { kind: 'group'; name: string; memberCount: number; ended: boolean; ttlSeconds: number };
+  | {
+      kind: 'group';
+      name: string;
+      memberCount: number;
+      ended: boolean;
+      ttlSeconds: number;
+      /** Someone you blocked is a member (UR-2): the chat says you do not see their messages. */
+      hasBlocked?: boolean;
+    };
 export interface StickerApi {
   list(): Promise<StickerInfo[]>;
   importFile(f: File): Promise<StickerInfo>;

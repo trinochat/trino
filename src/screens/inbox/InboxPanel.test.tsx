@@ -625,6 +625,22 @@ describe('InboxPanel: the right-click menu of a row', () => {
     expect(listed()).toEqual(['Ver detalles']);
   });
 
+  // UR-2 (PropBloquear card 1): after a line, Bloquear, which opens the confirmation; never on one blocked already.
+  it('offers Bloquear on a contact, after a line, when the shell can block', () => {
+    const rowActions = actions({ canBlock: handle => handle === 'Ana', onBlock: vi.fn() });
+    renderEs(<InboxPanel {...props({ rowActions })} />);
+    rightClick(rowNamed(/^Ana/));
+    expect(listed()).toEqual(['Llamada de voz', 'Videollamada', 'Ver detalles', 'Bloquear']);
+    expect(screen.getAllByRole('separator')).toHaveLength(1);
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Bloquear' }));
+    expect(rowActions.onBlock).toHaveBeenCalledWith('Ana');
+    rightClick(rowNamed(/^Carlos/));
+    expect(listed()).toEqual(['Ver detalles']);
+    fireEvent.keyDown(document.activeElement!, { key: 'Escape' });
+    rightClick(rowNamed(/^Familia/));
+    expect(listed()).toEqual(['Activar sonido', 'Ver detalles']);
+  });
+
   it('marks the row while its menu is open, and gives the focus back to it', () => {
     renderEs(<InboxPanel {...props({ rowActions: actions() })} />);
     const familia = rowNamed(/^Familia/);

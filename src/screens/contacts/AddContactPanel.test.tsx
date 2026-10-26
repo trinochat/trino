@@ -130,6 +130,22 @@ describe('AddContactPanel', () => {
     await waitFor(() => expect(api.probeNode).toHaveBeenCalledWith(expect.any(String), 'Ana Torres', true));
   });
 
+  // UR-2, design test 3 (R-23): replacing the keys of someone you blocked asks first, and says the old identity stays blocked.
+  it('says before replacing someone you blocked that their old identity stays blocked', async () => {
+    const { api } = mount(async () => preview({ handle: 'Ana Torres', same_keys: false, blocked: true }));
+    paste(CODE);
+    const replace = await screen.findByRole('checkbox', { name: 'Reemplazar a Ana Torres por esta clave' });
+    expect(
+      screen.getByText(
+        'Bloqueaste a Ana Torres. Su identidad anterior sigue bloqueada; esta clave es otra identidad y no queda bloqueada.',
+      ),
+    ).toBeTruthy();
+    expect(api.probeNode).not.toHaveBeenCalled();
+    fireEvent.click(replace);
+    fireEvent.click(screen.getByRole('button', { name: 'Reemplazar a Ana Torres' }));
+    await waitFor(() => expect(api.probeNode).toHaveBeenCalledWith(expect.any(String), 'Ana Torres', true));
+  });
+
   it('saves under another name instead, without replacing anyone', async () => {
     const { api } = mount(async () => preview({ handle: 'Ana Torres', same_keys: false }));
     paste(CODE);

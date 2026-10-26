@@ -2,12 +2,37 @@
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { useState } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { NodeInfo } from '../../lib/api';
+import type { BlockTarget, NodeInfo } from '../../lib/api';
 import type { PanelLayout, Trust } from '../types';
 import { commandError, memoryPrefs, node, renderEs, withLang } from '../settings/test-utils';
 import { ContactDetailsPanel, type ContactDetailsApi, type ContactDetailsPanelProps } from './ContactDetailsPanel';
 
 afterEach(cleanup);
+
+/** What blocking asks of the backend (UR-2), with nothing in common and no clash. */
+function blockingApi() {
+  return {
+    blockPreview: vi.fn(async (target: BlockTarget) => ({
+      label: target.kind === 'contact' ? target.handle : '',
+      ik_sign_pub: 'ab'.repeat(32),
+      fingerprint: '3F9A 12C0',
+      contact: target.kind === 'contact' ? target.handle : null,
+      shared_groups: [],
+      clash: false,
+      blocked: false,
+    })),
+    blockIdentity: vi.fn(async (target: BlockTarget) => ({
+      key: 'ab'.repeat(32),
+      label: target.kind === 'contact' ? target.handle : '',
+      fingerprint: '3F9A 12C0',
+      blocked_at: 1_760_000_000,
+      from: 'contact' as const,
+      contact: target.kind === 'contact' ? target.handle : null,
+    })),
+    removeGroupMember: vi.fn(),
+    leaveGroup: vi.fn(async () => {}),
+  };
+}
 
 function setup({
   contact = node('ana'),
@@ -26,6 +51,7 @@ function setup({
     renameNode: vi.fn(async () => {}),
     removeNode: vi.fn(async () => {}),
     blockNode: vi.fn(async () => {}),
+    ...blockingApi(),
     ...overrides,
   };
   const { prefs, storage } = memoryPrefs(stored);
@@ -131,7 +157,12 @@ describe('ContactDetailsPanel', () => {
 
   it('gives the focus to "Cambiar nombre" once "Usar este nombre" goes away', async () => {
     const { prefs } = memoryPrefs();
-    const api: ContactDetailsApi = { renameNode: vi.fn(async () => {}), removeNode: vi.fn(), blockNode: vi.fn() };
+    const api: ContactDetailsApi = {
+      renameNode: vi.fn(async () => {}),
+      removeNode: vi.fn(),
+      blockNode: vi.fn(),
+      ...blockingApi(),
+    };
     // The shell sends the contact again under the new name.
     function Shell() {
       const [contact, setContact] = useState(node('ana', { profile_name: 'Ana María' }));
@@ -239,7 +270,7 @@ describe('ContactDetailsPanel', () => {
 
   it('follows another contact without a new mount: their note and timer, not the last ones', () => {
     const { prefs } = memoryPrefs({ 'note:ana': 'Prima', 'note:beto': 'Vecino', 'ttl:beto': '3600' });
-    const api: ContactDetailsApi = { renameNode: vi.fn(), removeNode: vi.fn(), blockNode: vi.fn() };
+    const api: ContactDetailsApi = { renameNode: vi.fn(), removeNode: vi.fn(), blockNode: vi.fn(), ...blockingApi() };
     const panel = (contact: NodeInfo) => (
       <ContactDetailsPanel
         node={contact}
@@ -275,19 +306,41 @@ describe('ContactDetailsPanel', () => {
     ).toBeTruthy();
   });
 
-  it('blocks and unblocks', async () => {
+  // UR-2 (PropBloquear cards 2 and 3): never in one click, and unblocking says what does not come back.
+  it('blocks only after the confirmation, and unblocks saying what does not come back', async () => {
     const { api, props } = setup();
     fireEvent.click(screen.getByRole('button', { name: 'Bloquear' }));
-    await waitFor(() => expect(api.blockNode).toHaveBeenCalledWith('ana', true));
+    const dialog = screen.getByRole('alertdialog', { name: '¿Bloquear a ana?' });
+    expect(api.blockIdentity).not.toHaveBeenCalled();
+    fireEvent.click(await within(dialog).findByRole('button', { name: 'Bloquear' }));
+    await waitFor(() => expect(api.blockIdentity).toHaveBeenCalledWith({ kind: 'contact', handle: 'ana' }));
+    expect(api.blockNode).not.toHaveBeenCalled();
     expect(props.onChanged).toHaveBeenCalledTimes(1);
-    expect(await screen.findByText('Bloqueaste a ana: no recibes sus mensajes.')).toBeTruthy();
+    expect(screen.queryByRole('alertdialog')).toBeNull();
+    expect(await screen.findByText('Bloqueaste a ana.')).toBeTruthy();
+    expect(screen.getByText('Bloqueaste a ana: no recibes sus mensajes.')).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: 'Desbloquear' }));
     await waitFor(() => expect(api.blockNode).toHaveBeenLastCalledWith('ana', false));
+    expect(
+      await screen.findByText(
+        'Desbloqueaste a ana. Lo que mandó mientras estaba bloqueado no te llegó, y las invitaciones que tenía contigo no vuelven.',
+      ),
+    ).toBeTruthy();
+    expect(props.onChanged).toHaveBeenCalledTimes(2);
   });
 
-  it('shows a failed block as an alert', async () => {
-    setup({ api: { blockNode: vi.fn(async () => Promise.reject(new Error('io'))) } });
+  it('closes the confirmation without blocking on Cancelar', async () => {
+    const { api } = setup();
     fireEvent.click(screen.getByRole('button', { name: 'Bloquear' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Cancelar' }));
+    expect(screen.queryByRole('alertdialog')).toBeNull();
+    expect(api.blockIdentity).not.toHaveBeenCalled();
+    expect(screen.getByText('Dejas de recibir sus mensajes.')).toBeTruthy();
+  });
+
+  it('shows a failed unblock as an alert', async () => {
+    setup({ contact: node('ana', { blocked: true }), api: { blockNode: vi.fn(async () => Promise.reject(new Error('io'))) } });
+    fireEvent.click(screen.getByRole('button', { name: 'Desbloquear' }));
     expect((await screen.findByRole('alert')).textContent).toContain('No se pudo cambiar el bloqueo');
   });
 

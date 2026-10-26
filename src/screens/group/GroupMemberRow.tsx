@@ -3,10 +3,12 @@
  * for you) and a line with their part and their trust, in words, so no state
  * rests on colour alone. "Escribirle" opens the chat of someone who came
  * with a group, as the board offers it to people you did not add yourself;
- * whoever administers can remove anyone but themselves.
+ * whoever administers can remove anyone but themselves. Anyone but you can
+ * be blocked, contact or not (UR-2, PropBloquear card 4); someone blocked
+ * says so, and is offered neither "Escribirle" nor "Bloquear".
  */
 import type { ReactNode } from 'react';
-import { MessageSquare, UserMinus } from 'lucide-react';
+import { Ban, MessageSquare, UserMinus } from 'lucide-react';
 import { Avatar, Button, IconButton, TrustBadge, iconSize } from '../../ui';
 import { useT } from '../../lib/i18n';
 import type { GroupMemberView } from './group-model';
@@ -17,9 +19,11 @@ export interface GroupMemberRowProps {
   onWrite?(handle: string): void;
   /** Asks to remove this member; whoever administers gets it, for everyone but themselves. */
   onRemove?(member: GroupMemberView): void;
+  /** Asks to block this member (UR-2): anyone but you. */
+  onBlock?(member: GroupMemberView): void;
 }
 
-export function GroupMemberRow({ member, onWrite, onRemove }: GroupMemberRowProps) {
+export function GroupMemberRow({ member, onWrite, onRemove, onBlock }: GroupMemberRowProps) {
   const t = useT();
   const name = member.isSelf ? t('groupPanel.you') : member.name;
 
@@ -28,6 +32,12 @@ export function GroupMemberRow({ member, onWrite, onRemove }: GroupMemberRowProp
     parts.push(member.isAdmin ? t('groupPanel.adminYou') : t('groupPanel.statusMember'));
   } else {
     if (member.isAdmin) parts.push(t('groupPanel.statusAdmin'));
+    if (member.blocked)
+      parts.push(
+        <span key="blocked" className="font-semibold text-ui-ink">
+          {t('block.memberBlocked')}
+        </span>,
+      );
     if (member.trust === 'verified') parts.push(<TrustBadge key="trust" kind="verified" label={t('groupPanel.verified')} />);
     else if (member.trust === 'unverified') parts.push(<TrustBadge key="trust" kind="unverified" label={t('groupPanel.unverified')} />);
     else if (member.localHandle !== null) parts.push(t('groupPanel.viaGroup'));
@@ -39,7 +49,8 @@ export function GroupMemberRow({ member, onWrite, onRemove }: GroupMemberRowProp
       );
   }
 
-  const write = member.trust === 'viaGroup' && member.localHandle !== null && onWrite ? member.localHandle : null;
+  const write =
+    member.trust === 'viaGroup' && member.localHandle !== null && !member.blocked && onWrite ? member.localHandle : null;
   return (
     <li className="flex min-h-14 items-center gap-2.5 px-1 py-1.5">
       <Avatar initials={member.initials} size={40} />
@@ -63,6 +74,13 @@ export function GroupMemberRow({ member, onWrite, onRemove }: GroupMemberRowProp
         >
           {t('groupPanel.write')}
         </Button>
+      )}
+      {onBlock && !member.isSelf && !member.blocked && (
+        <IconButton
+          aria-label={t('block.memberBlock', { name: member.name })}
+          icon={<Ban {...iconSize('lg')} aria-hidden="true" />}
+          onClick={() => onBlock(member)}
+        />
       )}
       {onRemove && !member.isSelf && (
         <IconButton

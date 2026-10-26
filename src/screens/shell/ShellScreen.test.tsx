@@ -873,6 +873,43 @@ describe('ShellScreen: the right-click menu of the chats', () => {
     expect(screen.getAllByRole('menuitem').map(item => item.textContent)).toEqual(['Ver detalles']);
   });
 
+  // UR-2 (PropBloquear card 1): Bloquear opens the confirmation; the contacts are read again once blocked.
+  it('blocks a contact from its row after the confirmation, never one blocked already', async () => {
+    const block = {
+      blockPreview: vi.fn(async () => ({
+        label: 'Ana',
+        ik_sign_pub: 'ab'.repeat(32),
+        fingerprint: '',
+        contact: 'Ana',
+        shared_groups: [],
+        clash: false,
+        blocked: false,
+      })),
+      blockIdentity: vi.fn(async () => ({
+        key: 'ab'.repeat(32),
+        label: 'Ana',
+        fingerprint: '',
+        blocked_at: 0,
+        from: 'contact' as const,
+        contact: 'Ana',
+      })),
+      removeGroupMember: vi.fn(),
+      leaveGroup: vi.fn(async () => {}),
+    };
+    const { api } = setup({ block }, { nodes: [node('Ana'), node('Bea', { blocked: true })] });
+    rightClick(await row('Bea'));
+    expect(screen.queryByRole('menuitem', { name: 'Bloquear' })).toBeNull();
+    fireEvent.keyDown(document.activeElement!, { key: 'Escape' });
+    rightClick(await row('Ana'));
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Bloquear' }));
+    const dialog = await screen.findByRole('alertdialog', { name: '¿Bloquear a Ana?' });
+    const reads = api.listNodes.mock.calls.length;
+    fireEvent.click(await within(dialog).findByRole('button', { name: 'Bloquear' }));
+    await waitFor(() => expect(block.blockIdentity).toHaveBeenCalledWith({ kind: 'contact', handle: 'Ana' }));
+    await waitFor(() => expect(api.listNodes.mock.calls.length).toBeGreaterThan(reads));
+    expect(screen.queryByRole('alertdialog')).toBeNull();
+  });
+
   it('mutes Novedades from its row', async () => {
     setup();
     rightClick(await row('Novedades'));

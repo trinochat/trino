@@ -1,6 +1,7 @@
 /**
- * Settings > Privacidad (plan-cambios-11oct §4 W5): "Contactos bloqueados"
- * with how many there are, which opens their list, and one fixed line on
+ * Settings > Privacidad (plan-cambios-11oct §4 W5): "Bloqueados" with how
+ * many there are, which opens their list (uso responsable UR-2: everyone
+ * you blocked by identity, contacts or not), and one fixed line on
  * how calls protect your IP (TURN through Cloudflare, docs/llamadas-turn.md).
  *
  * And "Bloquear capturas de pantalla" (SC-1; David, 12 Oct: on by default,
@@ -42,7 +43,7 @@
  * (§8).
  */
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import type { NodeInfo } from '../../../lib/api';
+import type { BlockedView } from '../../../lib/api';
 import { useT } from '../../../lib/i18n';
 import type { Prefs } from '../../../lib/prefs';
 import { prefsSession } from '../../../lib/prefs-session';
@@ -60,12 +61,12 @@ import { SettingsSection } from '../SettingsSection';
 import type { SettingsApi, SettingsPlatform } from '../types';
 
 export interface PrivacySectionProps {
-  api: Pick<SettingsApi, 'listNodes' | 'blockNode' | 'setContentProtected'>;
+  api: Pick<SettingsApi, 'listBlocked' | 'unblockIdentity' | 'setContentProtected'>;
   /** Where the block of screen captures, locking with Windows and Protección reforzada are kept. */
   prefs: Prefs;
   /** Linux cannot keep a window out of captures, and only Windows locks Trino with it. */
   platform: SettingsPlatform;
-  /** A contact was unblocked: the shell reads its contacts again. */
+  /** Someone was unblocked: the shell reads its contacts again. */
   onContactsChanged?(): void;
   /** Protección reforzada changed the auto-lock: App applies it at once. */
   onAutolockChanged?(minutes: number): void;
@@ -102,7 +103,7 @@ export function PrivacySection({
 }: PrivacySectionProps) {
   const t = useT();
   const netStatus = useNetStatus(net ?? null);
-  const [nodes, setNodes] = useState<readonly NodeInfo[] | null>(null);
+  const [blocked, setBlocked] = useState<readonly BlockedView[] | null>(null);
   const [loadFailed, setLoadFailed] = useState(false);
   const [view, setView] = useState<View>('main');
   // After the first view, a change of view moves the focus to the new heading.
@@ -150,10 +151,10 @@ export function PrivacySection({
     if (!prefs.setBlockCaptures(on)) setCapturesError('save');
   };
 
-  /** Reads the contacts; resolves to whether they could be read. */
+  /** Reads whom you blocked; resolves to whether it could be read. */
   const load = useCallback(async () => {
     try {
-      setNodes(await api.listNodes());
+      setBlocked(await api.listBlocked());
       setLoadFailed(false);
       return true;
     } catch {
@@ -165,8 +166,6 @@ export function PrivacySection({
   useEffect(() => {
     void load();
   }, [load]);
-
-  const blocked = useMemo(() => (nodes ?? []).filter(contact => contact.blocked), [nodes]);
 
   const rows = useMemo<SettingsRowItem[]>(
     () => [
@@ -186,14 +185,15 @@ export function PrivacySection({
       {
         id: 'blocked',
         label: t('settings2.privacy.blocked'),
-        value: nodes === null ? undefined : blocked.length === 0 ? t('settings2.privacy.blockedNone') : String(blocked.length),
+        value:
+          blocked === null ? undefined : blocked.length === 0 ? t('settings2.privacy.blockedNone') : String(blocked.length),
         onSelect: () => {
           setMoved(true);
           setView('blocked');
         },
       },
     ],
-    [t, nodes, blocked, net, netStatus],
+    [t, blocked, net, netStatus],
   );
 
   const onDevice = useMemo<SettingsRowItem[]>(
@@ -215,18 +215,17 @@ export function PrivacySection({
     return (
       <BlockedContactsView
         autoFocus
-        blocked={nodes === null ? null : blocked}
+        blocked={blocked}
         loadFailed={loadFailed}
         onRetry={load}
         onBack={() => setView('main')}
-        onUnblock={async handle => {
-          await api.blockNode(handle, false);
+        onUnblock={async key => {
+          const gone = await api.unblockIdentity(key);
           // Unblocked, even if the list cannot be read again just now.
-          setNodes(current =>
-            current ? current.map(contact => (contact.handle === handle ? { ...contact, blocked: false } : contact)) : current,
-          );
+          setBlocked(current => (current ? current.filter(view => view.key !== key) : current));
           onContactsChanged?.();
           await load();
+          return gone;
         }}
       />
     );

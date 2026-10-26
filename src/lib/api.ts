@@ -228,6 +228,11 @@ export const COMMAND_ERROR_CODES = [
   'same_as_passphrase',
   'like_passphrase',
   'choose_another',
+  // Uso responsable (UR-2): a key the person to block proved they hold is
+  // another contact's, so nothing was blocked; and a message, file, call or
+  // handshake to someone you blocked, so nothing was sent.
+  'key_clash',
+  'blocked',
 ] as const;
 
 export type CommandErrorCode = (typeof COMMAND_ERROR_CODES)[number];
@@ -332,6 +337,8 @@ export interface GroupInfo {
   members: string[];
   // The admin removed us or deleted the group (W8, K10); optional until then.
   ended?: boolean;
+  // Someone you blocked is a member (UR-2); only `listGroups` tells.
+  has_blocked?: boolean;
 }
 
 export interface IncomingGroupMessageEvent {
@@ -459,7 +466,51 @@ export interface ContactPreview {
   handle: string;
   fingerprint: string;
   identity_digest: string;
-  existing: { handle: string; same_keys: boolean } | null;
+  // `blocked`: that contact is someone you blocked (UR-2); its old identity
+  // stays blocked if you replace its keys.
+  existing: { handle: string; same_keys: boolean; blocked?: boolean } | null;
+}
+
+// Uso responsable (UR-2): whom to block, as `block_cmds.rs` takes it.
+export type BlockTarget =
+  | { kind: 'contact'; handle: string }
+  | { kind: 'member'; gid: string; ik_sign_pub: string };
+
+// Where a block was made: Settings shows "~" for someone known only from a group.
+export type BlockOrigin = 'contact' | 'request' | 'group' | 'report' | 'invitation';
+
+// A group you share with someone, for the confirmation (decision U5).
+export interface SharedGroup {
+  gid: string;
+  name: string;
+  i_administer: boolean;
+  they_administer: boolean;
+}
+
+// What the confirmation says before anything is blocked.
+export interface BlockPreview {
+  label: string;
+  // Their identity key: what `removeGroupMember` takes.
+  ik_sign_pub: string;
+  fingerprint: string;
+  // Their name among your contacts, if they are one.
+  contact: string | null;
+  shared_groups: SharedGroup[];
+  // A key they proved they hold is another contact's: blocking would fail with `key_clash`.
+  clash: boolean;
+  blocked: boolean;
+}
+
+// One row of Ajustes › Privacidad › Bloqueados.
+export interface BlockedView {
+  // What `unblockIdentity` takes.
+  key: string;
+  label: string;
+  // Empty when their keys were not all known (a block of before UR-2).
+  fingerprint: string;
+  blocked_at: number;
+  from: BlockOrigin;
+  contact: string | null;
 }
 
 // A member of a group as its roster names it (K9), matched to a contact by key.
@@ -473,6 +524,8 @@ export interface GroupMember {
   is_admin: boolean;
   is_self: boolean;
   via_group?: string | null;
+  // Someone you blocked (UR-2).
+  blocked?: boolean;
 }
 
 export interface ContactKeyMismatchEvent {
@@ -685,6 +738,13 @@ export const api = {
   // member and renaming answer with the group as it is after the change;
   // leaving and deleting answer with nothing.
   groupMembers: (gid: string): Promise<GroupMember[]> => invoke('group_members', { gid }),
+  // UR-2: blocking by identity. `blockIdentity` rejects with `key_clash` when
+  // a key they proved they hold is another contact's (then nothing changed),
+  // and with `not_found` for someone unknown.
+  blockPreview: (target: BlockTarget): Promise<BlockPreview> => invoke('block_preview', { target }),
+  blockIdentity: (target: BlockTarget): Promise<BlockedView> => invoke('block_identity', { target }),
+  unblockIdentity: (key: string): Promise<BlockedView> => invoke('unblock_identity', { key }),
+  listBlocked: (): Promise<BlockedView[]> => invoke('list_blocked'),
   removeGroupMember: (gid: string, ikSignPub: string): Promise<GroupInfo> =>
     invoke('remove_group_member', { gid, ikSignPub }),
   renameGroup: (gid: string, name: string): Promise<GroupInfo> => invoke('rename_group', { gid, name }),

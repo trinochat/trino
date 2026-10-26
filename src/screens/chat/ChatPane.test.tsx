@@ -144,6 +144,18 @@ describe('ChatPane', () => {
     expect(items()).toEqual(['Copiar', 'Reenviar', 'Borrar para mí']);
   });
 
+  // UR-2 (PropBloquear card 5): one grey line, and the details, where "Salir del grupo" is.
+  it('says in a group that someone you blocked is in it', () => {
+    const onOpenDetails = vi.fn();
+    show({ convo: { kind: 'group', gid: 'g1' }, header: { ...FAMILIA, hasBlocked: true }, onCall: undefined, onOpenDetails });
+    const line = screen.getByText('Hay alguien que bloqueaste en este grupo. No ves sus mensajes.');
+    fireEvent.click(within(line.parentElement!).getByRole('button', { name: 'Ver detalles' }));
+    expect(onOpenDetails).toHaveBeenCalledTimes(1);
+    cleanup();
+    show({ convo: { kind: 'group', gid: 'g1' }, header: FAMILIA, onCall: undefined });
+    expect(screen.queryByText(/Hay alguien que bloqueaste/)).toBeNull();
+  });
+
   it('copies a message and says so', async () => {
     const writeText = vi.fn(async (_text: string) => {});
     Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText } });

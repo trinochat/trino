@@ -84,6 +84,7 @@ import { UpdateNeededDialog } from '../net/UpdateNeededDialog';
 import { WithoutTorDialog } from '../net/WithoutTorDialog';
 import { useInvites } from './useInvites';
 import { useStrangerAttempts } from './useStrangerAttempts';
+import { BlockDialog, type BlockDialogApi } from '../block/BlockDialog';
 
 /**
  * The longest text the composer sends, as it counts. The relays drop events
@@ -96,6 +97,8 @@ export const MAX_TEXT_LENGTH = 6_000;
 export interface ShellScreenProps {
   me: { handle: string; avatar: string | null; fingerprint: string; identityDigest: string | null };
   api: ShellApi;
+  /** Blocking from a row's menu (UR-2); without it the menu offers no Bloquear. */
+  block?: BlockDialogApi;
   events: ShellEvents;
   slots: ShellSlots;
   call: CallSlot;
@@ -135,7 +138,9 @@ type Overlay =
   | { kind: 'torFailed' }
   | { kind: 'withoutTor' }
   /** "Trino necesita actualizarse" (card 9): Arti too old for the Tor network. */
-  | { kind: 'updateNeeded' };
+  | { kind: 'updateNeeded' }
+  /** The confirmation to block a contact, from its row's menu (UR-2, PropBloquear card 1). */
+  | { kind: 'block'; handle: string };
 
 /** Where the focus goes once a change took the control that had it off the page. */
 type FocusTarget = 'main' | 'settings' | { row: string | null };
@@ -468,9 +473,14 @@ export function ShellScreen(props: ShellScreenProps) {
   });
   const canCall = useStable(callable);
   const onCallFromRow = useStable((handle: string, video: boolean) => call.start(handle, video));
+  const canBlock = useStable((handle: string) => {
+    const node = nodeOf(handle);
+    return props.block !== undefined && node !== undefined && !node.blocked;
+  });
+  const onBlockFromRow = useStable((handle: string) => setOverlay({ kind: 'block', handle }));
   const rowActions: InboxRowActions = useMemo(
-    () => ({ onToggleMuted, onOpenDetails, canCall, onCall: onCallFromRow }),
-    [onToggleMuted, onOpenDetails, canCall, onCallFromRow],
+    () => ({ onToggleMuted, onOpenDetails, canCall, onCall: onCallFromRow, canBlock, onBlock: onBlockFromRow }),
+    [onToggleMuted, onOpenDetails, canCall, onCallFromRow, canBlock, onBlockFromRow],
   );
 
   // The marks are read on every render, as before; the chats are built again only when one changed.
@@ -583,6 +593,7 @@ export function ShellScreen(props: ShellScreenProps) {
             memberCount: group?.member_count ?? 0,
             ended: group?.ended ?? false,
             ttlSeconds: prefs.getTtl(key),
+            hasBlocked: group?.has_blocked === true,
           };
     const chatProps: ChatPaneProps = {
       convo: ref,
@@ -675,7 +686,11 @@ export function ShellScreen(props: ShellScreenProps) {
           onVerify: () => setOverlay({ kind: 'verify', handle: node.handle }),
           onRenamed: to => renameContact(node.handle, to),
           onRemoved: () => removeContact(node.handle),
-          onChanged: () => void conv.refreshNodes(),
+          // A block changes the contacts and the groups that say someone blocked is in them.
+          onChanged: () => {
+            void conv.refreshNodes();
+            void conv.refreshGroups();
+          },
         });
       }
     } else if (open.kind === 'group') {
@@ -793,6 +808,28 @@ export function ShellScreen(props: ShellScreenProps) {
       ) : (
         <WithoutTorDialog api={net} onClose={closeTor} onDone={closeTor} />
       );
+  } else if (shown?.kind === 'block' && props.block) {
+    const { handle } = shown;
+    const refreshAll = () => {
+      void conv.refreshNodes();
+      void conv.refreshGroups();
+    };
+    overlayContent = (
+      <BlockDialog
+        target={{ kind: 'contact', handle }}
+        name={handle}
+        api={props.block}
+        onClose={closeOverlay}
+        onBlocked={() => {
+          closeOverlay();
+          refreshAll();
+        }}
+        onLeftGroup={gid => {
+          refreshAll();
+          if (open?.kind === 'group' && open.gid === gid) leaveGroup(gid);
+        }}
+      />
+    );
   } else if (shown?.kind === 'forward') {
     const { from, key } = shown;
     overlayContent = (

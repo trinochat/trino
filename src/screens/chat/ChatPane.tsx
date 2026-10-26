@@ -230,6 +230,12 @@ export function ChatPane(props: ChatPaneProps) {
       {header.kind === 'contact' && header.trust === 'keyChanged' && (
         <KeyChangeBanner name={header.name} onVerify={props.onVerify} onAcknowledge={props.onAcknowledgeKeyChange} />
       )}
+      {header.kind === 'group' && header.hasBlocked ? (
+        <div className="flex flex-wrap items-center justify-center gap-3 border-b border-ui-line px-4 py-2 text-center text-ui-md text-ui-muted">
+          <p className="m-0 min-w-0 flex-[1_1_16rem]">{t('block.inGroup')}</p>
+          <Button onClick={props.onOpenDetails}>{t('chat2.openDetails')}</Button>
+        </div>
+      ) : null}
       {header.kind === 'contact' && props.emergencyWarning ? (
         <EmergencyWarningStrip
           name={header.name}

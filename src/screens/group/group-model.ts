@@ -28,6 +28,8 @@ export interface GroupMemberView {
   isSelf: boolean;
   isAdmin: boolean;
   trust: MemberTrust;
+  /** Someone you blocked (UR-2). */
+  blocked: boolean;
 }
 
 function trustOf(member: GroupMember, isVerified: (handle: string, fingerprint: string) => boolean): MemberTrust {
@@ -63,6 +65,7 @@ export function buildMemberViews(
         isSelf: member.is_self,
         isAdmin: member.is_admin,
         trust: trustOf(member, isVerified),
+        blocked: member.blocked === true,
       };
     })
     .sort((a, b) => rank(a) - rank(b) || collator.compare(a.name, b.name) || (a.key < b.key ? -1 : 1));

@@ -13,7 +13,9 @@
  *   its own (plan-cambios-11oct §10).
  * - Yours, on this device: a private note and the timer of your new
  *   messages in this chat, in the device's preferences.
- * - Block, and remove after an alert dialog.
+ * - Block, after its confirmation (uso responsable UR-2, PropBloquear card
+ *   3: `BlockDialog`), and unblock, which says what does not come back
+ *   (R-24); and remove after an alert dialog.
  *
  * Renaming and removing move or forget what the preferences keep for the
  * contact (its note, timer and verification), then tell the shell.
@@ -25,13 +27,15 @@ import { useT } from '../../lib/i18n';
 import { identityInitials } from '../../lib/initials';
 import { prefs as devicePrefs, type Prefs } from '../../lib/prefs';
 import { Avatar, Button, Dialog, Field, iconSize, IconButton, Select, Textarea, TrustBadge } from '../../ui';
+import { BlockDialog, type BlockDialogApi } from '../block/BlockDialog';
 import { ErrorLine } from '../settings/ErrorLine';
 import type { ContactDetailsSlotProps, Trust } from '../types';
 import { isContactName, RenameContactDialog, renameErrorOf } from './RenameContactDialog';
 
-export interface ContactDetailsApi {
+export interface ContactDetailsApi extends BlockDialogApi {
   renameNode(oldHandle: string, newHandle: string): Promise<void>;
   removeNode(handle: string): Promise<void>;
+  /** Unblocking, by identity: every block that names this contact goes. */
   blockNode(handle: string, blocked: boolean): Promise<void>;
 }
 
@@ -82,7 +86,9 @@ export function ContactDetailsPanel({
   const [note, setNote] = useState(() => prefs.getNote(handle));
   const [ttl, setTtl] = useState(() => prefs.getTtl(key));
   const [blocked, setBlocked] = useState(node.blocked === true);
-  const [dialog, setDialog] = useState<'rename' | 'remove' | null>(null);
+  const [dialog, setDialog] = useState<'rename' | 'remove' | 'block' | null>(null);
+  /** What blocking or unblocking just did, said once until another contact shows. */
+  const [blockNote, setBlockNote] = useState<'block.done' | 'block.unblocked' | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<'block' | 'name' | 'remove' | null>(null);
   const [removeFailed, setRemoveFailed] = useState(false);
@@ -97,6 +103,7 @@ export function ContactDetailsPanel({
     setTtl(prefs.getTtl(key));
     setBlocked(node.blocked === true);
     setDialog(null);
+    setBlockNote(null);
     setError(null);
     setRemoveFailed(false);
   }
@@ -124,18 +131,27 @@ export function ContactDetailsPanel({
     }
   };
 
-  const toggleBlock = async () => {
+  const unblock = async () => {
     setBusy('block');
     setError(null);
+    setBlockNote(null);
     try {
-      await api.blockNode(handle, !blocked);
-      setBlocked(!blocked);
+      await api.blockNode(handle, false);
+      setBlocked(false);
+      setBlockNote('block.unblocked');
       onChanged();
     } catch {
       setError('contactInfo.errBlock');
     } finally {
       setBusy(null);
     }
+  };
+
+  const blockedNow = () => {
+    setDialog(null);
+    setBlocked(true);
+    setBlockNote('block.done');
+    onChanged();
   };
 
   const remove = async () => {
@@ -255,10 +271,21 @@ export function ContactDetailsPanel({
           className="self-start"
           leadingIcon={<Ban {...iconSize('md')} />}
           loading={busy === 'block'}
-          onClick={() => void toggleBlock()}
+          onClick={() => {
+            if (blocked) void unblock();
+            else {
+              setBlockNote(null);
+              setDialog('block');
+            }
+          }}
         >
           {t(blocked ? 'contactInfo.unblock' : 'contactInfo.block')}
         </Button>
+        {blockNote ? (
+          <p role="status" className="m-0 text-ui-md leading-normal text-ui-ink">
+            {t(blockNote, { name: handle })}
+          </p>
+        ) : null}
       </div>
 
       {error ? <ErrorLine>{t(error)}</ErrorLine> : null}
@@ -267,6 +294,16 @@ export function ContactDetailsPanel({
         {t('contactInfo.remove')}
       </Button>
 
+      {dialog === 'block' ? (
+        <BlockDialog
+          target={{ kind: 'contact', handle }}
+          name={handle}
+          api={api}
+          onBlocked={blockedNow}
+          onClose={() => setDialog(null)}
+          onLeftGroup={() => onChanged()}
+        />
+      ) : null}
       {dialog === 'rename' ? (
         <RenameContactDialog
           name={handle}

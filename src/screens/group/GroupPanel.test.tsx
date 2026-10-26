@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
-import type { GroupInfo, GroupMember, NodeInfo } from '../../lib/api';
+import type { BlockTarget, GroupInfo, GroupMember, NodeInfo } from '../../lib/api';
 import { I18nContext, makeT } from '../../lib/i18n';
 import { LangCtx } from '../../lib/i18n-context';
 import { createPrefs, type PrefsStorage } from '../../lib/prefs';
@@ -61,6 +61,24 @@ function mount({ members = AS_MEMBER, group = {}, props = {}, membersFail = fals
     renameGroup: vi.fn(async (_gid: string, name: string) => ({ ...GROUP, name })),
     leaveGroup: vi.fn(async (_gid: string) => {}),
     deleteGroup: vi.fn(async (_gid: string) => {}),
+    // UR-2: blocking a member, a contact or not.
+    blockPreview: vi.fn(async (target: BlockTarget) => ({
+      label: 'Ximena',
+      ik_sign_pub: target.kind === 'member' ? target.ik_sign_pub : '',
+      fingerprint: '',
+      contact: null,
+      shared_groups: [],
+      clash: false,
+      blocked: false,
+    })),
+    blockIdentity: vi.fn(async (_target: BlockTarget) => ({
+      key: 'k-x',
+      label: 'Ximena',
+      fingerprint: '',
+      blocked_at: 0,
+      from: 'group' as const,
+      contact: null,
+    })),
   };
   if (membersFail) api.groupMembers.mockRejectedValueOnce(new Error('io'));
   const handlers = { onClose: vi.fn(), onChanged: vi.fn(), onOpenContact: vi.fn(), onLeft: vi.fn() };
@@ -368,5 +386,36 @@ describe('GroupPanel', () => {
     const { onClose } = mount();
     fireEvent.click(screen.getByRole('button', { name: 'Cerrar' }));
     expect(onClose).toHaveBeenCalled();
+  });
+});
+
+// UR-2 (PropBloquear card 4): anyone in the group can be blocked, contact or not, after the same confirmation.
+describe('GroupPanel, blocking a member', () => {
+  it('blocks a member who is no contact after the confirmation, and reads the members again', async () => {
+    const { api, onChanged } = mount({ members: AS_ADMIN, group: { is_admin: true } });
+    fireEvent.click(await screen.findByRole('button', { name: 'Bloquear a Ximena' }));
+    const dialog = await screen.findByRole('alertdialog', { name: '¿Bloquear a ~Ximena?' });
+    expect(api.blockIdentity).not.toHaveBeenCalled();
+    fireEvent.click(await within(dialog).findByRole('button', { name: 'Bloquear' }));
+    await waitFor(() => expect(api.blockIdentity).toHaveBeenCalledWith({ kind: 'member', gid: 'g1', ik_sign_pub: 'k-x' }));
+    await waitFor(() => expect(api.groupMembers).toHaveBeenCalledTimes(2));
+    expect(onChanged).toHaveBeenCalled();
+    expect(screen.queryByRole('alertdialog')).toBeNull();
+  });
+
+  it('says who is blocked, and offers no Bloquear nor Escribirle for them, nor anything for you', async () => {
+    mount({
+      members: [
+        member('k-mom', 'Mamá', { is_admin: true }),
+        member('k-me', 'Rafa', { is_self: true, local_handle: null }),
+        member('k-lu', 'Lucía', { via_group: 'g1', blocked: true }),
+      ],
+    });
+    const lucia = (await screen.findByText('Lucía')).closest('li')!;
+    expect(within(lucia).getByText('Bloqueado')).toBeTruthy();
+    expect(within(lucia).queryByRole('button', { name: /Bloquear/ })).toBeNull();
+    expect(within(lucia).queryByRole('button', { name: /Escribir/ })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Bloquear a Tú' })).toBeNull();
+    expect(screen.getByRole('button', { name: 'Bloquear a Mamá' })).toBeTruthy();
   });
 });

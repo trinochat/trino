@@ -4,6 +4,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { holdAccessibility, holdAppearance, holdScanLines } from '../design/apply';
 import { AppearanceProvider } from '../design/useAppearance';
 import type {
+  BlockTarget,
+  BlockedView,
   CallEventWire,
   CallLogWire,
   CallSignalEvent,
@@ -175,6 +177,37 @@ function setup({
     contacts = contacts.map(other => (other.handle === handle ? { ...other, blocked } : other));
   });
   const shareBundle = vi.fn(async () => BUNDLE);
+  // UR-2: blocks by identity, kept on the contacts here.
+  const blockedViews = (): BlockedView[] =>
+    contacts
+      .filter(other => other.blocked)
+      .map(other => ({
+        key: `key-${other.handle}`,
+        label: other.handle,
+        fingerprint: other.fingerprint,
+        blocked_at: 1_760_443_200,
+        from: 'contact' as const,
+        contact: other.handle,
+      }));
+  const blockPreview = vi.fn(async (target: BlockTarget) => ({
+    label: target.kind === 'contact' ? target.handle : '',
+    ik_sign_pub: 'ab'.repeat(32),
+    fingerprint: '',
+    contact: target.kind === 'contact' ? target.handle : null,
+    shared_groups: [],
+    clash: false,
+    blocked: false,
+  }));
+  const blockIdentity = vi.fn(async (target: BlockTarget) => {
+    const handle = target.kind === 'contact' ? target.handle : '';
+    await blockNode(handle, true);
+    return blockedViews().find(view => view.contact === handle)!;
+  });
+  const unblockIdentity = vi.fn(async (key: string) => {
+    const gone = blockedViews().find(view => view.key === key)!;
+    await blockNode(gone.label, false);
+    return gone;
+  });
   const api: MainApi = {
     ...shell,
     shareBundle,
@@ -195,6 +228,8 @@ function setup({
     renameNode: vi.fn(async () => {}),
     removeNode: vi.fn(async () => {}),
     blockNode,
+    blockPreview,
+    blockIdentity,
     recordCall: vi.fn(async (peer: string, call: CallEventWire, startedAt: number): Promise<CallLogWire> => ({
       peer,
       ts: startedAt,
@@ -209,6 +244,8 @@ function setup({
       }),
       listNodes: vi.fn(async () => contacts),
       blockNode,
+      listBlocked: vi.fn(async () => blockedViews()),
+      unblockIdentity,
     }),
     shareBundle,
   };
@@ -631,7 +668,7 @@ describe('MainScreen: Settings in the main pane', () => {
     expect(screen.queryByRole('textbox', { name: 'Mensaje para Ana' })).toBeNull();
     await openSettings();
     await goTo('Privacidad');
-    fireEvent.click(await screen.findByRole('button', { name: /Contactos bloqueados\s*1/ }));
+    fireEvent.click(await screen.findByRole('button', { name: /Bloqueados\s*1/ }));
     fireEvent.click(await screen.findByRole('button', { name: 'Desbloquear a Ana' }));
     await waitFor(() => expect(screen.queryByRole('button', { name: 'Desbloquear a Ana' })).toBeNull());
 

@@ -227,6 +227,10 @@ function PreviewCard({ state, card, dispatch, onSubmit, onCancel }: PreviewCardP
           />
         </Field>
       )}
+      {conflict?.kind === 'nameTaken' && (state.kind === 'ready' || state.kind === 'adding') && state.card.preview.existing?.blocked ? (
+        // UR-2 (R-23): the identity it had stays blocked; the new keys are someone else.
+        <p className="m-0 text-ui-md leading-normal text-ui-ink">{t('block.replaceBlocked', { name: conflict.handle })}</p>
+      ) : null}
       {conflict?.kind === 'nameTaken' && (
         <Checkbox
           label={t('contacts.add.replace', { name: conflict.handle })}

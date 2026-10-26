@@ -5,8 +5,9 @@
  * the panel's `capabilities` hide what needs them.
  */
 import type { GroupInfo, GroupMember } from '../../lib/api';
+import type { BlockDialogApi } from '../block/BlockDialog';
 
-export interface GroupApi {
+export interface GroupApi extends BlockDialogApi {
   createGroup(name: string): Promise<GroupInfo>;
   addGroupMember(gid: string, friendHandle: string): Promise<GroupInfo>;
   /** The roster's members, matched to your contacts by key (K9). */

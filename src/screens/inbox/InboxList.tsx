@@ -19,9 +19,11 @@
  * elsewhere: a group, Silenciar or Activar sonido and Ver detalles; a
  * contact, Llamada de voz and Videollamada when you can call them, and Ver
  * detalles; Novedades, Silenciar or Activar sonido. A contact cannot be
- * muted. The row stays marked while its menu is open.
+ * muted. After a line, Bloquear for a contact the shell can block (uso
+ * responsable UR-2, PropBloquear card 1): it opens the confirmation, never
+ * blocks in one click. The row stays marked while its menu is open.
  */
-import { Bell, BellOff, Info, Phone, Video } from 'lucide-react';
+import { Ban, Bell, BellOff, Info, Phone, Video } from 'lucide-react';
 import { memo, useState } from 'react';
 import { rowTime } from '../../lib/dates';
 import { useT } from '../../lib/i18n';
@@ -38,6 +40,10 @@ export interface InboxRowActions {
   /** Whether a contact can be called: not one you blocked. */
   canCall(handle: string): boolean;
   onCall(handle: string, video: boolean): void;
+  /** Whether a contact can be blocked from here: not one blocked already (UR-2). */
+  canBlock?(handle: string): boolean;
+  /** Opens the confirmation to block a contact. */
+  onBlock?(handle: string): void;
 }
 
 export interface InboxListProps {
@@ -76,6 +82,13 @@ function rowEntries(item: InboxItem, actions: InboxRowActions, t: (key: string) 
   }
   if (ref.kind !== 'channel') {
     entries.push({ id: 'details', label: t('inbox.details'), icon: Info, onSelect: () => actions.onOpenDetails(ref) });
+  }
+  const { onBlock } = actions;
+  if (ref.kind === 'contact' && onBlock && actions.canBlock?.(ref.handle)) {
+    entries.push(
+      { id: 'sep-block', separator: true },
+      { id: 'block', label: t('block.confirm'), icon: Ban, tone: 'danger', onSelect: () => onBlock(ref.handle) },
+    );
   }
   return entries;
 }

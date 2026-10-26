@@ -40,6 +40,8 @@ export const settingsBackend: SettingsBackend = {
   getVersion,
   listNodes: api.listNodes,
   blockNode: api.blockNode,
+  listBlocked: api.listBlocked,
+  unblockIdentity: api.unblockIdentity,
   shareBundle: api.shareBundle,
   setContentProtected: appWindow.setContentProtected,
 };

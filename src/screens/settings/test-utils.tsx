@@ -6,7 +6,7 @@ import { render, type RenderResult } from '@testing-library/react';
 import type { ReactElement, ReactNode } from 'react';
 import { vi } from 'vitest';
 import type { AppearanceHost } from '../../design/apply';
-import type { NodeInfo, ProfileResponse } from '../../lib/api';
+import type { BlockedView, NodeInfo, ProfileResponse } from '../../lib/api';
 import { I18nContext, makeT, type Lang } from '../../lib/i18n';
 import { LangCtx } from '../../lib/i18n-context';
 import { createPrefs, type Prefs, type PrefsStorage } from '../../lib/prefs';
@@ -47,6 +47,19 @@ export function node(handle: string, extra: Partial<NodeInfo> = {}): NodeInfo {
   return { handle, fingerprint: '1111.2222.3333.4444', has_session: true, added_at: 0, ...extra };
 }
 
+/** Someone blocked on 14 Oct 2025, at noon (UR-2): a contact named `label`, unless `extra` says otherwise. */
+export function blockedView(label: string, extra: Partial<BlockedView> = {}): BlockedView {
+  return {
+    key: `key-${label}`,
+    label,
+    fingerprint: 'ab12.cd34.ef56.7890',
+    blocked_at: 1_760_443_200,
+    from: 'contact',
+    contact: label,
+    ...extra,
+  };
+}
+
 /** A backend that answers like a fresh identity; each test overrides what it needs. */
 export function fakeApi(overrides: Partial<SettingsApi> = {}): SettingsApi {
   return {
@@ -83,6 +96,8 @@ export function fakeApi(overrides: Partial<SettingsApi> = {}): SettingsApi {
     getVersion: vi.fn(async () => '0.1.0'),
     listNodes: vi.fn(async () => []),
     blockNode: vi.fn(async () => {}),
+    listBlocked: vi.fn(async () => []),
+    unblockIdentity: vi.fn(async (key: string) => blockedView(key)),
     setContentProtected: vi.fn(async () => {}),
     ...overrides,
   };

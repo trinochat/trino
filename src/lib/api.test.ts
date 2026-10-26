@@ -103,6 +103,9 @@ describe('command errors', () => {
       'same_as_passphrase',
       'like_passphrase',
       'choose_another',
+      // Blocking (UR-2): a key clash, and a message to someone blocked.
+      'key_clash',
+      'blocked',
     ]);
   });
 
@@ -111,7 +114,7 @@ describe('command errors', () => {
   // came after it.
   it('keep the code of the shared profile after the codes before it', () => {
     expect(COMMAND_ERROR_CODES.indexOf('profile_invalid')).toBe(21);
-    expect(COMMAND_ERROR_CODES[COMMAND_ERROR_CODES.length - 6]).toBe('profile_invalid');
+    expect(COMMAND_ERROR_CODES[COMMAND_ERROR_CODES.length - 8]).toBe('profile_invalid');
     expect(isCommandError({ code: 'profile_invalid', message: 'about is longer than 140' })).toBe(true);
   });
 
@@ -121,7 +124,7 @@ describe('command errors', () => {
   // code moves.
   it('keep the code of a name a contact cannot have after the codes before it', () => {
     expect(COMMAND_ERROR_CODES.indexOf('invalid_name')).toBe(22);
-    expect(COMMAND_ERROR_CODES[COMMAND_ERROR_CODES.length - 5]).toBe('invalid_name');
+    expect(COMMAND_ERROR_CODES[COMMAND_ERROR_CODES.length - 7]).toBe('invalid_name');
     expect(isCommandError({ code: 'invalid_name', message: 'that name is a group' })).toBe(true);
   });
 
@@ -135,10 +138,18 @@ describe('command errors', () => {
   });
 
   // The emergency key (CE-5, design §8.3 and §11.4). Added at the end, so
-  // no earlier code moves.
-  it('end with the codes of the emergency key', () => {
-    expect(COMMAND_ERROR_CODES.slice(-3)).toEqual(['same_as_passphrase', 'like_passphrase', 'choose_another']);
+  // no earlier code moves; only blocking's came after it.
+  it('keep the codes of the emergency key after the codes before them', () => {
+    expect(COMMAND_ERROR_CODES.slice(-5, -2)).toEqual(['same_as_passphrase', 'like_passphrase', 'choose_another']);
     expect(isCommandError({ code: 'choose_another', message: 'choose another passphrase' })).toBe(true);
+  });
+
+  // Uso responsable (UR-2): a key the person to block proved they hold is
+  // another contact's (nothing was blocked), and a message to someone you
+  // blocked (nothing was sent). Added at the end, so no earlier code moves.
+  it('end with the codes of blocking', () => {
+    expect(COMMAND_ERROR_CODES.slice(-2)).toEqual(['key_clash', 'blocked']);
+    expect(isCommandError({ code: 'blocked', message: 'blocked' })).toBe(true);
   });
 
   it('are recognised with their extra fields', () => {
@@ -180,6 +191,21 @@ describe('the new commands', () => {
     ['previewContact', () => api.previewContact('{}'), 'preview_contact', { bundleJson: '{}' }],
     ['acknowledgeKeyChange', () => api.acknowledgeKeyChange('Ana'), 'acknowledge_key_change', { handle: 'Ana' }],
     ['groupMembers', () => api.groupMembers('g1'), 'group_members', { gid: 'g1' }],
+    // UR-2: blocking by identity, a contact or a member of a group.
+    [
+      'blockPreview',
+      () => api.blockPreview({ kind: 'contact', handle: 'Ana' }),
+      'block_preview',
+      { target: { kind: 'contact', handle: 'Ana' } },
+    ],
+    [
+      'blockIdentity',
+      () => api.blockIdentity({ kind: 'member', gid: 'g1', ik_sign_pub: 'ab12' }),
+      'block_identity',
+      { target: { kind: 'member', gid: 'g1', ik_sign_pub: 'ab12' } },
+    ],
+    ['unblockIdentity', () => api.unblockIdentity('ab12'), 'unblock_identity', { key: 'ab12' }],
+    ['listBlocked', () => api.listBlocked(), 'list_blocked', undefined],
     ['removeGroupMember', () => api.removeGroupMember('g1', 'ab12'), 'remove_group_member', { gid: 'g1', ikSignPub: 'ab12' }],
     ['renameGroup', () => api.renameGroup('g1', 'Familia'), 'rename_group', { gid: 'g1', name: 'Familia' }],
     ['leaveGroup', () => api.leaveGroup('g1'), 'leave_group', { gid: 'g1' }],

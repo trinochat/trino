@@ -9,6 +9,7 @@ import type {
   EmergencyAlertEvent,
   EmergencyNetworkChoice,
   EmergencyNetworkView,
+  BlockedView,
   NodeInfo,
   NotificationTest,
   ProfileResponse,
@@ -59,6 +60,9 @@ export interface SettingsApi {
   /** For the blocked contacts and for who does not get your profile yet. */
   listNodes(): Promise<NodeInfo[]>;
   blockNode(handle: string, blocked: boolean): Promise<void>;
+  /** Privacidad › Bloqueados (UR-2): whom you blocked, contacts or not, and unblocking one by its key. */
+  listBlocked(): Promise<BlockedView[]>;
+  unblockIdentity(key: string): Promise<BlockedView>;
   /**
    * Keeps the window out of screenshots, recordings and screen sharing, or
    * lets them see it, at once (SC-1): Tauri's `setContentProtected` on the
