@@ -474,7 +474,9 @@ export interface ContactPreview {
 // Uso responsable (UR-2): whom to block, as `block_cmds.rs` takes it.
 export type BlockTarget =
   | { kind: 'contact'; handle: string }
-  | { kind: 'member'; gid: string; ik_sign_pub: string };
+  | { kind: 'member'; gid: string; ik_sign_pub: string }
+  // Whoever sent a request (UR-4), by its identity key; the request goes with the block.
+  | { kind: 'request'; ik_sign_pub: string };
 
 // Where a block was made: Settings shows "~" for someone known only from a group.
 export type BlockOrigin = 'contact' | 'request' | 'group' | 'report' | 'invitation';
@@ -511,6 +513,59 @@ export interface BlockedView {
   blocked_at: number;
   from: BlockOrigin;
   contact: string | null;
+}
+
+// Uso responsable (UR-4): Solicitudes, as `requests_cmds.rs` gives them
+// (trino-engine's requests.rs pins this JSON).
+// Where a request came from: a contact of a group who wrote apart (its name
+// is the admin's), your link, your @name or your code.
+export type RequestVia =
+  | { kind: 'group'; gid: string; group: string }
+  | { kind: 'link'; label: string }
+  | { kind: 'name' }
+  | { kind: 'code'; label: string };
+
+// One thing a request keeps: never a file's address or key, nor a photo.
+export type RequestItemView =
+  | { kind: 'text'; text: string; at: number }
+  | { kind: 'file'; mime: string; size: number; at: number }
+  | { kind: 'call'; video: boolean; at: number };
+
+export interface RequestView {
+  // Their identity key: what the actions take.
+  key: string;
+  name: string;
+  // The name is the admin's (R-10): it shows as "~name".
+  by_admin: boolean;
+  fingerprint: string;
+  via: RequestVia;
+  received_at: number;
+  last_at: number;
+  items: RequestItemView[];
+  // Items that did not fit (20 at most).
+  dropped: number;
+  // The contact whose name theirs resembles.
+  looks_like: string | null;
+}
+
+export interface RequestsView {
+  // The latest first.
+  requests: RequestView[];
+  // How many did not fit in their source's quota.
+  overflow: number;
+}
+
+// One row of Ajustes › Privacidad › Solicitudes eliminadas.
+export interface DeletedRequestView {
+  key: string;
+  label: string;
+  fingerprint: string;
+  deleted_at: number;
+}
+
+// `requests-changed`: the count, never who or what.
+export interface RequestsChangedEvent {
+  count: number;
 }
 
 // A member of a group as its roster names it (K9), matched to a contact by key.
@@ -745,6 +800,14 @@ export const api = {
   blockIdentity: (target: BlockTarget): Promise<BlockedView> => invoke('block_identity', { target }),
   unblockIdentity: (key: string): Promise<BlockedView> => invoke('unblock_identity', { key }),
   listBlocked: (): Promise<BlockedView[]> => invoke('list_blocked'),
+  // UR-4: Solicitudes. `acceptRequest` answers the new contact's name, and
+  // rejects with `key_clash` when a key of theirs is another contact's;
+  // each rejects with `not_found` for a request that is gone.
+  listRequests: (): Promise<RequestsView> => invoke('list_requests'),
+  acceptRequest: (key: string): Promise<{ handle: string }> => invoke('accept_request', { key }),
+  deleteRequest: (key: string): Promise<void> => invoke('delete_request', { key }),
+  listDeletedRequests: (): Promise<DeletedRequestView[]> => invoke('list_deleted_requests'),
+  undoDeletedRequest: (key: string): Promise<void> => invoke('undo_deleted_request', { key }),
   removeGroupMember: (gid: string, ikSignPub: string): Promise<GroupInfo> =>
     invoke('remove_group_member', { gid, ikSignPub }),
   renameGroup: (gid: string, name: string): Promise<GroupInfo> => invoke('rename_group', { gid, name }),
@@ -829,6 +892,12 @@ export async function onGroupUpdated(
   cb: (event: GroupUpdatedEvent) => void,
 ): Promise<UnlistenFn> {
   return await listen<GroupUpdatedEvent>('group-updated', e => cb(e.payload));
+}
+
+// Uso responsable (UR-4): the requests changed. Only the count: the list is
+// read with `listRequests`. Nothing rings for it.
+export async function onRequestsChanged(cb: (event: RequestsChangedEvent) => void): Promise<UnlistenFn> {
+  return await listen<RequestsChangedEvent>('requests-changed', e => cb(e.payload));
 }
 
 // A contact invited us to a group. Nothing is joined until the user accepts.

@@ -38,7 +38,7 @@ import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type Mutab
 import { THEMES } from '../../design/tokens';
 import { useAppearance } from '../../design/useAppearance';
 import { loadAnnouncementFeed, type AnnouncementFeed } from '../../lib/announcements';
-import type { NodeInfo } from '../../lib/api';
+import type { BlockTarget, NodeInfo } from '../../lib/api';
 import type { NetStatus } from '../../lib/net';
 import { convoKey } from '../../lib/convo';
 import { useT } from '../../lib/i18n';
@@ -85,6 +85,7 @@ import { WithoutTorDialog } from '../net/WithoutTorDialog';
 import { useInvites } from './useInvites';
 import { useStrangerAttempts } from './useStrangerAttempts';
 import { BlockDialog, type BlockDialogApi } from '../block/BlockDialog';
+import { RequestPane, RequestsList, useRequests, type RequestsApi } from '../requests';
 
 /**
  * The longest text the composer sends, as it counts. The relays drop events
@@ -97,8 +98,10 @@ export const MAX_TEXT_LENGTH = 6_000;
 export interface ShellScreenProps {
   me: { handle: string; avatar: string | null; fingerprint: string; identityDigest: string | null };
   api: ShellApi;
-  /** Blocking from a row's menu (UR-2); without it the menu offers no Bloquear. */
+  /** Blocking from a row's menu (UR-2) and from a request (UR-4); without it neither offers Bloquear. */
   block?: BlockDialogApi;
+  /** Solicitudes (UR-4); without it there is no row of them and nothing is asked. */
+  requests?: RequestsApi;
   events: ShellEvents;
   slots: ShellSlots;
   call: CallSlot;
@@ -139,8 +142,11 @@ type Overlay =
   | { kind: 'withoutTor' }
   /** "Trino necesita actualizarse" (card 9): Arti too old for the Tor network. */
   | { kind: 'updateNeeded' }
-  /** The confirmation to block a contact, from its row's menu (UR-2, PropBloquear card 1). */
-  | { kind: 'block'; handle: string };
+  /**
+   * The confirmation to block someone (UR-2, PropBloquear card 1): a contact
+   * from its row's menu, or whoever sent a request (UR-4).
+   */
+  | { kind: 'block'; target: BlockTarget; name: string };
 
 /** Where the focus goes once a change took the control that had it off the page. */
 type FocusTarget = 'main' | 'settings' | { row: string | null };
@@ -208,7 +214,13 @@ export function ShellScreen(props: ShellScreenProps) {
   latest.current = props;
 
   const [open, setOpen] = useState<ConvoRef | null>(null);
-  const [main, setMain] = useState<'convo' | 'settings'>('convo');
+  const [main, setMain] = useState<'convo' | 'settings' | 'request'>('convo');
+  /** What the sidebar lists: the chats, or Solicitudes in their place (UR-4). */
+  const [side, setSide] = useState<'chats' | 'requests'>('chats');
+  /** The request open in the main pane, by its key. */
+  const [openRequest, setOpenRequest] = useState<string | null>(null);
+  /** What the main pane says once a request went: deleted, or its sender blocked. */
+  const [requestDone, setRequestDone] = useState<string | null>(null);
   /** The section Settings was on: SettingsPane's, kept here for when it opens again. */
   const section = useRef<SettingsSectionId>('profile');
   const [pane, setPane] = useState<'list' | 'main'>('list');
@@ -223,7 +235,8 @@ export function ShellScreen(props: ShellScreenProps) {
   /** The call whose chat was opened from the log, to keep its row marked. */
   const [fromCall, setFromCall] = useState<{ key: string; peer: string } | null>(null);
   const [error, setError] = useState<ShellError | null>(null);
-  const [strangersSeen, setStrangersSeen] = useState(0);
+  /** "Intentó escribirte" was seen this session: it does not come back (R-30). */
+  const [strangersTold, setStrangersTold] = useState(false);
   /** Groups muted from the inbox's menu: each one renders the shell again, which reads the marks anew. */
   const [, setMutes] = useState(0);
   const [searchFocus, setSearchFocus] = useState(0);
@@ -293,6 +306,7 @@ export function ShellScreen(props: ShellScreenProps) {
   const channel = useAnnouncements(props.loadFeed ?? loadAnnouncementFeed, prefs);
   const strangers = useStrangerAttempts(events);
   const invites = useInvites(api, events);
+  const reqs = useRequests(props.requests ?? null);
   const callLog = useCallLog({
     api,
     events,
@@ -345,6 +359,7 @@ export function ShellScreen(props: ShellScreenProps) {
       if (event.key.toLowerCase() === 'k' && !latest.current.call.covering && !document.querySelector('[aria-modal="true"]')) {
         event.preventDefault();
         setTab('chats');
+        setSide('chats');
         setPane('list');
         setSearchFocus(count => count + 1);
       }
@@ -434,6 +449,35 @@ export function ShellScreen(props: ShellScreenProps) {
     moveFocus('main');
   };
 
+  // Solicitudes (UR-4): the list takes the chats' place, a request opens
+  // where a chat goes, and an answer leaves the main pane saying what it did.
+  const onOpenRequests = useStable(() => {
+    setSide('requests');
+    setPane('list');
+    void reqs.refresh();
+  });
+  const backToChats = () => {
+    setSide('chats');
+    if (main === 'request') setMain('convo');
+    setOpenRequest(null);
+    setRequestDone(null);
+    moveFocus({ row: openKey });
+  };
+  const openRequestPane = (key: string) => {
+    setOpenRequest(key);
+    setRequestDone(null);
+    setMain('request');
+    setPane('main');
+    setDetails(false);
+    moveFocus('main');
+  };
+  /** The request went: the list reads again, and the main pane says `done`. */
+  const requestGone = (done: string) => {
+    setOpenRequest(null);
+    setRequestDone(done);
+    void reqs.refresh();
+  };
+
   const renameContact = (from: string, to: string) => {
     conv.renamed(from, to);
     moveDraft(from, to);
@@ -477,7 +521,9 @@ export function ShellScreen(props: ShellScreenProps) {
     const node = nodeOf(handle);
     return props.block !== undefined && node !== undefined && !node.blocked;
   });
-  const onBlockFromRow = useStable((handle: string) => setOverlay({ kind: 'block', handle }));
+  const onBlockFromRow = useStable((handle: string) =>
+    setOverlay({ kind: 'block', target: { kind: 'contact', handle }, name: handle }),
+  );
   const rowActions: InboxRowActions = useMemo(
     () => ({ onToggleMuted, onOpenDetails, canCall, onCall: onCallFromRow, canBlock, onBlock: onBlockFromRow }),
     [onToggleMuted, onOpenDetails, canCall, onCallFromRow, canBlock, onBlockFromRow],
@@ -526,16 +572,22 @@ export function ShellScreen(props: ShellScreenProps) {
     () =>
       hasInvites
         ? { text: t('inbox.invites.notice'), onAction: () => setOverlay({ kind: 'contacts', tab: 'invites' }) }
-        : strangers > strangersSeen
+        : strangers > 0 && !strangersTold
           ? {
               text: t('inbox.stranger.notice'),
               onAction: () => {
-                setStrangersSeen(strangers);
+                setStrangersTold(true);
                 setOverlay({ kind: 'contacts', tab: 'invites' });
               },
             }
           : null,
-    [hasInvites, strangers, strangersSeen, t],
+    [hasInvites, strangers, strangersTold, t],
+  );
+  const requestCount = reqs.requests.length;
+  const hasRequests = props.requests !== undefined;
+  const requestsRow = useMemo(
+    () => (hasRequests ? { count: requestCount, onOpen: onOpenRequests } : null),
+    [hasRequests, requestCount, onOpenRequests],
   );
   const { handle: myHandle, avatar: myAvatar } = props.me;
   const me = useMemo(() => ({ handle: myHandle, ...(myAvatar && { avatarSrc: myAvatar }) }), [myHandle, myAvatar]);
@@ -628,6 +680,46 @@ export function ShellScreen(props: ShellScreenProps) {
     chat = <Fragment key={key}>{slots.chat(chatProps)}</Fragment>;
   }
 
+  /** The request open in the main pane, or what an answer to it did. */
+  function requestPane(): ReactNode {
+    const shown = openRequest ? reqs.requests.find(view => view.key === openRequest) : undefined;
+    const requestsApi = props.requests;
+    if (shown && requestsApi) {
+      const name = shown.by_admin ? `~${shown.name}` : shown.name;
+      return (
+        <RequestPane
+          key={shown.key}
+          request={shown}
+          onAccept={async () => {
+            const { handle } = await requestsApi.acceptRequest(shown.key);
+            void reqs.refresh();
+            await conv.refreshNodes();
+            setSide('chats');
+            setOpenRequest(null);
+            openConvo({ kind: 'contact', handle });
+          }}
+          onDelete={async () => {
+            await requestsApi.deleteRequest(shown.key);
+            requestGone(t('requests.deleted'));
+          }}
+          onBlock={() => setOverlay({ kind: 'block', target: { kind: 'request', ik_sign_pub: shown.key }, name })}
+          {...(single && { onBack: back })}
+        />
+      );
+    }
+    if (requestDone) {
+      return (
+        <div className="flex flex-1 flex-col items-start gap-3 px-6 py-6">
+          <p role="status" className="m-0 max-w-prose text-ui-base leading-normal text-ui-ink">
+            {requestDone}
+          </p>
+          {single ? <Button onClick={back}>{t('requests.backToList')}</Button> : null}
+        </div>
+      );
+    }
+    return <NoChatSelected />;
+  }
+
   const mainContent =
     main === 'settings'
       ? (
@@ -656,13 +748,17 @@ export function ShellScreen(props: ShellScreenProps) {
             ...(single && { onBack: back }),
             now: conv.now,
           })
-        : // No chat open: the chat's own empty pane (W3).
-          (chat ?? <NoChatSelected />);
+        : main === 'request'
+          ? requestPane()
+          : // No chat open: the chat's own empty pane (W3).
+            (chat ?? <NoChatSelected />);
 
   /** What the main pane shows: its name when it takes the focus. */
   const mainLabel =
     main === 'settings'
       ? t('inbox.profile.settings')
+      : main === 'request'
+        ? t('requests.title')
       : open?.kind === 'channel'
         ? t('inbox.channel')
         : open?.kind === 'contact'
@@ -809,20 +905,22 @@ export function ShellScreen(props: ShellScreenProps) {
         <WithoutTorDialog api={net} onClose={closeTor} onDone={closeTor} />
       );
   } else if (shown?.kind === 'block' && props.block) {
-    const { handle } = shown;
+    const { target, name } = shown;
     const refreshAll = () => {
       void conv.refreshNodes();
       void conv.refreshGroups();
     };
     overlayContent = (
       <BlockDialog
-        target={{ kind: 'contact', handle }}
-        name={handle}
+        target={target}
+        name={name}
         api={props.block}
         onClose={closeOverlay}
         onBlocked={() => {
           closeOverlay();
           refreshAll();
+          // Their request went with the block (UR-4).
+          if (target.kind === 'request') requestGone(t('block.done', { name }));
         }}
         onLeftGroup={gid => {
           refreshAll();
@@ -888,43 +986,59 @@ export function ShellScreen(props: ShellScreenProps) {
               single ? 'min-w-0 flex-1' : 'w-[20rem] shrink-0',
             )}
           >
-            <ShellInbox
-              net={net}
-              updateLater={updateLater}
-              onSeeWhat={onSeeWhat}
-              onUpdateLater={onUpdateLater}
-              wordmark={THEMES[`${appearance.style}-light`].wordmark}
-              items={items}
-              selectedKey={openKey}
-              onSelect={onSelect}
-              keepKey={kept}
-              filter={filter}
-              onFilterChange={onFilterChange}
-              search={search}
-              onSearchChange={setSearch}
-              searchRef={searchRef}
-              connection={connection}
-              me={me}
-              onNewChat={onNewChat}
-              onNewCall={onNewCall}
-              tab={tab}
-              onTabChange={setTab}
-              calls={callRows}
-              callFilter={callFilter}
-              onCallFilterChange={setCallFilter}
-              missedUnseen={callLog.missedUnseen}
-              selectedCallKey={selectedCallKey}
-              onCallBack={onCallBack}
-              onOpenCallChat={onOpenCallChat}
-              onShareCode={onShareCode}
-              onOpenSettings={onOpenSettings}
-              settingsRef={settingsRef}
-              hasContacts={!conv.nodesLoaded || conv.nodes.length > 0 || conv.groups.length > 0}
-              onAddContact={onAddContact}
-              notice={notice}
-              now={conv.now}
-              rowActions={rowActions}
-            />
+            {side === 'requests' && props.requests ? (
+              <div className="flex h-full min-h-0 flex-col gap-3 bg-ui-side px-3 py-4 text-ui-ink">
+                <RequestsList
+                  requests={reqs.requests}
+                  overflow={reqs.overflow}
+                  failed={reqs.failed}
+                  selectedKey={main === 'request' ? openRequest : null}
+                  now={conv.now}
+                  onOpen={openRequestPane}
+                  onBack={backToChats}
+                  onRetry={() => void reqs.refresh()}
+                />
+              </div>
+            ) : (
+              <ShellInbox
+                net={net}
+                updateLater={updateLater}
+                onSeeWhat={onSeeWhat}
+                onUpdateLater={onUpdateLater}
+                wordmark={THEMES[`${appearance.style}-light`].wordmark}
+                items={items}
+                selectedKey={openKey}
+                onSelect={onSelect}
+                keepKey={kept}
+                filter={filter}
+                onFilterChange={onFilterChange}
+                search={search}
+                onSearchChange={setSearch}
+                searchRef={searchRef}
+                connection={connection}
+                me={me}
+                onNewChat={onNewChat}
+                onNewCall={onNewCall}
+                tab={tab}
+                onTabChange={setTab}
+                calls={callRows}
+                callFilter={callFilter}
+                onCallFilterChange={setCallFilter}
+                missedUnseen={callLog.missedUnseen}
+                selectedCallKey={selectedCallKey}
+                onCallBack={onCallBack}
+                onOpenCallChat={onOpenCallChat}
+                onShareCode={onShareCode}
+                onOpenSettings={onOpenSettings}
+                settingsRef={settingsRef}
+                hasContacts={!conv.nodesLoaded || conv.nodes.length > 0 || conv.groups.length > 0}
+                onAddContact={onAddContact}
+                notice={notice}
+                now={conv.now}
+                rowActions={rowActions}
+                requests={requestsRow}
+              />
+            )}
           </nav>
         )}
         {mainShown && (

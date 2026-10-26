@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { DICTS, type Lang } from '../i18n';
-import { LANG_CODES, startsWithCapital } from './contract-test-utils';
+import { LANG_CODES, LINE_FRAGMENTS, startsWithCapital } from './contract-test-utils';
 import { AREAS, NAMESPACES, mergeAreas } from './index';
 import type { AreaStrings } from './types';
 
@@ -20,7 +20,7 @@ describe('the string areas', () => {
   // The old screens' area (legacy) went once I6 had removed its last texts (I7).
   // net: Tor in the app (TOR-6), every screen of it in one area.
   // emergency: the emergency key (CE-5), its page of Settings and its dialogs.
-  // safety: uso responsable (UR-2…), blocking first.
+  // safety: uso responsable (UR-2…), blocking and Solicitudes (UR-4).
   it('are the shared words, one area per unit of the redesign, Tor, the emergency key and safety', () => {
     expect(AREA_NAMES).toEqual([
       'common',
@@ -76,7 +76,7 @@ describe('the string areas', () => {
     expect(NAMESPACES.call).toEqual(['call2', 'verify']);
     expect(NAMESPACES.net).toEqual(['net']);
     expect(NAMESPACES.emergency).toEqual(['emergency']);
-    expect(NAMESPACES.safety).toEqual(['block']);
+    expect(NAMESPACES.safety).toEqual(['block', 'requests']);
   });
 });
 
@@ -107,13 +107,16 @@ describe('mergeAreas', () => {
 describe.each(LANG_CODES)('the copy in %s', lang => {
   it('starts every text with a capital letter', () => {
     const lower = entries(lang)
-      .filter(([, , text]) => !startsWithCapital(text))
+      .filter(([, key, text]) => !LINE_FRAGMENTS.has(key) && !startsWithCapital(text))
       .map(([name, key]) => `${name}: ${key}`);
     expect(lower).toEqual([]);
   });
 
-  it('promises neither message requests nor trino2 codes, which do not exist yet', () => {
+  // Solicitudes exist since UR-4, in their own prefix (and the store's file of them names
+  // them at unlock); nothing else promises them.
+  it('promises neither message requests outside Solicitudes nor trino2 codes, which do not exist yet', () => {
     const promises = entries(lang)
+      .filter(([name, key]) => !(name === 'safety' && key.startsWith('requests.')) && key !== 'integrity.item.requests')
       .filter(([, , text]) => /solicitud|solicitaç|request|trino2/i.test(text))
       .map(([name, key]) => `${name}: ${key}`);
     expect(promises).toEqual([]);

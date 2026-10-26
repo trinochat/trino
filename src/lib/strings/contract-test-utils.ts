@@ -19,6 +19,25 @@ export function startsWithCapital(text: string): boolean {
   return first === first.toUpperCase();
 }
 
+/**
+ * Pieces of a line, never a line of their own, written in lower case as the
+ * boards write them: "dice llamarse ana · por tu @nombre · huella 70A5 83C6"
+ * (Solicitudes, UR-4). Sentence case does not apply to them.
+ */
+export const LINE_FRAGMENTS: ReadonlySet<string> = new Set([
+  'requests.saysName',
+  'requests.via.name',
+  'requests.via.link',
+  'requests.via.code',
+  'requests.via.group',
+  'requests.byAdmin',
+  'requests.fingerprint',
+  'requests.kind.photo',
+  'requests.kind.video',
+  'requests.kind.audio',
+  'requests.kind.file',
+]);
+
 export interface AreaContract {
   /** Every key of the area, no more and no fewer. */
   readonly keys: readonly string[];
@@ -29,7 +48,7 @@ export interface AreaContract {
 /**
  * The contract between an area's texts and its screens, in every language:
  * exactly these keys, with these placeholders (so all languages match each
- * other), none of them empty and all in sentence case.
+ * other), none of them empty and all in sentence case but `LINE_FRAGMENTS`.
  */
 export function expectAreaContract(area: AreaStrings, contract: AreaContract): void {
   const placeholders = contract.placeholders ?? {};
@@ -50,7 +69,7 @@ export function expectAreaContract(area: AreaStrings, contract: AreaContract): v
       `${lang}: empty texts`,
     ).toEqual([]);
     expect(
-      texts.filter(([, text]) => !startsWithCapital(text)).map(([key]) => key),
+      texts.filter(([key, text]) => !LINE_FRAGMENTS.has(key) && !startsWithCapital(text)).map(([key]) => key),
       `${lang}: texts that do not start with a capital letter`,
     ).toEqual([]);
   }

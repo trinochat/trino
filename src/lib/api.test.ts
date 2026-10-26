@@ -206,6 +206,18 @@ describe('the new commands', () => {
     ],
     ['unblockIdentity', () => api.unblockIdentity('ab12'), 'unblock_identity', { key: 'ab12' }],
     ['listBlocked', () => api.listBlocked(), 'list_blocked', undefined],
+    // UR-4: Solicitudes, and blocking from one.
+    [
+      'blockIdentity for a request',
+      () => api.blockIdentity({ kind: 'request', ik_sign_pub: 'ab12' }),
+      'block_identity',
+      { target: { kind: 'request', ik_sign_pub: 'ab12' } },
+    ],
+    ['listRequests', () => api.listRequests(), 'list_requests', undefined],
+    ['acceptRequest', () => api.acceptRequest('ab12'), 'accept_request', { key: 'ab12' }],
+    ['deleteRequest', () => api.deleteRequest('ab12'), 'delete_request', { key: 'ab12' }],
+    ['listDeletedRequests', () => api.listDeletedRequests(), 'list_deleted_requests', undefined],
+    ['undoDeletedRequest', () => api.undoDeletedRequest('ab12'), 'undo_deleted_request', { key: 'ab12' }],
     ['removeGroupMember', () => api.removeGroupMember('g1', 'ab12'), 'remove_group_member', { gid: 'g1', ikSignPub: 'ab12' }],
     ['renameGroup', () => api.renameGroup('g1', 'Familia'), 'rename_group', { gid: 'g1', name: 'Familia' }],
     ['leaveGroup', () => api.leaveGroup('g1'), 'leave_group', { gid: 'g1' }],

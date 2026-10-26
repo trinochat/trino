@@ -126,6 +126,8 @@ describe('itemOf', () => {
     expect(['profiles', 'profiles.bin', 'profiles.bin.damaged'].map(itemOf)).toEqual(Array(3).fill('profiles'));
     expect(['sticker:' + 'a'.repeat(32), 'stickers/ab12.png'].map(itemOf)).toEqual(['stickers', 'stickers']);
     expect(['prefs', 'index', 'vault', 'store', 'something.else'].map(itemOf)).toEqual(['prefs', 'index', 'vault', 'store', 'other']);
+    // Solicitudes (UR-4): requests.bin, which never asks.
+    expect(itemOf('requests')).toBe('requests');
   });
 });
 

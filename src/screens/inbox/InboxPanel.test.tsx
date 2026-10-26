@@ -212,9 +212,25 @@ describe('InboxPanel: the chats', () => {
     expect(onFilterChange).toHaveBeenLastCalledWith('groups');
   });
 
-  it('has no chip for message requests in this batch', () => {
+  // Solicitudes (UR-4) are a row above the chats, never a chip.
+  it('has no chip for message requests, and no row of them while there are none', () => {
     renderEs(<InboxPanel {...props()} />);
     expect(screen.queryByText(/solicitud/i)).toBeNull();
+    cleanup();
+    renderEs(<InboxPanel {...props({ requests: { count: 0, onOpen: vi.fn() } })} />);
+    expect(screen.queryByText(/solicitud/i)).toBeNull();
+  });
+
+  // PropSolicitudes card 1: grey, no coloured dot or badge, above the chats; its number changes, nothing rings.
+  it('shows "Solicitudes (n)" above the chats while there are some, and opens them', () => {
+    const onOpen = vi.fn();
+    renderEs(<InboxPanel {...props({ requests: { count: 3, onOpen } })} />);
+    const row = screen.getByRole('button', { name: 'Solicitudes (3)' });
+    const chats = screen.getByRole('list', { name: 'Chats' });
+    expect(row.compareDocumentPosition(chats) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(classesOf(row)).toContain('text-ui-muted');
+    fireEvent.click(row);
+    expect(onOpen).toHaveBeenCalled();
   });
 
   it('applies the chip and the search, and says when nothing is left', () => {

@@ -15,6 +15,7 @@ export type ItemId =
   | 'history'
   | 'sessions'
   | 'profiles'
+  | 'requests'
   | 'stickers'
   | 'index'
   | 'vault'
@@ -86,7 +87,18 @@ const OLD_FILES: Readonly<Record<string, ItemId>> = {
   'profiles.bin.damaged': 'profiles',
 };
 
-const STORE_ITEMS: readonly ItemId[] = ['account', 'prefs', 'history', 'sessions', 'profiles', 'index', 'vault', 'store'];
+const STORE_ITEMS: readonly ItemId[] = [
+  'account',
+  'prefs',
+  'history',
+  'sessions',
+  'profiles',
+  // Solicitudes (UR-4): it never asks, it is only told.
+  'requests',
+  'index',
+  'vault',
+  'store',
+];
 
 /** What `file`, a logical name of the store or a file of before, holds. */
 export function itemOf(file: string): ItemId {

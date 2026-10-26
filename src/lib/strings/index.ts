@@ -36,8 +36,8 @@ export const NAMESPACES: Readonly<Record<AreaName, readonly string[]>> = {
   net: ['net'],
   // The emergency key (CE-5): its page of Settings, its dialogs and the network.
   emergency: ['emergency'],
-  // Uso responsable (UR-2…): blocking by identity; requests and reports later.
-  safety: ['block'],
+  // Uso responsable (UR-2…): blocking by identity and Solicitudes (UR-4); reports later.
+  safety: ['block', 'requests'],
 };
 
 /** One dictionary per language with the keys of every area. Areas never share a key. */

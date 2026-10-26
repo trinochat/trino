@@ -42,7 +42,12 @@ export interface Capabilities {
   diagnosticLog: boolean;
   /** Invitation links (INV, supplement §8): built now, turned on with Tor. */
   inviteLinks: boolean;
-  /** Message requests from people who are not contacts yet (R6b): with Tor. */
+  /**
+   * Message requests from people who are not contacts yet (R6b; uso
+   * responsable UR-4): the row "Solicitudes (n)", its list, and Ajustes ›
+   * Privacidad › Solicitudes eliminadas. What feeds them comes with UR-3 and
+   * the invitations.
+   */
   messageRequests: boolean;
   /** @names: find, register and remember them (K14): with Tor. */
   names: boolean;
@@ -61,6 +66,6 @@ export const capabilities: Readonly<Capabilities> = Object.freeze({
   manageGroups: true,
   diagnosticLog: import.meta.env.DEV,
   inviteLinks: false,
-  messageRequests: false,
+  messageRequests: true,
   names: false,
 });

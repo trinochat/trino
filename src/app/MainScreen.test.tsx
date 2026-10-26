@@ -23,6 +23,8 @@ import { encodeMeta } from '../lib/message-body';
 import type { CallSounds } from '../screens/call';
 import { fakeApi as fakeSettingsApi, fakeHost, memoryPrefs } from '../screens/settings/test-utils';
 import { fakeApi as fakeShellApi, fakeEvents } from '../screens/shell/test-fakes';
+import type { RequestsApi } from '../screens/requests';
+import { fakeRequestsApi, request } from '../screens/requests/test-support';
 import { ToastProvider } from '../ui';
 import type { Capabilities } from './capabilities';
 import type { EmergencyAlertsBackend } from './emergency-alerts';
@@ -121,7 +123,7 @@ const ALL: Capabilities = {
   manageGroups: true,
   diagnosticLog: false,
   inviteLinks: false,
-  messageRequests: false,
+  messageRequests: true,
   names: false,
 };
 
@@ -152,6 +154,8 @@ interface SetupOptions {
   inFront?: boolean;
   /** The warning to a trusted contact's side of the chats (CE-6); none by default. */
   alerts?: EmergencyAlertsBackend | null;
+  /** Solicitudes (UR-4); none by default. */
+  requests?: RequestsApi | null;
 }
 
 function setup({
@@ -164,6 +168,7 @@ function setup({
   capabilities = ALL,
   inFront = true,
   alerts = null,
+  requests = null,
 }: SetupOptions = {}) {
   let contacts = nodes;
   let profile = PROFILE;
@@ -294,6 +299,7 @@ function setup({
     // Tor's screens have tests of their own (src/screens/net).
     net: null,
     alerts,
+    requests,
   };
   const main = {
     intent,
@@ -437,6 +443,20 @@ describe('MainScreen: the chats', () => {
 });
 
 // CE-6: the warning to a trusted contact, in the chats.
+describe('MainScreen: Solicitudes (UR-4)', () => {
+  it('shows the row of requests from the backend, and only with message requests on', async () => {
+    const { api } = fakeRequestsApi({ requests: [request()], overflow: 0 });
+    setup({ requests: api });
+    expect(await screen.findByRole('button', { name: 'Solicitudes (1)' })).toBeTruthy();
+    cleanup();
+    const off = fakeRequestsApi({ requests: [request()], overflow: 0 });
+    setup({ requests: off.api, capabilities: { ...ALL, messageRequests: false } });
+    await row('Ana');
+    expect(screen.queryByText(/Solicitudes/)).toBeNull();
+    expect(off.api.listRequests).not.toHaveBeenCalled();
+  });
+});
+
 describe('MainScreen: the warning to a trusted contact', () => {
   function alertsOf(asks: string[]) {
     let heard: ((event: EmergencyAlertEvent) => void) | null = null;

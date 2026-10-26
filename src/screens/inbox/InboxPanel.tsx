@@ -3,7 +3,8 @@
  * and one button, "Nuevo chat" in Chats or "Nueva llamada" in Calls (it
  * replaces the old "+" menu); a notice only while no server is reachable
  * (David, 12 Oct 2026: no connection line while all is well); a notice of
- * invitations or of a stranger; the tabs "Chats | Llamadas · N";
+ * invitations or of a stranger; the tabs "Chats | Llamadas · N"; and, above
+ * the chats while there are any, the grey row "Solicitudes (n)" (UR-4);
  * and your profile at the foot. Chats has the search, the chips and the
  * chats; Calls has its chips, the log and its note. Without the call log
  * (K13) there are no tabs, only the chats.
@@ -25,7 +26,7 @@
  * at 200 % in a small window: #root cuts off whatever overflows
  * (accesibilidad.md §4.7, rule 9), so nothing there may only shrink.
  */
-import { Download, PhoneOutgoing, Plus, Search, WifiOff } from 'lucide-react';
+import { ChevronRight, Download, Inbox, PhoneOutgoing, Plus, Search, WifiOff } from 'lucide-react';
 import { memo, useId, useMemo, type Ref } from 'react';
 import type { TorLineTone } from '../net/net-model';
 import { useT } from '../../lib/i18n';
@@ -90,6 +91,11 @@ export interface InboxPanelProps {
    * lets it go when the chip or the chat changes.
    */
   keepKey?: string | null;
+  /**
+   * Solicitudes (UR-4): the row above the chats while there are some, which
+   * opens them. Left out without the backend for them.
+   */
+  requests?: { count: number; onOpen(): void } | null;
   /** The Settings button of the foot, for the shell to give the focus back to. */
   settingsRef?: Ref<HTMLButtonElement>;
   /** What the rows' right-click menu does (MC-2); without it, no row has one. */
@@ -119,7 +125,7 @@ const TOR_TONES: Readonly<Record<TorLineTone, string>> = {
   warn: 'font-bold text-ui-warn',
 };
 
-/** The chips of the inbox, in order; "Solicitudes" joins them with message requests (R6b). */
+/** The chips of the inbox, in order. Solicitudes are a row above the chats, not a chip (UR-4). */
 const FILTERS: readonly InboxFilter[] = ['all', 'unread', 'groups'];
 const FILTER_LABELS: Readonly<Record<InboxFilter, string>> = {
   all: 'inbox.filter.all',
@@ -134,7 +140,7 @@ const FILTER_LABELS: Readonly<Record<InboxFilter, string>> = {
 export const InboxPanel = memo(function InboxPanel(props: InboxPanelProps) {
   const t = useT();
   const searchId = useId();
-  const { connection, calls, tab, notice } = props;
+  const { connection, calls, tab, notice, requests } = props;
   const onCalls = calls !== null && tab === 'calls';
   const tor = props.tor ?? null;
   const update = props.update ?? null;
@@ -170,6 +176,21 @@ export const InboxPanel = memo(function InboxPanel(props: InboxPanelProps) {
         value={props.filter}
         onValueChange={props.onFilterChange}
       />
+      {requests && requests.count > 0 && (
+        // PropSolicitudes card 1: grey, no coloured dot or badge; its number changes, nothing rings.
+        <button
+          type="button"
+          onClick={requests.onOpen}
+          className={cx(
+            'flex min-h-11 w-full items-center gap-3 rounded-ui px-2.5 py-2 text-left font-ui text-ui-md font-semibold text-ui-muted hover:bg-ui-raised',
+            FOCUS_RING,
+          )}
+        >
+          <Inbox {...iconSize('md', 'shrink-0')} aria-hidden="true" />
+          <span className="min-w-0 flex-1">{t('requests.row', { n: requests.count })}</span>
+          <ChevronRight {...iconSize('md', 'shrink-0')} aria-hidden="true" />
+        </button>
+      )}
       <InboxList
         aria-label={t('inbox.tabs.chats')}
         items={visible}

@@ -17,6 +17,9 @@
  * - Your profile, read at the start and again once Settings saved it; and
  *   the one-time notice about the verification marks of 0.1.0, once the
  *   contacts are read, which waits while the call screen covers the shell.
+ * - Solicitudes (uso responsable UR-4), with message requests on: the row
+ *   above the chats, their list and each request, blocked through the same
+ *   confirmation as a contact.
  * - What only App does goes up through MainProps: the lock (Ctrl+L too is
  *   App's), the wipe, a new auto-lock time and the calls' gate.
  *
@@ -43,6 +46,7 @@ import {
   onHandshakeNeeded,
   onMessageReceived,
   onProfileUpdated,
+  onRequestsChanged,
   onResyncNeeded,
   onSessionEstablished,
   type NodeInfo,
@@ -58,6 +62,7 @@ import { ContactsDialog, NewChatDialog, ShareCodePanel, type ContactsApi } from 
 import { GroupPanel, NewGroupDialog, groupPrefs, type GroupApi } from '../screens/group';
 import { SettingsScreen, type SettingsPlatform } from '../screens/settings';
 import { linkBackend, netScreensApi, useLinkOpener, type LinkApi, type NetScreensApi } from '../screens/net';
+import type { RequestsApi } from '../screens/requests';
 import { ShellScreen, type ShellApi, type ShellEvents, type ShellScreenProps } from '../screens/shell';
 import type { OnboardingIntent, ShellSlots } from '../screens/types';
 import { VerifyContactDialog } from '../screens/verify';
@@ -131,6 +136,8 @@ export interface MainDeps {
   net?: NetScreensApi | null;
   /** The warning to a trusted contact's side of the chats (CE-6); null shows nothing of it. */
   alerts?: EmergencyAlertsBackend | null;
+  /** Solicitudes (UR-4), with message requests on; null shows nothing of them. */
+  requests?: RequestsApi | null;
 }
 
 /** This window through Tauri, asked for on each use, so that loading this module needs no Tauri. */
@@ -175,6 +182,12 @@ const DEVICE_DEPS: MainDeps = {
     emergencyAlerts: api.emergencyAlerts,
     answerEmergencyAlert: api.answerEmergencyAlert,
     onEmergencyAlert,
+  },
+  requests: {
+    listRequests: api.listRequests,
+    acceptRequest: api.acceptRequest,
+    deleteRequest: api.deleteRequest,
+    onRequestsChanged,
   },
 };
 
@@ -334,6 +347,7 @@ export function MainScreen({ intent, onLock, onAutolockChanged, onWiped, onCallG
         me={me}
         api={d.api}
         block={d.api}
+        {...(caps.messageRequests && d.requests && { requests: d.requests })}
         events={d.events}
         slots={slots}
         call={calls.slot}

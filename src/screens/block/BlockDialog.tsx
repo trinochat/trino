@@ -13,7 +13,8 @@
  *   contact's. Then there is no Bloquear, only the line that says so.
  *
  * Someone known only from a group shows as "~name": the admin wrote that
- * name (R-10). "Reportar también" arrives with the report (UR-5).
+ * name (R-10). Whoever sent a request (UR-4) shows as Solicitudes names
+ * them. "Reportar también" arrives with the report (UR-5).
  */
 import { Ban, CircleAlert, LogOut, UserMinus } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
@@ -82,7 +83,8 @@ export function BlockDialog({ target, name, api, onBlocked, onClose, onLeftGroup
     };
   }, [target]);
 
-  const shownName = preview ? blockedName(preview, name) : name;
+  // A request names them as Solicitudes does ("~name" only when an admin wrote it).
+  const shownName = preview && target.kind !== 'request' ? blockedName(preview, name) : name;
   const clash = preview?.clash === true || error === 'clash';
 
   const confirm = () => {

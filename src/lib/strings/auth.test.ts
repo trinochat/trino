@@ -44,7 +44,7 @@ const KEYS = [
   'integrity.title', 'integrity.body', 'integrity.listLabel',
   'integrity.item.account', 'integrity.item.prefs', 'integrity.item.history', 'integrity.item.sessions',
   'integrity.item.profiles', 'integrity.item.stickers', 'integrity.item.index', 'integrity.item.vault',
-  'integrity.item.store', 'integrity.item.other',
+  'integrity.item.store', 'integrity.item.requests', 'integrity.item.other',
   'integrity.askOlderOne', 'integrity.askOlderMany', 'integrity.askUnverified',
   'integrity.withoutOne', 'integrity.withoutMany', 'integrity.withoutUnverified',
   'integrity.risk.account', 'integrity.risk.prefs', 'integrity.risk.history', 'integrity.risk.profiles', 'integrity.risk.other',

@@ -20,6 +20,7 @@ import { ShellScreen, type ShellScreenProps } from './ShellScreen';
 import { fakeNet, UPDATES } from '../net/test-support';
 import { appearanceHost, fakeApi, fakeEvents, fakePrefs } from './test-fakes';
 import type { InboxListProps } from '../inbox/InboxList';
+import { fakeRequestsApi, request } from '../requests/test-support';
 
 /**
  * Each time the inbox's list renders (FIX-2). The real InboxList, counted:
@@ -758,6 +759,7 @@ describe('ShellScreen: contacts, invitations and Settings', () => {
     expect(lastProps(slots.contacts)).toMatchObject({ tab: 'invites', invites: [invite] });
   });
 
+  // R-30: once a session, whoever comes after.
   it('tells once of a stranger who tried to write', async () => {
     const { emit, slots } = setup();
     await row('Ana');
@@ -768,6 +770,8 @@ describe('ShellScreen: contacts, invitations and Settings', () => {
     expect(lastProps(slots.contacts)).toMatchObject({ tab: 'invites', strangerAttempts: 1 });
     act(() => lastProps(slots.contacts).onClose());
     expect(screen.queryByText(notice)).toBeNull();
+    act(() => emit.handshakeNeeded({ from_pubkey: 'bb' }));
+    expect(screen.queryByText(notice), 'not again this session').toBeNull();
   });
 
   it('opens Settings in the main pane and comes back', async () => {
@@ -921,6 +925,121 @@ describe('ShellScreen: the right-click menu of the chats', () => {
 // TOR-6 (PropTorSimple, cards 2, 3 and 5; design tests 45-47): the inbox's
 // line follows the network, "Ver qué hacer" opens "No se pudo conectar",
 // and its way out asks before anything goes without Tor.
+describe('ShellScreen: Solicitudes (UR-4)', () => {
+  const ANA_REQ = request({ looks_like: null });
+  const MARA_REQ = request({
+    key: 'cd'.repeat(32),
+    name: 'mara',
+    by_admin: true,
+    via: { kind: 'group', gid: 'g1', group: 'Familia' },
+  });
+  const blockApi = () => ({
+    blockPreview: vi.fn(async () => ({
+      label: 'ana',
+      ik_sign_pub: ANA_REQ.key,
+      fingerprint: ANA_REQ.fingerprint,
+      contact: null,
+      shared_groups: [],
+      clash: false,
+      blocked: false,
+    })),
+    blockIdentity: vi.fn(async () => ({
+      key: ANA_REQ.key,
+      label: 'ana',
+      fingerprint: ANA_REQ.fingerprint,
+      blocked_at: NOW,
+      from: 'request' as const,
+      contact: null,
+    })),
+    removeGroupMember: vi.fn(),
+    leaveGroup: vi.fn(async () => {}),
+  });
+
+  async function openRequests(over: Partial<ShellScreenProps> = {}, requests = [ANA_REQ, MARA_REQ]) {
+    const fake = fakeRequestsApi({ requests, overflow: 0 });
+    const block = blockApi();
+    const shell = setup({ requests: fake.api, block, ...over });
+    fireEvent.click(await screen.findByRole('button', { name: `Solicitudes (${requests.length})` }));
+    return { ...shell, fake, block };
+  }
+
+  it('has no row of requests without the backend for them', async () => {
+    setup();
+    await row('Ana');
+    expect(screen.queryByText(/Solicitudes/)).toBeNull();
+  });
+
+  it('opens them in place of the chats, and a request where a chat goes, with nothing to write', async () => {
+    const { slots } = await openRequests();
+    const list = await screen.findByRole('list', { name: 'Solicitudes' });
+    expect(screen.queryByRole('list', { name: 'Chats' })).toBeNull();
+    fireEvent.click(within(list).getAllByRole('button')[1]!);
+    const pane = await screen.findByRole('region', { name: 'Solicitud de ~mara' });
+    expect(within(pane).getByText('~mara está en «Familia» contigo, pero no es tu contacto.')).toBeTruthy();
+    expect(slots.chat).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('button', { name: 'Volver a los chats' }));
+    expect(await screen.findByRole('list', { name: 'Chats' })).toBeTruthy();
+  });
+
+  it('accepts a request into the chat of the new contact', async () => {
+    const { fake, slots, api } = await openRequests();
+    fake.api.acceptRequest.mockResolvedValueOnce({ handle: 'ana' });
+    fireEvent.click(within(await screen.findByRole('list', { name: 'Solicitudes' })).getAllByRole('button')[0]!);
+    const reads = api.listNodes.mock.calls.length;
+    fireEvent.click(await screen.findByRole('button', { name: 'Aceptar' }));
+    await waitFor(() => expect(fake.api.acceptRequest).toHaveBeenCalledWith(ANA_REQ.key));
+    await waitFor(() => expect(lastProps(slots.chat).convo).toEqual({ kind: 'contact', handle: 'ana' }));
+    expect(api.listNodes.mock.calls.length).toBeGreaterThan(reads);
+    expect(fake.api.listRequests.mock.calls.length).toBeGreaterThan(1);
+  });
+
+  it('deletes a request and says what that means', async () => {
+    const { fake } = await openRequests();
+    fireEvent.click(within(await screen.findByRole('list', { name: 'Solicitudes' })).getAllByRole('button')[0]!);
+    fake.api.listRequests.mockResolvedValue({ requests: [MARA_REQ], overflow: 0 });
+    fireEvent.click(await screen.findByRole('button', { name: 'Eliminar' }));
+    await waitFor(() => expect(fake.api.deleteRequest).toHaveBeenCalledWith(ANA_REQ.key));
+    expect(
+      await screen.findByText('Eliminaste la solicitud. Lo que mande en los próximos 30 días no te va a llegar.'),
+    ).toBeTruthy();
+    expect(screen.queryByRole('region', { name: 'Solicitud de ana' })).toBeNull();
+  });
+
+  // Design test 11, from Solicitudes.
+  it('blocks whoever sent a request after the confirmation, by the request', async () => {
+    const { block, fake } = await openRequests();
+    fireEvent.click(within(await screen.findByRole('list', { name: 'Solicitudes' })).getAllByRole('button')[0]!);
+    fireEvent.click(await screen.findByRole('button', { name: 'Bloquear' }));
+    const dialog = await screen.findByRole('alertdialog', { name: '¿Bloquear a ana?' });
+    expect(block.blockPreview).toHaveBeenCalledWith({ kind: 'request', ik_sign_pub: ANA_REQ.key });
+    fake.api.listRequests.mockResolvedValue({ requests: [MARA_REQ], overflow: 0 });
+    fireEvent.click(await within(dialog).findByRole('button', { name: 'Bloquear' }));
+    await waitFor(() => expect(block.blockIdentity).toHaveBeenCalledWith({ kind: 'request', ik_sign_pub: ANA_REQ.key }));
+    expect(await screen.findByText('Bloqueaste a ana.')).toBeTruthy();
+    expect(screen.queryByRole('alertdialog')).toBeNull();
+  });
+
+  it('follows one pane: the list, a request, and back each step', async () => {
+    await openRequests({ width: 600 });
+    fireEvent.click(within(await screen.findByRole('list', { name: 'Solicitudes' })).getAllByRole('button')[0]!);
+    expect(await screen.findByRole('region', { name: 'Solicitud de ana' })).toBeTruthy();
+    expect(sidebar()).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Volver a Solicitudes' }));
+    expect(await screen.findByRole('list', { name: 'Solicitudes' })).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Volver a los chats' }));
+    expect(await screen.findByRole('list', { name: 'Chats' })).toBeTruthy();
+  });
+
+  it('reads them again when their count changes, and the row follows', async () => {
+    const fake = fakeRequestsApi({ requests: [ANA_REQ], overflow: 0 });
+    setup({ requests: fake.api });
+    expect(await screen.findByRole('button', { name: 'Solicitudes (1)' })).toBeTruthy();
+    fake.api.listRequests.mockResolvedValue({ requests: [ANA_REQ, MARA_REQ], overflow: 0 });
+    act(() => fake.emit({ count: 2 }));
+    expect(await screen.findByRole('button', { name: 'Solicitudes (2)' })).toBeTruthy();
+  });
+});
+
 describe('ShellScreen: Tor', () => {
   it('shows how far Tor is, nothing once connected, and "Sin protección" while it lasts', async () => {
     const { api: net, emit } = fakeNet({ state: 'starting', pct: 40 });

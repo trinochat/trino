@@ -75,10 +75,14 @@ describe('capabilities', () => {
   });
 
   // "Construir ya, encender con Tor" (David, 11 Oct): their unit turns them on.
-  it('keeps invite links, message requests and @names off until they travel over Tor', () => {
+  it('keeps invite links and @names off until they travel over Tor', () => {
     expect(capabilities.inviteLinks).toBe(false);
-    expect(capabilities.messageRequests).toBe(false);
     expect(capabilities.names).toBe(false);
+  });
+
+  // Uso responsable UR-4: the store of requests, its commands and Solicitudes are in.
+  it('has message requests on', () => {
+    expect(capabilities.messageRequests).toBe(true);
   });
 
   it('cannot be changed while the app runs', () => {
