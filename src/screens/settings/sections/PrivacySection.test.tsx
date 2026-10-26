@@ -67,6 +67,30 @@ describe('PrivacySection', () => {
     expect(await screen.findByRole('button', { name: /Bloqueados\s*Ninguno/ })).toBeTruthy();
   });
 
+  // UR-4: Solicitudes eliminadas, under Bloqueados, when the backend has them.
+  it('counts the deleted requests, opens them and undoes one', async () => {
+    let current = [{ key: 'key-spam', label: 'spam', fingerprint: 'AB12CD34', deleted_at: 1_760_400_000 }];
+    const api = fakeApi({
+      listDeletedRequests: vi.fn(async () => current),
+      undoDeletedRequest: vi.fn(async (key: string) => {
+        current = current.filter(view => view.key !== key);
+      }),
+    });
+    renderEs(<PrivacySection api={api} prefs={memoryPrefs().prefs} platform="windows" />);
+    fireEvent.click(await screen.findByRole('button', { name: /Solicitudes eliminadas\s*1/ }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Deshacer: spam' }));
+    await waitFor(() => expect(api.undoDeletedRequest).toHaveBeenCalledWith('key-spam'));
+    expect(await screen.findByText('No has eliminado solicitudes.')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Volver a Privacidad' }));
+    expect(await screen.findByRole('button', { name: /Solicitudes eliminadas\s*Ninguna/ })).toBeTruthy();
+  });
+
+  it('has no row of deleted requests without the backend for them', async () => {
+    const { api } = setup([]);
+    await waitFor(() => expect(api.listBlocked).toHaveBeenCalled());
+    expect(screen.queryByText(/Solicitudes eliminadas/)).toBeNull();
+  });
+
   it('says that calls go through Cloudflare, which sees your IP', () => {
     setup([]);
     expect(screen.getByText(CALLS_LINE)).toBeTruthy();

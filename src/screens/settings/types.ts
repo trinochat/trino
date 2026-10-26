@@ -10,6 +10,7 @@ import type {
   EmergencyNetworkChoice,
   EmergencyNetworkView,
   BlockedView,
+  DeletedRequestView,
   NodeInfo,
   NotificationTest,
   ProfileResponse,
@@ -63,6 +64,12 @@ export interface SettingsApi {
   /** Privacidad › Bloqueados (UR-2): whom you blocked, contacts or not, and unblocking one by its key. */
   listBlocked(): Promise<BlockedView[]>;
   unblockIdentity(key: string): Promise<BlockedView>;
+  /**
+   * Privacidad › Solicitudes eliminadas (UR-4): whose requests you deleted,
+   * and letting one write again. Without them the row is not there.
+   */
+  listDeletedRequests?(): Promise<DeletedRequestView[]>;
+  undoDeletedRequest?(key: string): Promise<void>;
   /**
    * Keeps the window out of screenshots, recordings and screen sharing, or
    * lets them see it, at once (SC-1): Tauri's `setContentProtected` on the

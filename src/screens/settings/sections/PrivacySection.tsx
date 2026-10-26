@@ -1,7 +1,8 @@
 /**
  * Settings > Privacidad (plan-cambios-11oct §4 W5): "Bloqueados" with how
  * many there are, which opens their list (uso responsable UR-2: everyone
- * you blocked by identity, contacts or not), and one fixed line on
+ * you blocked by identity, contacts or not); "Solicitudes eliminadas"
+ * (UR-4), with how many, when the app gives them; and one fixed line on
  * how calls protect your IP (TURN through Cloudflare, docs/llamadas-turn.md).
  *
  * And "Bloquear capturas de pantalla" (SC-1; David, 12 Oct: on by default,
@@ -36,19 +37,20 @@
  * the connection's view (src/screens/net/ConnectionView.tsx).
  *
  * Not here, on purpose: the IP warning before a call (TURN made it
- * unnecessary), "Quién puede escribirte" (no message requests in this
- * batch), the @name (§8) and the default timer of
+ * unnecessary), "Quién puede escribirte" (with the age, UR-10), the @name
+ * (§8) and the default timer of
  * disappearing messages (later). The rows come from an array, so the
  * invitations unit adds "Que me encuentren por @nombre" and its links there
  * (§8).
  */
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import type { BlockedView } from '../../../lib/api';
+import type { BlockedView, DeletedRequestView } from '../../../lib/api';
 import { useT } from '../../../lib/i18n';
 import type { Prefs } from '../../../lib/prefs';
 import { prefsSession } from '../../../lib/prefs-session';
 import { Switch } from '../../../ui';
 import { BlockedContactsView } from '../BlockedContactsView';
+import { DeletedRequestsView } from '../DeletedRequestsView';
 import { ConnectionView } from '../../net/ConnectionView';
 import type { NetScreensApi } from '../../net/net-api';
 import { settingsStatusOf } from '../../net/net-model';
@@ -61,7 +63,10 @@ import { SettingsSection } from '../SettingsSection';
 import type { SettingsApi, SettingsPlatform } from '../types';
 
 export interface PrivacySectionProps {
-  api: Pick<SettingsApi, 'listBlocked' | 'unblockIdentity' | 'setContentProtected'>;
+  api: Pick<
+    SettingsApi,
+    'listBlocked' | 'unblockIdentity' | 'setContentProtected' | 'listDeletedRequests' | 'undoDeletedRequest'
+  >;
   /** Where the block of screen captures, locking with Windows and Protección reforzada are kept. */
   prefs: Prefs;
   /** Linux cannot keep a window out of captures, and only Windows locks Trino with it. */
@@ -81,7 +86,7 @@ export interface PrivacySectionProps {
   autoFocus?: boolean;
 }
 
-type View = 'main' | 'blocked' | 'data' | 'connection';
+type View = 'main' | 'blocked' | 'deletedRequests' | 'data' | 'connection';
 
 /** Why the switch of captures failed: the window refused, or the choice could not be kept. */
 type CapturesError = 'window' | 'save';
@@ -105,6 +110,11 @@ export function PrivacySection({
   const netStatus = useNetStatus(net ?? null);
   const [blocked, setBlocked] = useState<readonly BlockedView[] | null>(null);
   const [loadFailed, setLoadFailed] = useState(false);
+  /** Solicitudes eliminadas (UR-4); null until read, and always without the backend for them. */
+  const [deletedRequests, setDeletedRequests] = useState<readonly DeletedRequestView[] | null>(null);
+  const [deletedFailed, setDeletedFailed] = useState(false);
+  const { listDeletedRequests, undoDeletedRequest } = api;
+  const hasDeleted = listDeletedRequests !== undefined && undoDeletedRequest !== undefined;
   const [view, setView] = useState<View>('main');
   // After the first view, a change of view moves the focus to the new heading.
   const [moved, setMoved] = useState(false);
@@ -167,6 +177,23 @@ export function PrivacySection({
     void load();
   }, [load]);
 
+  /** Reads whose requests you deleted; resolves to whether it could be read. */
+  const loadDeleted = useCallback(async () => {
+    if (!listDeletedRequests) return false;
+    try {
+      setDeletedRequests(await listDeletedRequests());
+      setDeletedFailed(false);
+      return true;
+    } catch {
+      setDeletedFailed(true);
+      return false;
+    }
+  }, [listDeletedRequests]);
+
+  useEffect(() => {
+    void loadDeleted();
+  }, [loadDeleted]);
+
   const rows = useMemo<SettingsRowItem[]>(
     () => [
       ...(net
@@ -192,8 +219,26 @@ export function PrivacySection({
           setView('blocked');
         },
       },
+      ...(hasDeleted
+        ? [
+            {
+              id: 'deletedRequests',
+              label: t('requests.deletedTitle'),
+              value:
+                deletedRequests === null
+                  ? undefined
+                  : deletedRequests.length === 0
+                    ? t('requests.deletedNone')
+                    : String(deletedRequests.length),
+              onSelect: () => {
+                setMoved(true);
+                setView('deletedRequests');
+              },
+            },
+          ]
+        : []),
     ],
-    [t, blocked, net, netStatus],
+    [t, blocked, net, netStatus, hasDeleted, deletedRequests],
   );
 
   const onDevice = useMemo<SettingsRowItem[]>(
@@ -226,6 +271,23 @@ export function PrivacySection({
           onContactsChanged?.();
           await load();
           return gone;
+        }}
+      />
+    );
+  }
+
+  if (view === 'deletedRequests' && undoDeletedRequest) {
+    return (
+      <DeletedRequestsView
+        autoFocus
+        deleted={deletedRequests}
+        loadFailed={deletedFailed}
+        onRetry={loadDeleted}
+        onBack={() => setView('main')}
+        onUndo={async key => {
+          await undoDeletedRequest(key);
+          setDeletedRequests(current => (current ? current.filter(view => view.key !== key) : current));
+          await loadDeleted();
         }}
       />
     );

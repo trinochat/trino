@@ -48,6 +48,9 @@ describe('settingsBackend', () => {
       // Privacidad › Bloqueados (UR-2).
       'listBlocked',
       'unblockIdentity',
+      // Privacidad › Solicitudes eliminadas (UR-4).
+      'listDeletedRequests',
+      'undoDeletedRequest',
       'shareBundle',
       'testNotification',
     ] as const;
