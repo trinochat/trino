@@ -5,7 +5,8 @@
  * goes. Atrás goes back to the chats.
  *
  * On top, what it is: "No son tus contactos. Nada de aquí suena ni se
- * descarga hasta que aceptes."; then, when some did not fit, how many. Each
+ * descarga hasta que aceptes." (for an account of 16 or 17, that only the
+ * redemptions of its links come, UR-10); then, when some did not fit, how many. Each
  * row says who they say they are ("dice llamarse ana", "~mara" when the
  * admin of a group wrote the name, R-10), where it came from and when, their
  * latest text, and in amber when the name resembles a contact's. Never a
@@ -26,6 +27,8 @@ export interface RequestsListProps {
   requests: readonly RequestView[];
   /** How many did not fit in their source's quota. */
   overflow: number;
+  /** The account is of 16 or 17 (UR-10): only its links' redemptions come. */
+  onlyLinks?: boolean;
   /** The last reading failed. */
   failed: boolean;
   /** The request open beside the list. */
@@ -38,7 +41,17 @@ export interface RequestsListProps {
   onRetry(): void;
 }
 
-export function RequestsList({ requests, overflow, failed, selectedKey, now, onOpen, onBack, onRetry }: RequestsListProps) {
+export function RequestsList({
+  requests,
+  overflow,
+  onlyLinks = false,
+  failed,
+  selectedKey,
+  now,
+  onOpen,
+  onBack,
+  onRetry,
+}: RequestsListProps) {
   const t = useT();
   const { lang } = useLang();
   const title = t('requests.title');
@@ -48,7 +61,7 @@ export function RequestsList({ requests, overflow, failed, selectedKey, now, onO
         <IconButton aria-label={t('requests.back')} icon={<ArrowLeft {...iconSize('lg')} />} onClick={onBack} />
         <h2 className="m-0 font-ui-display text-ui-title font-bold text-ui-ink">{title}</h2>
       </div>
-      <p className="m-0 px-1 text-ui-md leading-normal text-ui-muted">{t('requests.notice')}</p>
+      <p className="m-0 px-1 text-ui-md leading-normal text-ui-muted">{t(onlyLinks ? 'requests.noticeOnlyLinks' : 'requests.notice')}</p>
       {overflow > 0 ? (
         <p className="m-0 px-1 text-ui-md font-semibold leading-normal text-ui-warn">
           {t('requests.overflow', { n: overflow })}

@@ -3,7 +3,8 @@
  * many there are, which opens their list (uso responsable UR-2: everyone
  * you blocked by identity, contacts or not); "Solicitudes eliminadas"
  * (UR-4), with how many, when the app gives them; "Reportes enviados"
- * (UR-5), only codes and days for 30 days; and one fixed line on
+ * (UR-5), only codes and days for 30 days; "Edad" first (UR-10), which
+ * decides who can write to you; and one fixed line on
  * how calls protect your IP (TURN through Cloudflare, docs/llamadas-turn.md).
  *
  * And "Bloquear capturas de pantalla" (SC-1; David, 12 Oct: on by default,
@@ -45,7 +46,7 @@
  * (§8).
  */
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import type { BlockedView, DeletedRequestView, SentReportView } from '../../../lib/api';
+import type { AgeView, BlockedView, DeletedRequestView, SentReportView } from '../../../lib/api';
 import { useT } from '../../../lib/i18n';
 import type { Prefs } from '../../../lib/prefs';
 import { prefsSession } from '../../../lib/prefs-session';
@@ -53,6 +54,7 @@ import { Switch } from '../../../ui';
 import { BlockedContactsView } from '../BlockedContactsView';
 import { DeletedRequestsView } from '../DeletedRequestsView';
 import { SentReportsView } from '../SentReportsView';
+import { AgeSettingsView } from '../AgeSettingsView';
 import { ConnectionView } from '../../net/ConnectionView';
 import type { NetScreensApi } from '../../net/net-api';
 import { settingsStatusOf } from '../../net/net-model';
@@ -74,6 +76,9 @@ export interface PrivacySectionProps {
     | 'undoDeletedRequest'
     | 'listSentReports'
     | 'cancelReport'
+    | 'getAge'
+    | 'setAge'
+    | 'cancelAgeChange'
   >;
   /** Where the block of screen captures, locking with Windows and Protección reforzada are kept. */
   prefs: Prefs;
@@ -94,7 +99,7 @@ export interface PrivacySectionProps {
   autoFocus?: boolean;
 }
 
-type View = 'main' | 'blocked' | 'deletedRequests' | 'sentReports' | 'data' | 'connection';
+type View = 'main' | 'blocked' | 'deletedRequests' | 'sentReports' | 'age' | 'data' | 'connection';
 
 /** Why the switch of captures failed: the window refused, or the choice could not be kept. */
 type CapturesError = 'window' | 'save';
@@ -128,6 +133,20 @@ export function PrivacySection({
   const [reportsFailed, setReportsFailed] = useState(false);
   const { listSentReports, cancelReport } = api;
   const hasReports = listSentReports !== undefined && cancelReport !== undefined;
+  /** Edad (UR-10); null until read. */
+  const [age, setAgeShown] = useState<AgeView | null>(null);
+  const { getAge, setAge, cancelAgeChange } = api;
+  useEffect(() => {
+    if (!getAge) return;
+    let live = true;
+    getAge().then(
+      read => live && setAgeShown(read),
+      () => {},
+    );
+    return () => {
+      live = false;
+    };
+  }, [getAge]);
   const [view, setView] = useState<View>('main');
   // After the first view, a change of view moves the focus to the new heading.
   const [moved, setMoved] = useState(false);
@@ -222,6 +241,19 @@ export function PrivacySection({
 
   const rows = useMemo<SettingsRowItem[]>(
     () => [
+      ...(age && setAge && cancelAgeChange
+        ? [
+            {
+              id: 'age',
+              label: t('age.row'),
+              value: t(age.bracket === 'minor' ? 'age.minor' : 'age.adult'),
+              onSelect: () => {
+                setMoved(true);
+                setView('age');
+              },
+            },
+          ]
+        : []),
       ...(net
         ? [
             {
@@ -278,7 +310,7 @@ export function PrivacySection({
           ]
         : []),
     ],
-    [t, blocked, net, netStatus, hasDeleted, deletedRequests, hasReports, loadReports],
+    [t, blocked, net, netStatus, hasDeleted, deletedRequests, hasReports, loadReports, age, setAge, cancelAgeChange],
   );
 
   const onDevice = useMemo<SettingsRowItem[]>(
@@ -329,6 +361,18 @@ export function PrivacySection({
           setDeletedRequests(current => (current ? current.filter(view => view.key !== key) : current));
           await loadDeleted();
         }}
+      />
+    );
+  }
+
+  if (view === 'age' && age && setAge && cancelAgeChange) {
+    return (
+      <AgeSettingsView
+        autoFocus
+        age={age}
+        api={{ setAge, cancelAgeChange }}
+        onChanged={setAgeShown}
+        onBack={() => setView('main')}
       />
     );
   }

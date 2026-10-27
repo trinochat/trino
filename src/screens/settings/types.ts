@@ -12,6 +12,7 @@ import type {
   BlockedView,
   DeletedRequestView,
   SentReportView,
+  AgeView,
   NodeInfo,
   NotificationTest,
   ProfileResponse,
@@ -77,6 +78,13 @@ export interface SettingsApi {
    */
   listSentReports?(): Promise<SentReportView[]>;
   cancelReport?(id: string): Promise<void>;
+  /**
+   * Privacidad › Edad (UR-10): the range, and correcting it. Without them
+   * the row is not there.
+   */
+  getAge?(): Promise<AgeView>;
+  setAge?(bracket: 'minor' | 'adult'): Promise<AgeView>;
+  cancelAgeChange?(): Promise<AgeView>;
   /**
    * Keeps the window out of screenshots, recordings and screen sharing, or
    * lets them see it, at once (SC-1): Tauri's `setContentProtected` on the

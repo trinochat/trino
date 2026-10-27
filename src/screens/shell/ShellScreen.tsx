@@ -1111,6 +1111,7 @@ export function ShellScreen(props: ShellScreenProps) {
                 <RequestsList
                   requests={reqs.requests}
                   overflow={reqs.overflow}
+                  onlyLinks={reqs.onlyLinks}
                   failed={reqs.failed}
                   selectedKey={main === 'request' ? openRequest : null}
                   now={conv.now}

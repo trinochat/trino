@@ -72,6 +72,15 @@ describe('RequestsList (PropSolicitudes cards 2, PropMovilSolicitudes card 2)', 
     return props;
   }
 
+  // UR-10 (PropMenoresPC card 7): an account of 16 or 17 gets only its links' redemptions, and is told so.
+  it('says to an account of 16 or 17 that only the redemptions of its links come', () => {
+    list({ onlyLinks: true });
+    expect(
+      screen.getByText('Solo te llegan las de quien usó tus enlaces. Nada de aquí suena ni se descarga hasta que aceptes.'),
+    ).toBeTruthy();
+    expect(screen.queryByText('No son tus contactos. Nada de aquí suena ni se descarga hasta que aceptes.')).toBeNull();
+  });
+
   it('says they are not contacts, then each one: who they say they are, from where, when and what', () => {
     const props = list();
     expect(screen.getByRole('heading', { name: 'Solicitudes' })).toBeTruthy();

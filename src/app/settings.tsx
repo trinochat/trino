@@ -46,6 +46,9 @@ export const settingsBackend: SettingsBackend = {
   undoDeletedRequest: api.undoDeletedRequest,
   listSentReports: api.listSentReports,
   cancelReport: api.cancelReport,
+  getAge: api.getAge,
+  setAge: api.setAge,
+  cancelAgeChange: api.cancelAgeChange,
   shareBundle: api.shareBundle,
   setContentProtected: appWindow.setContentProtected,
 };

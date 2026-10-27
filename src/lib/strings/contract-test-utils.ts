@@ -42,6 +42,12 @@ export const LINE_FRAGMENTS: ReadonlySet<string> = new Set([
   'report.sendsMedia',
   'report.sendsKind',
   'report.sendsNote',
+  // Ajustes › Edad (PropMenoresPC cards 5 and 6): lines of one list.
+  'age.toMinorRequests',
+  'age.toMinorLinks',
+  'age.onlyAdded',
+  'age.noName',
+  'age.linksApproval',
 ]);
 
 export interface AreaContract {

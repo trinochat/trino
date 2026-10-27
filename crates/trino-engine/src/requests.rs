@@ -278,6 +278,9 @@ pub enum ItemView {
 pub struct RequestsView {
     pub requests: Vec<RequestView>,
     pub overflow: u32,
+    /// The account is of 16 or 17 (UR-10): only its links' redemptions
+    /// come, and the list says so (PropMenoresPC card 7).
+    pub only_links: bool,
 }
 
 /// One row of Solicitudes eliminadas.
@@ -689,6 +692,7 @@ pub fn list(inner: &InnerState, now: i64) -> RequestsView {
     RequestsView {
         requests,
         overflow: inner.requests.overflow.values().sum(),
+        only_links: inner.requests.closed_to_strangers,
     }
 }
 
@@ -1377,6 +1381,7 @@ mod tests {
                     "looks_like": null,
                 }],
                 "overflow": 0,
+                "only_links": false,
             })
         );
         delete(&mut inner, &ik(&ana), NOW + 3).unwrap();
@@ -1453,6 +1458,9 @@ mod tests {
             0,
             "dropped in silence, not counted"
         );
+        // Solicitudes says so (PropMenoresPC card 7).
+        assert!(list(&inner, NOW + 2).only_links);
+        assert!(!list(&me(), NOW).only_links);
     }
 
     // ---- On disk and in memory ----

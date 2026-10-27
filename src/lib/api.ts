@@ -557,6 +557,8 @@ export interface RequestsView {
   requests: RequestView[];
   // How many did not fit in their source's quota.
   overflow: number;
+  // The account is of 16 or 17 (UR-10): only its links' redemptions come.
+  only_links?: boolean;
 }
 
 // One row of Ajustes › Privacidad › Solicitudes eliminadas.
@@ -620,6 +622,15 @@ export interface SentReportView {
   reply: string | null;
 }
 
+// The account's age range (UR-10): only on this device, never sent. A change
+// to "18 o más" waits until `adult_from`; `instant` in the first 24 hours.
+export interface AgeView {
+  bracket: 'minor' | 'adult';
+  adult_from: number | null;
+  instant: boolean;
+  from_store: boolean;
+}
+
 // A member of a group as its roster names it (K9), matched to a contact by key.
 // `via_group` is the group the contact came with (`FriendRecord.via_group`);
 // only the members carry it, not `NodeInfo`.
@@ -657,11 +668,13 @@ export const api = {
   // The `forge` command: creates the identity and opens its session, so the
   // chats follow without an unlock. With `useTotp`, the secret from
   // `totpBegin` must have been confirmed through `totpVerify` first.
+  // `age` (UR-10) is the answer of the first run, kept only on this device.
   createIdentity: (
     handle: string,
     passphrase: string,
     useTotp: boolean,
-  ): Promise<ForgeResponse> => invoke('forge', { handle, passphrase, useTotp }),
+    age?: 'minor' | 'adult',
+  ): Promise<ForgeResponse> => invoke('forge', { handle, passphrase, useTotp, age: age ?? null }),
   // Leave `totpCode` out, or empty, for a vault without TOTP.
   unseal: (passphrase: string, totpCode?: string | null): Promise<UnsealResponse> =>
     invoke('unseal', { passphrase, totpCode: totpCode ?? null }),
@@ -868,6 +881,10 @@ export const api = {
     invoke('send_report', { target, draft, block }),
   listSentReports: (): Promise<SentReportView[]> => invoke('list_sent_reports'),
   cancelReport: (id: string): Promise<void> => invoke('cancel_report', { id }),
+  // UR-10: Ajustes › Privacidad › Edad.
+  getAge: (): Promise<AgeView> => invoke('get_age'),
+  setAge: (bracket: 'minor' | 'adult'): Promise<AgeView> => invoke('set_age', { bracket }),
+  cancelAgeChange: (): Promise<AgeView> => invoke('cancel_age_change'),
   deleteRequest: (key: string): Promise<void> => invoke('delete_request', { key }),
   listDeletedRequests: (): Promise<DeletedRequestView[]> => invoke('list_deleted_requests'),
   undoDeletedRequest: (key: string): Promise<void> => invoke('undo_deleted_request', { key }),

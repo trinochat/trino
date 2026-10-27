@@ -85,6 +85,21 @@ describe('PrivacySection', () => {
     expect(await screen.findByRole('button', { name: /Solicitudes eliminadas\s*Ninguna/ })).toBeTruthy();
   });
 
+  // UR-10 (PropMenoresPC card 4): "Edad" first, with the range; it opens Edad.
+  it('shows the age first, and opens Edad', async () => {
+    const api = fakeApi({
+      getAge: vi.fn(async () => ({ bracket: 'minor' as const, adult_from: null, instant: false, from_store: false })),
+      setAge: vi.fn(),
+      cancelAgeChange: vi.fn(),
+    });
+    renderEs(<PrivacySection api={api} prefs={memoryPrefs().prefs} platform="windows" />);
+    const row = await screen.findByRole('button', { name: /Edad\s*16 o 17/ });
+    const buttons = screen.getAllByRole('button');
+    expect(buttons.indexOf(row)).toBeLessThan(buttons.findIndex(button => /Bloqueados/.test(button.textContent ?? '')));
+    fireEvent.click(row);
+    expect(await screen.findByText('Dijiste que tienes 16 o 17 años. Por eso:')).toBeTruthy();
+  });
+
   // UR-5: Reportes enviados, last in the list, when the backend has them.
   it('opens the reports sent and cancels one that waits', async () => {
     let current = [{ id: 'R-AAAA-BBBB', created_at: 1_791_985_600, state: 'waiting' as const, write_instead: false, reply: null }];

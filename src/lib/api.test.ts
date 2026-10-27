@@ -216,6 +216,8 @@ describe('the new commands', () => {
     ['listRequests', () => api.listRequests(), 'list_requests', undefined],
     ['acceptRequest', () => api.acceptRequest('ab12'), 'accept_request', { key: 'ab12' }],
     ['acceptGroupContact', () => api.acceptGroupContact('mara'), 'accept_group_contact', { handle: 'mara' }],
+    // UR-10: the age of the first run goes with the new identity, and only there.
+    ['createIdentity', () => api.createIdentity('Mara', 'clave', false, 'minor'), 'forge', { handle: 'Mara', passphrase: 'clave', useTotp: false, age: 'minor' }],
     ['reportPreview', () => api.reportPreview({ kind: 'contact', handle: 'Lina' }), 'report_preview', { target: { kind: 'contact', handle: 'Lina' } }],
     [
       'sendReport',

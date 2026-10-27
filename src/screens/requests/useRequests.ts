@@ -17,6 +17,8 @@ export interface Requests {
   requests: readonly RequestView[];
   /** How many did not fit in their source's quota. */
   overflow: number;
+  /** The account is of 16 or 17 (UR-10): only its links' redemptions come. */
+  onlyLinks: boolean;
   /** The last reading failed. */
   failed: boolean;
   /** Reads them again; resolves once it is done, whatever came of it. */
@@ -28,6 +30,7 @@ const NONE: readonly RequestView[] = [];
 export function useRequests(api: RequestsApi | null): Requests {
   const [requests, setRequests] = useState<readonly RequestView[]>(NONE);
   const [overflow, setOverflow] = useState(0);
+  const [onlyLinks, setOnlyLinks] = useState(false);
   const [failed, setFailed] = useState(false);
   const apiRef = useRef(api);
   apiRef.current = api;
@@ -39,6 +42,7 @@ export function useRequests(api: RequestsApi | null): Requests {
       const view = await current.listRequests();
       setRequests(view.requests);
       setOverflow(view.overflow);
+      setOnlyLinks(view.only_links === true);
       setFailed(false);
     } catch (error) {
       console.error('listRequests failed', error);
@@ -54,5 +58,5 @@ export function useRequests(api: RequestsApi | null): Requests {
     return listenAll([current.onRequestsChanged(() => void refresh())]);
   }, [present, refresh]);
 
-  return { requests, overflow, failed, refresh };
+  return { requests, overflow, onlyLinks, failed, refresh };
 }

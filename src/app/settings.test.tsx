@@ -54,6 +54,10 @@ describe('settingsBackend', () => {
       // Privacidad › Reportes enviados (UR-5).
       'listSentReports',
       'cancelReport',
+      // Privacidad › Edad (UR-10).
+      'getAge',
+      'setAge',
+      'cancelAgeChange',
       'shareBundle',
       'testNotification',
     ] as const;

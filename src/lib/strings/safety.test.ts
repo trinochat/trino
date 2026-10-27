@@ -44,6 +44,7 @@ const REQUEST_KEYS: string[] = [
   'requests.title',
   'requests.back',
   'requests.notice',
+  'requests.noticeOnlyLinks',
   'requests.overflow',
   'requests.empty',
   'requests.loadFailed',
@@ -90,6 +91,40 @@ const REQUEST_KEYS: string[] = [
 
 // Contacts of a group, limited (UR-3, PropSolicitudes card 3; design §12.2).
 const GROUP_CONTACT_KEYS: string[] = ['groupContact.add', 'groupContact.addTo', 'groupContact.added', 'groupContact.failed'];
+
+// Ajustes › Privacidad › Edad (UR-10, PropMenoresPC cards 4 to 6; U17, U23).
+const AGE_KEYS: string[] = [
+  'age.row',
+  'age.minor',
+  'age.adult',
+  'age.saidAdult',
+  'age.adultBody',
+  'age.toMinor',
+  'age.toMinorTitle',
+  'age.toMinorBody',
+  'age.toMinorRequests',
+  'age.toMinorLinks',
+  'age.toMinorKeeps',
+  'age.change',
+  'age.toMinorDone',
+  'age.saidMinor',
+  'age.onlyAdded',
+  'age.noName',
+  'age.linksApproval',
+  'age.toAdult',
+  'age.toAdultTitle',
+  'age.toAdultWarning',
+  'age.toAdultWait',
+  'age.toAdultNow',
+  'age.toAdultConfirm',
+  'age.opensOn',
+  'age.cancelChange',
+  'age.cancelled',
+  'age.toAdultDone',
+  'age.fromPhone',
+  'age.failed',
+  'age.loadFailed',
+];
 
 // Reportar (UR-5, PropReportar; design §6, §8.3 and §12.4).
 const REPORT_KEYS: string[] = [
@@ -186,7 +221,7 @@ const REPORT_KEYS: string[] = [
 describe('the texts of blocking', () => {
   it('have the same keys and placeholders in es, en and pt', () => {
     expectAreaContract(safety, {
-      keys: [...KEYS, ...REQUEST_KEYS, ...GROUP_CONTACT_KEYS, ...REPORT_KEYS],
+      keys: [...KEYS, ...REQUEST_KEYS, ...GROUP_CONTACT_KEYS, ...REPORT_KEYS, ...AGE_KEYS],
       placeholders: {
         'block.title': ['name'],
         'block.iAdminister': ['group'],
@@ -249,13 +284,14 @@ describe('the texts of blocking', () => {
         'report.writeInstead': ['id'],
         'report.reply': ['id', 'reply'],
         'report.cancelA11y': ['id'],
+        'age.opensOn': ['date'],
       },
     });
   });
 
   it('reach the app', () => {
     for (const lang of LANG_CODES) {
-      for (const key of [...KEYS, ...REQUEST_KEYS, ...GROUP_CONTACT_KEYS, ...REPORT_KEYS]) expect(DICTS[lang][key], `${lang}: ${key}`).toBe(safety[lang][key]);
+      for (const key of [...KEYS, ...REQUEST_KEYS, ...GROUP_CONTACT_KEYS, ...REPORT_KEYS, ...AGE_KEYS]) expect(DICTS[lang][key], `${lang}: ${key}`).toBe(safety[lang][key]);
     }
   });
 
@@ -318,6 +354,18 @@ describe('the texts of blocking', () => {
     // Global: no country's numbers, institutions or laws.
     const global = Object.entries(safety.es).filter(([key]) => key.startsWith('report.'));
     expect(global.filter(([, text]) => /123|ADenunciar|Te Protejo|Fiscal|Colombia/.test(text))).toEqual([]);
+  });
+
+  // PropMenoresPC cards 5 and 6, U17: no switch, a wait, and the warning against pressure.
+  it('say the age in Spanish as the boards do, with tú', () => {
+    expect(safety.es['age.toAdultTitle']).toBe('¿Tienes 18 años o más?');
+    expect(safety.es['age.toAdultWarning']).toBe(
+      'Si alguien te pidió que cambies esto, no lo hagas y cuéntaselo a un adulto de confianza.',
+    );
+    expect(safety.es['age.toAdultWait']).toBe(
+      'El cambio se aplica en 7 días. Mientras tanto todo sigue igual, y lo puedes cancelar aquí.',
+    );
+    expect(safety.es['age.toMinorKeeps']).toBe('Tus contactos y tus chats se quedan.');
   });
 
   // David, 26 Oct: a report is kept one month at most; the app says so, and promises nothing of the outcome.

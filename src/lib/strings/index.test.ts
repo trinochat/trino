@@ -76,7 +76,7 @@ describe('the string areas', () => {
     expect(NAMESPACES.call).toEqual(['call2', 'verify']);
     expect(NAMESPACES.net).toEqual(['net']);
     expect(NAMESPACES.emergency).toEqual(['emergency']);
-    expect(NAMESPACES.safety).toEqual(['block', 'requests', 'groupContact', 'report']);
+    expect(NAMESPACES.safety).toEqual(['block', 'requests', 'groupContact', 'report', 'age']);
   });
 });
 
@@ -113,10 +113,15 @@ describe.each(LANG_CODES)('the copy in %s', lang => {
   });
 
   // Solicitudes exist since UR-4, in their own prefix (and the store's file of them names
-  // them at unlock); nothing else promises them.
+  // them at unlock; and changing the age to 16 or 17 deletes them, UR-10, U23); nothing
+  // else promises them.
   it('promises neither message requests outside Solicitudes nor trino2 codes, which do not exist yet', () => {
     const promises = entries(lang)
-      .filter(([name, key]) => !(name === 'safety' && key.startsWith('requests.')) && key !== 'integrity.item.requests')
+      .filter(
+        ([name, key]) =>
+          !(name === 'safety' && (key.startsWith('requests.') || key === 'age.toMinorRequests')) &&
+          key !== 'integrity.item.requests',
+      )
       .filter(([, , text]) => /solicitud|solicitaç|request|trino2/i.test(text))
       .map(([name, key]) => `${name}: ${key}`);
     expect(promises).toEqual([]);
