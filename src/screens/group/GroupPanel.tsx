@@ -97,6 +97,7 @@ export function GroupPanel({
   onChanged,
   onOpenContact,
   onLeft,
+  onReportMember,
   api,
   capabilities,
   isVerified = (handle, fingerprint) => prefs.isVerified(handle, fingerprint),
@@ -298,6 +299,7 @@ export function GroupPanel({
                   onRemove={canRemove ? member => setOpen({ kind: 'remove', member }) : undefined}
                   onBlock={member => setOpen({ kind: 'block', member })}
                   onAdd={accept ? handle => void addContact(accept, handle) : undefined}
+                  onReport={onReportMember ? member => onReportMember(member, false) : undefined}
                 />
               ))}
             </ul>
@@ -410,6 +412,14 @@ export function GroupPanel({
               close();
               onLeft();
             }}
+            onReport={
+              onReportMember
+                ? () => {
+                    close();
+                    onReportMember(current.member, true);
+                  }
+                : undefined
+            }
           />
         );
     }

@@ -36,6 +36,12 @@ export const LINE_FRAGMENTS: ReadonlySet<string> = new Set([
   'requests.kind.video',
   'requests.kind.audio',
   'requests.kind.file',
+  // The confirmation of a report (PropReportar card 4): lines of one list.
+  'report.sendsKey',
+  'report.sendsKeyNoName',
+  'report.sendsMedia',
+  'report.sendsKind',
+  'report.sendsNote',
 ]);
 
 export interface AreaContract {

@@ -20,7 +20,7 @@
  * Renaming and removing move or forget what the preferences keep for the
  * contact (its note, timer and verification), then tell the shell.
  */
-import { Ban, Pencil, Trash2, X } from 'lucide-react';
+import { Ban, Flag, Pencil, Trash2, X } from 'lucide-react';
 import { useEffect, useId, useRef, useState, type ReactNode } from 'react';
 import { convoKey } from '../../lib/convo';
 import { useT } from '../../lib/i18n';
@@ -75,6 +75,7 @@ export function ContactDetailsPanel({
   onRenamed,
   onRemoved,
   onChanged,
+  onReport,
 }: ContactDetailsPanelProps) {
   const t = useT();
   const handle = node.handle;
@@ -281,6 +282,11 @@ export function ContactDetailsPanel({
         >
           {t(blocked ? 'contactInfo.unblock' : 'contactInfo.block')}
         </Button>
+        {onReport ? (
+          <Button className="self-start" leadingIcon={<Flag {...iconSize('md')} />} onClick={() => onReport(false)}>
+            {t('report.action')}
+          </Button>
+        ) : null}
         {blockNote ? (
           <p role="status" className="m-0 text-ui-md leading-normal text-ui-ink">
             {t(blockNote, { name: handle })}
@@ -302,6 +308,14 @@ export function ContactDetailsPanel({
           onBlocked={blockedNow}
           onClose={() => setDialog(null)}
           onLeftGroup={() => onChanged()}
+          onReport={
+            onReport
+              ? () => {
+                  setDialog(null);
+                  onReport(true);
+                }
+              : undefined
+          }
         />
       ) : null}
       {dialog === 'rename' ? (

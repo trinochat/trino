@@ -86,6 +86,17 @@ import { useInvites } from './useInvites';
 import { useStrangerAttempts } from './useStrangerAttempts';
 import { BlockDialog, type BlockDialogApi } from '../block/BlockDialog';
 import { RequestPane, RequestsList, useRequests, type RequestsApi } from '../requests';
+import { ReportDialog, type ReportDialogApi } from '../report/ReportDialog';
+import { candidatesOf, type ReportCandidate } from '../report/report-model';
+import { clipboard } from '../../lib/clipboard';
+import type { GroupMember } from '../../lib/api';
+import type { Msg } from '../types';
+
+/**
+ * Reportar (UR-5): the dialog's backend, and the members of a group, to name
+ * whoever wrote a message there by their key.
+ */
+export type ShellReportApi = ReportDialogApi & { groupMembers?(gid: string): Promise<GroupMember[]> };
 
 /**
  * The longest text the composer sends, as it counts. The relays drop events
@@ -102,6 +113,8 @@ export interface ShellScreenProps {
   block?: BlockDialogApi;
   /** Solicitudes (UR-4); without it there is no row of them and nothing is asked. */
   requests?: RequestsApi;
+  /** Reportar (UR-5); without it nothing offers Reportar. */
+  report?: ShellReportApi;
   events: ShellEvents;
   slots: ShellSlots;
   call: CallSlot;
@@ -146,7 +159,20 @@ type Overlay =
    * The confirmation to block someone (UR-2, PropBloquear card 1): a contact
    * from its row's menu, or whoever sent a request (UR-4).
    */
-  | { kind: 'block'; target: BlockTarget; name: string };
+  | { kind: 'block'; target: BlockTarget; name: string }
+  /**
+   * The report (UR-5, PropReportar): of a contact, a member or whoever sent
+   * a request, with what of their chat may go; `mustBlock` from the block's
+   * "Reportar también".
+   */
+  | {
+      kind: 'report';
+      target: BlockTarget;
+      name: string;
+      candidates: readonly ReportCandidate[];
+      initial?: string;
+      mustBlock?: boolean;
+    };
 
 /** Where the focus goes once a change took the control that had it off the page. */
 type FocusTarget = 'main' | 'settings' | { row: string | null };
@@ -471,6 +497,20 @@ export function ShellScreen(props: ShellScreenProps) {
     setDetails(false);
     moveFocus('main');
   };
+  /**
+   * The report of whoever wrote the message `msgKey` (UR-5), with it marked:
+   * the contact of a chat, or the member of a group, found by their key.
+   */
+  const reportMessage = async (ref: ConvoRef, msgKey: string) => {
+    if (ref.kind === 'contact') return reportContact(ref.handle, false, msgKey);
+    if (ref.kind !== 'group') return;
+    const from = conv.messages[convoKey(ref)]?.find(message => message.key === msgKey)?.from;
+    const members = await props.report?.groupMembers?.(ref.gid).catch(() => []);
+    const member = members?.find(candidate => from !== undefined && candidate.local_handle === from);
+    if (!member || from === undefined) return;
+    reportMember(ref.gid, member.ik_sign_pub, from, from, false, msgKey);
+  };
+
   /** The request went: the list reads again, and the main pane says `done`. */
   const requestGone = (done: string) => {
     setOpenRequest(null);
@@ -524,9 +564,39 @@ export function ShellScreen(props: ShellScreenProps) {
   const onBlockFromRow = useStable((handle: string) =>
     setOverlay({ kind: 'block', target: { kind: 'contact', handle }, name: handle }),
   );
+  /** The report of a contact (UR-5), with their chat to choose from. */
+  const reportContact = (handle: string, mustBlock = false, initial?: string) =>
+    setOverlay({
+      kind: 'report',
+      target: { kind: 'contact', handle },
+      name: handle,
+      candidates: candidatesOf(conv.messages[convoKey({ kind: 'contact', handle })] ?? [], null),
+      ...(initial !== undefined && { initial }),
+      mustBlock,
+    });
+  /** The report of a member of `gid` (UR-5): only theirs and yours of the group's chat. */
+  const reportMember = (gid: string, key: string, name: string, handle: string | null, mustBlock = false, initial?: string) =>
+    setOverlay({
+      kind: 'report',
+      target: { kind: 'member', gid, ik_sign_pub: key },
+      name,
+      candidates: handle === null ? [] : candidatesOf(conv.messages[convoKey({ kind: 'group', gid })] ?? [], handle),
+      ...(initial !== undefined && { initial }),
+      mustBlock,
+    });
+  const onReportFromRow = useStable((handle: string) => reportContact(handle));
+  const reporting = props.report !== undefined;
   const rowActions: InboxRowActions = useMemo(
-    () => ({ onToggleMuted, onOpenDetails, canCall, onCall: onCallFromRow, canBlock, onBlock: onBlockFromRow }),
-    [onToggleMuted, onOpenDetails, canCall, onCallFromRow, canBlock, onBlockFromRow],
+    () => ({
+      onToggleMuted,
+      onOpenDetails,
+      canCall,
+      onCall: onCallFromRow,
+      canBlock,
+      onBlock: onBlockFromRow,
+      ...(reporting && { onReport: onReportFromRow }),
+    }),
+    [onToggleMuted, onOpenDetails, canCall, onCallFromRow, canBlock, onBlockFromRow, reporting, onReportFromRow],
   );
 
   // The marks are read on every render, as before; the chats are built again only when one changed.
@@ -672,6 +742,7 @@ export function ShellScreen(props: ShellScreenProps) {
         header.kind === 'contact' &&
         header.trust === 'keyChanged' && { onAcknowledgeKeyChange: () => void conv.acknowledgeKeyChange(ref.handle) }),
       ...(single && { onBack: back }),
+      ...(props.report && { onReport: (msgKey: string) => void reportMessage(ref, msgKey) }),
       fetchFile: (file, maxBytes) =>
         maxBytes === undefined
           ? api.fetchFile(file.url, file.key, file.sha256, file.mime)
@@ -704,6 +775,15 @@ export function ShellScreen(props: ShellScreenProps) {
             requestGone(t('requests.deleted'));
           }}
           onBlock={() => setOverlay({ kind: 'block', target: { kind: 'request', ik_sign_pub: shown.key }, name })}
+          {...(props.report && {
+            onReport: () =>
+              setOverlay({
+                kind: 'report',
+                target: { kind: 'request', ik_sign_pub: shown.key },
+                name,
+                candidates: candidatesOf(requestMessages(shown.items), null),
+              }),
+          })}
           {...(single && { onBack: back })}
         />
       );
@@ -788,6 +868,7 @@ export function ShellScreen(props: ShellScreenProps) {
             void conv.refreshNodes();
             void conv.refreshGroups();
           },
+          ...(props.report && { onReport: (mustBlock: boolean) => reportContact(node.handle, mustBlock) }),
         });
       }
     } else if (open.kind === 'group') {
@@ -804,6 +885,10 @@ export function ShellScreen(props: ShellScreenProps) {
           },
           onOpenContact: handle => openConvo({ kind: 'contact', handle }),
           onLeft: () => leaveGroup(group.gid),
+          ...(props.report && {
+            onReportMember: (member, mustBlock) =>
+              reportMember(group.gid, member.key, member.name, member.localHandle, mustBlock),
+          }),
         });
       }
     }
@@ -926,6 +1011,40 @@ export function ShellScreen(props: ShellScreenProps) {
         onLeftGroup={gid => {
           refreshAll();
           if (open?.kind === 'group' && open.gid === gid) leaveGroup(gid);
+        }}
+        {...(props.report && {
+          onReport: () => {
+            if (target.kind === 'contact') return reportContact(target.handle, true);
+            const request = reqs.requests.find(view => target.kind === 'request' && view.key === target.ik_sign_pub);
+            setOverlay({
+              kind: 'report',
+              target,
+              name,
+              candidates: request ? candidatesOf(requestMessages(request.items), null) : [],
+              mustBlock: true,
+            });
+          },
+        })}
+      />
+    );
+  } else if (shown?.kind === 'report' && props.report) {
+    const { target, name, candidates, initial, mustBlock } = shown;
+    overlayContent = (
+      <ReportDialog
+        target={target}
+        name={name}
+        candidates={candidates}
+        {...(initial !== undefined && { initial })}
+        mustBlock={mustBlock === true}
+        api={props.report}
+        openLink={props.openLink}
+        copyText={text => clipboard.copyText(text)}
+        onClose={closeOverlay}
+        onBlocked={() => {
+          void conv.refreshNodes();
+          void conv.refreshGroups();
+          // Their request went with the block (UR-4).
+          if (target.kind === 'request') requestGone(t('block.done', { name }));
         }}
       />
     );
@@ -1072,5 +1191,14 @@ export function ShellScreen(props: ShellScreenProps) {
       {net && <ObsoleteWatch net={net} onChange={setObsolete} />}
       {call.layer}
     </div>
+  );
+}
+
+/** What a request held, as a chat's messages: its texts (UR-5). */
+function requestMessages(items: readonly { kind: string; text?: string; at: number }[]): Msg[] {
+  return items.flatMap((item, index) =>
+    item.kind === 'text' && item.text !== undefined
+      ? [{ key: `request:${index}`, side: 'them' as const, ts: item.at, text: item.text }]
+      : [],
   );
 }

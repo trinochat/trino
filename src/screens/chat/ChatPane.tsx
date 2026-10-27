@@ -95,7 +95,7 @@ function DeleteQuestion({ group, name, onCancel, onConfirm }: DeleteQuestionProp
 }
 
 export function ChatPane(props: ChatPaneProps) {
-  const { header, onCall, onDeleteForMe, onRetry, onForward, onOpenLink, fetchFile } = props;
+  const { header, onCall, onDeleteForMe, onRetry, onForward, onOpenLink, fetchFile, onReport } = props;
   const t = useT();
   const headingId = useId();
   const pane = useRef<HTMLElement>(null);
@@ -148,8 +148,9 @@ export function ChatPane(props: ChatPaneProps) {
         ? png => void clipboard.copyImage(png).then(copied('image'), notCopied('image'))
         : undefined,
       onDeleteForMe: onDeleteForMe ? setDeleting : undefined,
+      onReport,
     };
-  }, [onRetry, onForward, onOpenLink, fetchFile, onDeleteForMe, writable, t]);
+  }, [onRetry, onForward, onOpenLink, fetchFile, onDeleteForMe, onReport, writable, t]);
 
   const confirmDelete = () => {
     const key = deleting;

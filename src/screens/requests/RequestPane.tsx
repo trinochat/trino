@@ -13,12 +13,12 @@
  *   descarga si aceptas.", nothing fetched; a call as the line that it did
  *   not ring. Initials, never a photo. No field to write in until accepted.
  * - Eliminar, Bloquear (the shell's confirmation) and Aceptar, the main one.
- *   "Reportar" arrives with the report (UR-5): its place is after Bloquear.
+ *   Reportar (UR-5) after Bloquear.
  *
  * What an answer did is the shell's to show (the chat that opens, or the
  * line that it was deleted); here only why one failed.
  */
-import { ArrowLeft, Ban, Check, CircleAlert, Phone, Trash2, Video } from 'lucide-react';
+import { ArrowLeft, Ban, Check, CircleAlert, Flag, Phone, Trash2, Video } from 'lucide-react';
 import { useState } from 'react';
 import { isCommandError, type RequestView } from '../../lib/api';
 import { clockTime } from '../../lib/dates';
@@ -36,6 +36,8 @@ export interface RequestPaneProps {
   onDelete(): Promise<void>;
   /** Opens the confirmation to block them. */
   onBlock(): void;
+  /** Opens the report (UR-5). */
+  onReport?(): void;
   /** On one pane: back to the list of requests. */
   onBack?(): void;
 }
@@ -54,7 +56,7 @@ function failureOf(reason: unknown): Failure {
   return 'failed';
 }
 
-export function RequestPane({ request, onAccept, onDelete, onBlock, onBack }: RequestPaneProps) {
+export function RequestPane({ request, onAccept, onDelete, onBlock, onReport, onBack }: RequestPaneProps) {
   const t = useT();
   const { lang } = useLang();
   const [busy, setBusy] = useState<'accept' | 'delete' | null>(null);
@@ -159,7 +161,11 @@ export function RequestPane({ request, onAccept, onDelete, onBlock, onBack }: Re
           >
             {t('block.confirm')}
           </Button>
-          {/* UR-5: "Reportar" goes here, opening the report with this request chosen. */}
+          {onReport ? (
+            <Button leadingIcon={<Flag {...iconSize('md')} aria-hidden="true" />} onClick={onReport} disabled={busy !== null}>
+              {t('report.action')}
+            </Button>
+          ) : null}
           <Button
             className="ms-auto"
             variant="primary"

@@ -47,6 +47,7 @@ import {
   onMessageReceived,
   onProfileUpdated,
   onRequestsChanged,
+  onReportsChanged,
   onResyncNeeded,
   onSessionEstablished,
   type NodeInfo,
@@ -64,6 +65,7 @@ import { SettingsScreen, type SettingsPlatform } from '../screens/settings';
 import { linkBackend, netScreensApi, useLinkOpener, type LinkApi, type NetScreensApi } from '../screens/net';
 import type { RequestsApi } from '../screens/requests';
 import { ShellScreen, type ShellApi, type ShellEvents, type ShellScreenProps } from '../screens/shell';
+import type { ShellReportApi } from '../screens/shell/ShellScreen';
 import type { OnboardingIntent, ShellSlots } from '../screens/types';
 import { VerifyContactDialog } from '../screens/verify';
 import { capabilities as buildCapabilities, type Capabilities } from './capabilities';
@@ -138,6 +140,8 @@ export interface MainDeps {
   alerts?: EmergencyAlertsBackend | null;
   /** Solicitudes (UR-4), with message requests on; null shows nothing of them. */
   requests?: RequestsApi | null;
+  /** Reportar (UR-5); null offers it nowhere. */
+  report?: ShellReportApi | null;
 }
 
 /** This window through Tauri, asked for on each use, so that loading this module needs no Tauri. */
@@ -188,6 +192,15 @@ const DEVICE_DEPS: MainDeps = {
     acceptRequest: api.acceptRequest,
     deleteRequest: api.deleteRequest,
     onRequestsChanged,
+  },
+  report: {
+    reportPreview: api.reportPreview,
+    sendReport: api.sendReport,
+    cancelReport: api.cancelReport,
+    listSentReports: api.listSentReports,
+    blockIdentity: api.blockIdentity,
+    groupMembers: api.groupMembers,
+    onReportsChanged,
   },
 };
 
@@ -348,6 +361,7 @@ export function MainScreen({ intent, onLock, onAutolockChanged, onWiped, onCallG
         api={d.api}
         block={d.api}
         {...(caps.messageRequests && d.requests && { requests: d.requests })}
+        {...(d.report && { report: d.report })}
         events={d.events}
         slots={slots}
         call={calls.slot}

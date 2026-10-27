@@ -55,6 +55,8 @@ export interface MessageActions {
   onForward(msgKey: string): void;
   /** Without it (no K11) there is no "Borrar para mí". */
   onDeleteForMe?(msgKey: string): void;
+  /** Opens the report with this message marked (UR-5); only on theirs. */
+  onReport?(msgKey: string): void;
   onOpenLink(url: string): void;
   fetchFile(f: FileRef, maxBytes?: number): Promise<string>;
 }
@@ -166,6 +168,7 @@ export function MessageItem({ msg, now, sender, authorName, actions, guarded = f
     onCopy: text ? () => actions.onCopy(text) : undefined,
     onForward: () => actions.onForward(msg.key),
     onDelete: actions.onDeleteForMe ? () => actions.onDeleteForMe?.(msg.key) : undefined,
+    onReport: actions.onReport && !mine ? () => actions.onReport?.(msg.key) : undefined,
   };
 
   /** The menu of a photo, a video or a file: what its card does, then the options of the message. */

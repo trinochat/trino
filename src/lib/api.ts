@@ -572,6 +572,54 @@ export interface RequestsChangedEvent {
   count: number;
 }
 
+// Reportar (UR-5, design §6). What goes is decided again in Rust: a child at
+// risk and intimate images carry no content, photos and videos never go.
+export type ReportCategory = 'spam' | 'harassment' | 'impersonation' | 'fraud' | 'ncii' | 'child' | 'other';
+export type ReportMode = 'key_only' | 'messages' | 'description_only';
+
+// A message marked, named as "Borrar para mí" names one.
+export interface ReportPick {
+  ts: number;
+  side: 'me' | 'them';
+  from?: string | null;
+  text?: string | null;
+  sha256?: string | null;
+}
+
+export interface ReportDraft {
+  category: ReportCategory;
+  mode: ReportMode;
+  picks: ReportPick[];
+  note: string;
+  want_reply: boolean;
+}
+
+// Whom a report names: their fingerprint and the name they gave themselves;
+// `can_send` is false while this build has no key of Trino's (UR-6).
+export interface ReportPreview {
+  fingerprint: string;
+  self_handle: string | null;
+  can_send: boolean;
+}
+
+// What `sendReport` did: `queued` false when nothing could be sealed, and
+// the UI offers the e-mail; `blocked` when they were blocked from it.
+export interface SentReport {
+  id: string;
+  day: string;
+  queued: boolean;
+  blocked: boolean;
+}
+
+// One row of Reportes enviados: never its kind, whom or what (R-06).
+export interface SentReportView {
+  id: string;
+  created_at: number;
+  state: 'waiting' | 'sent' | 'refused';
+  write_instead: boolean;
+  reply: string | null;
+}
+
 // A member of a group as its roster names it (K9), matched to a contact by key.
 // `via_group` is the group the contact came with (`FriendRecord.via_group`);
 // only the members carry it, not `NodeInfo`.
@@ -814,6 +862,12 @@ export const api = {
   acceptRequest: (key: string): Promise<{ handle: string }> => invoke('accept_request', { key }),
   // UR-3: "Agregar a contactos" for a contact a group made; answers its name.
   acceptGroupContact: (handle: string): Promise<{ handle: string }> => invoke('accept_group_contact', { handle }),
+  // UR-5: Reportar, and Ajustes › Privacidad › Reportes enviados.
+  reportPreview: (target: BlockTarget): Promise<ReportPreview> => invoke('report_preview', { target }),
+  sendReport: (target: BlockTarget, draft: ReportDraft, block: boolean): Promise<SentReport> =>
+    invoke('send_report', { target, draft, block }),
+  listSentReports: (): Promise<SentReportView[]> => invoke('list_sent_reports'),
+  cancelReport: (id: string): Promise<void> => invoke('cancel_report', { id }),
   deleteRequest: (key: string): Promise<void> => invoke('delete_request', { key }),
   listDeletedRequests: (): Promise<DeletedRequestView[]> => invoke('list_deleted_requests'),
   undoDeletedRequest: (key: string): Promise<void> => invoke('undo_deleted_request', { key }),
@@ -905,6 +959,11 @@ export async function onGroupUpdated(
 
 // Uso responsable (UR-4): the requests changed. Only the count: the list is
 // read with `listRequests`. Nothing rings for it.
+// `reports-changed` (UR-5): a report went, or its answer came. Nothing of it.
+export async function onReportsChanged(cb: () => void): Promise<UnlistenFn> {
+  return await listen('reports-changed', () => cb());
+}
+
 export async function onRequestsChanged(cb: (event: RequestsChangedEvent) => void): Promise<UnlistenFn> {
   return await listen<RequestsChangedEvent>('requests-changed', e => cb(e.payload));
 }

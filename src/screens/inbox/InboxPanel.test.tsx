@@ -641,6 +641,16 @@ describe('InboxPanel: the right-click menu of a row', () => {
     expect(listed()).toEqual(['Ver detalles']);
   });
 
+  // UR-5: Reportar next to Bloquear, after the line.
+  it('offers Reportar on a contact, next to Bloquear', () => {
+    const rowActions = actions({ canBlock: handle => handle === 'Ana', onBlock: vi.fn(), onReport: vi.fn() });
+    renderEs(<InboxPanel {...props({ rowActions })} />);
+    rightClick(rowNamed(/^Ana/));
+    expect(listed()).toEqual(['Llamada de voz', 'Videollamada', 'Ver detalles', 'Reportar', 'Bloquear']);
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Reportar' }));
+    expect(rowActions.onReport).toHaveBeenCalledWith('Ana');
+  });
+
   // UR-2 (PropBloquear card 1): after a line, Bloquear, which opens the confirmation; never on one blocked already.
   it('offers Bloquear on a contact, after a line, when the shell can block', () => {
     const rowActions = actions({ canBlock: handle => handle === 'Ana', onBlock: vi.fn() });

@@ -76,7 +76,7 @@ describe('the string areas', () => {
     expect(NAMESPACES.call).toEqual(['call2', 'verify']);
     expect(NAMESPACES.net).toEqual(['net']);
     expect(NAMESPACES.emergency).toEqual(['emergency']);
-    expect(NAMESPACES.safety).toEqual(['block', 'requests', 'groupContact']);
+    expect(NAMESPACES.safety).toEqual(['block', 'requests', 'groupContact', 'report']);
   });
 });
 

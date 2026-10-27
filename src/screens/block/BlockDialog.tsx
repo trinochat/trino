@@ -14,7 +14,8 @@
  *
  * Someone known only from a group shows as "~name": the admin wrote that
  * name (R-10). Whoever sent a request (UR-4) shows as Solicitudes names
- * them. "Reportar también" arrives with the report (UR-5).
+ * them. With a report to open (UR-5), "Reportar también": then Bloquear
+ * opens the report instead, which blocks them whether it is sent or not.
  */
 import { Ban, CircleAlert, LogOut, UserMinus } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
@@ -27,7 +28,7 @@ import {
   type SharedGroup,
 } from '../../lib/api';
 import { useT } from '../../lib/i18n';
-import { Button, Dialog, iconSize } from '../../ui';
+import { Button, Checkbox, Dialog, iconSize } from '../../ui';
 import { ERROR_LINE } from '../contacts/styles';
 
 export interface BlockDialogApi {
@@ -47,6 +48,8 @@ export interface BlockDialogProps {
   onClose(): void;
   /** You left a group from here. */
   onLeftGroup?(gid: string): void;
+  /** "Reportar también" (UR-5): opens the report, which blocks them. */
+  onReport?(): void;
 }
 
 /** How the confirmation names them: "~name" for someone known only from a group. */
@@ -58,13 +61,14 @@ export function blockedName(preview: Pick<BlockPreview, 'label' | 'contact'>, fa
 /** What happened to a group's offer: done, or failed. */
 type GroupDone = Record<string, 'done' | 'failed' | 'busy'>;
 
-export function BlockDialog({ target, name, api, onBlocked, onClose, onLeftGroup }: BlockDialogProps) {
+export function BlockDialog({ target, name, api, onBlocked, onClose, onLeftGroup, onReport }: BlockDialogProps) {
   const t = useT();
   const cancelRef = useRef<HTMLButtonElement>(null);
   const [preview, setPreview] = useState<BlockPreview | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<'failed' | 'clash' | null>(null);
   const [groups, setGroups] = useState<GroupDone>({});
+  const [reportToo, setReportToo] = useState(false);
   const apiRef = useRef(api);
   apiRef.current = api;
 
@@ -89,6 +93,10 @@ export function BlockDialog({ target, name, api, onBlocked, onClose, onLeftGroup
 
   const confirm = () => {
     if (busy || !preview) return;
+    if (reportToo && onReport) {
+      onReport();
+      return;
+    }
     setBusy(true);
     setError(null);
     api.blockIdentity(target).then(onBlocked, (reason: unknown) => {
@@ -166,6 +174,9 @@ export function BlockDialog({ target, name, api, onBlocked, onClose, onLeftGroup
           <CircleAlert {...iconSize('md', 'mt-0.5 shrink-0')} aria-hidden="true" />
           <span>{t(clash ? 'block.clash' : 'block.failed')}</span>
         </p>
+      ) : null}
+      {onReport && preview && !clash ? (
+        <Checkbox label={t('report.alsoReport')} checked={reportToo} onChange={event => setReportToo(event.target.checked)} />
       ) : null}
       <div className="flex flex-wrap justify-end gap-2">
         <Button ref={cancelRef} onClick={onClose} disabled={busy}>

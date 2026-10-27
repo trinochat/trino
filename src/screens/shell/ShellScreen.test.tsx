@@ -914,6 +914,23 @@ describe('ShellScreen: the right-click menu of the chats', () => {
     expect(screen.queryByRole('alertdialog')).toBeNull();
   });
 
+  // UR-5: Reportar from the row's menu opens the report of that contact, with their chat to choose from.
+  it('reports a contact from its row, with what of their chat this device has', async () => {
+    const report = reportApi();
+    setup({ report, block: { blockPreview: vi.fn(), blockIdentity: vi.fn(), removeGroupMember: vi.fn(), leaveGroup: vi.fn() } }, { nodes: [node('Ana')] });
+    rightClick(await row('Ana'));
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Reportar' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Reportar a Ana' });
+    expect(report.reportPreview).toHaveBeenCalledWith({ kind: 'contact', handle: 'Ana' });
+    fireEvent.click(within(dialog).getByRole('radio', { name: 'Acoso, amenazas o insultos' }));
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Siguiente' }));
+    // This test's Ana has no chat on this device: nothing of hers to choose.
+    expect(within(dialog).getByText('No hay mensajes suyos en este equipo para elegir.')).toBeTruthy();
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Atrás' }));
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Cancelar' }));
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Reportar a Ana' })).toBeNull());
+  });
+
   it('mutes Novedades from its row', async () => {
     setup();
     rightClick(await row('Novedades'));
@@ -925,6 +942,18 @@ describe('ShellScreen: the right-click menu of the chats', () => {
 // TOR-6 (PropTorSimple, cards 2, 3 and 5; design tests 45-47): the inbox's
 // line follows the network, "Ver qué hacer" opens "No se pudo conectar",
 // and its way out asks before anything goes without Tor.
+/** What the report (UR-5) asks of the backend: nothing goes anywhere. */
+function reportApi() {
+  return {
+    reportPreview: vi.fn(async () => ({ fingerprint: '1a2b.3c4d', self_handle: null, can_send: true })),
+    sendReport: vi.fn(async () => ({ id: 'R-AAAA-BBBB', day: '2026-10-26', queued: true, blocked: false })),
+    cancelReport: vi.fn(async () => {}),
+    listSentReports: vi.fn(async () => []),
+    blockIdentity: vi.fn(async () => ({ key: 'k', label: '', fingerprint: '', blocked_at: 0, from: 'report' as const, contact: null })),
+    groupMembers: vi.fn(async () => []),
+  };
+}
+
 describe('ShellScreen: Solicitudes (UR-4)', () => {
   const ANA_REQ = request({ looks_like: null });
   const MARA_REQ = request({
@@ -1003,6 +1032,16 @@ describe('ShellScreen: Solicitudes (UR-4)', () => {
       await screen.findByText('Eliminaste la solicitud. Lo que mande en los próximos 30 días no te va a llegar.'),
     ).toBeTruthy();
     expect(screen.queryByRole('region', { name: 'Solicitud de ana' })).toBeNull();
+  });
+
+  // UR-5: Reportar from a request, by the request, with what it held.
+  it('reports whoever sent a request, by the request', async () => {
+    const report = reportApi();
+    await openRequests({ report });
+    fireEvent.click(within(await screen.findByRole('list', { name: 'Solicitudes' })).getAllByRole('button')[0]!);
+    fireEvent.click(await screen.findByRole('button', { name: 'Reportar' }));
+    await screen.findByRole('dialog', { name: 'Reportar a ana' });
+    expect(report.reportPreview).toHaveBeenCalledWith({ kind: 'request', ik_sign_pub: ANA_REQ.key });
   });
 
   // Design test 11, from Solicitudes.

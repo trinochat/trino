@@ -132,6 +132,19 @@ describe('ChatPane', () => {
     expect(p.onSendText).toHaveBeenCalledWith('Y el pan', { author: 'Tú', preview: 'Lo compro de camino' });
   });
 
+  // UR-5 (PropReportar card 1): Reportar on a message of theirs, next to what deletes; never on yours.
+  it('offers Reportar on their messages, next to Borrar para mí', () => {
+    const onReport = vi.fn();
+    show({ onReport, messages: [message('k1', at(2026, 10, 11, 10, 42), { text: 'Sé dónde trabajas.' }), message('k2', at(2026, 10, 11, 10, 43), { side: 'me', text: 'Déjame' })] });
+    const menus = screen.getAllByRole('button', { name: 'Opciones del mensaje' });
+    fireEvent.click(menus[0]);
+    expect(screen.getAllByRole('menuitem').map(item => item.textContent)).toEqual(['Responder', 'Copiar', 'Reenviar', 'Reportar', 'Borrar para mí']);
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Reportar' }));
+    expect(onReport).toHaveBeenCalledWith('k1');
+    fireEvent.click(menus[1]);
+    expect(screen.getAllByRole('menuitem').map(item => item.textContent)).not.toContain('Reportar');
+  });
+
   it('offers no Responder where you cannot write: to a contact you blocked, or in a group you left', () => {
     const items = () => {
       fireEvent.click(screen.getByRole('button', { name: 'Opciones del mensaje' }));

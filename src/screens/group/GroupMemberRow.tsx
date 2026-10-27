@@ -11,7 +11,7 @@
  * place of "Escribirle".
  */
 import type { ReactNode } from 'react';
-import { Ban, MessageSquare, UserMinus, UserPlus } from 'lucide-react';
+import { Ban, Flag, MessageSquare, UserMinus, UserPlus } from 'lucide-react';
 import { Avatar, Button, IconButton, TrustBadge, iconSize } from '../../ui';
 import { useT } from '../../lib/i18n';
 import type { GroupMemberView } from './group-model';
@@ -26,9 +26,11 @@ export interface GroupMemberRowProps {
   onBlock?(member: GroupMemberView): void;
   /** "Agregar a contactos" (UR-3): offered to a contact the group made and you did not accept. */
   onAdd?(handle: string): void;
+  /** Opens the report of this member (UR-5): anyone but you. */
+  onReport?(member: GroupMemberView): void;
 }
 
-export function GroupMemberRow({ member, onWrite, onRemove, onBlock, onAdd }: GroupMemberRowProps) {
+export function GroupMemberRow({ member, onWrite, onRemove, onBlock, onAdd, onReport }: GroupMemberRowProps) {
   const t = useT();
   const name = member.isSelf ? t('groupPanel.you') : member.name;
 
@@ -93,6 +95,13 @@ export function GroupMemberRow({ member, onWrite, onRemove, onBlock, onAdd }: Gr
         >
           {t('groupContact.add')}
         </Button>
+      )}
+      {onReport && !member.isSelf && (
+        <IconButton
+          aria-label={t('report.actionTo', { name: member.name })}
+          icon={<Flag {...iconSize('lg')} aria-hidden="true" />}
+          onClick={() => onReport(member)}
+        />
       )}
       {onBlock && !member.isSelf && !member.blocked && (
         <IconButton

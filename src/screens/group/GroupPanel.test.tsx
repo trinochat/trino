@@ -205,6 +205,18 @@ describe('GroupPanel', () => {
     expect(await screen.findByText('Agregaste a mara a tus contactos.')).toBeTruthy();
   });
 
+  // UR-5: report any member but yourself.
+  it('reports a member from their row', async () => {
+    const onReportMember = vi.fn();
+    mount({ props: { onReportMember } });
+    const items = await rows();
+    const dad = items.find(item => item.textContent?.includes('Papá'))!;
+    fireEvent.click(within(dad).getByRole('button', { name: 'Reportar a Papá' }));
+    expect(onReportMember).toHaveBeenCalledWith(expect.objectContaining({ key: 'k-dad', name: 'Papá' }), false);
+    const me = items.find(item => item.textContent?.includes('Tú'))!;
+    expect(within(me).queryByRole('button', { name: /Reportar/ })).toBeNull();
+  });
+
   it('says a member is not in your contacts, and offers no chat with them', async () => {
     mount({ members: AS_ADMIN, group: { is_admin: true } });
     const items = await rows();

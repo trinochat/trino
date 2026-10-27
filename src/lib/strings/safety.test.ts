@@ -91,10 +91,102 @@ const REQUEST_KEYS: string[] = [
 // Contacts of a group, limited (UR-3, PropSolicitudes card 3; design §12.2).
 const GROUP_CONTACT_KEYS: string[] = ['groupContact.add', 'groupContact.addTo', 'groupContact.added', 'groupContact.failed'];
 
+// Reportar (UR-5, PropReportar; design §6, §8.3 and §12.4).
+const REPORT_KEYS: string[] = [
+  'report.action',
+  'report.actionTo',
+  'report.alsoReport',
+  'report.title',
+  'report.step',
+  'report.stepWith',
+  'report.whatHappened',
+  'report.cat.spam',
+  'report.cat.harassment',
+  'report.cat.impersonation',
+  'report.cat.fraud',
+  'report.cat.ncii',
+  'report.cat.child',
+  'report.cat.other',
+  'report.next',
+  'report.back',
+  'report.whatGoes',
+  'report.keyOnly',
+  'report.withMessages',
+  'report.keyOnlyNote',
+  'report.noContentNote',
+  'report.pickNote',
+  'report.pickLimit',
+  'report.noMessages',
+  'report.you',
+  'report.photoRow',
+  'report.videoRow',
+  'report.fileRow',
+  'report.mediaNote',
+  'report.describe',
+  'report.sendsTitle',
+  'report.sendsKey',
+  'report.sendsKeyNoName',
+  'report.sendsTheirsOne',
+  'report.sendsTheirs',
+  'report.sendsMineOne',
+  'report.sendsMine',
+  'report.sendsMedia',
+  'report.sendsKind',
+  'report.sendsNote',
+  'report.notSent',
+  'report.notSentMessages',
+  'report.retention',
+  'report.wantReply',
+  'report.alsoBlock',
+  'report.blockedToo',
+  'report.send',
+  'report.failed',
+  'report.childEmergency',
+  'report.childDontShare',
+  'report.childAuthority',
+  'report.tellTrino',
+  'report.notify',
+  'report.inhope',
+  'report.nciiDontShare',
+  'report.nciiAuthority',
+  'report.stopncii',
+  'report.sentTitle',
+  'report.sentBody',
+  'report.alone',
+  'report.done',
+  'report.queued',
+  'report.code',
+  'report.cancel',
+  'report.cancelled',
+  'report.cancelFailed',
+  'report.unsent',
+  'report.unavailable',
+  'report.copy',
+  'report.copied',
+  'report.copyFailed',
+  'report.dataTitle',
+  'report.dataKind',
+  'report.dataFingerprint',
+  'report.dataName',
+  'report.dataDay',
+  'report.dataNote',
+  'report.sentList',
+  'report.sentListBody',
+  'report.row',
+  'report.rowLine',
+  'report.waiting',
+  'report.refused',
+  'report.writeInstead',
+  'report.reply',
+  'report.empty',
+  'report.loadFailed',
+  'report.cancelA11y',
+];
+
 describe('the texts of blocking', () => {
   it('have the same keys and placeholders in es, en and pt', () => {
     expectAreaContract(safety, {
-      keys: [...KEYS, ...REQUEST_KEYS, ...GROUP_CONTACT_KEYS],
+      keys: [...KEYS, ...REQUEST_KEYS, ...GROUP_CONTACT_KEYS, ...REPORT_KEYS],
       placeholders: {
         'block.title': ['name'],
         'block.iAdminister': ['group'],
@@ -128,13 +220,42 @@ describe('the texts of blocking', () => {
         'requests.undoFailed': ['name'],
         'groupContact.addTo': ['name'],
         'groupContact.added': ['name'],
+        'report.actionTo': ['name'],
+        'report.title': ['name'],
+        'report.step': ['n'],
+        'report.stepWith': ['n', 'kind'],
+        'report.pickLimit': ['n'],
+        'report.photoRow': ['size'],
+        'report.videoRow': ['size'],
+        'report.fileRow': ['size'],
+        'report.sendsKey': ['name', 'fingerprint'],
+        'report.sendsKeyNoName': ['name', 'fingerprint'],
+        'report.sendsTheirs': ['n'],
+        'report.sendsMine': ['n'],
+        'report.sendsMedia': ['n'],
+        'report.sendsKind': ['kind'],
+        'report.alsoBlock': ['name'],
+        'report.blockedToo': ['name'],
+        'report.sentTitle': ['id'],
+        'report.code': ['id'],
+        'report.copied': ['id'],
+        'report.dataTitle': ['id'],
+        'report.dataKind': ['kind'],
+        'report.dataFingerprint': ['fingerprint'],
+        'report.dataName': ['name'],
+        'report.dataDay': ['day'],
+        'report.dataNote': ['note'],
+        'report.rowLine': ['id', 'date'],
+        'report.writeInstead': ['id'],
+        'report.reply': ['id', 'reply'],
+        'report.cancelA11y': ['id'],
       },
     });
   });
 
   it('reach the app', () => {
     for (const lang of LANG_CODES) {
-      for (const key of [...KEYS, ...REQUEST_KEYS, ...GROUP_CONTACT_KEYS]) expect(DICTS[lang][key], `${lang}: ${key}`).toBe(safety[lang][key]);
+      for (const key of [...KEYS, ...REQUEST_KEYS, ...GROUP_CONTACT_KEYS, ...REPORT_KEYS]) expect(DICTS[lang][key], `${lang}: ${key}`).toBe(safety[lang][key]);
     }
   });
 
@@ -179,6 +300,39 @@ describe('the texts of blocking', () => {
     expect(safety.es['requests.deletedTitle']).toBe('Solicitudes eliminadas');
     // UR-3: "Agregar a contactos", as card 3 says it.
     expect(safety.es['groupContact.add']).toBe('Agregar a contactos');
+  });
+
+  // §12.4 and §6.5 as PropReportar says them, global (15 Oct), and one month at most (26 Oct).
+  it('say the report in Spanish as the boards do, with tú', () => {
+    expect(safety.es['report.whatHappened']).toBe('¿Qué pasó?');
+    expect(safety.es['report.cat.child']).toBe('Un niño, niña o adolescente en riesgo');
+    expect(safety.es['report.keyOnlyNote']).toBe('Se envía solo su llave. Trino no ve ningún mensaje.');
+    expect(safety.es['report.mediaNote']).toBe(
+      'Las fotos y los videos nunca se envían. Va solo que existen, su tamaño aproximado y su día.',
+    );
+    expect(safety.es['report.sendsTitle']).toBe('Esto le envías a Trino:');
+    expect(safety.es['report.queued']).toBe('El reporte se enviará cuando Tor conecte.');
+    expect(safety.es['report.unsent']).toBe('No pudimos enviar el reporte. También puedes escribir a abuso@trinochat.org.');
+    expect(safety.es['report.alone']).toBe('Un reporte solo nunca basta para cortar a nadie.');
+    expect(safety.es['report.copy']).toBe('Copiar datos del reporte');
+    // Global: no country's numbers, institutions or laws.
+    const global = Object.entries(safety.es).filter(([key]) => key.startsWith('report.'));
+    expect(global.filter(([, text]) => /123|ADenunciar|Te Protejo|Fiscal|Colombia/.test(text))).toEqual([]);
+  });
+
+  // David, 26 Oct: a report is kept one month at most; the app says so, and promises nothing of the outcome.
+  it('say honestly that a report is deleted within 30 days', () => {
+    for (const lang of LANG_CODES) {
+      expect(safety[lang]['report.retention'], lang).toMatch(/30/);
+      expect(safety[lang]['report.sentListBody'], lang).toMatch(/30/);
+    }
+    expect(safety.es['report.retention']).toBe('Trino revisa cada reporte y lo borra en 30 días como máximo.');
+    const promised = LANG_CODES.flatMap(lang =>
+      Object.entries(safety[lang])
+        .filter(([key, text]) => key.startsWith('report.') && /se resolver|will be resolved|será resolvid|te avisaremos/i.test(text))
+        .map(([key]) => `${lang} ${key}`),
+    );
+    expect(promised).toEqual([]);
   });
 
   // Trino cannot take anyone off the network, and the person is not told (R-13, R-34).

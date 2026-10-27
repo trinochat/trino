@@ -216,6 +216,24 @@ describe('the new commands', () => {
     ['listRequests', () => api.listRequests(), 'list_requests', undefined],
     ['acceptRequest', () => api.acceptRequest('ab12'), 'accept_request', { key: 'ab12' }],
     ['acceptGroupContact', () => api.acceptGroupContact('mara'), 'accept_group_contact', { handle: 'mara' }],
+    ['reportPreview', () => api.reportPreview({ kind: 'contact', handle: 'Lina' }), 'report_preview', { target: { kind: 'contact', handle: 'Lina' } }],
+    [
+      'sendReport',
+      () =>
+        api.sendReport(
+          { kind: 'contact', handle: 'Lina' },
+          { category: 'spam', mode: 'key_only', picks: [], note: '', want_reply: false },
+          true,
+        ),
+      'send_report',
+      {
+        target: { kind: 'contact', handle: 'Lina' },
+        draft: { category: 'spam', mode: 'key_only', picks: [], note: '', want_reply: false },
+        block: true,
+      },
+    ],
+    ['listSentReports', () => api.listSentReports(), 'list_sent_reports', undefined],
+    ['cancelReport', () => api.cancelReport('R-AAAA-BBBB'), 'cancel_report', { id: 'R-AAAA-BBBB' }],
     ['deleteRequest', () => api.deleteRequest('ab12'), 'delete_request', { key: 'ab12' }],
     ['listDeletedRequests', () => api.listDeletedRequests(), 'list_deleted_requests', undefined],
     ['undoDeletedRequest', () => api.undoDeletedRequest('ab12'), 'undo_deleted_request', { key: 'ab12' }],

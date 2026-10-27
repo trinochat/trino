@@ -23,6 +23,7 @@ import type { CallEvent } from '../lib/call-events';
 import type { BridgesChecked, BridgesInfo, BridgesSet, FirstWay } from '../lib/net';
 import type { ConvoRef } from '../lib/convo';
 import type { ProcessedFile } from '../lib/media';
+import type { GroupMemberView } from './group/group-model';
 
 /* Conversations */
 export type { ConvoRef };
@@ -176,6 +177,8 @@ export interface StickerApi {
 /** The shell mounts it with `key={convoKey}`. */
 export interface ChatPaneProps {
   convo: Exclude<ConvoRef, { kind: 'channel' }>;
+  /** Opens the report with a message of theirs marked (UR-5). */
+  onReport?(msgKey: string): void;
   header: ChatHeaderInfo;
   messages: readonly Msg[];
   /** Epoch seconds, like `Msg.ts`. */
@@ -251,6 +254,8 @@ export interface GroupPanelSlotProps {
   onChanged(): void;
   onOpenContact(handle: string): void;
   onLeft(): void;
+  /** Opens the report of a member (UR-5); `mustBlock` from the block's "Reportar también". */
+  onReportMember?(member: GroupMemberView, mustBlock: boolean): void;
 }
 /** "Nuevo chat" from the Chats tab, "Nueva llamada" from the Calls tab. */
 export type NewChatPurpose = 'chat' | 'call';
@@ -301,6 +306,8 @@ export interface ContactDetailsSlotProps {
   onRenamed(newHandle: string): void;
   onRemoved(): void;
   onChanged(): void;
+  /** Opens the report (UR-5); `mustBlock` from the block's "Reportar también". */
+  onReport?(mustBlock: boolean): void;
 }
 
 /* Calls and verification (W6) */

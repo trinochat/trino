@@ -180,6 +180,16 @@ describe('RequestPane (PropSolicitudes card 4, PropMovilSolicitudes card 3)', ()
     expect(props.onBlock).toHaveBeenCalled();
   });
 
+  // UR-5 (PropSolicitudes card 4): Reportar after Bloquear.
+  it('reports from its button, after Bloquear', () => {
+    const onReport = vi.fn();
+    pane({ onReport });
+    const names = screen.getAllByRole('button').map(button => button.textContent);
+    expect(names.indexOf('Reportar')).toBe(names.indexOf('Bloquear') + 1);
+    fireEvent.click(screen.getByRole('button', { name: 'Reportar' }));
+    expect(onReport).toHaveBeenCalled();
+  });
+
   it('says why an answer failed: a shared key, a request that is gone, or anything else', async () => {
     const clash = Object.assign(new Error('clash'), { code: 'key_clash', message: 'x' });
     const onAccept = vi.fn(async () => {

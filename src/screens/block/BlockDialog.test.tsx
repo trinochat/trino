@@ -52,6 +52,29 @@ function mount(shown: BlockPreview = preview(), over: Partial<BlockDialogApi> = 
 const description = (dialog: HTMLElement) =>
   document.getElementById(dialog.getAttribute('aria-describedby') ?? '')?.textContent;
 
+describe('BlockDialog: Reportar también (UR-5)', () => {
+  it('reports too, if you tick it: the report blocks them, sent or not', async () => {
+    const onReport = vi.fn();
+    const api: BlockDialogApi = {
+      blockPreview: vi.fn(async () => preview()),
+      blockIdentity: vi.fn(async () => done),
+      removeGroupMember: vi.fn(async () => ({ gid: 'g1', name: 'Fútbol', epoch: 2, is_admin: true, member_count: 5, members: [] })),
+      leaveGroup: vi.fn(async () => {}),
+    };
+    render(
+      <I18nContext.Provider value={makeT('es')}>
+        <BlockDialog target={ANA} name="Andrés Rojas" api={api} onBlocked={vi.fn()} onClose={vi.fn()} onReport={onReport} />
+      </I18nContext.Provider>,
+    );
+    const box = (await screen.findByRole('checkbox', { name: 'Reportar también' })) as HTMLInputElement;
+    expect(box.checked).toBe(false);
+    fireEvent.click(box);
+    fireEvent.click(await screen.findByRole('button', { name: 'Bloquear' }));
+    expect(onReport).toHaveBeenCalledTimes(1);
+    expect(api.blockIdentity).not.toHaveBeenCalled();
+  });
+});
+
 describe('BlockDialog (PropBloquear, card 3)', () => {
   it('asks first, says what it does and that they are not told, with Cancelar focused', async () => {
     const { api } = mount();
@@ -66,7 +89,7 @@ describe('BlockDialog (PropBloquear, card 3)', () => {
     expect(confirm.className).toContain('bg-ui-danger');
     expect(confirm.querySelector('svg')).not.toBeNull();
     expect(api.blockIdentity).not.toHaveBeenCalled();
-    // UR-5 is not built: no "Reportar también" yet.
+    // Without a report to open, no "Reportar también".
     expect(screen.queryByRole('checkbox')).toBeNull();
   });
 

@@ -40,12 +40,14 @@ function setup({
   layout = 'aside' as PanelLayout,
   api: overrides = {} as Partial<ContactDetailsApi>,
   stored = {} as Record<string, string>,
+  extra = {} as Partial<ContactDetailsPanelProps>,
 }: {
   contact?: NodeInfo;
   trust?: Trust;
   layout?: PanelLayout;
   api?: Partial<ContactDetailsApi>;
   stored?: Record<string, string>;
+  extra?: Partial<ContactDetailsPanelProps>;
 } = {}) {
   const api: ContactDetailsApi = {
     renameNode: vi.fn(async () => {}),
@@ -66,6 +68,7 @@ function setup({
     onRenamed: vi.fn(),
     onRemoved: vi.fn(),
     onChanged: vi.fn(),
+    ...extra,
   };
   renderEs(<ContactDetailsPanel {...props} />);
   return { api, prefs, storage, props };
@@ -304,6 +307,19 @@ describe('ContactDetailsPanel', () => {
         'Tus mensajes nuevos en este chat se borran de los dos equipos después de 1 día. Cada uno elige el tiempo de sus propios mensajes.',
       ),
     ).toBeTruthy();
+  });
+
+  // UR-5: Reportar in the details, and "Reportar también" from its block's confirmation.
+  it('reports from the details, and from the block with Reportar también', async () => {
+    const onReport = vi.fn();
+    setup({ extra: { onReport } });
+    fireEvent.click(screen.getByRole('button', { name: 'Reportar' }));
+    expect(onReport).toHaveBeenLastCalledWith(false);
+    fireEvent.click(screen.getByRole('button', { name: 'Bloquear' }));
+    const dialog = screen.getByRole('alertdialog', { name: '¿Bloquear a ana?' });
+    fireEvent.click(await within(dialog).findByRole('checkbox', { name: 'Reportar también' }));
+    fireEvent.click(await within(dialog).findByRole('button', { name: 'Bloquear' }));
+    expect(onReport).toHaveBeenLastCalledWith(true);
   });
 
   // UR-2 (PropBloquear cards 2 and 3): never in one click, and unblocking says what does not come back.
