@@ -34,7 +34,7 @@ describe('consentRecord', () => {
   // on this device holds the date, the version of each text accepted and the
   // public key of the identity that accepted them.
   it('holds the date, the version of each text and the public key', () => {
-    expect(consentRecord({ publicKey: PUBLIC_KEY, lang: 'es', at: AT })).toEqual({
+    expect(consentRecord({ publicKey: PUBLIC_KEY, lang: 'es', at: AT, age: 'adult' })).toEqual({
       format: 1,
       acceptedAt: '2026-10-11T14:03:00.000Z',
       publicKey: PUBLIC_KEY,
@@ -44,16 +44,25 @@ describe('consentRecord', () => {
     });
   });
 
-  it('points at the public document and its first version, for people of 18 or more', () => {
-    expect(MINIMUM_AGE).toBe(18);
+  // UR-10 (minimum of 16, David, 25 Oct): "¿Cuántos años tienes?" replaced
+  // the box of 18; the record keeps the least age the answer states.
+  it('keeps the least age the answer states, 16 for "16 o 17"', () => {
+    expect(consentRecord({ publicKey: PUBLIC_KEY, lang: 'es', at: AT, age: 'minor' }).age).toEqual({
+      minimum: 16,
+      version: AGE_STATEMENT_VERSION,
+    });
+  });
+
+  it('points at the public document and its first version, for people of 16 or more', () => {
+    expect(MINIMUM_AGE).toBe(16);
     expect(PRIVACY_POLICY_URL).toBe('https://trinochat.org/privacidad/');
     expect(PRIVACY_POLICY_VERSION).toBe(1);
-    expect(AGE_STATEMENT_VERSION).toBe(1);
+    expect(AGE_STATEMENT_VERSION).toBe(2);
   });
 });
 
 describe('saveConsentRecord and loadConsentRecord', () => {
-  const record: ConsentRecord = consentRecord({ publicKey: PUBLIC_KEY, lang: 'pt', at: AT });
+  const record: ConsentRecord = consentRecord({ publicKey: PUBLIC_KEY, lang: 'pt', at: AT, age: 'adult' });
 
   it('keep the record on this device under its own key', () => {
     const { storage, data } = memoryStorage();

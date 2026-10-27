@@ -260,9 +260,10 @@ describe('App', () => {
     const api = fakeApi(NO_VAULT);
     renderApp(api);
     await heading('Te damos la bienvenida a Trino');
-    fireEvent.click(screen.getByRole('checkbox', { name: 'Tengo 18 años o más' }));
     fireEvent.click(screen.getByRole('checkbox', { name: 'Leí y acepto cómo Trino trata mis datos' }));
     click('Empezar');
+    fireEvent.click(screen.getByRole('radio', { name: '18 o más' }));
+    click('Continuar');
     // The profile reaches the contacts (K12 is in), and the first run says so.
     expect(
       screen.getByText('Tu nombre va en tu código de contacto. Tu nombre y tu foto también les llegan cifrados a tus contactos.'),
@@ -276,7 +277,7 @@ describe('App', () => {
     click('Continuar');
     click('Ahora no');
     await heading('Todo listo');
-    expect(api.createIdentity).toHaveBeenCalledWith('Rechita', PASS, false);
+    expect(api.createIdentity).toHaveBeenCalledWith('Rechita', PASS, false, 'adult');
 
     click('Agregar un contacto');
     expect(await screen.findByText('intent: add-contact', {}, WAIT)).toBeTruthy();
@@ -398,9 +399,10 @@ describe('App', () => {
     const dialog = await screen.findByRole('alertdialog', {}, WAIT);
     fireEvent.click(within(dialog).getByRole('button', { name: 'Borrar identidad y empezar de cero' }));
     await heading('Te damos la bienvenida a Trino');
-    fireEvent.click(screen.getByRole('checkbox', { name: 'Tengo 18 años o más' }));
     fireEvent.click(screen.getByRole('checkbox', { name: 'Leí y acepto cómo Trino trata mis datos' }));
     click('Empezar');
+    fireEvent.click(screen.getByRole('radio', { name: '18 o más' }));
+    click('Continuar');
     type('Nombre', 'Rechita');
     click('Continuar');
     type('Contraseña', PASS);
@@ -556,9 +558,10 @@ describe("App and the account's preferences", () => {
     api.createIdentity.mockResolvedValue({ ...CREATED, prefs_import: 'pending' });
     renderApp(api);
     await heading('Te damos la bienvenida a Trino');
-    fireEvent.click(screen.getByRole('checkbox', { name: 'Tengo 18 años o más' }));
     fireEvent.click(screen.getByRole('checkbox', { name: 'Leí y acepto cómo Trino trata mis datos' }));
     click('Empezar');
+    fireEvent.click(screen.getByRole('radio', { name: '18 o más' }));
+    click('Continuar');
     type('Nombre', 'Rechita');
     click('Continuar');
     type('Contraseña', PASS);

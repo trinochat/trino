@@ -41,7 +41,9 @@ import {
 } from './onboarding-machine';
 import { StepProgress } from './StepProgress';
 import { ConnectionStep } from './steps/ConnectionStep';
+import { AgeStep } from './steps/AgeStep';
 import { DoneStep } from './steps/DoneStep';
+import { TooYoungStep } from './steps/TooYoungStep';
 import { NameStep } from './steps/NameStep';
 import { PasswordStep } from './steps/PasswordStep';
 import { StyleStep } from './steps/StyleStep';
@@ -87,7 +89,6 @@ export function OnboardingFlow({
   const current = useRef(state);
   const mounted = useRef(true);
   const headingRef = useRef<HTMLHeadingElement>(null);
-  const ageRef = useRef<HTMLInputElement>(null);
   const privacyRef = useRef<HTMLInputElement>(null);
   const nameRef = useRef<HTMLInputElement>(null);
   const passRef = useRef<HTMLInputElement>(null);
@@ -153,7 +154,7 @@ export function OnboardingFlow({
         );
         return;
       case 'createIdentity':
-        attempt(() => api.createIdentity(effect.handle, effect.passphrase, effect.useTotp)).then(
+        attempt(() => api.createIdentity(effect.handle, effect.passphrase, effect.useTotp, effect.age)).then(
           response => send({ type: 'created', response }),
           (error: unknown) => {
             console.warn('forge failed:', codeOf(error));
@@ -162,7 +163,12 @@ export function OnboardingFlow({
         );
         return;
       case 'recordConsent': {
-        const record = consentRecord({ publicKey: effect.publicKey, lang, at: new Date(now()) });
+        const record = consentRecord({
+          publicKey: effect.publicKey,
+          lang,
+          at: new Date(now()),
+          age: current.current.age === 'minor' ? 'minor' : 'adult',
+        });
         if (!saveConsentRecord(consentStorage ?? accountPrefsStorage, record)) {
           console.warn('the record of the age and data boxes could not be kept');
         }
@@ -195,7 +201,10 @@ export function OnboardingFlow({
   function focusTargetOf(field: ErrorField): HTMLElement | null {
     switch (field) {
       case 'consent':
-        return current.current.ageConfirmed ? privacyRef.current : ageRef.current;
+        return privacyRef.current;
+      // The answers are buttons the person picks: "Continuar" waits for one.
+      case 'age':
+        return null;
       case 'name':
         return nameRef.current;
       case 'pass':
@@ -228,7 +237,12 @@ export function OnboardingFlow({
   const progress = stepNumber(state);
   const created = state.step === 'done' ? state.created : null;
   const busy = state.busy !== null;
-  const withNav = state.step === 'connection' || state.step === 'name' || state.step === 'password' || state.step === 'style';
+  const withNav =
+    state.step === 'age' ||
+    state.step === 'connection' ||
+    state.step === 'name' ||
+    state.step === 'password' ||
+    state.step === 'style';
   const withBack = withNav || (state.step === 'twofa' && state.twofa === 'ask');
   const heading = { headingId, headingRef };
 
@@ -249,8 +263,10 @@ export function OnboardingFlow({
         {progress ? <StepProgress current={progress.current} total={progress.total} /> : null}
 
         {state.step === 'welcome' ? (
-          <WelcomeStep state={state} send={send} {...heading} ageRef={ageRef} privacyRef={privacyRef} openLink={openLink} />
+          <WelcomeStep state={state} send={send} {...heading} privacyRef={privacyRef} openLink={openLink} />
         ) : null}
+        {state.step === 'age' ? <AgeStep state={state} send={send} {...heading} /> : null}
+        {state.step === 'tooYoung' ? <TooYoungStep send={send} {...heading} /> : null}
         {state.step === 'connection' ? (
           <ConnectionStep state={state} send={send} {...heading} stepErrorRef={stepErrorRef} bridges={api.bridges} />
         ) : null}
@@ -272,7 +288,13 @@ export function OnboardingFlow({
               {t('onb.back')}
             </Button>
             {withNav ? (
-              <Button type="submit" variant="primary" size="lg" loading={state.busy === 'checking' || state.busy === 'connecting'}>
+              <Button
+                type="submit"
+                variant="primary"
+                size="lg"
+                disabled={state.step === 'age' && state.age === null}
+                loading={state.busy === 'checking' || state.busy === 'connecting'}
+              >
                 {state.busy === 'checking' ? t('onb.checking') : t('onb.next')}
               </Button>
             ) : null}

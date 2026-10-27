@@ -96,7 +96,8 @@ export interface OnboardingApi {
   checkPassphrase(passphrase: string): Promise<void>;
   totpBegin(label?: string): Promise<TotpBeginResponse>;
   totpVerify(code: string): Promise<boolean>;
-  createIdentity(handle: string, passphrase: string, useTotp: boolean): Promise<ForgeResponse>;
+  /** `age` (UR-10): the answer of the first run, kept only on this device. */
+  createIdentity(handle: string, passphrase: string, useTotp: boolean, age?: 'minor' | 'adult'): Promise<ForgeResponse>;
   updateProfile(handle: string, avatar: string | null): Promise<void>;
   /**
    * Start Tor from the first run's "Conexión" step (TOR-6), the way chosen:

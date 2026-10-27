@@ -22,7 +22,9 @@ const KEYS = [
   // (plan-cambios-11oct §6), the two boxes of the first step (age and data,
   // the parent's addendum), the 2FA errors and the QR dialog.
   'onb.nameBodySync', 'onb.changePhoto', 'onb.removePhoto', 'onb.errPhoto', 'onb.errPhotoSave',
-  'onb.errNameTooLong', 'onb.checking', 'onb.ageLabel', 'onb.privacyLabel', 'onb.privacyLink',
+  'onb.errNameTooLong', 'onb.checking', 'onb.privacyLabel', 'onb.privacyLink',
+  // UR-10: the age question, under 16, and the end for 16 and 17.
+  'onb.ageTitle', 'onb.ageBody', 'onb.ageUnder16', 'onb.ageMinor', 'onb.ageAdult', 'onb.ageNote', 'onb.ageMinorNote', 'onb.errAge', 'onb.youngTitle', 'onb.youngBody', 'onb.youngLater', 'onb.youngBack', 'onb.doneBodyMinor',
   'onb.errConsent', 'onb.errTotpBegin', 'onb.errCodeLength', 'onb.errTotpCheck',
   'onb.errTotpNotVerified', 'onb.qrTitle',
   'unlock2.lockedIdle', 'unlock2.lockedIdleOne', 'unlock2.lockedManual',
@@ -95,14 +97,21 @@ describe('the copy of the first run', () => {
     expect(auth.es['onb.nameBody']).toContain('tu foto solo se guarda en este equipo');
   });
 
-  // David, 11 Oct 2026: Trino is for people of 18 or more, asked with a box
-  // and no birth date; and the data authorization of Ley 1581.
+  // David, 25 Oct 2026 (minimum of 16): one question with three answers, no
+  // birth date; and the data authorization of Ley 1581.
   it('asks for the age and the data authorization in the words David chose', () => {
-    expect(auth.es['onb.ageLabel']).toBe('Tengo 18 años o más');
+    expect(auth.es['onb.ageTitle']).toBe('¿Cuántos años tienes?');
+    expect([auth.es['onb.ageUnder16'], auth.es['onb.ageMinor'], auth.es['onb.ageAdult']]).toEqual([
+      'Menos de 16',
+      '16 o 17',
+      '18 o más',
+    ]);
+    expect(auth.es['onb.ageNote']).toBe('No te pedimos documento, fecha de nacimiento ni foto. Tu respuesta se queda en tus equipos.');
+    expect(auth.es['onb.youngTitle']).toBe('Trino es para personas de 16 años o más');
     expect(auth.es['onb.privacyLabel']).toBe('Leí y acepto cómo Trino trata mis datos');
     for (const lang of ['es', 'en', 'pt'] as const) {
-      expect(auth[lang]['onb.ageLabel'], lang).toContain('18');
-      expect(auth[lang]['onb.errConsent'], lang).toContain('18');
+      expect(auth[lang]['onb.youngTitle'], lang).toContain('16');
+      expect(auth[lang]['onb.errConsent'], lang).not.toContain('18');
     }
   });
 });

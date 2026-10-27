@@ -2,9 +2,10 @@
  * The two boxes of the first step and the record they leave on this device
  * (the parent's addendum to plan-cambios-11oct, David, 11 Oct 2026):
  *
- * - "Tengo 18 años o más": Trino is for people of 18 or more. A box, with no
- *   birth date and no document (reports/Marco legal de Trino Chat.md,
- *   action 10).
+ * - The age: "¿Cuántos años tienes?" (uso responsable UR-10, minimum of 16,
+ *   David, 25 Oct), its own step since the box of 18; no birth date and no
+ *   document. The record keeps the least age the answer states: 16 for
+ *   "16 o 17", 18 for "18 o más".
  * - "Leí y acepto cómo Trino trata mis datos", with a link to the public
  *   document: the authorization of Ley 1581, arts. 9 and 10, which has to be
  *   prior, express and informed, and provable.
@@ -16,9 +17,9 @@
  */
 import type { Lang } from '../../../lib/i18n';
 
-export const MINIMUM_AGE = 18;
-/** The version of the age statement (`onb.ageLabel`). Raise it when its words change. */
-export const AGE_STATEMENT_VERSION = 1;
+export const MINIMUM_AGE = 16;
+/** The version of the age statement (`onb.ageTitle` and its answers). Raise it when its words change. */
+export const AGE_STATEMENT_VERSION = 2;
 /**
  * The version of the public document "Cómo funciona Trino y cómo trata tus
  * datos" that the box accepts: its last line says "Versión 1". Raise it with
@@ -46,19 +47,29 @@ export interface ConsentRecord {
   publicKey: string;
   /** The language the boxes and the link were shown in. */
   lang: Lang;
-  /** "Tengo 18 años o más", ticked: the age it states and the version of its words. */
+  /** The answer to the age: the least age it states and the version of its words. */
   age: { minimum: number; version: number };
   /** "Leí y acepto cómo Trino trata mis datos", ticked: the document's version and where it is. */
   privacyPolicy: { version: number; url: string };
 }
 
-export function consentRecord({ publicKey, lang, at }: { publicKey: string; lang: Lang; at: Date }): ConsentRecord {
+export function consentRecord({
+  publicKey,
+  lang,
+  at,
+  age,
+}: {
+  publicKey: string;
+  lang: Lang;
+  at: Date;
+  age: 'minor' | 'adult';
+}): ConsentRecord {
   return {
     format: 1,
     acceptedAt: at.toISOString(),
     publicKey,
     lang,
-    age: { minimum: MINIMUM_AGE, version: AGE_STATEMENT_VERSION },
+    age: { minimum: age === 'minor' ? MINIMUM_AGE : 18, version: AGE_STATEMENT_VERSION },
     privacyPolicy: { version: PRIVACY_POLICY_VERSION, url: PRIVACY_POLICY_URL },
   };
 }

@@ -6,12 +6,20 @@
  * them from the event that caused them, so React's double effects in
  * development never create an identity twice.
  *
- * Steps: welcome (language and the two boxes) → name and photo → password →
- * style → the 2FA question, and its setup → "Todo listo". Back goes one step
- * back, also from the 2FA question to the style (plan §1.8, 8).
+ * Steps: welcome (language and the box of the data) → age → name and photo
+ * → password → style → the 2FA question, and its setup → "Todo listo". Back
+ * goes one step back, also from the 2FA question to the style (plan §1.8,
+ * 8).
+ *
+ * The age (uso responsable UR-10, PropMenoresPC cards 1 and 2; minimum of
+ * 16, David, 25 Oct) is one question with three answers and none chosen:
+ * "Menos de 16" makes no account and leads to its own screen, whose "Volver
+ * al inicio" goes to the welcome without the answer; "16 o 17" and "18 o
+ * más" go on, and the answer goes with the new identity (`createIdentity`),
+ * kept only on this device.
  *
  * With the network (`withConnection`, TOR-6), a "Conexión" step comes after
- * the welcome (PropTorSimple, card 1; Tor design §9.2): Tor starts only
+ * the age (PropTorSimple, card 1; Tor design §9.2): Tor starts only
  * from its "Continuar", so whoever needs to hide that they use Trino
  * chooses before the first connection ("No quiero que mi proveedor note
  * que uso Trino", a built-in bridge). Going back to it and on again starts
@@ -32,18 +40,21 @@ import { onboardingFailure } from './errors';
 export const NAME_MAX = 40;
 const CODE_DIGITS = 6;
 
-/** The steps of the progress bar, in order: "Paso n de 5". "Todo listo" has none. */
-export const PROGRESS_STEPS = ['welcome', 'name', 'password', 'style', 'twofa'] as const;
-/** The same with the "Conexión" step, after the welcome. */
-const STEPS_WITH_CONNECTION = ['welcome', 'connection', 'name', 'password', 'style', 'twofa'] as const;
-export type OnboardingStep = (typeof STEPS_WITH_CONNECTION)[number] | 'done';
+/** The steps of the progress bar, in order: "Paso n de 6". "Todo listo" has none. */
+export const PROGRESS_STEPS = ['welcome', 'age', 'name', 'password', 'style', 'twofa'] as const;
+/** The same with the "Conexión" step, after the age. */
+const STEPS_WITH_CONNECTION = ['welcome', 'age', 'connection', 'name', 'password', 'style', 'twofa'] as const;
+/** "Menos de 16" (PropMenoresPC card 2) and "Todo listo" have no number. */
+export type OnboardingStep = (typeof STEPS_WITH_CONNECTION)[number] | 'tooYoung' | 'done';
+/** "¿Cuántos años tienes?" (UR-10). */
+export type AgeAnswer = 'under16' | 'minor' | 'adult';
 /** The 2FA step asks first; "Activar" sets it up. */
 export type TwofaView = 'ask' | 'setup';
 /** What the flow waits for. */
 export type Busy = 'checking' | 'enrolling' | 'verifying' | 'creating' | 'connecting';
 
-/** Where an error shows: next to a field, by the two boxes, or for the whole step. */
-export type ErrorField = 'consent' | 'name' | 'photo' | 'pass' | 'pass2' | 'code' | 'step';
+/** Where an error shows: next to a field, by the box, by the age, or for the whole step. */
+export type ErrorField = 'consent' | 'age' | 'name' | 'photo' | 'pass' | 'pass2' | 'code' | 'step';
 export interface UiError {
   field: ErrorField;
   key: string;
@@ -61,8 +72,8 @@ export interface OnboardingState {
   /** The way Tor was started from the step, or null before. */
   started: FirstWay | null;
   twofa: TwofaView;
-  /** "Tengo 18 años o más". */
-  ageConfirmed: boolean;
+  /** The answer to "¿Cuántos años tienes?", or null while none is chosen. */
+  age: AgeAnswer | null;
   /** "Leí y acepto cómo Trino trata mis datos". */
   privacyAccepted: boolean;
   /** As typed; trimmed when it is checked and sent. */
@@ -87,7 +98,9 @@ export interface OnboardingState {
 }
 
 export type OnboardingEvent =
-  | { type: 'setAge'; checked: boolean }
+  | { type: 'setAge'; answer: AgeAnswer }
+  /** "Volver al inicio", from "Menos de 16". */
+  | { type: 'restart' }
   | { type: 'setPrivacy'; checked: boolean }
   | { type: 'setName'; value: string }
   | { type: 'photoChosen'; dataUrl: string }
@@ -134,7 +147,7 @@ export type OnboardingEffect =
   | { type: 'checkPassphrase'; passphrase: string }
   | { type: 'totpBegin'; label: string }
   | { type: 'totpVerify'; code: string }
-  | { type: 'createIdentity'; handle: string; passphrase: string; useTotp: boolean }
+  | { type: 'createIdentity'; handle: string; passphrase: string; useTotp: boolean; age: 'minor' | 'adult' }
   /** Keep the record of the two boxes, with the new identity's public key. */
   | { type: 'recordConsent'; publicKey: string }
   /** The photo is saved after the identity exists: `forge` takes none. */
@@ -154,7 +167,7 @@ export const INITIAL_ONBOARDING: OnboardingState = Object.freeze({
   bridges: false,
   started: null,
   twofa: 'ask',
-  ageConfirmed: false,
+  age: null,
   privacyAccepted: false,
   name: '',
   photo: null,
@@ -170,9 +183,9 @@ export const INITIAL_ONBOARDING: OnboardingState = Object.freeze({
   photoSave: 'idle',
 }) as OnboardingState;
 
-/** "Paso n de 5" (6 with the "Conexión" step), or null on "Todo listo". */
+/** "Paso n de 6" (7 with the "Conexión" step), or null on "Menos de 16" and "Todo listo". */
 export function stepNumber(state: OnboardingState): { current: number; total: number } | null {
-  if (state.step === 'done') return null;
+  if (state.step === 'done' || state.step === 'tooYoung') return null;
   const steps: readonly OnboardingStep[] = state.withConnection ? STEPS_WITH_CONNECTION : PROGRESS_STEPS;
   return { current: steps.indexOf(state.step) + 1, total: steps.length };
 }
@@ -193,16 +206,23 @@ function sameWay(a: FirstWay | null, b: FirstWay): boolean {
 
 /**
  * A fresh object for each refusal, so the flow sees a new error and takes the
- * focus again to the first unticked box.
+ * focus again to the box.
  */
 const consentError = (): UiError => ({ field: 'consent', key: 'onb.errConsent' });
+/** No answer to the age, or one under 16. */
+const ageError = (): UiError => ({ field: 'age', key: 'onb.errAge' });
 
 const stay = (state: OnboardingState): Transition => ({ state, effects: [] });
 const go = (state: OnboardingState, ...effects: OnboardingEffect[]): Transition => ({ state, effects });
 
-/** Both boxes of the welcome step are ticked: the only way on (consent.ts). */
+/** The box of the welcome step is ticked: the only way on (consent.ts). */
 function consentGiven(state: OnboardingState): boolean {
-  return state.ageConfirmed && state.privacyAccepted;
+  return state.privacyAccepted;
+}
+
+/** An age with which an account can be made: 16 or more. */
+function accountAge(state: OnboardingState): 'minor' | 'adult' | null {
+  return state.age === 'minor' || state.age === 'adult' ? state.age : null;
 }
 
 /** The name's problem, or null: trimmed, at least one and at most NAME_MAX scalars. */
@@ -220,17 +240,20 @@ function nameError(name: string): UiError | null {
  */
 function create(state: OnboardingState, useTotp: boolean): Transition {
   if (!consentGiven(state)) return stay({ ...state, step: 'welcome', twofa: 'ask', busy: null, error: consentError() });
+  const age = accountAge(state);
+  if (age === null) return stay({ ...state, step: 'age', twofa: 'ask', busy: null, error: ageError() });
   const badName = nameError(state.name);
   if (badName) return stay({ ...state, step: 'name', twofa: 'ask', busy: null, error: badName });
   return go(
     { ...state, busy: 'creating', error: null },
-    { type: 'createIdentity', handle: state.name.trim(), passphrase: state.pass, useTotp },
+    { type: 'createIdentity', handle: state.name.trim(), passphrase: state.pass, useTotp, age },
   );
 }
 
 const PREVIOUS: Partial<Record<OnboardingStep, OnboardingStep>> = {
-  connection: 'welcome',
-  name: 'welcome',
+  age: 'welcome',
+  connection: 'age',
+  name: 'age',
   password: 'name',
   style: 'password',
   twofa: 'style',
@@ -240,6 +263,10 @@ function next(state: OnboardingState): Transition {
   switch (state.step) {
     case 'welcome':
       if (!consentGiven(state)) return stay({ ...state, error: consentError() });
+      return stay({ ...state, step: 'age', error: null });
+    case 'age':
+      if (state.age === null) return stay({ ...state, error: ageError() });
+      if (state.age === 'under16') return stay({ ...state, step: 'tooYoung', error: null });
       return stay({ ...state, step: state.withConnection ? 'connection' : 'name', error: null });
     case 'connection':
       // Started already this way: nothing new to start.
@@ -334,11 +361,14 @@ function createFailed(state: OnboardingState, error: unknown): Transition {
 function personEvent(state: OnboardingState, event: OnboardingEvent): Transition {
   switch (event.type) {
     case 'setAge':
+      return state.step === 'age'
+        ? stay({ ...state, age: event.answer, error: state.error?.field === 'age' ? null : state.error })
+        : stay(state);
+    case 'restart':
+      // To the welcome, not to the question: nothing invites another answer.
+      return state.step === 'tooYoung' ? stay({ ...state, step: 'welcome', age: null, error: null }) : stay(state);
     case 'setPrivacy': {
-      const ticked =
-        event.type === 'setAge'
-          ? { ...state, ageConfirmed: event.checked }
-          : { ...state, privacyAccepted: event.checked };
+      const ticked = { ...state, privacyAccepted: event.checked };
       const clear = ticked.error?.field === 'consent' && consentGiven(ticked);
       return stay(clear ? { ...ticked, error: null } : ticked);
     }

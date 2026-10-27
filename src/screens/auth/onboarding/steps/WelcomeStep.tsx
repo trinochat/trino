@@ -1,9 +1,9 @@
 /**
  * Step 1 (Onboarding:56-72): the welcome, the language, which applies at
- * once, and the two boxes the parent's addendum asks for (David, 11 Oct
- * 2026), both unticked and both required: "Tengo 18 años o más" and "Leí y
- * acepto cómo Trino trata mis datos", with the link to the public document.
- * Without them "Empezar" says why and goes back to the first unticked box.
+ * once, and the box the parent's addendum asks for (David, 11 Oct 2026),
+ * unticked and required: "Leí y acepto cómo Trino trata mis datos", with the
+ * link to the public document. Without it "Empezar" says why and goes back
+ * to the box. The age is its own step since UR-10 (`AgeStep`).
  */
 import { ExternalLink } from 'lucide-react';
 import { useId, type Ref } from 'react';
@@ -25,19 +25,18 @@ export interface WelcomeStepProps {
   send(event: OnboardingEvent): void;
   headingId: string;
   headingRef: Ref<HTMLHeadingElement>;
-  ageRef: Ref<HTMLInputElement>;
   privacyRef: Ref<HTMLInputElement>;
   /** Opens the public document in the system browser. */
   openLink(url: string): void;
 }
 
-export function WelcomeStep({ state, send, headingId, headingRef, ageRef, privacyRef, openLink }: WelcomeStepProps) {
+export function WelcomeStep({ state, send, headingId, headingRef, privacyRef, openLink }: WelcomeStepProps) {
   const t = useT();
   const { lang, setLang } = useLang();
   const languageLabelId = useId();
   const errorId = useId();
   const refused = state.error?.field === 'consent';
-  /** Once "Empezar" was refused, each unticked box says so and points at why. */
+  /** Once "Empezar" was refused, the unticked box says so and points at why. */
   const boxState = (ticked: boolean) => (refused ? { 'aria-describedby': errorId, 'aria-invalid': ticked ? undefined : true } : {});
 
   return (
@@ -64,13 +63,6 @@ export function WelcomeStep({ state, send, headingId, headingRef, ageRef, privac
         />
       </div>
       <div className="flex flex-col">
-        <Checkbox
-          ref={ageRef}
-          label={t('onb.ageLabel')}
-          checked={state.ageConfirmed}
-          onChange={event => send({ type: 'setAge', checked: event.target.checked })}
-          {...boxState(state.ageConfirmed)}
-        />
         <Checkbox
           ref={privacyRef}
           label={t('onb.privacyLabel')}

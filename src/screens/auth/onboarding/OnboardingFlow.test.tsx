@@ -95,10 +95,11 @@ const type = (label: string, value: string) => fireEvent.change(screen.getByLabe
 const tick = (name: string) => fireEvent.click(screen.getByRole('checkbox', { name }));
 const alertText = () => screen.getByRole('alert').textContent;
 
-function passWelcome() {
-  tick('Tengo 18 años o más');
+function passWelcome(age = '18 o más') {
   tick('Leí y acepto cómo Trino trata mis datos');
   click('Empezar');
+  fireEvent.click(screen.getByRole('radio', { name: age }));
+  click('Continuar');
 }
 function passName(name = 'Rechita') {
   type('Nombre', name);
@@ -133,10 +134,10 @@ describe('OnboardingFlow, the whole way', () => {
   it('creates an identity without 2FA, step by step (Onboarding:56-200)', async () => {
     const { api, onCreated } = setup();
     expect(heading().textContent).toBe('Te damos la bienvenida a Trino');
-    expect(screen.getByText('Paso 1 de 5')).toBeTruthy();
+    expect(screen.getByText('Paso 1 de 6')).toBeTruthy();
     passWelcome();
     expect(heading().textContent).toBe('¿Cómo quieres que te vean?');
-    expect(screen.getByText('Paso 2 de 5')).toBeTruthy();
+    expect(screen.getByText('Paso 3 de 6')).toBeTruthy();
     passName();
     expect(heading().textContent).toBe('Crea una contraseña');
     await passPassword();
@@ -144,10 +145,10 @@ describe('OnboardingFlow, the whole way', () => {
     expect(heading().textContent).toBe('Elige cómo se ve Trino');
     click('Continuar');
     expect(heading().textContent).toBe('Verificación en dos pasos (opcional)');
-    expect(screen.getByText('Paso 5 de 5')).toBeTruthy();
+    expect(screen.getByText('Paso 6 de 6')).toBeTruthy();
     click('Ahora no');
     await settle();
-    expect(api.createIdentity).toHaveBeenCalledWith('Rechita', PASS, false);
+    expect(api.createIdentity).toHaveBeenCalledWith('Rechita', PASS, false, 'adult');
     expect(heading().textContent).toBe('Todo listo');
     expect(screen.queryByText(/^Paso/)).toBeNull();
     const code = toShareCode(CREATED.bundle_json);
@@ -177,7 +178,7 @@ describe('OnboardingFlow, the whole way', () => {
     type('Código de 6 dígitos', '482913');
     click('Comprobar');
     await settle();
-    expect(api.createIdentity).toHaveBeenCalledWith('Rechita', PASS, true);
+    expect(api.createIdentity).toHaveBeenCalledWith('Rechita', PASS, true, 'adult');
     expect(heading().textContent).toBe('Todo listo');
     click('Agregar un contacto');
     expect(onCreated).toHaveBeenCalledWith(CREATED, 'add-contact');
@@ -209,32 +210,74 @@ describe('OnboardingFlow, the whole way', () => {
     click('Atrás');
     click('Atrás');
     click('Atrás');
+    expect(heading().textContent).toBe('¿Cuántos años tienes?');
+    click('Atrás');
     expect(heading().textContent).toBe('Te damos la bienvenida a Trino');
   });
 });
 
 describe('the two boxes of the welcome step', () => {
-  // The parent's addendum: no account without "Tengo 18 años o más" and the
-  // data authorization, both unticked at first.
-  it('start unticked, and nothing goes on until both are ticked', () => {
-    const { api } = setup();
-    const age = screen.getByRole<HTMLInputElement>('checkbox', { name: 'Tengo 18 años o más' });
+  // Ley 1581: no account without the data authorization, unticked at first.
+  // The age is its own step (UR-10).
+  it('starts unticked, and nothing goes on until it is ticked', () => {
+    setup();
+    expect(screen.queryByRole('checkbox', { name: /18 años/ })).toBeNull();
     const privacy = screen.getByRole<HTMLInputElement>('checkbox', { name: 'Leí y acepto cómo Trino trata mis datos' });
-    expect([age.checked, privacy.checked]).toEqual([false, false]);
+    expect(privacy.checked).toBe(false);
     click('Empezar');
     expect(heading().textContent).toBe('Te damos la bienvenida a Trino');
-    expect(alertText()).toBe('Para empezar, confirma que tienes 18 años o más y acepta cómo Trino trata tus datos.');
-    expect(document.activeElement).toBe(age);
-    expect([age.getAttribute('aria-invalid'), privacy.getAttribute('aria-invalid')]).toEqual(['true', 'true']);
-    tick('Tengo 18 años o más');
-    click('Empezar');
-    expect(heading().textContent).toBe('Te damos la bienvenida a Trino');
+    expect(alertText()).toBe('Para empezar, acepta cómo Trino trata tus datos.');
     expect(document.activeElement).toBe(privacy);
+    expect(privacy.getAttribute('aria-invalid')).toBe('true');
     tick('Leí y acepto cómo Trino trata mis datos');
     expect(screen.queryByRole('alert')).toBeNull();
     click('Empezar');
-    expect(heading().textContent).toBe('¿Cómo quieres que te vean?');
+    expect(heading().textContent).toBe('¿Cuántos años tienes?');
+  });
+
+  // UR-10 (PropMenoresPC card 1): three answers, none chosen, and Continuar waits.
+  it('asks the age with nothing chosen, and says the answer stays on this device', () => {
+    setup();
+    tick('Leí y acepto cómo Trino trata mis datos');
+    click('Empezar');
+    expect(screen.getByText('Paso 2 de 6')).toBeTruthy();
+    const radios = screen.getAllByRole('radio');
+    expect(radios.map(radio => radio.textContent)).toEqual(['Menos de 16', '16 o 17', '18 o más']);
+    expect(radios.every(radio => radio.getAttribute('aria-checked') === 'false')).toBe(true);
+    expect((screen.getByRole('button', { name: 'Continuar' }) as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.getByText('No te pedimos documento, fecha de nacimiento ni foto. Tu respuesta se queda en tus equipos.')).toBeTruthy();
+    fireEvent.click(screen.getByRole('radio', { name: '16 o 17' }));
+    expect(
+      screen.getByText('Tu cuenta empieza cerrada: nadie que no hayas agregado te puede escribir. Si te equivocaste, lo corriges en Ajustes › Privacidad › Edad.'),
+    ).toBeTruthy();
+  });
+
+  // UR-10 (PropMenoresPC card 2): under 16 no account, and back to the welcome.
+  it('makes no account under 16, and goes back to the welcome', async () => {
+    const { api } = setup();
+    passWelcome('Menos de 16');
+    expect(heading().textContent).toBe('Trino es para personas de 16 años o más');
+    expect(screen.getByText('Por eso no se puede crear tu cuenta.')).toBeTruthy();
+    expect(screen.queryByText(/^Paso/)).toBeNull();
+    click('Volver al inicio');
+    expect(heading().textContent).toBe('Te damos la bienvenida a Trino');
     expect(api.createIdentity).not.toHaveBeenCalled();
+  });
+
+  // UR-10 (PropMenoresPC card 3): 16 or 17 is told how to add someone, not to share a code to be written to.
+  it('creates the account of 16 or 17 with its answer, and ends with how to add someone', async () => {
+    const { api } = setup();
+    passWelcome('16 o 17');
+    passName();
+    await passPassword();
+    click('Continuar');
+    click('Ahora no');
+    await settle();
+    expect(api.createIdentity).toHaveBeenCalledWith('Rechita', PASS, false, 'minor');
+    expect(heading().textContent).toBe('Todo listo');
+    expect(
+      screen.getByText('Para hablar con alguien, agrégalo tú: muéstrale tu QR en persona. Nadie que no hayas agregado te puede escribir.'),
+    ).toBeTruthy();
   });
 
   // Without an href (Tor design §4, R-10): the WebView has nothing to
@@ -261,7 +304,7 @@ describe('the two boxes of the welcome step', () => {
       acceptedAt: '2026-10-11T14:03:00.000Z',
       publicKey: CREATED.nostr_pub,
       lang: 'es',
-      age: { minimum: 18, version: 1 },
+      age: { minimum: 18, version: 2 },
       privacyPolicy: { version: 1, url: PRIVACY_POLICY_URL },
     });
   });
@@ -394,7 +437,7 @@ describe('what applies at once', () => {
     setup();
     fireEvent.click(screen.getByRole('radio', { name: 'English' }));
     expect(heading().textContent).toBe('Welcome to Trino');
-    expect(screen.getByRole('checkbox', { name: 'I am 18 or older' })).toBeTruthy();
+    expect(screen.getByRole('checkbox', { name: 'I have read and accept how Trino handles my data' })).toBeTruthy();
     expect(screen.getByRole('radio', { name: 'English' }).getAttribute('aria-checked')).toBe('true');
     expect(screen.getByRole('radio', { name: 'English' }).getAttribute('lang')).toBe('en');
   });
@@ -509,7 +552,7 @@ describe('after a failure about the whole step', () => {
     type('Código de 6 dígitos', '482913');
     pressAndLoseFocus('Comprobar');
     await settle();
-    expect(api.createIdentity).toHaveBeenCalledWith('Rechita', PASS, true);
+    expect(api.createIdentity).toHaveBeenCalledWith('Rechita', PASS, true, 'adult');
     expectFocusOnMessage('No se pudo crear tu identidad. Inténtalo de nuevo.');
   });
 
@@ -583,11 +626,11 @@ describe('OnboardingFlow: the connection step', () => {
   it('comes after the welcome, explains Tor once, and starts it only on "Continuar"', async () => {
     const startConnection = vi.fn((_way: FirstWay) => Promise.resolve());
     setup({ api: fakeApi({ startConnection }) });
-    expect(screen.getByText('Paso 1 de 6')).toBeTruthy();
+    expect(screen.getByText('Paso 1 de 7')).toBeTruthy();
     passWelcome();
     expect(heading().textContent).toBe('Trino se conecta de forma privada');
     expect(document.activeElement).toBe(heading());
-    expect(screen.getByText('Paso 2 de 6')).toBeTruthy();
+    expect(screen.getByText('Paso 3 de 7')).toBeTruthy();
     expect(
       screen.getByText(
         'Usa Tor: tus mensajes dan varias vueltas por internet antes de llegar, para que los servidores no vean desde dónde te conectas. La primera vez puede tardar un poco.',
@@ -604,7 +647,7 @@ describe('OnboardingFlow: the connection step', () => {
     await settle();
     expect(startConnection.mock.calls).toEqual([[{ kind: 'none' }]]);
     expect(heading().textContent).not.toBe('Trino se conecta de forma privada');
-    expect(screen.getByText('Paso 3 de 6')).toBeTruthy();
+    expect(screen.getByText('Paso 4 de 7')).toBeTruthy();
   });
 
   it('starts it through the hidden way when the person asks for it', async () => {
@@ -628,12 +671,15 @@ describe('OnboardingFlow: the connection step', () => {
     expect(heading().textContent).toBe('Trino se conecta de forma privada');
   });
 
-  it('goes back to the welcome', () => {
+  // UR-10: the age comes between the welcome and the connection.
+  it('goes back to the age, and from there to the welcome', () => {
     setup({ api: fakeApi({ startConnection: vi.fn(() => Promise.resolve()) }) });
     passWelcome();
     expect(screen.queryByRole('button', { name: 'En mi red bloquean Tor' })).toBeNull();
     click('Atrás');
-    expect(screen.getByRole('checkbox', { name: 'Tengo 18 años o más' })).toBeTruthy();
+    expect(heading().textContent).toBe('¿Cuántos años tienes?');
+    click('Atrás');
+    expect(screen.getByRole('checkbox', { name: 'Leí y acepto cómo Trino trata mis datos' })).toBeTruthy();
   });
 });
 
@@ -728,6 +774,6 @@ describe('OnboardingFlow: the other ways from the connection step', () => {
     click('Buscar una forma que funcione aquí');
     await settle();
     expect(startConnection.mock.calls).toEqual([[{ kind: 'search' }]]);
-    expect(screen.getByText('Paso 3 de 6')).toBeTruthy();
+    expect(screen.getByText('Paso 4 de 7')).toBeTruthy();
   });
 });

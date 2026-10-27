@@ -4,6 +4,10 @@
  * moves to trino2:. The copy is honest: both people add each other with
  * their codes, since there are no message requests in this batch. When the
  * photo could not be saved, it says so without stopping anyone.
+ *
+ * An account of 16 or 17 (UR-10, PropMenoresPC card 3) is told to add
+ * whoever it wants to talk to, showing its QR in person; nothing invites it
+ * to hand out its code so others write first.
  */
 import { Check, Copy, QrCode } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
@@ -30,6 +34,7 @@ export interface DoneStepProps {
 export function DoneStep({ state, headingId, headingRef, onFinish }: DoneStepProps) {
   const t = useT();
   const code = state.created ? toShareCode(state.created.bundle_json) : '';
+  const minor = state.age === 'minor';
   const [copied, setCopied] = useState(false);
   const [qrOpen, setQrOpen] = useState(false);
 
@@ -48,7 +53,13 @@ export function DoneStep({ state, headingId, headingRef, onFinish }: DoneStepPro
 
   return (
     <div className="flex flex-col gap-[1.125rem]">
-      <StepHeader ref={headingRef} id={headingId} large title={t('onb.doneTitle')} body={t('onb.doneBody')} />
+      <StepHeader
+        ref={headingRef}
+        id={headingId}
+        large
+        title={t('onb.doneTitle')}
+        body={t(minor ? 'onb.doneBodyMinor' : 'onb.doneBody')}
+      />
       {state.photoSave === 'failed' ? <Banner tone="warn">{t('onb.errPhotoSave')}</Banner> : null}
       <div className="flex flex-col gap-2 rounded-ui border border-ui-line bg-ui-bg p-3.5">
         <span className={LABEL_TEXT}>{t('onb.yourCode')}</span>

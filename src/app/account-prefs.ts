@@ -21,7 +21,7 @@ const PREFS_FILE = 'prefs';
 /** What the preferences need from the backend: `api` of src/lib/api.ts. */
 export interface AccountPrefsApi {
   unseal(passphrase: string, totpCode?: string | null): Promise<UnsealResponse>;
-  createIdentity(handle: string, passphrase: string, useTotp: boolean): Promise<ForgeResponse>;
+  createIdentity(handle: string, passphrase: string, useTotp: boolean, age?: 'minor' | 'adult'): Promise<ForgeResponse>;
   prefsSave(prefs: PrefsMap): Promise<void>;
   prefsImport(entries: PrefsMap): Promise<PrefsImported>;
   clearBrowsingData(): Promise<void>;
@@ -66,8 +66,8 @@ export function withAccountPrefs<T extends AccountPrefsApi>(
   return {
     ...backend,
     unseal: (passphrase: string, totpCode?: string | null) => backend.unseal(passphrase, totpCode).then(opened),
-    createIdentity: (handle: string, passphrase: string, useTotp: boolean) =>
-      backend.createIdentity(handle, passphrase, useTotp).then(opened),
+    createIdentity: (...args: Parameters<AccountPrefsApi['createIdentity']>) =>
+      backend.createIdentity(...args).then(opened),
     storeChoose: async (file: string, useIt: boolean) => {
       const left = await backend.storeChoose(file, useIt);
       if (file === PREFS_FILE && useIt) {

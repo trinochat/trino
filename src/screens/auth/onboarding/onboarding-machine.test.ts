@@ -43,12 +43,9 @@ function drive(from: OnboardingState, ...events: OnboardingEvent[]) {
   return { state, effects };
 }
 
-const consented = drive(
-  INITIAL_ONBOARDING,
-  { type: 'setAge', checked: true },
-  { type: 'setPrivacy', checked: true },
-).state;
-const atName = drive(consented, { type: 'next' }).state;
+const consented = drive(INITIAL_ONBOARDING, { type: 'setPrivacy', checked: true }).state;
+const atAge = drive(consented, { type: 'next' }).state;
+const atName = drive(atAge, { type: 'setAge', answer: 'adult' }, { type: 'next' }).state;
 const atPassword = drive(atName, { type: 'setName', value: '  Rechita ' }, { type: 'next' }).state;
 const typed = drive(atPassword, { type: 'setPass', value: PASS }, { type: 'setPass2', value: PASS }).state;
 const checking = drive(typed, { type: 'next' }).state;
@@ -59,42 +56,82 @@ const atSetup = drive(enrolling, { type: 'enrolled', enrollment: ENROLLMENT }).s
 const creatingWithoutTotp = drive(atTwofa, { type: 'later' }).state;
 
 describe('the welcome step', () => {
-  it('starts with both boxes unticked and nothing in progress, as step 1 of 5', () => {
+  it('starts with the box unticked, no age and nothing in progress, as step 1 of 6', () => {
     expect(INITIAL_ONBOARDING).toMatchObject({
       step: 'welcome',
-      ageConfirmed: false,
+      age: null,
       privacyAccepted: false,
       busy: null,
       error: null,
     });
-    expect(stepNumber(INITIAL_ONBOARDING)).toEqual({ current: 1, total: 5 });
+    expect(stepNumber(INITIAL_ONBOARDING)).toEqual({ current: 1, total: 6 });
   });
 
-  // The parent's addendum: without the age box, and without the data box,
-  // there is no way on, so no account can be created without them.
-  it('goes no further until both boxes are ticked', () => {
+  // Ley 1581: without the data box there is no way on. The age is its own
+  // step now (UR-10), no longer a box here.
+  it('goes no further until the box of the data is ticked', () => {
     const consentError = { field: 'consent', key: 'onb.errConsent' };
     expect(drive(INITIAL_ONBOARDING, { type: 'next' }).state).toMatchObject({ step: 'welcome', error: consentError });
-    const ageOnly = drive(INITIAL_ONBOARDING, { type: 'setAge', checked: true }, { type: 'next' }).state;
-    expect(ageOnly).toMatchObject({ step: 'welcome', error: consentError });
-    const privacyOnly = drive(INITIAL_ONBOARDING, { type: 'setPrivacy', checked: true }, { type: 'next' }).state;
-    expect(privacyOnly).toMatchObject({ step: 'welcome', error: consentError });
-    expect(atName).toMatchObject({ step: 'name', error: null });
+    expect(atAge).toMatchObject({ step: 'age', error: null });
   });
 
-  it('keeps the consent error until both boxes are ticked', () => {
+  it('keeps the consent error until the box is ticked', () => {
     const refused = drive(INITIAL_ONBOARDING, { type: 'next' }).state;
-    expect(drive(refused, { type: 'setAge', checked: true }).state.error?.field).toBe('consent');
-    expect(drive(refused, { type: 'setAge', checked: true }, { type: 'setPrivacy', checked: true }).state.error).toBeNull();
+    expect(refused.error?.field).toBe('consent');
+    expect(drive(refused, { type: 'setPrivacy', checked: true }).state.error).toBeNull();
   });
 
   // The flow moves the focus when the error changes: a second refusal is a
-  // new error, so the focus goes to the box that is still unticked.
+  // new error, so the focus goes to the box again.
   it('refuses with a new error each time', () => {
     const refused = drive(INITIAL_ONBOARDING, { type: 'next' }).state;
-    const again = drive(refused, { type: 'setAge', checked: true }, { type: 'next' }).state;
+    const again = drive(refused, { type: 'next' }).state;
     expect(again.error).toEqual(refused.error);
     expect(again.error).not.toBe(refused.error);
+  });
+});
+
+// UR-10 (PropMenoresPC cards 1 and 2; minimum of 16, David, 25 Oct): one
+// question with three answers and none chosen, after the welcome and
+// before the name.
+describe('the age step', () => {
+  it('is step 2 of 6, with nothing chosen, and goes no further until you answer', () => {
+    expect(stepNumber(atAge)).toEqual({ current: 2, total: 6 });
+    expect(atAge.age).toBeNull();
+    expect(drive(atAge, { type: 'next' }).state).toMatchObject({ step: 'age', error: { field: 'age', key: 'onb.errAge' } });
+  });
+
+  // Under 16 no account is made; "Volver al inicio" goes to the welcome, not to the question.
+  it('stops under 16, and goes back to the welcome without the answer', () => {
+    const young = drive(atAge, { type: 'setAge', answer: 'under16' }, { type: 'next' });
+    expect(young.state.step).toBe('tooYoung');
+    expect(young.effects).toEqual([]);
+    expect(stepNumber(young.state)).toBeNull();
+    const restarted = drive(young.state, { type: 'restart' }).state;
+    expect(restarted).toMatchObject({ step: 'welcome', age: null, error: null });
+  });
+
+  it('goes on with 16 or 17 and with 18 or more, and back to it from the name', () => {
+    const minor = drive(atAge, { type: 'setAge', answer: 'minor' }, { type: 'next' }).state;
+    expect(minor).toMatchObject({ step: 'name', age: 'minor' });
+    expect(drive(atName, { type: 'back' }).state.step).toBe('age');
+    expect(drive(atAge, { type: 'back' }).state.step).toBe('welcome');
+  });
+
+  // The answer goes with the new identity, and only there: never to a server.
+  it('hands the answer to the identity it creates', () => {
+    const minor = drive(atAge, { type: 'setAge', answer: 'minor' }, { type: 'next' }).state;
+    const atPass = drive(minor, { type: 'setName', value: 'Mara' }, { type: 'next' }).state;
+    const toTwofa = drive(
+      atPass,
+      { type: 'setPass', value: PASS },
+      { type: 'setPass2', value: PASS },
+      { type: 'next' },
+      { type: 'checked' },
+      { type: 'next' },
+      { type: 'later' },
+    );
+    expect(toTwofa.effects).toContainEqual({ type: 'createIdentity', handle: 'Mara', passphrase: PASS, useTotp: false, age: 'minor' });
   });
 });
 
@@ -135,7 +172,7 @@ describe('the name step', () => {
 
 describe('going back', () => {
   it('goes one step back from each step, and from setting up 2FA to the question', () => {
-    expect(drive(atName, { type: 'back' }).state.step).toBe('welcome');
+    expect(drive(atName, { type: 'back' }).state.step).toBe('age');
     expect(drive(atPassword, { type: 'back' }).state.step).toBe('name');
     expect(drive(atStyle, { type: 'back' }).state.step).toBe('password');
     // A deviation from the board (plan §1.8, 8): the 2FA question goes back to the style.
@@ -185,10 +222,10 @@ describe('the password step', () => {
 });
 
 describe('the 2FA question and its setup', () => {
-  it('is step 5 of 5, after the style', () => {
+  it('is step 6 of 6, after the style', () => {
     expect(atTwofa).toMatchObject({ step: 'twofa', twofa: 'ask' });
-    expect(stepNumber(atTwofa)).toEqual({ current: 5, total: 5 });
-    expect(stepNumber(atSetup)).toEqual({ current: 5, total: 5 });
+    expect(stepNumber(atTwofa)).toEqual({ current: 6, total: 6 });
+    expect(stepNumber(atSetup)).toEqual({ current: 6, total: 6 });
   });
 
   // The enrollment is kept: going back and pressing Activar again shows the
@@ -225,13 +262,13 @@ describe('the 2FA question and its setup', () => {
     const sent = drive(atSetup, { type: 'setCode', value: '482913' }, { type: 'verify' }).state;
     const { state, effects } = drive(sent, { type: 'verified', ok: true });
     expect(state).toMatchObject({ busy: 'creating', totpVerified: true });
-    expect(effects).toEqual([{ type: 'createIdentity', handle: 'Rechita', passphrase: PASS, useTotp: true }]);
+    expect(effects).toEqual([{ type: 'createIdentity', handle: 'Rechita', passphrase: PASS, useTotp: true, age: 'adult' }]);
   });
 
   it('creates the identity without 2FA on "Ahora no"', () => {
     const { state, effects } = drive(atTwofa, { type: 'later' });
     expect(state.busy).toBe('creating');
-    expect(effects).toEqual([{ type: 'createIdentity', handle: 'Rechita', passphrase: PASS, useTotp: false }]);
+    expect(effects).toEqual([{ type: 'createIdentity', handle: 'Rechita', passphrase: PASS, useTotp: false, age: 'adult' }]);
   });
 });
 
@@ -300,7 +337,7 @@ describe('creating the identity', () => {
       const failed = drive(creatingWithoutTotp, { type: 'createFailed', error }).state;
       expect(failed).toMatchObject({ step: 'twofa', twofa: 'ask', busy: null, error: { field: 'step', key: 'onb.errCreate' } });
       expect(drive(failed, { type: 'later' }).effects).toEqual([
-        { type: 'createIdentity', handle: 'Rechita', passphrase: PASS, useTotp: false },
+        { type: 'createIdentity', handle: 'Rechita', passphrase: PASS, useTotp: false, age: 'adult' },
       ]);
     }
   });
@@ -312,20 +349,26 @@ describe('creating the identity', () => {
     const failed = drive(verified, { type: 'createFailed', error: failure('io') }).state;
     expect(failed).toMatchObject({ twofa: 'setup', busy: null, error: { field: 'step', key: 'onb.errCreate' } });
     expect(drive(failed, { type: 'verify' }).effects).toEqual([
-      { type: 'createIdentity', handle: 'Rechita', passphrase: PASS, useTotp: true },
+      { type: 'createIdentity', handle: 'Rechita', passphrase: PASS, useTotp: true, age: 'adult' },
     ]);
   });
 
-  // Defence in depth: whatever happened before, no identity without both boxes.
-  it('never creates an identity without both boxes ticked', () => {
-    for (const unticked of [{ ageConfirmed: false }, { privacyAccepted: false }]) {
-      const later = drive({ ...atTwofa, ...unticked }, { type: 'later' });
+  // Defence in depth: whatever happened before, no identity without the
+  // box of the data, nor without an age of 16 or more.
+  it('never creates an identity without the box, or without an age of 16 or more', () => {
+    const cases = [
+      [{ privacyAccepted: false }, 'welcome', { field: 'consent', key: 'onb.errConsent' }],
+      [{ age: null }, 'age', { field: 'age', key: 'onb.errAge' }],
+      [{ age: 'under16' as const }, 'age', { field: 'age', key: 'onb.errAge' }],
+    ] as const;
+    for (const [changed, step, error] of cases) {
+      const later = drive({ ...atTwofa, ...changed }, { type: 'later' });
       expect(later.effects).toEqual([]);
-      expect(later.state).toMatchObject({ step: 'welcome', busy: null, error: { field: 'consent', key: 'onb.errConsent' } });
-      const sent = drive({ ...atSetup, ...unticked }, { type: 'setCode', value: '482913' }, { type: 'verify' }).state;
+      expect(later.state).toMatchObject({ step, busy: null, error });
+      const sent = drive({ ...atSetup, ...changed }, { type: 'setCode', value: '482913' }, { type: 'verify' }).state;
       const verified = drive(sent, { type: 'verified', ok: true });
       expect(verified.effects).toEqual([]);
-      expect(verified.state.step).toBe('welcome');
+      expect(verified.state.step).toBe(step);
     }
   });
 });
@@ -354,18 +397,18 @@ describe('answers that arrive late', () => {
 // provider option follows it.
 describe('the connection step', () => {
   const withTor = { ...INITIAL_ONBOARDING, withConnection: true };
-  const agreed = drive(withTor, { type: 'setAge', checked: true }, { type: 'setPrivacy', checked: true }).state;
+  const agreed = drive(withTor, { type: 'setPrivacy', checked: true }, { type: 'next' }, { type: 'setAge', answer: 'adult' }).state;
   const atConnection = drive(agreed, { type: 'next' }).state;
   const NONE: FirstWay = { kind: 'none' };
   const SNOWFLAKE: FirstWay = { kind: 'builtin', transport: 'snowflake' };
   const OBFS4: FirstWay = { kind: 'builtin', transport: 'obfs4' };
 
-  it('comes after the welcome, as step 2 of 6, and starts nothing by itself', () => {
+  it('comes after the age, as step 3 of 7, and starts nothing by itself', () => {
     const { state, effects } = drive(agreed, { type: 'next' });
     expect(state).toMatchObject({ step: 'connection', busy: null, error: null, way: NONE, bridges: false });
     expect(hiddenOf(state)).toBe(false);
-    expect(stepNumber(state)).toEqual({ current: 2, total: 6 });
-    expect(stepNumber(withTor)).toEqual({ current: 1, total: 6 });
+    expect(stepNumber(state)).toEqual({ current: 3, total: 7 });
+    expect(stepNumber(withTor)).toEqual({ current: 1, total: 7 });
     expect(effects).toEqual([]);
   });
 
@@ -393,7 +436,7 @@ describe('the connection step', () => {
     const atNameAgain = drive(atConnection, { type: 'next' }, { type: 'connectionStarted' }).state;
     const back = drive(atNameAgain, { type: 'back' }).state;
     expect(back.step).toBe('connection');
-    expect(drive(back, { type: 'back' }).state.step).toBe('welcome');
+    expect(drive(back, { type: 'back' }).state.step).toBe('age');
 
     const same = drive(back, { type: 'next' });
     expect(same.effects).toEqual([]);
@@ -439,9 +482,9 @@ describe('the connection step', () => {
     expect(drive(started, { type: 'back' }, { type: 'next' }).effects).toEqual([]);
   });
 
-  it('is not there without the network: the welcome leads to the name, as before', () => {
-    expect(stepNumber(consented)).toEqual({ current: 1, total: 5 });
-    expect(drive(consented, { type: 'next' }).state.step).toBe('name');
-    expect(drive(atName, { type: 'back' }).state.step).toBe('welcome');
+  it('is not there without the network: the age leads to the name', () => {
+    expect(stepNumber(consented)).toEqual({ current: 1, total: 6 });
+    expect(drive(atAge, { type: 'setAge', answer: 'adult' }, { type: 'next' }).state.step).toBe('name');
+    expect(drive(atName, { type: 'back' }).state.step).toBe('age');
   });
 });
