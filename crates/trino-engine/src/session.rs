@@ -353,6 +353,8 @@ pub fn clear_sensitive_state(inner: &mut InnerState) {
     // -- UR-5 -- The watcher of the reports ends with the session.
     inner.reports.forget();
     inner.report_watch.notify_waiters();
+    // -- UR-10 --
+    inner.age = None;
 }
 
 /// The relay connections of a session `open_session` just opened: what

@@ -69,6 +69,8 @@ pub(crate) mod clipboard_cmds;
 #[path = "block_cmds.rs"]
 pub(crate) mod block_cmds;
 // Uso responsable (UR-4): Solicitudes.
+#[path = "age_cmds.rs"]
+pub(crate) mod age_cmds;
 #[path = "report_cmds.rs"]
 pub(crate) mod report_cmds;
 #[path = "requests_cmds.rs"]
@@ -179,6 +181,7 @@ pub async fn forge(
     handle: String,
     passphrase: String,
     use_totp: bool,
+    age: Option<trino_engine::age::Bracket>,
 ) -> Result<ForgeResponse, CommandError> {
     let totp = if use_totp {
         NewVaultTotp::Confirmed
@@ -187,7 +190,7 @@ pub async fn forge(
     };
     let events = crate::events::sink(app.clone());
     let starter = relay_starter(events, profile::resend_through(app), &state);
-    account::forge_identity(&state, starter, handle, passphrase, totp).await
+    account::forge_identity(&state, starter, handle, passphrase, totp, age).await
 }
 
 /// "Conectar sin protección (solo esta vez)" (Tor design §2.8, §10.4;

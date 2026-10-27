@@ -471,6 +471,7 @@ pub async fn forge_identity(
     handle: String,
     passphrase: String,
     totp: NewVaultTotp,
+    age: Option<crate::age::Bracket>,
 ) -> Result<ForgeResponse, CommandError> {
     // Wiped when dropped, whichever way this returns.
     let passphrase = Zeroizing::new(passphrase);
@@ -533,6 +534,14 @@ pub async fn forge_identity(
         start_relays,
     )
     .await?;
+    // -- UR-10 -- The answer to "¿Cuántos años tienes?", kept only here.
+    if let Some(bracket) = age {
+        let mut inner = state.inner.lock().await;
+        let now = chrono::Utc::now().timestamp();
+        crate::age::declare(&mut inner, bracket, now);
+        crate::storage::persist_account(&inner)
+            .map_err(|error| CommandError::new(ErrorCode::Io, error))?;
+    }
     // Private bridges pasted before the account existed (the first run's
     // "Conexión" step) are sealed in it now (Tor design §2.5).
     if crate::bridges::keep_first_run_lines(&*state.inner.lock().await, &state.net).is_err() {

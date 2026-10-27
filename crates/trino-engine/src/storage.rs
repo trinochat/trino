@@ -71,6 +71,7 @@ pub fn account_of(inner: &InnerState) -> AccountFile {
         group_invites,
         alerts: inner.alerts.clone(),
         reports: inner.reports.clone(),
+        age: inner.age.clone(),
     }
 }
 
@@ -422,6 +423,7 @@ pub fn load_legacy(files: &DataFiles, identity: &Identity) -> Result<LoadedSessi
         group_invites: read_list(&files.group_invites),
         alerts: Default::default(),
         reports: Default::default(),
+        age: None,
     };
 
     let mut legacy = legacy_files(files, identity)?;
@@ -546,6 +548,7 @@ pub fn apply_loaded(
     inner.alerts = account.alerts;
     inner.reports.forget();
     inner.reports = account.reports;
+    inner.age = account.age;
     inner.history.clear();
     load_history(inner, history);
     load_ratchets(inner, sessions);
@@ -554,6 +557,11 @@ pub fn apply_loaded(
     // -- Uso responsable (UR-4) --
     let requests = inner.storage.take_requests();
     crate::requests::load(inner, requests, now);
+    // -- UR-10 -- A change of age that came due takes effect, and an account
+    // of 16 or 17 is closed to strangers before anything reaches it.
+    if crate::age::apply(inner, now) && persist_account(inner).is_err() {
+        crate::session::dbg_log("the age could not be saved");
+    }
 }
 
 /// What the unlock screen gets. Before unlocking it reads nothing in clear

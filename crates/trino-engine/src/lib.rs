@@ -16,6 +16,7 @@ pub use trino_core::{
 };
 
 pub mod account;
+pub mod age;
 pub mod alert;
 pub mod block;
 pub mod blossom;

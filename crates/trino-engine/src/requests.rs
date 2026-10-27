@@ -401,6 +401,12 @@ impl RequestBook {
         self.closed_to_strangers
     }
 
+    /// The account is of 18 or more again (UR-10, U17): requests of every
+    /// source reach it from now on. Nothing dropped comes back.
+    pub fn open_to_strangers(&mut self) {
+        self.closed_to_strangers = false;
+    }
+
     /// Empty it, wiping names and texts, as a lock does.
     pub fn forget(&mut self) {
         for request in &mut self.requests {

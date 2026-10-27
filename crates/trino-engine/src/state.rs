@@ -70,6 +70,10 @@ pub struct InnerState {
     /// request you deleted (uso responsable UR-4, `requests.rs`). Persisted
     /// ENCRYPTED to the store's requests.bin.
     pub requests: crate::requests::RequestBook,
+    /// The account's age range (uso responsable UR-10, `age.rs`): only on
+    /// this device, never sent. `None` for an account of before UR-10.
+    /// Persisted ENCRYPTED with the account.
+    pub age: Option<crate::age::Age>,
     /// The reports you made (uso responsable UR-5, `report.rs`): sealed
     /// while they wait, then only their code and day, for 30 days.
     /// Persisted ENCRYPTED with the account.

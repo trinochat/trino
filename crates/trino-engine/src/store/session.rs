@@ -87,6 +87,10 @@ pub struct AccountFile {
     /// is none, as in every account from before.
     #[serde(default, skip_serializing_if = "crate::report::ReportBook::is_empty")]
     pub reports: crate::report::ReportBook,
+    /// The age range (UR-10). Left out for an account of before, which
+    /// reads as 18 or more.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub age: Option<crate::age::Age>,
 }
 
 /// What a sticker's file holds. Its id is the start of the image's SHA-256,
