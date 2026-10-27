@@ -11,6 +11,7 @@ import type {
   EmergencyNetworkView,
   BlockedView,
   DeletedRequestView,
+  SentReportView,
   NodeInfo,
   NotificationTest,
   ProfileResponse,
@@ -70,6 +71,12 @@ export interface SettingsApi {
    */
   listDeletedRequests?(): Promise<DeletedRequestView[]>;
   undoDeletedRequest?(key: string): Promise<void>;
+  /**
+   * Privacidad › Reportes enviados (UR-5): codes and days of the last 30
+   * days, and cancelling one that waits. Without them the row is not there.
+   */
+  listSentReports?(): Promise<SentReportView[]>;
+  cancelReport?(id: string): Promise<void>;
   /**
    * Keeps the window out of screenshots, recordings and screen sharing, or
    * lets them see it, at once (SC-1): Tauri's `setContentProtected` on the

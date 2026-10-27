@@ -44,6 +44,8 @@ export const settingsBackend: SettingsBackend = {
   unblockIdentity: api.unblockIdentity,
   listDeletedRequests: api.listDeletedRequests,
   undoDeletedRequest: api.undoDeletedRequest,
+  listSentReports: api.listSentReports,
+  cancelReport: api.cancelReport,
   shareBundle: api.shareBundle,
   setContentProtected: appWindow.setContentProtected,
 };

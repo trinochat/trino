@@ -2,7 +2,8 @@
  * Settings > Privacidad (plan-cambios-11oct §4 W5): "Bloqueados" with how
  * many there are, which opens their list (uso responsable UR-2: everyone
  * you blocked by identity, contacts or not); "Solicitudes eliminadas"
- * (UR-4), with how many, when the app gives them; and one fixed line on
+ * (UR-4), with how many, when the app gives them; "Reportes enviados"
+ * (UR-5), only codes and days for 30 days; and one fixed line on
  * how calls protect your IP (TURN through Cloudflare, docs/llamadas-turn.md).
  *
  * And "Bloquear capturas de pantalla" (SC-1; David, 12 Oct: on by default,
@@ -44,13 +45,14 @@
  * (§8).
  */
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import type { BlockedView, DeletedRequestView } from '../../../lib/api';
+import type { BlockedView, DeletedRequestView, SentReportView } from '../../../lib/api';
 import { useT } from '../../../lib/i18n';
 import type { Prefs } from '../../../lib/prefs';
 import { prefsSession } from '../../../lib/prefs-session';
 import { Switch } from '../../../ui';
 import { BlockedContactsView } from '../BlockedContactsView';
 import { DeletedRequestsView } from '../DeletedRequestsView';
+import { SentReportsView } from '../SentReportsView';
 import { ConnectionView } from '../../net/ConnectionView';
 import type { NetScreensApi } from '../../net/net-api';
 import { settingsStatusOf } from '../../net/net-model';
@@ -65,7 +67,13 @@ import type { SettingsApi, SettingsPlatform } from '../types';
 export interface PrivacySectionProps {
   api: Pick<
     SettingsApi,
-    'listBlocked' | 'unblockIdentity' | 'setContentProtected' | 'listDeletedRequests' | 'undoDeletedRequest'
+    | 'listBlocked'
+    | 'unblockIdentity'
+    | 'setContentProtected'
+    | 'listDeletedRequests'
+    | 'undoDeletedRequest'
+    | 'listSentReports'
+    | 'cancelReport'
   >;
   /** Where the block of screen captures, locking with Windows and Protección reforzada are kept. */
   prefs: Prefs;
@@ -86,7 +94,7 @@ export interface PrivacySectionProps {
   autoFocus?: boolean;
 }
 
-type View = 'main' | 'blocked' | 'deletedRequests' | 'data' | 'connection';
+type View = 'main' | 'blocked' | 'deletedRequests' | 'sentReports' | 'data' | 'connection';
 
 /** Why the switch of captures failed: the window refused, or the choice could not be kept. */
 type CapturesError = 'window' | 'save';
@@ -115,6 +123,11 @@ export function PrivacySection({
   const [deletedFailed, setDeletedFailed] = useState(false);
   const { listDeletedRequests, undoDeletedRequest } = api;
   const hasDeleted = listDeletedRequests !== undefined && undoDeletedRequest !== undefined;
+  /** Reportes enviados (UR-5); read when opened. */
+  const [reports, setReports] = useState<readonly SentReportView[] | null>(null);
+  const [reportsFailed, setReportsFailed] = useState(false);
+  const { listSentReports, cancelReport } = api;
+  const hasReports = listSentReports !== undefined && cancelReport !== undefined;
   const [view, setView] = useState<View>('main');
   // After the first view, a change of view moves the focus to the new heading.
   const [moved, setMoved] = useState(false);
@@ -194,6 +207,19 @@ export function PrivacySection({
     void loadDeleted();
   }, [loadDeleted]);
 
+  /** Reads the reports sent; resolves to whether it could be read. */
+  const loadReports = useCallback(async () => {
+    if (!listSentReports) return false;
+    try {
+      setReports(await listSentReports());
+      setReportsFailed(false);
+      return true;
+    } catch {
+      setReportsFailed(true);
+      return false;
+    }
+  }, [listSentReports]);
+
   const rows = useMemo<SettingsRowItem[]>(
     () => [
       ...(net
@@ -237,8 +263,22 @@ export function PrivacySection({
             },
           ]
         : []),
+      ...(hasReports
+        ? [
+            {
+              id: 'sentReports',
+              label: t('report.sentList'),
+              onSelect: () => {
+                setMoved(true);
+                setReports(null);
+                void loadReports();
+                setView('sentReports');
+              },
+            },
+          ]
+        : []),
     ],
-    [t, blocked, net, netStatus, hasDeleted, deletedRequests],
+    [t, blocked, net, netStatus, hasDeleted, deletedRequests, hasReports, loadReports],
   );
 
   const onDevice = useMemo<SettingsRowItem[]>(
@@ -288,6 +328,22 @@ export function PrivacySection({
           await undoDeletedRequest(key);
           setDeletedRequests(current => (current ? current.filter(view => view.key !== key) : current));
           await loadDeleted();
+        }}
+      />
+    );
+  }
+
+  if (view === 'sentReports' && cancelReport) {
+    return (
+      <SentReportsView
+        autoFocus
+        reports={reports}
+        loadFailed={reportsFailed}
+        onRetry={loadReports}
+        onBack={() => setView('main')}
+        onCancel={async id => {
+          await cancelReport(id);
+          await loadReports();
         }}
       />
     );

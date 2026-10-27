@@ -51,6 +51,9 @@ describe('settingsBackend', () => {
       // Privacidad › Solicitudes eliminadas (UR-4).
       'listDeletedRequests',
       'undoDeletedRequest',
+      // Privacidad › Reportes enviados (UR-5).
+      'listSentReports',
+      'cancelReport',
       'shareBundle',
       'testNotification',
     ] as const;

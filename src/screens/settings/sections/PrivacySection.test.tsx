@@ -85,6 +85,22 @@ describe('PrivacySection', () => {
     expect(await screen.findByRole('button', { name: /Solicitudes eliminadas\s*Ninguna/ })).toBeTruthy();
   });
 
+  // UR-5: Reportes enviados, last in the list, when the backend has them.
+  it('opens the reports sent and cancels one that waits', async () => {
+    let current = [{ id: 'R-AAAA-BBBB', created_at: 1_791_985_600, state: 'waiting' as const, write_instead: false, reply: null }];
+    const api = fakeApi({
+      listSentReports: vi.fn(async () => current),
+      cancelReport: vi.fn(async (id: string) => {
+        current = current.filter(view => view.id !== id);
+      }),
+    });
+    renderEs(<PrivacySection api={api} prefs={memoryPrefs().prefs} platform="windows" />);
+    fireEvent.click(await screen.findByRole('button', { name: /Reportes enviados/ }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Cancelar el reporte R-AAAA-BBBB' }));
+    await waitFor(() => expect(api.cancelReport).toHaveBeenCalledWith('R-AAAA-BBBB'));
+    expect(await screen.findByText('No has enviado reportes en los últimos 30 días.')).toBeTruthy();
+  });
+
   it('has no row of deleted requests without the backend for them', async () => {
     const { api } = setup([]);
     await waitFor(() => expect(api.listBlocked).toHaveBeenCalled());
