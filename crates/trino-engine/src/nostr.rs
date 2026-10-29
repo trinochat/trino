@@ -1,4 +1,5 @@
 use crate::crypto::sha256;
+use crate::relay_caps::RelayCaps;
 use futures_util::future::BoxFuture;
 use futures_util::{SinkExt, StreamExt};
 use secp256k1::{Keypair, Message as SecpMessage, Secp256k1};
@@ -7,7 +8,7 @@ use serde_json::Value;
 use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex as StdMutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use thiserror::Error;
 use tokio::sync::{mpsc, oneshot, watch};
 use tokio_tungstenite::tungstenite::Message;
@@ -159,14 +160,19 @@ pub fn seal_p1(
         .map_err(|e| NostrError::Signing(e.to_string()))
 }
 
-/// The filters that listen to `mailboxes` since `since`: only the P1 kinds
-/// and the mailboxes, no identity anywhere, split every
-/// `MAILBOXES_PER_FILTER` (P1 §3.6). No mailbox, no filter.
-pub fn p1_filters(mailboxes: &[[u8; 32]], since: i64) -> Vec<NostrFilter> {
+/// The filters that listen to `mailboxes` for events of one P1 `kind` since
+/// `since`: only that kind and the mailboxes, no identity anywhere, split
+/// every `MAILBOXES_PER_FILTER` (P1 §3.6). No mailbox, no filter.
+///
+/// One kind per REQ: a relay may never answer a REQ that names an ephemeral
+/// kind (the relay spike, 29 oct 2026), and that must not cost the
+/// messages. Both REQs go on the same connection, which is one pseudonym
+/// anyway.
+pub fn p1_filters(kind: u32, mailboxes: &[[u8; 32]], since: i64) -> Vec<NostrFilter> {
     mailboxes
         .chunks(MAILBOXES_PER_FILTER)
         .map(|chunk| NostrFilter {
-            kinds: Some(P1_KINDS.to_vec()),
+            kinds: Some(vec![kind]),
             p_tag: Some(chunk.iter().map(hex::encode).collect()),
             since: Some(since),
             ..Default::default()
@@ -249,6 +255,35 @@ struct SubscriptionBook {
     live: bool,
     /// Last moment (local clock) a socket was known to be live.
     synced_at: Option<i64>,
+    /// `ClientOptions::answer_deadline`.
+    answer_deadline: Option<Duration>,
+    /// When each subscription sent on the current socket must have had its
+    /// EOSE or CLOSED.
+    due: HashMap<String, Instant>,
+}
+
+/// What a relay frame said about a subscription.
+#[derive(Debug, PartialEq)]
+enum SubAnswer {
+    Nothing,
+    /// EOSE, for a subscription of these kinds.
+    Eose(Vec<u32>),
+    /// CLOSED, for a subscription of these kinds, with the relay's message.
+    Closed(Vec<u32>, String),
+}
+
+impl Subscription {
+    /// The kinds its filters name, once each.
+    fn kinds(&self) -> Vec<u32> {
+        let mut kinds: Vec<u32> = self
+            .filters
+            .iter()
+            .flat_map(|filter| filter.kinds.clone().unwrap_or_default())
+            .collect();
+        kinds.sort_unstable();
+        kinds.dedup();
+        kinds
+    }
 }
 
 impl SubscriptionBook {
@@ -261,6 +296,11 @@ impl SubscriptionBook {
             .filter(|sub| sub.catch_up.is_some())
             .map(|sub| sub.id.clone())
             .collect();
+        self.due.clear();
+        if let Some(deadline) = self.answer_deadline {
+            let at = Instant::now() + deadline;
+            self.due = self.subs.iter().map(|sub| (sub.id.clone(), at)).collect();
+        }
         self.subs
             .iter()
             .map(|sub| req_payload(sub, now, self.synced_at))
@@ -274,6 +314,9 @@ impl SubscriptionBook {
             self.awaiting_eose.insert(sub.id.clone());
             self.live = false;
         }
+        if let Some(deadline) = self.answer_deadline {
+            self.due.insert(sub.id.clone(), Instant::now() + deadline);
+        }
         self.subs.push(sub);
         req
     }
@@ -281,37 +324,94 @@ impl SubscriptionBook {
     /// Forget a subscription: its CLOSE, if it was there. A catch-up one no
     /// longer holds the socket back from being live.
     fn remove(&mut self, id: &str) -> Option<String> {
+        self.drop_sub(id).map(|_| close_payload(id))
+    }
+
+    /// Takes subscription `id` out of the book, and out of what the socket
+    /// waits for.
+    fn drop_sub(&mut self, id: &str) -> Option<Subscription> {
         let at = self.subs.iter().position(|sub| sub.id == id)?;
-        self.subs.remove(at);
+        let sub = self.subs.remove(at);
+        self.due.remove(id);
         if self.awaiting_eose.remove(id) && self.awaiting_eose.is_empty() {
             self.live = true;
         }
-        Some(close_payload(id))
+        Some(sub)
     }
 
-    /// Any frame from the relay; `text` is its content when it is a text frame.
-    fn on_frame(&mut self, text: Option<&str>, now: i64) {
-        if let Some(sub_id) = text.and_then(eose_subscription) {
-            if self.awaiting_eose.remove(&sub_id) && self.awaiting_eose.is_empty() {
-                self.live = true;
+    /// When the next subscription runs out of time to be answered.
+    fn next_due(&self) -> Option<Instant> {
+        self.due.values().min().copied()
+    }
+
+    /// The subscriptions unanswered at `at`, dropped: the CLOSE of each,
+    /// and its kinds. They are not sent again on a later socket.
+    fn expire(&mut self, at: Instant) -> Vec<(String, Vec<u32>)> {
+        let late: Vec<String> = self
+            .due
+            .iter()
+            .filter(|(_, due)| **due <= at)
+            .map(|(id, _)| id.clone())
+            .collect();
+        late.into_iter()
+            .filter_map(|id| {
+                let sub = self.drop_sub(&id)?;
+                Some((close_payload(&id), sub.kinds()))
+            })
+            .collect()
+    }
+
+    /// Any frame from the relay; `text` is its content when it is a text
+    /// frame. A subscription the relay CLOSED is dropped: it is not sent
+    /// again on a later socket.
+    fn on_frame(&mut self, text: Option<&str>, now: i64) -> SubAnswer {
+        let answer = match text.and_then(subscription_answer) {
+            Some((true, id, _)) => {
+                self.due.remove(&id);
+                if self.awaiting_eose.remove(&id) && self.awaiting_eose.is_empty() {
+                    self.live = true;
+                }
+                match self.subs.iter().find(|sub| sub.id == id) {
+                    Some(sub) => SubAnswer::Eose(sub.kinds()),
+                    None => SubAnswer::Nothing,
+                }
             }
-        }
+            Some((false, id, message)) => match self.drop_sub(&id) {
+                Some(sub) => SubAnswer::Closed(sub.kinds(), message),
+                None => SubAnswer::Nothing,
+            },
+            None => SubAnswer::Nothing,
+        };
         if self.live {
             self.synced_at = Some(now);
         }
+        answer
     }
 }
 
-/// The subscription id of an `["EOSE", <id>]` relay message.
-fn eose_subscription(text: &str) -> Option<String> {
-    if !text.contains("EOSE") {
+/// An `["EOSE", <id>]` (`true`) or `["CLOSED", <id>, <message>]` (`false`)
+/// relay message: which, the subscription id and the message.
+fn subscription_answer(text: &str) -> Option<(bool, String, String)> {
+    if !text.contains("EOSE") && !text.contains("CLOSED") {
         return None; // skip parsing every event a second time
     }
     let msg: Vec<Value> = serde_json::from_str(text).ok()?;
-    if msg.first()?.as_str()? != "EOSE" {
-        return None;
+    let eose = match msg.first()?.as_str()? {
+        "EOSE" => true,
+        "CLOSED" => false,
+        _ => return None,
+    };
+    let id = msg.get(1)?.as_str()?.to_string();
+    let message = msg.get(2).and_then(Value::as_str).unwrap_or_default();
+    Some((eose, id, message.to_string()))
+}
+
+/// Resolves at `at`, or never.
+async fn until_due(at: Option<Instant>) {
+    match at {
+        Some(at) => tokio::time::sleep_until(tokio::time::Instant::from_std(at)).await,
+        None => futures_util::future::pending().await,
     }
-    msg.get(1)?.as_str().map(str::to_string)
 }
 
 fn unix_now() -> i64 {
@@ -512,6 +612,10 @@ pub fn relay_deadline(url: &str) -> Duration {
     trino_net::onion_map::relay_deadline(url, CONNECT_DEADLINE)
 }
 
+/// How long a REQ may go unanswered. Through Tor the relays of the spike
+/// sent EOSE within 5 s, and a REQ goes out only once the socket is up.
+pub const ANSWER_DEADLINE: Duration = Duration::from_secs(60);
+
 /// The most events a client keeps for a relay while it is down. Kept
 /// events go out once it is back (K3); past this many, `publish` refuses
 /// more until it is, so a relay down for a whole session does not hold
@@ -541,6 +645,13 @@ pub struct ClientOptions {
     /// contact's, so the emergency path leaves the notes of a real unlock
     /// only (clave de emergencia RC-03).
     pub quiet: bool,
+    /// What is learned about the relay; share one between the connections
+    /// to the same relay.
+    pub caps: RelayCaps,
+    /// How long a REQ may go without EOSE or CLOSED: past it, the
+    /// subscription is CLOSEd and dropped, and its kinds are marked
+    /// unanswered in `caps`. `None` waits for ever.
+    pub answer_deadline: Option<Duration>,
 }
 
 impl ClientOptions {
@@ -555,6 +666,8 @@ impl ClientOptions {
             route: None,
             on_state,
             quiet: false,
+            caps: RelayCaps::new(),
+            answer_deadline: Some(ANSWER_DEADLINE),
         }
     }
 }
@@ -602,6 +715,8 @@ pub struct NostrClient {
     queued: Arc<AtomicUsize>,
     /// `ClientOptions::quiet`.
     quiet: bool,
+    /// `ClientOptions::caps`.
+    caps: RelayCaps,
 }
 
 /// What a relay answered to an event (NIP-01 `OK`).
@@ -694,6 +809,7 @@ impl NostrClient {
         let pending_ok = PendingOks::default();
         let queued = Arc::new(AtomicUsize::new(0));
         let quiet = options.quiet;
+        let caps = options.caps.clone();
         let connection = Connection {
             url: url.to_string(),
             on_event,
@@ -711,7 +827,13 @@ impl NostrClient {
             pending_ok,
             queued,
             quiet,
+            caps,
         })
+    }
+
+    /// What has been learned about this relay.
+    pub fn caps(&self) -> &RelayCaps {
+        &self.caps
     }
 
     /// Whether the socket is up right now (K3).
@@ -817,6 +939,26 @@ impl NostrClient {
         Ok(sub_id)
     }
 
+    /// Listen to `mailboxes` since `since`: a REQ per P1 kind the relay
+    /// is known to answer (`p1_filters`, `RelayCaps::readable`). Gives each
+    /// kind with its subscription id; none without mailboxes.
+    pub async fn subscribe_p1(
+        &self,
+        mailboxes: &[[u8; 32]],
+        since: i64,
+    ) -> Result<Vec<(u32, String)>, NostrError> {
+        let mut subscribed = Vec::new();
+        let now = Instant::now();
+        for kind in P1_KINDS {
+            let filters = p1_filters(kind, mailboxes, since);
+            if filters.is_empty() || !self.caps.readable(kind, now) {
+                continue;
+            }
+            subscribed.push((kind, self.subscribe_filters(filters, None).await?));
+        }
+        Ok(subscribed)
+    }
+
     /// Replace subscription `old` with these filters: CLOSE it, then a REQ
     /// under a new random id, so the two cannot be tied by their id (P1
     /// §3.6, R-09). Gives the new id.
@@ -884,7 +1026,10 @@ impl Connection {
         mut receiver: mpsc::UnboundedReceiver<ClientCommand>,
         mut closed: watch::Receiver<bool>,
     ) {
-        let mut book = SubscriptionBook::default();
+        let mut book = SubscriptionBook {
+            answer_deadline: self.options.answer_deadline,
+            ..Default::default()
+        };
         let mut route = self.options.route.clone();
         // A socket handed in was opened the way the route says now.
         let mut next = first.map(|ws| (ws, route.as_mut().map(|r| *r.borrow_and_update())));
@@ -1004,10 +1149,18 @@ impl Connection {
         let mut ping = tokio::time::interval(Duration::from_secs(25));
         ping.tick().await; // discard the immediate first tick
         loop {
+            let due = book.next_due();
             tokio::select! {
                 incoming = read.next() => match incoming {
                     Some(Ok(Message::Text(text))) => {
-                        book.on_frame(Some(&text), unix_now());
+                        match book.on_frame(Some(&text), unix_now()) {
+                            SubAnswer::Eose(kinds) => self.options.caps.answered(&kinds),
+                            SubAnswer::Closed(kinds, message) => {
+                                self.note("REQ closed by the relay, dropped");
+                                self.options.caps.refused(&kinds, &message);
+                            }
+                            SubAnswer::Nothing => {}
+                        }
                         handle_relay_message(&text, &self.on_event, &self.pending_ok, self.options.quiet);
                     }
                     Some(Ok(Message::Ping(payload))) => {
@@ -1020,7 +1173,9 @@ impl Connection {
                     }
                     // Pong / Binary / Frame: nothing to do, but the relay is
                     // evidently still there.
-                    Some(Ok(_)) => book.on_frame(None, unix_now()),
+                    Some(Ok(_)) => {
+                        book.on_frame(None, unix_now());
+                    }
                     Some(Err(_)) => {
                         self.note("WS read error, reconnecting");
                         return Served::Dropped;
@@ -1053,6 +1208,15 @@ impl Connection {
                         return Served::Closed; // shut down for good
                     }
                 },
+                () = until_due(due) => {
+                    for (close, kinds) in book.expire(Instant::now()) {
+                        self.note("REQ unanswered in time, closed");
+                        self.options.caps.unanswered(&kinds, Instant::now());
+                        if write.send(Message::Text(close)).await.is_err() {
+                            return Served::Dropped; // socket dead → reconnect
+                        }
+                    }
+                }
                 () = route_moved(route, opened) => {
                     // The socket goes, and nothing more is sent the old way.
                     self.note("WS route changed, opening it again");
@@ -1238,6 +1402,16 @@ pub mod test_relay {
         AcceptWhenReleased(Arc<Notify>),
     }
 
+    /// How a test relay departs from NIP-01, as relays in the spike did.
+    #[derive(Clone, Debug, Default)]
+    pub struct Quirks {
+        /// A REQ naming one of these kinds gets nothing back: no event, no
+        /// EOSE, no CLOSED.
+        pub silent_kinds: Vec<u32>,
+        /// A REQ naming one of these kinds is CLOSED with this message.
+        pub closed_kinds: Vec<(u32, String)>,
+    }
+
     pub struct TestRelay {
         pub url: String,
         /// Its host, as the tests' Tor records the connections to it.
@@ -1267,6 +1441,7 @@ pub mod test_relay {
         kicks: Arc<Notify>,
         /// Whether it hands its events to the subscriptions that match.
         serving: bool,
+        quirks: Quirks,
         live: tokio::sync::broadcast::Sender<NostrEvent>,
     }
 
@@ -1298,6 +1473,21 @@ pub mod test_relay {
 
         /// A relay at `host`, reached through `tor`: one that comes up late.
         pub fn start_named(tor: &Mock, host: &str, answer: Answer, serving: bool) -> Self {
+            Self::start_full(tor, host, answer, serving, Quirks::default())
+        }
+
+        /// A serving relay with these quirks.
+        pub fn quirky(answer: Answer, quirks: Quirks) -> Self {
+            Self::start_full(&TOR.0, &Self::new_host(), answer, true, quirks)
+        }
+
+        fn start_full(
+            tor: &Mock,
+            host: &str,
+            answer: Answer,
+            serving: bool,
+            quirks: Quirks,
+        ) -> Self {
             let host = host.to_string();
             let mut listener = tor.listen(&host, 80);
             let url = format!("ws://{host}");
@@ -1308,6 +1498,7 @@ pub mod test_relay {
                 frames: Arc::default(),
                 kicks: Arc::new(Notify::new()),
                 serving,
+                quirks,
                 live: tokio::sync::broadcast::channel(64).0,
             };
             let relay = TestRelay {
@@ -1416,6 +1607,7 @@ pub mod test_relay {
             frames,
             kicks,
             serving,
+            quirks,
             live,
         } = shared;
         let mut later = live.subscribe();
@@ -1489,6 +1681,23 @@ pub mod test_relay {
                         id.as_str().unwrap_or_default().to_string(),
                         filters.clone(),
                     ));
+                    let names = |kind: &u32| {
+                        filters.iter().any(|f| {
+                            f.get("kinds")
+                                .and_then(Value::as_array)
+                                .is_some_and(|kinds| kinds.contains(&Value::from(*kind)))
+                        })
+                    };
+                    if quirks.silent_kinds.iter().any(names) {
+                        continue;
+                    }
+                    if let Some((_, message)) = quirks.closed_kinds.iter().find(|(k, _)| names(k)) {
+                        let closed = serde_json::json!(["CLOSED", id, message]).to_string();
+                        if write.send(Message::Text(closed)).await.is_err() {
+                            return;
+                        }
+                        continue;
+                    }
                     if serving {
                         let kept = events.lock().unwrap().clone();
                         for event in stored_for(&filters, &kept) {
@@ -1540,6 +1749,8 @@ pub mod test_relay {
             route: None,
             on_state,
             quiet: false,
+            caps: RelayCaps::new(),
+            answer_deadline: Some(Duration::from_secs(5)),
         }
     }
 
@@ -2064,6 +2275,8 @@ mod tests {
             route: None,
             on_state: None,
             quiet: false,
+            caps: RelayCaps::new(),
+            answer_deadline: None,
         };
 
         let client = NostrClient::start("ws://relay.trino.invalid", ignore_events(), options);
@@ -2667,28 +2880,30 @@ mod tests {
         (0..n).map(|_| generate_nostr_keypair().pub_bytes).collect()
     }
 
-    /// P1 design test 11: only mailboxes, the P1 kinds and `since`.
+    /// P1 design test 11: only mailboxes, one P1 kind and `since`.
     #[test]
-    fn p1_filters_hold_only_mailboxes_and_the_p1_kinds() {
+    fn p1_filters_hold_only_mailboxes_and_one_p1_kind() {
         let boxes = mailboxes(3);
-        let filters = p1_filters(&boxes, 1_800_000_000);
-        assert_eq!(filters.len(), 1);
-        let json = serde_json::to_value(&filters[0]).unwrap();
-        let mut keys: Vec<&String> = json.as_object().unwrap().keys().collect();
-        keys.sort();
-        assert_eq!(keys, ["#p", "kinds", "since"]);
-        assert_eq!(json["kinds"], serde_json::json!([1059, 21059]));
-        assert_eq!(json["since"], 1_800_000_000);
-        let want: Vec<String> = boxes.iter().map(hex::encode).collect();
-        assert_eq!(json["#p"], serde_json::json!(want));
-        assert!(p1_filters(&[], 0).is_empty());
+        for kind in P1_KINDS {
+            let filters = p1_filters(kind, &boxes, 1_800_000_000);
+            assert_eq!(filters.len(), 1);
+            let json = serde_json::to_value(&filters[0]).unwrap();
+            let mut keys: Vec<&String> = json.as_object().unwrap().keys().collect();
+            keys.sort();
+            assert_eq!(keys, ["#p", "kinds", "since"]);
+            assert_eq!(json["kinds"], serde_json::json!([kind]));
+            assert_eq!(json["since"], 1_800_000_000);
+            let want: Vec<String> = boxes.iter().map(hex::encode).collect();
+            assert_eq!(json["#p"], serde_json::json!(want));
+            assert!(p1_filters(kind, &[], 0).is_empty());
+        }
     }
 
     /// R-31: past 650 mailboxes the list goes in more filters of one REQ.
     #[test]
     fn a_long_list_of_mailboxes_is_split_in_filters() {
         let boxes = mailboxes(1301);
-        let filters = p1_filters(&boxes, 0);
+        let filters = p1_filters(p1event::KIND_MESSAGE, &boxes, 0);
         let sizes: Vec<usize> = filters
             .iter()
             .map(|f| f.p_tag.as_ref().unwrap().len())
@@ -2699,7 +2914,7 @@ mod tests {
             .flat_map(|f| f.p_tag.clone().unwrap())
             .collect();
         assert_eq!(all, boxes.iter().map(hex::encode).collect::<Vec<_>>());
-        assert_eq!(p1_filters(&mailboxes(1300), 0).len(), 2);
+        assert_eq!(p1_filters(p1event::KIND_CALL, &mailboxes(1300), 0).len(), 2);
     }
 
     #[tokio::test]
@@ -2711,11 +2926,12 @@ mod tests {
         let mailbox = generate_nostr_keypair();
         let other = generate_nostr_keypair();
         let now = chrono::Utc::now().timestamp();
-        client
-            .subscribe_filters(p1_filters(&[mailbox.pub_bytes], now - 3 * 3600), None)
+        let subs = client
+            .subscribe_p1(&[mailbox.pub_bytes], now - 3 * 3600)
             .await
             .unwrap();
-        wait_until("the REQ", || relay.frames().len() == 1).await;
+        assert_eq!(subs.len(), 2, "a REQ per kind");
+        wait_until("the REQs", || relay.frames().len() == 2).await;
 
         let sender = relay.client().await;
         let inner = vec![7u8; 1024];
@@ -2781,6 +2997,161 @@ mod tests {
         assert!((now + 3_600..=now + 7_200).contains(&expiration));
         assert!(verify_event(&call));
         assert_eq!(p1event::mailbox_of(&call.into()), Some(mailbox));
+    }
+
+    // ---- Relays that do not answer, or CLOSE (the relay spike) ----
+
+    fn reqs_on(relay: &TestRelay, connection: usize) -> Vec<(String, Vec<Value>)> {
+        relay
+            .frames()
+            .into_iter()
+            .filter_map(|frame| match frame {
+                test_relay::Frame::Req(c, id, filters) if c == connection => Some((id, filters)),
+                _ => None,
+            })
+            .collect()
+    }
+
+    fn closes_on(relay: &TestRelay, connection: usize) -> Vec<String> {
+        relay
+            .frames()
+            .into_iter()
+            .filter_map(|frame| match frame {
+                test_relay::Frame::Close(c, id) if c == connection => Some(id),
+                _ => None,
+            })
+            .collect()
+    }
+
+    fn deadline_options(deadline: Duration) -> ClientOptions {
+        ClientOptions {
+            answer_deadline: Some(deadline),
+            ..quick_options(None)
+        }
+    }
+
+    #[tokio::test]
+    async fn a_relay_silent_to_a_kind_is_cut_at_the_deadline_and_the_rest_still_flows() {
+        use crate::relay_caps::Reads;
+        let relay = TestRelay::quirky(
+            Answer::Accept,
+            test_relay::Quirks {
+                silent_kinds: vec![p1event::KIND_CALL],
+                ..Default::default()
+            },
+        );
+        let (on_event, seen) = collector();
+        let options = deadline_options(Duration::from_millis(300));
+        let client = NostrClient::start(&relay.url, on_event, options);
+        wait_until("the client to connect", || client.is_connected()).await;
+        let mailbox = generate_nostr_keypair().pub_bytes;
+        let now = chrono::Utc::now().timestamp();
+        let subs = client
+            .subscribe_p1(&[mailbox], now - 4 * 3600)
+            .await
+            .unwrap();
+        let call_sub = subs
+            .iter()
+            .find(|(k, _)| *k == p1event::KIND_CALL)
+            .unwrap()
+            .1
+            .clone();
+
+        wait_until("the silent REQ to be closed", || {
+            closes_on(&relay, 1) == [call_sub.clone()]
+        })
+        .await;
+        assert!(matches!(
+            client.caps().reads(p1event::KIND_CALL),
+            Reads::Unanswered(_)
+        ));
+        assert_eq!(client.caps().reads(p1event::KIND_MESSAGE), Reads::Answered);
+
+        let sender = relay.client().await;
+        let event = seal_p1(p1event::KIND_MESSAGE, now, &mailbox, b"hi").unwrap();
+        assert_eq!(
+            sender.publish_acked(&event, Duration::from_secs(5)).await,
+            Ack::Accepted
+        );
+        wait_until("the message", || seen.lock().unwrap().len() == 1).await;
+
+        // A later reconnect asks only for what the relay answers. The
+        // sender was connection 2; the client comes back as the third.
+        sender.close();
+        relay.kick();
+        wait_until("the client again", || !reqs_on(&relay, 3).is_empty()).await;
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        let again = reqs_on(&relay, 3);
+        assert_eq!(again.len(), 1);
+        assert_eq!(again[0].1[0]["kinds"], serde_json::json!([1059]));
+        // And a new subscription skips that kind for now.
+        let subs = client
+            .subscribe_p1(&[mailbox], now - 4 * 3600)
+            .await
+            .unwrap();
+        let kinds: Vec<u32> = subs.iter().map(|(k, _)| *k).collect();
+        assert_eq!(kinds, [p1event::KIND_MESSAGE]);
+        client.close();
+    }
+
+    #[tokio::test]
+    async fn a_query_closed_for_auth_is_marked_and_never_sent_again() {
+        use crate::relay_caps::{Reads, Refusal};
+        let relay = TestRelay::quirky(
+            Answer::Accept,
+            test_relay::Quirks {
+                closed_kinds: vec![(
+                    p1event::KIND_MESSAGE,
+                    "auth-required: requested filter requires authentication".to_string(),
+                )],
+                ..Default::default()
+            },
+        );
+        let client = NostrClient::start(&relay.url, ignore_events(), quick_options(None));
+        wait_until("the client to connect", || client.is_connected()).await;
+        let mailbox = generate_nostr_keypair().pub_bytes;
+        client
+            .subscribe_p1(&[mailbox], 1_800_000_000)
+            .await
+            .unwrap();
+        wait_until("the refusal", || {
+            client.caps().reads(p1event::KIND_MESSAGE) == Reads::Refused(Refusal::AuthRequired)
+        })
+        .await;
+        wait_until("the calls answered", || {
+            client.caps().reads(p1event::KIND_CALL) == Reads::Answered
+        })
+        .await;
+        assert!(closes_on(&relay, 1).is_empty(), "a CLOSED needs no CLOSE");
+        relay.kick();
+        wait_until("the second connection", || !reqs_on(&relay, 2).is_empty()).await;
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        let again = reqs_on(&relay, 2);
+        assert_eq!(again.len(), 1);
+        assert_eq!(again[0].1[0]["kinds"], serde_json::json!([21059]));
+        client.close();
+    }
+
+    #[test]
+    fn a_catch_up_query_the_relay_closed_or_never_answered_does_not_hold_the_sync_back() {
+        let mut book = SubscriptionBook {
+            answer_deadline: Some(Duration::from_secs(1)),
+            ..Default::default()
+        };
+        book.add(catch_up_sub("s1"), T);
+        book.add(catch_up_sub("s2"), T);
+        book.add(catch_up_sub("s3"), T);
+        book.on_frame(Some(&eose("s1")), T + 1);
+        book.on_frame(Some(r#"["CLOSED","s2","auth-required: no"]"#), T + 2);
+        assert!(!book.live, "s3 still owes an answer");
+        let expired = book.expire(Instant::now() + Duration::from_secs(2));
+        assert_eq!(expired.len(), 1);
+        assert!(expired[0].0.contains("s3"), "its CLOSE");
+        assert!(book.live);
+        book.on_frame(None, T + 10);
+        let reqs = book.on_connected(T + 20);
+        assert_eq!(reqs.len(), 1, "only the answered one is sent again");
+        assert_eq!(since_of(&reqs[0]), Some(T + 10 - 600));
     }
 
     // ---- P1-6: the one-shot catch-up, paged with `until` (R-20) ----
