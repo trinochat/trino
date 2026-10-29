@@ -20,6 +20,32 @@ pub const TRINO_KIND: u32 = 4848;
 /// The kinds P1 listens to: messages (1059) and call signals (21059).
 pub const P1_KINDS: [u32; 2] = [p1event::KIND_MESSAGE, p1event::KIND_CALL];
 
+/// How far back of the moment it is sent a mailbox REQ's `since` stays at
+/// least. Relays apply `since` to what arrives live too (the relay spike,
+/// 29 oct 2026), and a message's `created_at` goes back up to 300 s, from a
+/// clock that may be up to 3 h behind (P1 §3.5): a `since` any closer to
+/// now drops such a message for good.
+pub const P1_SINCE_LAG_SECS: i64 = 3 * 3600 + p1event::MAX_BACKDATE_SECS;
+
+/// Whether `filter` asks for P1 mailboxes: a `#p` and only P1 kinds.
+fn is_mailbox_filter(filter: &NostrFilter) -> bool {
+    filter.p_tag.is_some()
+        && filter
+            .kinds
+            .as_ref()
+            .is_some_and(|kinds| !kinds.is_empty() && kinds.iter().all(|k| P1_KINDS.contains(k)))
+}
+
+/// A mailbox filter's `since`, moved back to `now − P1_SINCE_LAG_SECS` if
+/// it is any later. Other filters, and no `since`, are left as they are.
+fn hold_since_back(filter: &mut NostrFilter, now: i64) {
+    if is_mailbox_filter(filter) {
+        if let Some(since) = filter.since.as_mut() {
+            *since = (*since).min(now - P1_SINCE_LAG_SECS);
+        }
+    }
+}
+
 /// Mailboxes in one filter. Past this a list is split in more filters of
 /// the same REQ, which stays one pseudonym (P1 §3.6, R-31).
 pub const MAILBOXES_PER_FILTER: usize = 650;
@@ -220,6 +246,7 @@ fn req_payload(sub: &Subscription, now: i64, synced_at: Option<i64>) -> String {
         if let Some(catch_up) = sub.catch_up {
             filter.since = Some(catch_up_since(now, synced_at, catch_up));
         }
+        hold_since_back(&mut filter, now);
         frame.push(serde_json::to_value(filter).expect("a filter is plain JSON"));
     }
     Value::Array(frame).to_string()
@@ -307,8 +334,15 @@ impl SubscriptionBook {
             .collect()
     }
 
-    /// A new subscription: remember it, and return its REQ.
-    fn add(&mut self, sub: Subscription, now: i64) -> String {
+    /// A new subscription: remember it, and return its REQ. A mailbox
+    /// subscription's `since` is held back once, here, and stays fixed: a
+    /// later socket sends the same one.
+    fn add(&mut self, mut sub: Subscription, now: i64) -> String {
+        if sub.catch_up.is_none() {
+            for filter in &mut sub.filters {
+                hold_since_back(filter, now);
+            }
+        }
         let req = req_payload(&sub, now, self.synced_at);
         if sub.catch_up.is_some() {
             self.awaiting_eose.insert(sub.id.clone());
@@ -472,7 +506,7 @@ pub async fn fetch_once(
                     filters: page,
                     catch_up: None,
                 },
-                0,
+                unix_now(),
                 None,
             );
             write
@@ -3152,6 +3186,60 @@ mod tests {
         let reqs = book.on_connected(T + 20);
         assert_eq!(reqs.len(), 1, "only the answered one is sent again");
         assert_eq!(since_of(&reqs[0]), Some(T + 10 - 600));
+    }
+
+    // ---- A mailbox REQ never asks `since` a recent moment ----
+
+    fn p1_sub(id: &str, since: i64, catch_up: Option<CatchUp>) -> Subscription {
+        Subscription {
+            id: id.to_string(),
+            filters: p1_filters(p1event::KIND_MESSAGE, &[[2u8; 32]], since),
+            catch_up,
+        }
+    }
+
+    #[test]
+    fn a_mailbox_req_never_asks_since_a_recent_moment() {
+        let mut book = SubscriptionBook::default();
+        // Asked for since now: the relay would drop, even live, a message
+        // backdated up to 300 s or sent with a clock 3 h behind.
+        let req = book.add(p1_sub("m1", T, None), T);
+        assert_eq!(since_of(&req), Some(T - P1_SINCE_LAG_SECS));
+        // An older `since` stays as it is.
+        let req = book.add(p1_sub("m2", T - DAY, None), T);
+        assert_eq!(since_of(&req), Some(T - DAY));
+        // A catch-up one, back after a sync a few seconds ago, too.
+        book.add(p1_sub("m3", 0, Some(CATCH_UP)), T);
+        book.on_frame(Some(&eose("m3")), T + 1);
+        book.on_frame(None, T + 50);
+        let reqs = book.on_connected(T + 60);
+        assert_eq!(since_of(&reqs[0]), Some(T - P1_SINCE_LAG_SECS), "fixed");
+        assert_eq!(since_of(&reqs[2]), Some(T + 60 - P1_SINCE_LAG_SECS));
+        // Anything else is left alone.
+        assert_eq!(since_of(&book.add(catch_up_sub("c1"), T)), Some(T - 600));
+    }
+
+    #[tokio::test]
+    async fn a_backdated_message_arrives_live_even_if_asked_since_now() {
+        let relay = TestRelay::serving(Answer::Accept).await;
+        let (on_event, seen) = collector();
+        let client = NostrClient::start(&relay.url, on_event, quick_options(None));
+        wait_until("the client to connect", || client.is_connected()).await;
+        let mailbox = generate_nostr_keypair().pub_bytes;
+        let now = chrono::Utc::now().timestamp();
+        client.subscribe_p1(&[mailbox], now).await.unwrap();
+        wait_until("the REQs", || relay.frames().len() == 2).await;
+        // A sender whose clock is 200 s behind ours, backdating up to 300 s more.
+        let sender = relay.client().await;
+        let event = seal_p1(p1event::KIND_MESSAGE, now - 200, &mailbox, b"late").unwrap();
+        assert!(event.created_at < now);
+        assert_eq!(
+            sender.publish_acked(&event, Duration::from_secs(5)).await,
+            Ack::Accepted
+        );
+        wait_until("the backdated message", || seen.lock().unwrap().len() == 1).await;
+        client.close();
+        sender.close();
     }
 
     // ---- P1-6: the one-shot catch-up, paged with `until` (R-20) ----
