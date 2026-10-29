@@ -21,7 +21,7 @@ test-util = ["trino-net/test-util"]
 
 [dependencies]
 # Protocol and cryptography, at the same commit as the app's (Cargo.lock).
-trino-core = { git = "https://github.com/trinochat/trino-core", rev = "77bbfeece9e16bd196c08eff879441caeef028f3" }
+trino-core = { git = "https://github.com/trinochat/trino-core", rev = "b5a7782d212af380a76d0c595bc9f1e12ba16b0f" }
 # Every connection: the relays (nostr.rs) and Blossom (blossom.rs).
 trino-net = { path = "../trino-net" }
 serde = { version = "1", features = ["derive"] }
@@ -51,7 +51,7 @@ rand = "0.8"
 # Argon2id each (its `test-kdf` feature). Only here, never in
 # [dependencies]: a vault a test build writes never opens in a build that
 # ships, and a release build with it does not compile (trino-core lib.rs).
-trino-core = { git = "https://github.com/trinochat/trino-core", rev = "77bbfeece9e16bd196c08eff879441caeef028f3", features = ["test-kdf"] }
+trino-core = { git = "https://github.com/trinochat/trino-core", rev = "b5a7782d212af380a76d0c595bc9f1e12ba16b0f", features = ["test-kdf"] }
 # Tor as an in-memory pipe, and a direct transport that fails the test.
 trino-net = { path = "../trino-net", features = ["test-util"] }
 # tokio's paused clock (`start_paused`) for the relay tests.

@@ -145,8 +145,9 @@ impl From<NostrEvent> for p1event::Event {
 }
 
 /// `inner` sealed for `mailbox` in a P1 event of `kind` (1059 or 21059),
-/// sent at `now`: a one-time author, one `p`, NIP-44, and on 1059 a
-/// backdated `created_at` and an `expiration` (trino-core, P1 §2.1).
+/// sent at `now`: a one-time author, one `p`, NIP-44 and an `expiration`
+/// (6–8 days on 1059, 1–2 hours on 21059), and on 1059 a backdated
+/// `created_at` (trino-core, P1 §2.1, `diseno-vinculacion.md` §23.8).
 pub fn seal_p1(
     kind: u32,
     now: i64,
@@ -2764,6 +2765,22 @@ mod tests {
         assert!(expiration >= a.created_at + 6 * 86_400);
         assert!(verify_event(&a));
         assert!(seal_p1(TRINO_KIND, now, &mailbox, b"x").is_err());
+    }
+
+    /// diseno-vinculacion.md §23.8: a call signal expires too, 1 to 2 hours
+    /// out, and is still read as a mailbox's event.
+    #[test]
+    fn a_p1_call_signal_expires_within_two_hours_and_names_its_mailbox() {
+        let mailbox = generate_nostr_keypair().pub_bytes;
+        let now = 1_800_000_000;
+        let call = seal_p1(p1event::KIND_CALL, now, &mailbox, b"x").unwrap();
+        assert_eq!(call.created_at, now);
+        assert_eq!(call.tags.len(), 2);
+        assert_eq!(call.tags[1][0], "expiration");
+        let expiration: i64 = call.tags[1][1].parse().unwrap();
+        assert!((now + 3_600..=now + 7_200).contains(&expiration));
+        assert!(verify_event(&call));
+        assert_eq!(p1event::mailbox_of(&call.into()), Some(mailbox));
     }
 
     // ---- P1-6: the one-shot catch-up, paged with `until` (R-20) ----

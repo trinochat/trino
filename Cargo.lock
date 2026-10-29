@@ -8344,7 +8344,7 @@ dependencies = [
 [[package]]
 name = "trino-core"
 version = "0.1.0"
-source = "git+https://github.com/trinochat/trino-core?rev=77bbfeece9e16bd196c08eff879441caeef028f3#77bbfeece9e16bd196c08eff879441caeef028f3"
+source = "git+https://github.com/trinochat/trino-core?rev=b5a7782d212af380a76d0c595bc9f1e12ba16b0f#b5a7782d212af380a76d0c595bc9f1e12ba16b0f"
 dependencies = [
  "aes-gcm",
  "argon2",
