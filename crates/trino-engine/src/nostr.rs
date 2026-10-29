@@ -317,6 +317,128 @@ fn unix_now() -> i64 {
     chrono::Utc::now().timestamp()
 }
 
+/// Most pages a one-shot catch-up asks for before it gives up.
+pub const MAX_PAGES: usize = 64;
+
+/// What a one-shot catch-up got.
+#[derive(Debug, Default)]
+pub struct Fetched {
+    /// Every event that matched, checked and kept once, newest pages first.
+    pub events: Vec<NostrEvent>,
+    /// Whether it ended on a page with nothing new. `false` when it stopped
+    /// at `MAX_PAGES`.
+    pub complete: bool,
+}
+
+/// Asks `url` for what matches `filters` on a connection of its own, used
+/// once (P1 §3.6, R-20): page after page of at most `page_limit` events,
+/// each asking `until` the oldest `created_at` seen so far, until a page
+/// brings nothing new. Each page is CLOSEd after its EOSE, and the socket
+/// after the last one. Every event is checked (`verify_event`) and kept
+/// once. The whole is given up at `deadline`.
+///
+/// More than `page_limit` events with one `created_at` would end it early
+/// (the next page repeats them); P1's `created_at` is spread over 5 minutes
+/// per message, so a page of a few hundred never meets that.
+pub async fn fetch_once(
+    url: &str,
+    connector: &Connector,
+    filters: &[NostrFilter],
+    page_limit: u32,
+    deadline: Duration,
+) -> Result<Fetched, NostrError> {
+    let fetch = async {
+        let ws = connector(url.to_string())
+            .await
+            .map_err(NostrError::Connect)?;
+        let (mut write, mut read) = ws.split();
+        let mut fetched = Fetched::default();
+        let mut seen: HashSet<String> = HashSet::new();
+        let mut until: Option<i64> = None;
+        for _ in 0..MAX_PAGES {
+            let id = random_sub_id();
+            let page: Vec<NostrFilter> = filters
+                .iter()
+                .map(|f| NostrFilter {
+                    until: until.or(f.until),
+                    limit: Some(page_limit),
+                    ..f.clone()
+                })
+                .collect();
+            let req = req_payload(
+                &Subscription {
+                    id: id.clone(),
+                    filters: page,
+                    catch_up: None,
+                },
+                0,
+                None,
+            );
+            write
+                .send(Message::Text(req))
+                .await
+                .map_err(|e| NostrError::Send(e.to_string()))?;
+            let mut new = 0usize;
+            loop {
+                let frame = match read.next().await {
+                    Some(Ok(Message::Text(text))) => text,
+                    Some(Ok(Message::Ping(payload))) => {
+                        let _ = write.send(Message::Pong(payload)).await;
+                        continue;
+                    }
+                    Some(Ok(Message::Close(_))) | None | Some(Err(_)) => {
+                        return Err(NostrError::Connect("the relay closed".to_string()));
+                    }
+                    Some(Ok(_)) => continue,
+                };
+                let Ok(msg) = serde_json::from_str::<Vec<Value>>(&frame) else {
+                    continue;
+                };
+                let (kind, sub) = (
+                    msg.first().and_then(Value::as_str),
+                    msg.get(1).and_then(Value::as_str),
+                );
+                if sub != Some(id.as_str()) {
+                    continue;
+                }
+                match kind {
+                    Some("EVENT") => {
+                        let Some(event) = msg
+                            .get(2)
+                            .and_then(|e| serde_json::from_value::<NostrEvent>(e.clone()).ok())
+                        else {
+                            continue;
+                        };
+                        if verify_event(&event) && seen.insert(event.id.clone()) {
+                            until =
+                                Some(until.map_or(event.created_at, |u| u.min(event.created_at)));
+                            fetched.events.push(event);
+                            new += 1;
+                        }
+                    }
+                    Some("EOSE") => break,
+                    Some("CLOSED") => {
+                        return Err(NostrError::Connect(
+                            "the relay closed the query".to_string(),
+                        ));
+                    }
+                    _ => {}
+                }
+            }
+            let _ = write.send(Message::Text(close_payload(&id))).await;
+            if new == 0 {
+                fetched.complete = true;
+                break;
+            }
+        }
+        let _ = write.close().await;
+        Ok(fetched)
+    };
+    tokio::time::timeout(deadline, fetch)
+        .await
+        .map_err(|_| NostrError::Connect("timeout".to_string()))?
+}
+
 /// A relay's WebSocket, over whatever trino-net carries it on: Tor, or the
 /// direct transport with its permit (Tor design §3 R1).
 pub type WsStream = trino_net::WsStream;
@@ -2642,5 +2764,116 @@ mod tests {
         assert!(expiration >= a.created_at + 6 * 86_400);
         assert!(verify_event(&a));
         assert!(seal_p1(TRINO_KIND, now, &mailbox, b"x").is_err());
+    }
+
+    // ---- P1-6: the one-shot catch-up, paged with `until` (R-20) ----
+
+    #[tokio::test]
+    async fn a_one_shot_catch_up_pages_back_to_an_empty_page() {
+        let relay = TestRelay::serving(Answer::Accept).await;
+        let mailbox = "aa".repeat(32);
+        let mut want = HashSet::new();
+        for i in 0..25 {
+            let event = addressed(&mailbox, 1_800_000_000 + i * 7);
+            want.insert(event.id.clone());
+            relay.store(event);
+        }
+        // Someone else's: never asked for.
+        relay.store(addressed(&"bb".repeat(32), 1_800_000_100));
+        let fetched = fetch_once(
+            &relay.url,
+            &test_relay::connector(),
+            &[to_mailbox(&mailbox)],
+            10,
+            Duration::from_secs(5),
+        )
+        .await
+        .unwrap();
+        assert!(fetched.complete);
+        let got: HashSet<String> = fetched.events.iter().map(|e| e.id.clone()).collect();
+        assert_eq!(got, want);
+        assert_eq!(fetched.events.len(), 25, "each one once");
+
+        // One connection; a REQ per page, each CLOSEd, `until` going back.
+        let frames = relay.frames();
+        let mut untils = Vec::new();
+        let mut open: Option<String> = None;
+        for frame in &frames {
+            match frame {
+                test_relay::Frame::Req(1, id, filters) => {
+                    assert!(open.is_none(), "one page at a time");
+                    assert_eq!(filters[0]["limit"], 10);
+                    untils.push(filters[0]["until"].as_i64());
+                    open = Some(id.clone());
+                }
+                test_relay::Frame::Close(1, id) => {
+                    assert_eq!(open.take().as_ref(), Some(id));
+                }
+                other => panic!("another connection: {other:?}"),
+            }
+        }
+        wait_until("the last CLOSE", || {
+            matches!(relay.frames().last(), Some(test_relay::Frame::Close(..)))
+        })
+        .await;
+        assert_eq!(untils[0], None);
+        assert!(untils.len() >= 3 && untils.len() <= 5, "{untils:?}");
+        let backwards: Vec<i64> = untils.iter().flatten().copied().collect();
+        assert!(backwards.windows(2).all(|w| w[1] <= w[0]), "{backwards:?}");
+    }
+
+    #[tokio::test]
+    async fn a_one_shot_catch_up_of_nothing_asks_once() {
+        let relay = TestRelay::serving(Answer::Accept).await;
+        let fetched = fetch_once(
+            &relay.url,
+            &test_relay::connector(),
+            &[to_mailbox(&"aa".repeat(32))],
+            10,
+            Duration::from_secs(5),
+        )
+        .await
+        .unwrap();
+        assert!(fetched.complete);
+        assert!(fetched.events.is_empty());
+        wait_until("REQ and CLOSE", || relay.frames().len() == 2).await;
+    }
+
+    #[tokio::test]
+    async fn a_one_shot_catch_up_drops_what_does_not_verify() {
+        let relay = TestRelay::serving(Answer::Accept).await;
+        let mailbox = "aa".repeat(32);
+        let good = addressed(&mailbox, 1_800_000_000);
+        let mut forged = addressed(&mailbox, 1_800_000_001);
+        forged.content = "changed".to_string();
+        relay.store(good.clone());
+        relay.store(forged);
+        let fetched = fetch_once(
+            &relay.url,
+            &test_relay::connector(),
+            &[to_mailbox(&mailbox)],
+            10,
+            Duration::from_secs(5),
+        )
+        .await
+        .unwrap();
+        let ids: Vec<&str> = fetched.events.iter().map(|e| e.id.as_str()).collect();
+        assert_eq!(ids, [good.id.as_str()]);
+    }
+
+    #[tokio::test]
+    async fn a_one_shot_catch_up_gives_up_at_its_deadline() {
+        let never: Connector = Arc::new(|_url| Box::pin(futures_util::future::pending()));
+        let started = std::time::Instant::now();
+        let result = fetch_once(
+            "ws://relay.trino.invalid",
+            &never,
+            &[to_mailbox(&"aa".repeat(32))],
+            10,
+            Duration::from_millis(100),
+        )
+        .await;
+        assert!(result.is_err());
+        assert!(started.elapsed() < Duration::from_secs(5));
     }
 }
