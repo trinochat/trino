@@ -9,7 +9,7 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex as StdMutex};
 use std::time::Duration;
 use thiserror::Error;
-use tokio::sync::{mpsc, oneshot, watch, RwLock};
+use tokio::sync::{mpsc, oneshot, watch};
 use tokio_tungstenite::tungstenite::Message;
 use trino_net::{IsoKind, Mode, Net, Session};
 
@@ -165,16 +165,33 @@ pub fn catch_up_since(now: i64, synced_at: Option<i64>, catch_up: CatchUp) -> i6
 
 struct Subscription {
     id: String,
-    filter: NostrFilter,
+    /// One REQ may carry several filters (P1 splits a long list of mailboxes
+    /// in two, R-31): the relay sends what matches any of them.
+    filters: Vec<NostrFilter>,
     catch_up: Option<CatchUp>,
 }
 
 fn req_payload(sub: &Subscription, now: i64, synced_at: Option<i64>) -> String {
-    let mut filter = sub.filter.clone();
-    if let Some(catch_up) = sub.catch_up {
-        filter.since = Some(catch_up_since(now, synced_at, catch_up));
+    let mut frame = vec![Value::from("REQ"), Value::from(sub.id.as_str())];
+    for filter in &sub.filters {
+        let mut filter = filter.clone();
+        if let Some(catch_up) = sub.catch_up {
+            filter.since = Some(catch_up_since(now, synced_at, catch_up));
+        }
+        frame.push(serde_json::to_value(filter).expect("a filter is plain JSON"));
     }
-    serde_json::json!(["REQ", sub.id, filter]).to_string()
+    Value::Array(frame).to_string()
+}
+
+/// `["CLOSE", <id>]` (NIP-01).
+fn close_payload(id: &str) -> String {
+    serde_json::json!(["CLOSE", id]).to_string()
+}
+
+/// A subscription id no relay can tie to another: 16 random hex digits,
+/// never a counter (P1 R-23).
+fn random_sub_id() -> String {
+    hex::encode(rand::random::<[u8; 8]>())
 }
 
 /// The subscriptions of one relay connection. Owned by its connection task,
@@ -223,6 +240,17 @@ impl SubscriptionBook {
         }
         self.subs.push(sub);
         req
+    }
+
+    /// Forget a subscription: its CLOSE, if it was there. A catch-up one no
+    /// longer holds the socket back from being live.
+    fn remove(&mut self, id: &str) -> Option<String> {
+        let at = self.subs.iter().position(|sub| sub.id == id)?;
+        self.subs.remove(at);
+        if self.awaiting_eose.remove(id) && self.awaiting_eose.is_empty() {
+            self.live = true;
+        }
+        Some(close_payload(id))
     }
 
     /// Any frame from the relay; `text` is its content when it is a text frame.
@@ -404,7 +432,6 @@ type PendingOks = Arc<StdMutex<HashMap<String, OkCallback>>>;
 pub struct NostrClient {
     url: String,
     sender: mpsc::UnboundedSender<ClientCommand>,
-    sub_counter: Arc<RwLock<u64>>,
     /// Whether the socket is up right now. Only the connection task sets it.
     connected: Arc<AtomicBool>,
     /// Set by `close`: it stops a client that is waiting to connect, which
@@ -459,6 +486,8 @@ fn is_duplicate(message: Option<&str>) -> bool {
 enum ClientCommand {
     Send(String),
     Subscribe(Subscription),
+    /// CLOSE a subscription and forget it.
+    Unsubscribe(String),
     Close,
 }
 
@@ -519,7 +548,6 @@ impl NostrClient {
         Arc::new(NostrClient {
             url: url.to_string(),
             sender,
-            sub_counter: Arc::new(RwLock::new(0)),
             connected,
             closed,
             pending_ok,
@@ -605,9 +633,18 @@ impl NostrClient {
         filter: &NostrFilter,
         catch_up: Option<CatchUp>,
     ) -> Result<String, NostrError> {
-        let mut c = self.sub_counter.write().await;
-        *c += 1;
-        let sub_id = format!("trino-{}", c);
+        self.subscribe_filters(vec![filter.clone()], catch_up).await
+    }
+
+    /// Subscribe with several filters in one REQ, under a random id; with
+    /// `catch_up`, each filter's `since` is set as `subscribe_catching_up`
+    /// does.
+    pub async fn subscribe_filters(
+        &self,
+        filters: Vec<NostrFilter>,
+        catch_up: Option<CatchUp>,
+    ) -> Result<String, NostrError> {
+        let sub_id = random_sub_id();
         if !self.quiet {
             dlog("SUBSCRIBE");
         }
@@ -615,11 +652,32 @@ impl NostrClient {
         self.sender
             .send(ClientCommand::Subscribe(Subscription {
                 id: sub_id.clone(),
-                filter: filter.clone(),
+                filters,
                 catch_up,
             }))
             .map_err(|e| NostrError::Send(e.to_string()))?;
         Ok(sub_id)
+    }
+
+    /// Replace subscription `old` with these filters: CLOSE it, then a REQ
+    /// under a new random id, so the two cannot be tied by their id (P1
+    /// §3.6, R-09). Gives the new id.
+    pub async fn replace_subscription(
+        &self,
+        old: &str,
+        filters: Vec<NostrFilter>,
+        catch_up: Option<CatchUp>,
+    ) -> Result<String, NostrError> {
+        self.unsubscribe(old)?;
+        self.subscribe_filters(filters, catch_up).await
+    }
+
+    /// CLOSE subscription `id` and forget it: it is not sent again after a
+    /// reconnect.
+    pub fn unsubscribe(&self, id: &str) -> Result<(), NostrError> {
+        self.sender
+            .send(ClientCommand::Unsubscribe(id.to_string()))
+            .map_err(|e| NostrError::Send(e.to_string()))
     }
 
     /// Shut the client down for good. A client waiting to connect stops at
@@ -825,6 +883,13 @@ impl Connection {
                             return Served::Dropped; // socket dead → reconnect
                         }
                     }
+                    Some(ClientCommand::Unsubscribe(id)) => {
+                        if let Some(close) = book.remove(&id) {
+                            if write.send(Message::Text(close)).await.is_err() {
+                                return Served::Dropped; // socket dead → reconnect
+                            }
+                        }
+                    }
                     Some(ClientCommand::Close) | None => {
                         let _ = write.close().await;
                         return Served::Closed; // shut down for good
@@ -1021,7 +1086,17 @@ pub mod test_relay {
         pub host: String,
         events: Arc<StdMutex<Vec<NostrEvent>>>,
         reqs: Arc<StdMutex<Vec<(usize, Value)>>>,
+        frames: Arc<StdMutex<Vec<Frame>>>,
         kicks: Arc<Notify>,
+    }
+
+    /// A REQ or CLOSE a relay received, with the number of its connection.
+    #[derive(Clone, Debug, PartialEq)]
+    pub enum Frame {
+        /// `["REQ", id, filters…]`.
+        Req(usize, String, Vec<Value>),
+        /// `["CLOSE", id]`.
+        Close(usize, String),
     }
 
     /// What every connection of one relay shares.
@@ -1030,6 +1105,7 @@ pub mod test_relay {
         answer: Answer,
         events: Arc<StdMutex<Vec<NostrEvent>>>,
         reqs: Arc<StdMutex<Vec<(usize, Value)>>>,
+        frames: Arc<StdMutex<Vec<Frame>>>,
         kicks: Arc<Notify>,
         /// Whether it hands its events to the subscriptions that match.
         serving: bool,
@@ -1071,6 +1147,7 @@ pub mod test_relay {
                 answer,
                 events: Arc::default(),
                 reqs: Arc::default(),
+                frames: Arc::default(),
                 kicks: Arc::new(Notify::new()),
                 serving,
                 live: tokio::sync::broadcast::channel(64).0,
@@ -1080,6 +1157,7 @@ pub mod test_relay {
                 host,
                 events: Arc::clone(&shared.events),
                 reqs: Arc::clone(&shared.reqs),
+                frames: Arc::clone(&shared.frames),
                 kicks: Arc::clone(&shared.kicks),
             };
             tokio::spawn(async move {
@@ -1103,6 +1181,17 @@ pub mod test_relay {
             self.reqs.lock().unwrap().clone()
         }
 
+        /// Every REQ and CLOSE it received, in order, with all their filters.
+        pub fn frames(&self) -> Vec<Frame> {
+            self.frames.lock().unwrap().clone()
+        }
+
+        /// Keep `event` as if it had been published to it, without telling
+        /// the subscriptions open now.
+        pub fn store(&self, event: NostrEvent) {
+            self.events.lock().unwrap().push(event);
+        }
+
         /// Close every connection it has, as a relay restarting would.
         pub fn kick(&self) {
             self.kicks.notify_waiters();
@@ -1116,7 +1205,8 @@ pub mod test_relay {
         }
     }
 
-    /// Whether `event` matches `filter`, by its kinds and `#p` only.
+    /// Whether `event` matches `filter`, by its kinds, `#p`, `since` and
+    /// `until` (a REQ applies `limit`).
     fn matches(filter: &Value, event: &NostrEvent) -> bool {
         let listed = |field: &str, wanted: Value| {
             filter
@@ -1124,8 +1214,37 @@ pub mod test_relay {
                 .and_then(Value::as_array)
                 .is_none_or(|values| values.contains(&wanted))
         };
+        let since = filter.get("since").and_then(Value::as_i64);
+        let until = filter.get("until").and_then(Value::as_i64);
         listed("kinds", Value::from(event.kind))
             && listed("#p", Value::from(event.recipient().unwrap_or_default()))
+            && since.is_none_or(|since| event.created_at >= since)
+            && until.is_none_or(|until| event.created_at <= until)
+    }
+
+    /// Whether `event` matches any of `filters`.
+    fn matches_any(filters: &[Value], event: &NostrEvent) -> bool {
+        filters.iter().any(|filter| matches(filter, event))
+    }
+
+    /// The kept events a REQ with `filters` gets: each filter's matches,
+    /// newest first and at most its `limit`, as relays send them.
+    fn stored_for(filters: &[Value], kept: &[NostrEvent]) -> Vec<NostrEvent> {
+        let mut out: Vec<NostrEvent> = Vec::new();
+        for filter in filters {
+            let mut found: Vec<&NostrEvent> = kept.iter().filter(|e| matches(filter, e)).collect();
+            found.sort_by_key(|e| std::cmp::Reverse(e.created_at));
+            let limit = filter
+                .get("limit")
+                .and_then(Value::as_u64)
+                .map_or(usize::MAX, |l| l as usize);
+            for event in found.into_iter().take(limit) {
+                if !out.iter().any(|seen| seen.id == event.id) {
+                    out.push(event.clone());
+                }
+            }
+        }
+        out
     }
 
     async fn serve(io: impl AsyncRead + AsyncWrite + Unpin, shared: Shared, connection: usize) {
@@ -1136,12 +1255,13 @@ pub mod test_relay {
             answer,
             events,
             reqs,
+            frames,
             kicks,
             serving,
             live,
         } = shared;
         let mut later = live.subscribe();
-        let mut subs: Vec<(Value, Value)> = Vec::new();
+        let mut subs: Vec<(Value, Vec<Value>)> = Vec::new();
         let (mut write, mut read) = ws.split();
         loop {
             let message = tokio::select! {
@@ -1151,8 +1271,8 @@ pub mod test_relay {
                     return;
                 }
                 Ok(event) = later.recv(), if serving => {
-                    for (id, filter) in &subs {
-                        if matches(filter, &event) {
+                    for (id, filters) in &subs {
+                        if matches_any(filters, &event) {
                             let frame = serde_json::json!(["EVENT", id, event]).to_string();
                             if write.send(Message::Text(frame)).await.is_err() {
                                 return;
@@ -1203,19 +1323,36 @@ pub mod test_relay {
                 }
                 Some("REQ") => {
                     let id = frame.get(1).cloned().unwrap_or_default();
-                    let filter = frame.get(2).cloned().unwrap_or_default();
-                    reqs.lock().unwrap().push((connection, filter.clone()));
+                    let filters: Vec<Value> = frame.iter().skip(2).cloned().collect();
+                    let first = filters.first().cloned().unwrap_or_default();
+                    reqs.lock().unwrap().push((connection, first));
+                    frames.lock().unwrap().push(Frame::Req(
+                        connection,
+                        id.as_str().unwrap_or_default().to_string(),
+                        filters.clone(),
+                    ));
                     if serving {
                         let kept = events.lock().unwrap().clone();
-                        for event in kept.iter().filter(|event| matches(&filter, event)) {
+                        for event in stored_for(&filters, &kept) {
                             let frame = serde_json::json!(["EVENT", id, event]).to_string();
                             if write.send(Message::Text(frame)).await.is_err() {
                                 return;
                             }
                         }
-                        subs.push((id.clone(), filter));
+                        // A REQ under an id already open replaces it (NIP-01).
+                        subs.retain(|(open, _)| *open != id);
+                        subs.push((id.clone(), filters));
                     }
                     Some(serde_json::json!(["EOSE", id]))
+                }
+                Some("CLOSE") => {
+                    let id = frame.get(1).cloned().unwrap_or_default();
+                    frames.lock().unwrap().push(Frame::Close(
+                        connection,
+                        id.as_str().unwrap_or_default().to_string(),
+                    ));
+                    subs.retain(|(open, _)| *open != id);
+                    None
                 }
                 _ => None,
             };
@@ -1404,11 +1541,11 @@ mod tests {
     fn catch_up_sub(id: &str) -> Subscription {
         Subscription {
             id: id.to_string(),
-            filter: NostrFilter {
+            filters: vec![NostrFilter {
                 kinds: Some(vec![TRINO_KIND]),
                 p_tag: Some(vec!["aa".repeat(32)]),
                 ..Default::default()
-            },
+            }],
             catch_up: Some(CATCH_UP),
         }
     }
@@ -1490,7 +1627,7 @@ mod tests {
         let first = book.add(
             Subscription {
                 id: "i1".to_string(),
-                filter,
+                filters: vec![filter],
                 catch_up: None,
             },
             T,
@@ -2220,5 +2357,149 @@ mod tests {
             Ok((false, Some("blocked: spam".to_string())))
         );
         assert!(pending.lock().unwrap().is_empty());
+    }
+
+    // ---- P1-6: random ids, several filters in one REQ, replace and CLOSE ----
+
+    /// A handler that keeps every event it gets.
+    fn collector() -> (EventHandler, Arc<StdMutex<Vec<NostrEvent>>>) {
+        let seen = Arc::new(StdMutex::new(Vec::new()));
+        let keep = Arc::clone(&seen);
+        let handler: EventHandler = Arc::new(move |event| keep.lock().unwrap().push(event));
+        (handler, seen)
+    }
+
+    /// An event addressed (`p`) to `to`, signed by a fresh key.
+    fn addressed(to: &str, created_at: i64) -> NostrEvent {
+        let kp = generate_nostr_keypair();
+        let tags = vec![vec!["p".to_string(), to.to_string()]];
+        build_and_sign_event(
+            &kp.priv_bytes,
+            &kp.pub_bytes,
+            1059,
+            "x",
+            tags,
+            Some(created_at),
+        )
+        .unwrap()
+    }
+
+    fn to_mailbox(p: &str) -> NostrFilter {
+        NostrFilter {
+            kinds: Some(vec![1059]),
+            p_tag: Some(vec![p.to_string()]),
+            ..Default::default()
+        }
+    }
+
+    #[tokio::test]
+    async fn subscription_ids_are_random_not_a_counter() {
+        let relay = TestRelay::start(Answer::Accept).await;
+        let client = relay.client().await;
+        let a = client.subscribe(&NostrFilter::default()).await.unwrap();
+        let b = client.subscribe(&NostrFilter::default()).await.unwrap();
+        assert_ne!(a, b);
+        for id in [&a, &b] {
+            assert_eq!(id.len(), 16, "{id}");
+            assert!(id.bytes().all(|c| c.is_ascii_hexdigit()), "{id}");
+            assert!(!id.starts_with("trino"));
+        }
+        wait_until("both REQs", || relay.frames().len() == 2).await;
+        client.close();
+    }
+
+    #[tokio::test]
+    async fn one_req_carries_several_filters() {
+        let relay = TestRelay::serving(Answer::Accept).await;
+        let (on_event, seen) = collector();
+        let client = NostrClient::start(&relay.url, on_event, quick_options(None));
+        wait_until("the client to connect", || client.is_connected()).await;
+        let (a, b, c) = ("aa".repeat(32), "bb".repeat(32), "cc".repeat(32));
+        let id = client
+            .subscribe_filters(vec![to_mailbox(&a), to_mailbox(&b)], None)
+            .await
+            .unwrap();
+        wait_until("the REQ", || relay.frames().len() == 1).await;
+        match &relay.frames()[0] {
+            test_relay::Frame::Req(_, got, filters) => {
+                assert_eq!(got, &id);
+                assert_eq!(filters.len(), 2);
+            }
+            other => panic!("{other:?}"),
+        }
+        let sender = relay.client().await;
+        for to in [&a, &b, &c] {
+            sender.publish(&addressed(to, 1_800_000_000)).await.unwrap();
+        }
+        wait_until("two events", || seen.lock().unwrap().len() == 2).await;
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        let got: Vec<String> = seen
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|e| e.recipient().unwrap().to_string())
+            .collect();
+        assert_eq!(got, vec![a, b]);
+        client.close();
+        sender.close();
+    }
+
+    #[tokio::test]
+    async fn replacing_a_subscription_closes_the_old_one_under_a_new_id() {
+        let relay = TestRelay::serving(Answer::Accept).await;
+        let (on_event, seen) = collector();
+        let client = NostrClient::start(&relay.url, on_event, quick_options(None));
+        wait_until("the client to connect", || client.is_connected()).await;
+        let (a, b) = ("aa".repeat(32), "bb".repeat(32));
+        let old = client
+            .subscribe_filters(vec![to_mailbox(&a)], None)
+            .await
+            .unwrap();
+        let new = client
+            .replace_subscription(&old, vec![to_mailbox(&b)], None)
+            .await
+            .unwrap();
+        assert_ne!(old, new);
+        wait_until("REQ, CLOSE and REQ", || relay.frames().len() == 3).await;
+        let frames = relay.frames();
+        assert!(matches!(&frames[0], test_relay::Frame::Req(1, id, _) if *id == old));
+        assert_eq!(frames[1], test_relay::Frame::Close(1, old.clone()));
+        assert!(matches!(&frames[2], test_relay::Frame::Req(1, id, _) if *id == new));
+
+        let sender = relay.client().await;
+        sender.publish(&addressed(&a, 1_800_000_000)).await.unwrap();
+        sender.publish(&addressed(&b, 1_800_000_000)).await.unwrap();
+        wait_until("the new mailbox's event", || {
+            seen.lock().unwrap().len() == 1
+        })
+        .await;
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        assert_eq!(seen.lock().unwrap().len(), 1);
+        assert_eq!(seen.lock().unwrap()[0].recipient(), Some(b.as_str()));
+
+        // After a reconnect only the new one is asked for again.
+        relay.kick();
+        wait_until("the REQ again", || relay.frames().len() == 4).await;
+        // On a new connection (the sender's is another one).
+        assert!(
+            matches!(&relay.frames()[3], test_relay::Frame::Req(n, id, _) if *n > 1 && *id == new)
+        );
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        assert_eq!(relay.frames().len(), 4);
+        client.close();
+        sender.close();
+    }
+
+    #[test]
+    fn a_closed_catch_up_no_longer_holds_the_socket_back() {
+        let mut book = SubscriptionBook::default();
+        book.add(catch_up_sub("a"), T);
+        book.add(catch_up_sub("b"), T);
+        book.on_frame(Some(r#"["EOSE","a"]"#), T + 1);
+        assert!(!book.live);
+        assert_eq!(book.remove("b"), Some(r#"["CLOSE","b"]"#.to_string()));
+        assert!(book.live);
+        assert_eq!(book.remove("b"), None);
+        assert_eq!(book.on_connected(T + 2).len(), 1);
     }
 }
