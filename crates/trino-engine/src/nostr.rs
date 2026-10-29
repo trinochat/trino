@@ -1,7 +1,7 @@
 use crate::crypto::sha256;
 use futures_util::future::BoxFuture;
 use futures_util::{SinkExt, StreamExt};
-use secp256k1::{schnorr::Signature, Keypair, Message as SecpMessage, Secp256k1, XOnlyPublicKey};
+use secp256k1::{Keypair, Message as SecpMessage, Secp256k1};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::{HashMap, HashSet};
@@ -11,9 +11,17 @@ use std::time::Duration;
 use thiserror::Error;
 use tokio::sync::{mpsc, oneshot, watch};
 use tokio_tungstenite::tungstenite::Message;
+use trino_core::p1::event as p1event;
 use trino_net::{IsoKind, Mode, Net, Session};
 
 pub const TRINO_KIND: u32 = 4848;
+
+/// The kinds P1 listens to: messages (1059) and call signals (21059).
+pub const P1_KINDS: [u32; 2] = [p1event::KIND_MESSAGE, p1event::KIND_CALL];
+
+/// Mailboxes in one filter. Past this a list is split in more filters of
+/// the same REQ, which stays one pseudonym (P1 §3.6, R-31).
+pub const MAILBOXES_PER_FILTER: usize = 650;
 
 #[derive(Debug, Error)]
 pub enum NostrError {
@@ -101,41 +109,68 @@ pub fn build_and_sign_event(
     })
 }
 
+/// Whether the event's id is its NIP-01 id and its BIP-340 signature is
+/// valid: trino-core's check (P1 §6.2, step 1), the one every event that
+/// arrives goes through.
 pub fn verify_event(event: &NostrEvent) -> bool {
-    let serialized = serde_json::json!([
-        0,
-        event.pubkey,
-        event.created_at,
-        event.kind,
-        event.tags,
-        event.content
-    ])
-    .to_string();
-    let id_bytes = sha256(serialized.as_bytes());
-    if hex::encode(id_bytes) != event.id {
-        return false;
+    p1event::verify_event(&event.clone().into())
+}
+
+impl From<p1event::Event> for NostrEvent {
+    fn from(e: p1event::Event) -> Self {
+        NostrEvent {
+            id: e.id,
+            pubkey: e.pubkey,
+            created_at: e.created_at,
+            kind: e.kind,
+            tags: e.tags,
+            content: e.content,
+            sig: e.sig,
+        }
     }
-    let Ok(sig_bytes) = hex::decode(&event.sig) else {
-        return false;
-    };
-    let Ok(pub_bytes) = hex::decode(&event.pubkey) else {
-        return false;
-    };
-    if sig_bytes.len() != 64 || pub_bytes.len() != 32 {
-        return false;
+}
+
+impl From<NostrEvent> for p1event::Event {
+    fn from(e: NostrEvent) -> Self {
+        p1event::Event {
+            id: e.id,
+            pubkey: e.pubkey,
+            created_at: e.created_at,
+            kind: e.kind,
+            tags: e.tags,
+            content: e.content,
+            sig: e.sig,
+        }
     }
-    // BIP340 verification via libsecp256k1 (compatible with @noble/curves + relays).
-    let secp = Secp256k1::verification_only();
-    let Ok(xonly) = XOnlyPublicKey::from_slice(&pub_bytes) else {
-        return false;
-    };
-    let Ok(sig) = Signature::from_slice(&sig_bytes) else {
-        return false;
-    };
-    let Ok(msg) = SecpMessage::from_digest_slice(&id_bytes) else {
-        return false;
-    };
-    secp.verify_schnorr(&sig, &msg, &xonly).is_ok()
+}
+
+/// `inner` sealed for `mailbox` in a P1 event of `kind` (1059 or 21059),
+/// sent at `now`: a one-time author, one `p`, NIP-44, and on 1059 a
+/// backdated `created_at` and an `expiration` (trino-core, P1 §2.1).
+pub fn seal_p1(
+    kind: u32,
+    now: i64,
+    mailbox: &[u8; 32],
+    inner: &[u8],
+) -> Result<NostrEvent, NostrError> {
+    p1event::seal_event(kind, now, mailbox, inner)
+        .map(NostrEvent::from)
+        .map_err(|e| NostrError::Signing(e.to_string()))
+}
+
+/// The filters that listen to `mailboxes` since `since`: only the P1 kinds
+/// and the mailboxes, no identity anywhere, split every
+/// `MAILBOXES_PER_FILTER` (P1 §3.6). No mailbox, no filter.
+pub fn p1_filters(mailboxes: &[[u8; 32]], since: i64) -> Vec<NostrFilter> {
+    mailboxes
+        .chunks(MAILBOXES_PER_FILTER)
+        .map(|chunk| NostrFilter {
+            kinds: Some(P1_KINDS.to_vec()),
+            p_tag: Some(chunk.iter().map(hex::encode).collect()),
+            since: Some(since),
+            ..Default::default()
+        })
+        .collect()
 }
 
 type EventHandler = Arc<dyn Fn(NostrEvent) + Send + Sync>;
@@ -2501,5 +2536,111 @@ mod tests {
         assert!(book.live);
         assert_eq!(book.remove("b"), None);
         assert_eq!(book.on_connected(T + 2).len(), 1);
+    }
+
+    // ---- P1-6: P1 events and the filters of mailboxes ----
+
+    fn mailboxes(n: usize) -> Vec<[u8; 32]> {
+        (0..n).map(|_| generate_nostr_keypair().pub_bytes).collect()
+    }
+
+    /// P1 design test 11: only mailboxes, the P1 kinds and `since`.
+    #[test]
+    fn p1_filters_hold_only_mailboxes_and_the_p1_kinds() {
+        let boxes = mailboxes(3);
+        let filters = p1_filters(&boxes, 1_800_000_000);
+        assert_eq!(filters.len(), 1);
+        let json = serde_json::to_value(&filters[0]).unwrap();
+        let mut keys: Vec<&String> = json.as_object().unwrap().keys().collect();
+        keys.sort();
+        assert_eq!(keys, ["#p", "kinds", "since"]);
+        assert_eq!(json["kinds"], serde_json::json!([1059, 21059]));
+        assert_eq!(json["since"], 1_800_000_000);
+        let want: Vec<String> = boxes.iter().map(hex::encode).collect();
+        assert_eq!(json["#p"], serde_json::json!(want));
+        assert!(p1_filters(&[], 0).is_empty());
+    }
+
+    /// R-31: past 650 mailboxes the list goes in more filters of one REQ.
+    #[test]
+    fn a_long_list_of_mailboxes_is_split_in_filters() {
+        let boxes = mailboxes(1301);
+        let filters = p1_filters(&boxes, 0);
+        let sizes: Vec<usize> = filters
+            .iter()
+            .map(|f| f.p_tag.as_ref().unwrap().len())
+            .collect();
+        assert_eq!(sizes, [650, 650, 1]);
+        let all: Vec<String> = filters
+            .iter()
+            .flat_map(|f| f.p_tag.clone().unwrap())
+            .collect();
+        assert_eq!(all, boxes.iter().map(hex::encode).collect::<Vec<_>>());
+        assert_eq!(p1_filters(&mailboxes(1300), 0).len(), 2);
+    }
+
+    #[tokio::test]
+    async fn a_sealed_p1_event_reaches_its_mailbox_and_opens() {
+        let relay = TestRelay::serving(Answer::Accept).await;
+        let (on_event, seen) = collector();
+        let client = NostrClient::start(&relay.url, on_event, quick_options(None));
+        wait_until("the client to connect", || client.is_connected()).await;
+        let mailbox = generate_nostr_keypair();
+        let other = generate_nostr_keypair();
+        let now = chrono::Utc::now().timestamp();
+        client
+            .subscribe_filters(p1_filters(&[mailbox.pub_bytes], now - 3 * 3600), None)
+            .await
+            .unwrap();
+        wait_until("the REQ", || relay.frames().len() == 1).await;
+
+        let sender = relay.client().await;
+        let inner = vec![7u8; 1024];
+        let event = seal_p1(p1event::KIND_MESSAGE, now, &mailbox.pub_bytes, &inner).unwrap();
+        let elsewhere = seal_p1(p1event::KIND_CALL, now, &other.pub_bytes, &inner).unwrap();
+        assert_eq!(
+            sender
+                .publish_acked(&elsewhere, Duration::from_secs(5))
+                .await,
+            Ack::Accepted
+        );
+        assert_eq!(
+            sender.publish_acked(&event, Duration::from_secs(5)).await,
+            Ack::Accepted
+        );
+        wait_until("the event", || seen.lock().unwrap().len() == 1).await;
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        let got = seen.lock().unwrap()[0].clone();
+        assert_eq!(got.id, event.id);
+        assert!(verify_event(&got));
+        let core: p1event::Event = got.into();
+        assert_eq!(p1event::mailbox_of(&core), Some(mailbox.pub_bytes));
+        assert_eq!(
+            &p1event::open_event(&mailbox.priv_bytes, &core).unwrap()[..],
+            &inner[..]
+        );
+        assert_eq!(
+            seen.lock().unwrap().len(),
+            1,
+            "the other mailbox's event stays out"
+        );
+        client.close();
+        sender.close();
+    }
+
+    #[test]
+    fn a_p1_event_has_a_one_time_author_and_expires() {
+        let me = crate::identity::create_identity();
+        let mailbox = generate_nostr_keypair().pub_bytes;
+        let now = 1_800_000_000;
+        let a = seal_p1(p1event::KIND_MESSAGE, now, &mailbox, b"x").unwrap();
+        let b = seal_p1(p1event::KIND_MESSAGE, now, &mailbox, b"x").unwrap();
+        assert_ne!(a.pubkey, b.pubkey);
+        assert_ne!(a.pubkey, hex::encode(me.nostr.pub_bytes));
+        assert_eq!(a.tags[0], vec!["p".to_string(), hex::encode(mailbox)]);
+        let expiration: i64 = a.tags[1][1].parse().unwrap();
+        assert!(expiration >= a.created_at + 6 * 86_400);
+        assert!(verify_event(&a));
+        assert!(seal_p1(TRINO_KIND, now, &mailbox, b"x").is_err());
     }
 }
