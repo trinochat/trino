@@ -472,16 +472,29 @@ pub struct Fetched {
 /// after the last one. Every event is checked (`verify_event`) and kept
 /// once. The whole is given up at `deadline`.
 ///
-/// More than `page_limit` events with one `created_at` would end it early
-/// (the next page repeats them); P1's `created_at` is spread over 5 minutes
-/// per message, so a page of a few hundred never meets that.
+/// A page with nothing new is confirmed by asking once more without
+/// `limit`: a relay may return short pages under `until` + `limit` (the
+/// relay spike, 29 oct 2026), and stopping there would lose messages. If
+/// that ask brings anything new, `caps` learns the relay's paging is broken
+/// and the rest, and every later catch-up from it, goes without `limit`.
+/// The same ask covers more than `page_limit` events with one `created_at`.
+/// A CLOSED, or no answer by `deadline`, is recorded in `caps` too.
 pub async fn fetch_once(
     url: &str,
     connector: &Connector,
     filters: &[NostrFilter],
     page_limit: u32,
     deadline: Duration,
+    caps: &RelayCaps,
 ) -> Result<Fetched, NostrError> {
+    let kinds = Subscription {
+        id: String::new(),
+        filters: filters.to_vec(),
+        catch_up: None,
+    }
+    .kinds();
+    // A REQ is out and its answer not in yet.
+    let asking = AtomicBool::new(false);
     let fetch = async {
         let ws = connector(url.to_string())
             .await
@@ -490,13 +503,16 @@ pub async fn fetch_once(
         let mut fetched = Fetched::default();
         let mut seen: HashSet<String> = HashSet::new();
         let mut until: Option<i64> = None;
+        let mut limit = (!caps.paging_broken()).then_some(page_limit);
+        // This page is the ask without `limit` that confirms an end.
+        let mut confirming = false;
         for _ in 0..MAX_PAGES {
             let id = random_sub_id();
             let page: Vec<NostrFilter> = filters
                 .iter()
                 .map(|f| NostrFilter {
                     until: until.or(f.until),
-                    limit: Some(page_limit),
+                    limit,
                     ..f.clone()
                 })
                 .collect();
@@ -513,6 +529,7 @@ pub async fn fetch_once(
                 .send(Message::Text(req))
                 .await
                 .map_err(|e| NostrError::Send(e.to_string()))?;
+            asking.store(true, Ordering::SeqCst);
             let mut new = 0usize;
             loop {
                 let frame = match read.next().await {
@@ -553,6 +570,9 @@ pub async fn fetch_once(
                     }
                     Some("EOSE") => break,
                     Some("CLOSED") => {
+                        asking.store(false, Ordering::SeqCst);
+                        let message = msg.get(2).and_then(Value::as_str).unwrap_or_default();
+                        caps.refused(&kinds, message);
                         return Err(NostrError::Connect(
                             "the relay closed the query".to_string(),
                         ));
@@ -560,18 +580,31 @@ pub async fn fetch_once(
                     _ => {}
                 }
             }
+            asking.store(false, Ordering::SeqCst);
+            caps.answered(&kinds);
             let _ = write.send(Message::Text(close_payload(&id))).await;
             if new == 0 {
+                if limit.is_some() {
+                    limit = None;
+                    confirming = true;
+                    continue;
+                }
                 fetched.complete = true;
                 break;
+            }
+            if confirming {
+                caps.mark_paging_broken();
+                confirming = false;
             }
         }
         let _ = write.close().await;
         Ok(fetched)
     };
-    tokio::time::timeout(deadline, fetch)
-        .await
-        .map_err(|_| NostrError::Connect("timeout".to_string()))?
+    let result = tokio::time::timeout(deadline, fetch).await;
+    if result.is_err() && asking.load(Ordering::SeqCst) {
+        caps.unanswered(&kinds, Instant::now());
+    }
+    result.map_err(|_| NostrError::Connect("timeout".to_string()))?
 }
 
 /// A relay's WebSocket, over whatever trino-net carries it on: Tor, or the
@@ -1444,6 +1477,9 @@ pub mod test_relay {
         pub silent_kinds: Vec<u32>,
         /// A REQ naming one of these kinds is CLOSED with this message.
         pub closed_kinds: Vec<(u32, String)>,
+        /// A filter with both `until` and `limit` gets only the events whose
+        /// `created_at` is exactly `until`: short pages.
+        pub broken_paging: bool,
     }
 
     pub struct TestRelay {
@@ -1612,10 +1648,16 @@ pub mod test_relay {
 
     /// The kept events a REQ with `filters` gets: each filter's matches,
     /// newest first and at most its `limit`, as relays send them.
-    fn stored_for(filters: &[Value], kept: &[NostrEvent]) -> Vec<NostrEvent> {
+    fn stored_for(filters: &[Value], kept: &[NostrEvent], quirks: &Quirks) -> Vec<NostrEvent> {
         let mut out: Vec<NostrEvent> = Vec::new();
         for filter in filters {
-            let mut found: Vec<&NostrEvent> = kept.iter().filter(|e| matches(filter, e)).collect();
+            let until = filter.get("until").and_then(Value::as_i64);
+            let short = quirks.broken_paging && filter.get("limit").is_some();
+            let mut found: Vec<&NostrEvent> = kept
+                .iter()
+                .filter(|e| matches(filter, e))
+                .filter(|e| !short || until.is_none_or(|until| e.created_at == until))
+                .collect();
             found.sort_by_key(|e| std::cmp::Reverse(e.created_at));
             let limit = filter
                 .get("limit")
@@ -1734,7 +1776,7 @@ pub mod test_relay {
                     }
                     if serving {
                         let kept = events.lock().unwrap().clone();
-                        for event in stored_for(&filters, &kept) {
+                        for event in stored_for(&filters, &kept, &quirks) {
                             let frame = serde_json::json!(["EVENT", id, event]).to_string();
                             if write.send(Message::Text(frame)).await.is_err() {
                                 return;
@@ -3262,6 +3304,7 @@ mod tests {
             &[to_mailbox(&mailbox)],
             10,
             Duration::from_secs(5),
+            &RelayCaps::new(),
         )
         .await
         .unwrap();
@@ -3273,12 +3316,13 @@ mod tests {
         // One connection; a REQ per page, each CLOSEd, `until` going back.
         let frames = relay.frames();
         let mut untils = Vec::new();
+        let mut limits = Vec::new();
         let mut open: Option<String> = None;
         for frame in &frames {
             match frame {
                 test_relay::Frame::Req(1, id, filters) => {
                     assert!(open.is_none(), "one page at a time");
-                    assert_eq!(filters[0]["limit"], 10);
+                    limits.push(filters[0]["limit"].as_u64());
                     untils.push(filters[0]["until"].as_i64());
                     open = Some(id.clone());
                 }
@@ -3293,7 +3337,11 @@ mod tests {
         })
         .await;
         assert_eq!(untils[0], None);
-        assert!(untils.len() >= 3 && untils.len() <= 5, "{untils:?}");
+        assert!(untils.len() >= 4 && untils.len() <= 6, "{untils:?}");
+        // Pages of 10, and a last ask without `limit` that confirms the end.
+        let (last, pages) = limits.split_last().unwrap();
+        assert!(pages.iter().all(|l| *l == Some(10)), "{limits:?}");
+        assert_eq!(*last, None);
         let backwards: Vec<i64> = untils.iter().flatten().copied().collect();
         assert!(backwards.windows(2).all(|w| w[1] <= w[0]), "{backwards:?}");
     }
@@ -3307,12 +3355,13 @@ mod tests {
             &[to_mailbox(&"aa".repeat(32))],
             10,
             Duration::from_secs(5),
+            &RelayCaps::new(),
         )
         .await
         .unwrap();
         assert!(fetched.complete);
         assert!(fetched.events.is_empty());
-        wait_until("REQ and CLOSE", || relay.frames().len() == 2).await;
+        wait_until("two REQs and their CLOSEs", || relay.frames().len() == 4).await;
     }
 
     #[tokio::test]
@@ -3330,11 +3379,107 @@ mod tests {
             &[to_mailbox(&mailbox)],
             10,
             Duration::from_secs(5),
+            &RelayCaps::new(),
         )
         .await
         .unwrap();
         let ids: Vec<&str> = fetched.events.iter().map(|e| e.id.as_str()).collect();
         assert_eq!(ids, [good.id.as_str()]);
+    }
+
+    #[tokio::test]
+    async fn a_relay_whose_pages_come_back_short_is_read_without_limit() {
+        let relay = TestRelay::quirky(
+            Answer::Accept,
+            test_relay::Quirks {
+                broken_paging: true,
+                ..Default::default()
+            },
+        );
+        let mailbox = "aa".repeat(32);
+        let mut want = HashSet::new();
+        for i in 0..25 {
+            let event = addressed(&mailbox, 1_800_000_000 + i * 7);
+            want.insert(event.id.clone());
+            relay.store(event);
+        }
+        let caps = RelayCaps::new();
+        let fetched = fetch_once(
+            &relay.url,
+            &test_relay::connector(),
+            &[to_mailbox(&mailbox)],
+            10,
+            Duration::from_secs(5),
+            &caps,
+        )
+        .await
+        .unwrap();
+        assert!(fetched.complete);
+        let got: HashSet<String> = fetched.events.iter().map(|e| e.id.clone()).collect();
+        assert_eq!(got, want, "nothing lost to the short pages");
+        assert!(caps.paging_broken());
+
+        // Known now: the next catch-up asks without `limit` from the start.
+        let fetched = fetch_once(
+            &relay.url,
+            &test_relay::connector(),
+            &[to_mailbox(&mailbox)],
+            10,
+            Duration::from_secs(5),
+            &caps,
+        )
+        .await
+        .unwrap();
+        assert_eq!(fetched.events.len(), 25);
+        let first_of_second = relay
+            .frames()
+            .into_iter()
+            .find_map(|frame| match frame {
+                test_relay::Frame::Req(2, _, filters) => Some(filters),
+                _ => None,
+            })
+            .unwrap();
+        assert!(first_of_second[0].get("limit").is_none());
+    }
+
+    #[tokio::test]
+    async fn a_one_shot_catch_up_marks_a_kind_the_relay_never_answers() {
+        use crate::relay_caps::Reads;
+        let relay = TestRelay::quirky(
+            Answer::Accept,
+            test_relay::Quirks {
+                silent_kinds: vec![p1event::KIND_CALL],
+                ..Default::default()
+            },
+        );
+        let caps = RelayCaps::new();
+        let calls = p1_filters(p1event::KIND_CALL, &[[2u8; 32]], 0);
+        let result = fetch_once(
+            &relay.url,
+            &test_relay::connector(),
+            &calls,
+            10,
+            Duration::from_millis(300),
+            &caps,
+        )
+        .await;
+        assert!(result.is_err());
+        assert!(matches!(
+            caps.reads(p1event::KIND_CALL),
+            Reads::Unanswered(_)
+        ));
+        let messages = p1_filters(p1event::KIND_MESSAGE, &[[2u8; 32]], 0);
+        fetch_once(
+            &relay.url,
+            &test_relay::connector(),
+            &messages,
+            10,
+            Duration::from_secs(5),
+            &caps,
+        )
+        .await
+        .unwrap();
+        assert_eq!(caps.reads(p1event::KIND_MESSAGE), Reads::Answered);
     }
 
     #[tokio::test]
@@ -3347,6 +3492,7 @@ mod tests {
             &[to_mailbox(&"aa".repeat(32))],
             10,
             Duration::from_millis(100),
+            &RelayCaps::new(),
         )
         .await;
         assert!(result.is_err());
