@@ -1048,9 +1048,14 @@ impl NostrClient {
     /// The answer teaches the relay's `caps`: a `rate-limited:` holds that
     /// kind back, a `banned:` every kind, for a while that grows each time
     /// in a row, and both stretch the pace (`RelayCaps::event_refused`).
-    /// While held back, an event is not sent at all: `Ack::Throttled`.
+    /// While held back, an event is not sent at all: `Ack::Throttled`. A
+    /// kind the relay keeps refusing and has never taken is not sent either
+    /// for a while (`RelayCaps::writable`): `Ack::Rejected`.
     pub async fn publish_acked(&self, event: &NostrEvent, wait: Duration) -> Ack {
         let kind = Some(event.kind);
+        if !self.caps.writable(event.kind, Instant::now()) {
+            return Ack::Rejected;
+        }
         if self
             .caps
             .write_blocked(event.kind, Instant::now())
@@ -3649,6 +3654,40 @@ mod tests {
             Ack::Throttled
         );
         assert_eq!(relay.events().len(), 1);
+        client.close();
+    }
+
+    #[tokio::test]
+    async fn a_kind_a_relay_always_refuses_is_not_sent_there_for_a_while() {
+        let relay = throttling(
+            p1event::KIND_CALL,
+            "sign up at https://relay.example/signup",
+        );
+        let client = relay.client().await;
+        let wait = Duration::from_secs(5);
+        for _ in 0..2 {
+            assert_eq!(
+                client
+                    .publish_acked(&sealed(p1event::KIND_CALL), wait)
+                    .await,
+                Ack::Rejected
+            );
+        }
+        assert!(!client.caps().writable(p1event::KIND_CALL, Instant::now()));
+        // Refused here, without asking the relay again.
+        assert_eq!(
+            client
+                .publish_acked(&sealed(p1event::KIND_CALL), wait)
+                .await,
+            Ack::Rejected
+        );
+        assert_eq!(relay.events().len(), 2);
+        assert_eq!(
+            client
+                .publish_acked(&sealed(p1event::KIND_MESSAGE), wait)
+                .await,
+            Ack::Accepted
+        );
         client.close();
     }
 

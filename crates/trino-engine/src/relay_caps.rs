@@ -7,7 +7,7 @@
 //! answers a REQ whose filter names an ephemeral kind, one requires an AUTH
 //! it cannot complete, one returns short pages under `until` + `limit`, one
 //! rate-limits a kind or bans after a burst, one drops a socket quiet for
-//! 10 s. Nothing here is tied to a relay's name: each fact is learned from
+//! 10 s, one takes 1059 but asks to sign up for 21059. Nothing here is tied to a relay's name: each fact is learned from
 //! what the relay does, kept for the session (one `RelayCaps` per relay,
 //! shared by its connections), and read by whoever decides where to send
 //! and what to ask.
@@ -33,6 +33,10 @@ pub const BAN_MAX: Duration = Duration::from_secs(6 * 3600);
 pub const MAX_PACE_FACTOR: u32 = 256;
 /// Acceptances in a row that halve the pace factor again.
 pub const PACE_RELAX_AFTER: u32 = 50;
+/// Refusals of a kind it has never taken that make it not worth sending
+/// for `READ_RETRY`: one may be about that event, two in a row are about
+/// the kind.
+pub const KIND_REFUSALS: u32 = 2;
 /// Each throttle multiplies the pace factor by this: two in a row slow a
 /// burst of 32 every 100 ms (the default) down to 2 every 1.6 s, before a
 /// relay that bans at the third gets there.
@@ -108,6 +112,9 @@ struct State {
     accepted_in_a_row: u32,
     /// Kinds it has taken at least once.
     accepted_kinds: std::collections::BTreeSet<u32>,
+    /// Kinds it has never taken: how many refusals in a row, the last one
+    /// when.
+    kind_refusals: BTreeMap<u32, (u32, Instant)>,
     keepalive: Option<Duration>,
 }
 
@@ -196,11 +203,25 @@ impl RelayCaps {
 
     /// The relay refused an event of `kind` (`None`: not known) with
     /// `message`: a throttle if it says `rate-limited:` or `banned:`.
+    ///
+    /// Any other refusal of a kind it has never taken counts towards that
+    /// kind not being `writable`, unless it says the event itself was wrong
+    /// (`invalid:`, `pow:`) or already there (`duplicate:`).
     pub fn event_refused(&self, kind: Option<u32>, message: &str, now: Instant) -> Throttled {
         let (key, first, max, ban) = match prefix(message) {
             "rate-limited" => (kind, RATE_LIMIT_FIRST, RATE_LIMIT_MAX, false),
             "banned" => (None, BAN_FIRST, BAN_MAX, true),
-            _ => return Throttled::No,
+            "invalid" | "pow" | "duplicate" => return Throttled::No,
+            _ => {
+                if let Some(kind) = kind {
+                    let mut state = self.state();
+                    if !state.accepted_kinds.contains(&kind) {
+                        let count = state.kind_refusals.get(&kind).map_or(0, |(n, _)| *n);
+                        state.kind_refusals.insert(kind, (count + 1, now));
+                    }
+                }
+                return Throttled::No;
+            }
         };
         let mut state = self.state();
         let streak = state.throttles.get(&key).map_or(0, |t| t.streak + 1);
@@ -235,11 +256,22 @@ impl RelayCaps {
         if let Some(kind) = kind {
             state.throttles.remove(&Some(kind));
             state.accepted_kinds.insert(kind);
+            state.kind_refusals.remove(&kind);
         }
         state.accepted_in_a_row += 1;
         if state.accepted_in_a_row >= PACE_RELAX_AFTER {
             state.accepted_in_a_row = 0;
             state.pace_factor = (state.pace_factor / 2).max(1);
+        }
+    }
+
+    /// Whether an event of `kind` is worth sending at `now`: not refused
+    /// `KIND_REFUSALS` times in a row without ever being taken, unless that
+    /// was `READ_RETRY` ago. Throttles are `write_blocked`.
+    pub fn writable(&self, kind: u32, now: Instant) -> bool {
+        match self.state().kind_refusals.get(&kind) {
+            Some((count, at)) if *count >= KIND_REFUSALS => now.duration_since(*at) >= READ_RETRY,
+            _ => true,
         }
     }
 
@@ -388,6 +420,33 @@ mod tests {
         assert!(caps.write_blocked(21059, now).is_some());
         caps.event_refused(None, "rate-limited: of an unknown kind", now);
         assert_eq!(caps.pace_gap(S), PACE_STRETCH * S);
+    }
+
+    #[test]
+    fn a_kind_refused_each_time_and_never_taken_is_not_written_for_a_while() {
+        // One relay in the spike refused every 21059 with "sign up at …".
+        let caps = RelayCaps::new();
+        let now = Instant::now();
+        let signup = "sign up at https://relay.example/signup";
+        caps.event_refused(Some(21059), signup, now);
+        assert!(caps.writable(21059, now), "once may be that event");
+        caps.event_refused(Some(21059), signup, now);
+        assert!(!caps.writable(21059, now));
+        assert!(caps.writable(1059, now), "only that kind");
+        assert!(caps.writable(21059, now + READ_RETRY), "tried again later");
+        caps.event_accepted(Some(21059));
+        assert!(caps.writable(21059, now), "taken after all");
+        // A kind it has taken, or events refused for themselves, are not
+        // the kind's fault.
+        caps.event_accepted(Some(1059));
+        for _ in 0..3 {
+            caps.event_refused(Some(1059), "blocked: spam not permitted", now);
+        }
+        assert!(caps.writable(1059, now));
+        for _ in 0..3 {
+            caps.event_refused(Some(30_000), "invalid: event expired", now);
+        }
+        assert!(caps.writable(30_000, now));
     }
 
     #[test]
