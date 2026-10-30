@@ -699,6 +699,23 @@ pub const PACE: Pace = Pace {
     gap: Duration::from_millis(100),
 };
 
+/// How often a client pings a socket that has nothing else to send:
+/// `every`, or more often for a relay that drops quiet sockets
+/// (`RelayCaps::keepalive`), never more often than every `floor`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Keepalive {
+    pub every: Duration,
+    pub floor: Duration,
+}
+
+/// The keepalive by default: a ping every 25 s, as before, and down to one
+/// every 5 s for a relay that drops a socket after less quiet (one in the
+/// relay spike declared 10 s).
+pub const KEEPALIVE: Keepalive = Keepalive {
+    every: Duration::from_secs(25),
+    floor: Duration::from_secs(5),
+};
+
 /// How long a REQ may go unanswered. Through Tor the relays of the spike
 /// sent EOSE within 5 s, and a REQ goes out only once the socket is up.
 pub const ANSWER_DEADLINE: Duration = Duration::from_secs(60);
@@ -741,6 +758,8 @@ pub struct ClientOptions {
     pub answer_deadline: Option<Duration>,
     /// How fast events go out to the relay.
     pub pace: Pace,
+    /// How often a quiet socket is pinged.
+    pub keepalive: Keepalive,
 }
 
 impl ClientOptions {
@@ -758,6 +777,7 @@ impl ClientOptions {
             caps: RelayCaps::new(),
             answer_deadline: Some(ANSWER_DEADLINE),
             pace: PACE,
+            keepalive: KEEPALIVE,
         }
     }
 }
@@ -1260,6 +1280,18 @@ impl Connection {
         }
     }
 
+    /// The relay dropped the socket `last_sent` after our last frame: if
+    /// that is less quiet than the ping interval allows, ping more often
+    /// from now on.
+    fn learn_quiet(&self, last_sent: Instant) {
+        let keepalive = self.options.keepalive;
+        self.options.caps.dropped_while_quiet(
+            last_sent.elapsed(),
+            keepalive.every,
+            keepalive.floor,
+        );
+    }
+
     /// The pace now: the options', stretched by what the relay did.
     fn pace(&self) -> (u32, Duration) {
         let base = self.options.pace;
@@ -1380,11 +1412,21 @@ impl Connection {
         opened: Option<Mode>,
     ) -> Served {
         let (mut write, mut read) = ws.split();
+        // When we last sent the relay a frame: a relay may drop a socket
+        // that stays quiet (`RelayCaps::dropped_while_quiet`).
+        let mut last_sent = Instant::now();
+        macro_rules! send {
+            ($message:expr) => {{
+                last_sent = Instant::now();
+                write.send($message).await
+            }};
+        }
         // Re-send the subscriptions so the fresh socket delivers events.
         for req in book.on_connected(unix_now()) {
-            let _ = write.send(Message::Text(req)).await;
+            let _ = send!(Message::Text(req));
         }
-        let mut ping = tokio::time::interval(Duration::from_secs(25));
+        let every = self.options.caps.keepalive(self.options.keepalive.every);
+        let mut ping = tokio::time::interval(every);
         ping.tick().await; // discard the immediate first tick
         loop {
             let due = book.next_due();
@@ -1404,9 +1446,10 @@ impl Connection {
                     }
                     Some(Ok(Message::Ping(payload))) => {
                         book.on_frame(None, unix_now());
-                        let _ = write.send(Message::Pong(payload)).await;
+                        let _ = send!(Message::Pong(payload));
                     }
                     Some(Ok(Message::Close(_))) | None => {
+                        self.learn_quiet(last_sent);
                         self.note("WS dropped, reconnecting");
                         return Served::Dropped;
                     }
@@ -1416,6 +1459,7 @@ impl Connection {
                         book.on_frame(None, unix_now());
                     }
                     Some(Err(_)) => {
+                        self.learn_quiet(last_sent);
                         self.note("WS read error, reconnecting");
                         return Served::Dropped;
                     }
@@ -1426,7 +1470,7 @@ impl Connection {
                         // At once, if its turn has come: a timer would add
                         // a tick to each event.
                         while let Some(outgoing) = self.take_turn(outbox) {
-                            if write.send(Message::Text(outgoing)).await.is_err() {
+                            if send!(Message::Text(outgoing)).is_err() {
                                 return Served::Dropped; // socket dead → reconnect
                             }
                         }
@@ -1435,13 +1479,13 @@ impl Connection {
                         // Kept in the book even if this send fails, so the
                         // reconnect re-sends it.
                         let req = book.add(sub, unix_now());
-                        if write.send(Message::Text(req)).await.is_err() {
+                        if send!(Message::Text(req)).is_err() {
                             return Served::Dropped; // socket dead → reconnect
                         }
                     }
                     Some(ClientCommand::Unsubscribe(id)) => {
                         if let Some(close) = book.remove(&id) {
-                            if write.send(Message::Text(close)).await.is_err() {
+                            if send!(Message::Text(close)).is_err() {
                                 return Served::Dropped; // socket dead → reconnect
                             }
                         }
@@ -1461,7 +1505,7 @@ impl Connection {
                 },
                 () = until_due(turn) => {
                     while let Some(outgoing) = self.take_turn(outbox) {
-                        if write.send(Message::Text(outgoing)).await.is_err() {
+                        if send!(Message::Text(outgoing)).is_err() {
                             return Served::Dropped; // socket dead → reconnect
                         }
                     }
@@ -1470,7 +1514,7 @@ impl Connection {
                     for (close, kinds) in book.expire(Instant::now()) {
                         self.note("REQ unanswered in time, closed");
                         self.options.caps.unanswered(&kinds, Instant::now());
-                        if write.send(Message::Text(close)).await.is_err() {
+                        if send!(Message::Text(close)).is_err() {
                             return Served::Dropped; // socket dead → reconnect
                         }
                     }
@@ -1481,7 +1525,7 @@ impl Connection {
                     return Served::Moved;
                 }
                 _ = ping.tick() => {
-                    if write.send(Message::Ping(Vec::new())).await.is_err() {
+                    if send!(Message::Ping(Vec::new())).is_err() {
                         return Served::Dropped; // socket dead → reconnect
                     }
                 }
@@ -1679,6 +1723,9 @@ pub mod test_relay {
         pub broken_paging: bool,
         /// An EVENT of one of these kinds is refused with this message.
         pub refused_kinds: Vec<(u32, String)>,
+        /// A socket it hears nothing from (not even a ping) for this long
+        /// is closed.
+        pub idle_timeout: Option<Duration>,
     }
 
     pub struct TestRelay {
@@ -1898,9 +1945,18 @@ pub mod test_relay {
         let mut later = live.subscribe();
         let mut subs: Vec<(Value, Vec<Value>)> = Vec::new();
         let (mut write, mut read) = ws.split();
+        let mut heard = Instant::now();
         loop {
+            let idle_at = quirks.idle_timeout.map(|idle| heard + idle);
             let message = tokio::select! {
-                message = read.next() => message,
+                message = read.next() => {
+                    heard = Instant::now();
+                    message
+                }
+                () = until_due(idle_at) => {
+                    let _ = write.close().await;
+                    return;
+                }
                 () = kicks.notified() => {
                     let _ = write.close().await;
                     return;
@@ -2054,6 +2110,11 @@ pub mod test_relay {
             pace: Pace {
                 burst: 1_000_000,
                 gap: Duration::from_millis(1),
+            },
+            // A test relay that is kicked must not teach a shorter ping.
+            keepalive: Keepalive {
+                every: Duration::from_secs(25),
+                floor: Duration::from_secs(25),
             },
         }
     }
@@ -2582,6 +2643,7 @@ mod tests {
             caps: RelayCaps::new(),
             answer_deadline: None,
             pace: PACE,
+            keepalive: KEEPALIVE,
         };
 
         let client = NostrClient::start("ws://relay.trino.invalid", ignore_events(), options);
@@ -3649,6 +3711,74 @@ mod tests {
             "a send shown as failed never goes out later"
         );
         client.close();
+    }
+
+    // ---- Relays that drop quiet sockets ----
+
+    /// How many connections the relay has had that sent a REQ.
+    fn connections_with_reqs(relay: &TestRelay) -> usize {
+        relay
+            .frames()
+            .into_iter()
+            .filter_map(|frame| match frame {
+                test_relay::Frame::Req(c, ..) => Some(c),
+                _ => None,
+            })
+            .max()
+            .unwrap_or(0)
+    }
+
+    #[tokio::test]
+    async fn a_relay_that_drops_quiet_sockets_is_pinged_often_enough() {
+        let relay = TestRelay::quirky(
+            Answer::Accept,
+            test_relay::Quirks {
+                idle_timeout: Some(Duration::from_millis(300)),
+                ..Default::default()
+            },
+        );
+        let (on_event, seen) = collector();
+        let options = ClientOptions {
+            keepalive: Keepalive {
+                every: Duration::from_secs(25),
+                floor: Duration::from_millis(50),
+            },
+            ..quick_options(None)
+        };
+        let client = NostrClient::start(&relay.url, on_event, options);
+        wait_until("the client to connect", || client.is_connected()).await;
+        let mailbox = generate_nostr_keypair().pub_bytes;
+        let now = chrono::Utc::now().timestamp();
+        client
+            .subscribe_p1(&[mailbox], now - 4 * 3600)
+            .await
+            .unwrap();
+
+        // The first socket is dropped after 300 ms of quiet; the client
+        // learns to ping at about half of that (the quiet it measured).
+        wait_until("the quiet socket dropped and opened again", || {
+            connections_with_reqs(&relay) >= 2
+        })
+        .await;
+        let learned = client.caps().keepalive(Duration::from_secs(25));
+        assert!(
+            learned >= Duration::from_millis(50) && learned <= Duration::from_millis(200),
+            "{learned:?}"
+        );
+        // From then on the socket stays up.
+        let before = connections_with_reqs(&relay);
+        tokio::time::sleep(Duration::from_millis(1200)).await;
+        assert_eq!(connections_with_reqs(&relay), before, "no more drops");
+
+        let sender = relay.client().await;
+        let event = seal_p1(p1event::KIND_MESSAGE, now, &mailbox, b"still here").unwrap();
+        assert_eq!(
+            sender.publish_acked(&event, Duration::from_secs(5)).await,
+            Ack::Accepted
+        );
+        wait_until("the message", || seen.lock().unwrap().len() == 1).await;
+        client.close();
+        sender.close();
     }
 
     // ---- P1-6: the one-shot catch-up, paged with `until` (R-20) ----
