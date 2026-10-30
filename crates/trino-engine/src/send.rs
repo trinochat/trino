@@ -46,6 +46,15 @@ pub enum SendError {
     TooLong,
     /// To someone you blocked (UR-2).
     Blocked,
+    /// The session waits for the contact's first reply (a PQ-11 handshake,
+    /// P1-8): nothing else goes until it comes.
+    Pending,
+    /// No list of the contact's account yet, so no P1 handshake can start
+    /// (P1-8).
+    NoPrekeys,
+    /// The network time is unknown and the clock is off by more than an
+    /// hour (design P1 §3.5).
+    ClockSkewed,
     /// The X3DH, the ratchet or the signature failed; for the log.
     Failed(String),
 }
@@ -64,6 +73,9 @@ impl std::fmt::Display for SendError {
             SendError::NotAccepted => "no relay accepted the message",
             SendError::TooLong => "the message is too large for the relays",
             SendError::Blocked => "blocked",
+            SendError::Pending => "waiting for the contact's reply",
+            SendError::NoPrekeys => "no device list of this contact yet",
+            SendError::ClockSkewed => "the clock is too far off to send",
             SendError::Failed(reason) => reason,
         })
     }
@@ -73,7 +85,10 @@ impl From<SendError> for CommandError {
     fn from(error: SendError) -> Self {
         let code = match &error {
             SendError::Sealed => ErrorCode::NoVault,
-            SendError::NoSession => ErrorCode::NoSession,
+            SendError::NoSession | SendError::Pending | SendError::NoPrekeys => {
+                ErrorCode::NoSession
+            }
+            SendError::ClockSkewed => ErrorCode::Offline,
             SendError::NoRelays | SendError::Offline => ErrorCode::Offline,
             SendError::NotAccepted => ErrorCode::NotAccepted,
             SendError::TooLong => ErrorCode::MessageTooLong,

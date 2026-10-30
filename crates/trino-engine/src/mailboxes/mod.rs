@@ -19,7 +19,7 @@ use crate::state::InnerState;
 use pad::PadBook;
 use rand::{CryptoRng, Rng};
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use table::Dedup;
 
 /// What the mailboxes keep on disk, in the sessions file (`RatchetsFile`
@@ -36,6 +36,14 @@ pub struct MailboxState {
     /// seconds): kept, so a restart does not draw the moment again.
     #[serde(default)]
     pub handshakes_due: BTreeMap<String, i64>,
+    /// The PQ-11 handshakes this device started that wait for their type 4
+    /// (`p1.rs`), by contact.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub pq11: BTreeMap<String, crate::p1::Pq11Pending>,
+    /// The contacts this device started a session with whose first reply,
+    /// with their list, has not come yet (RV-06).
+    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
+    pub unverified: BTreeSet<String>,
 }
 
 impl MailboxState {

@@ -36,6 +36,7 @@ pub mod groups;
 pub mod lock;
 pub mod mailboxes;
 pub mod nostr;
+pub mod p1;
 pub mod passphrase;
 pub mod prefs;
 pub mod profile;
