@@ -22,30 +22,25 @@ use crate::connection::{ConnectionStatus, Debouncer, CONNECTION_CHANGED_EVENT, D
 use crate::envelope::{decode_envelope, Envelope};
 use crate::events::EventSink;
 use crate::group::{self, FileRef, GroupRoster};
-use crate::groups::{
-    accept_incoming_roster, admit_event, judge_handshake, record_handshake, respond_to_handshake,
-    Admission, HandshakeRejection,
-};
-use crate::identity::{decode_array_32, Identity};
+use crate::groups::accept_incoming_roster;
+use crate::identity::Identity;
 use crate::nostr::{
-    build_and_sign_event, inspector_connector, relay_deadline, CatchUp, ClientOptions, Connector,
-    NostrClient, NostrEvent, NostrFilter, ReadyGate, StateHandler, TRINO_KIND,
+    inspector_connector, relay_deadline, ClientOptions, Connector, NostrClient, NostrEvent,
+    NostrFilter, ReadyGate, StateHandler,
 };
 use crate::profile;
-use crate::ratchet::{
-    init_initiator, ratchet_decrypt, ratchet_encrypt, EncryptedMessage, MessageHeader, RatchetError,
-};
 use crate::send::SendError;
 use crate::state::{HandshakeMark, HistItem, InnerState};
 use crate::store::envelope::Slot;
 use crate::store::session::Found;
 use crate::turn::TurnGate;
-use crate::x3dh::initiate;
 use crate::Engine;
 use base64::Engine as _;
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use std::collections::HashMap;
 use std::sync::Arc;
+use trino_core::p1::event::{KIND_CALL, KIND_MESSAGE};
+use trino_core::p1::wire::Step;
 use zeroize::{Zeroize, Zeroizing};
 
 pub const MAX_INLINE_RASTER_BYTES: usize = 128 * 1024;
@@ -56,35 +51,6 @@ pub const CATCH_UP_WINDOW_SECS: i64 = 86_400;
 /// handshake may claim to be, and how much a re-subscription overlaps the time
 /// the previous connection already covered.
 pub const CLOCK_SKEW_SECS: i64 = 600;
-
-#[derive(Serialize, Deserialize, Clone)]
-pub struct WirePayload {
-    pub header: WireHeader,
-    pub nonce: String,
-    pub ciphertext: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub handshake: Option<WireHandshake>,
-}
-
-#[derive(Serialize, Deserialize, Clone)]
-pub struct WireHeader {
-    #[serde(rename = "dhPub")]
-    pub dh_pub: String,
-    pub pn: u32,
-    pub n: u32,
-}
-
-#[derive(Serialize, Deserialize, Clone)]
-pub struct WireHandshake {
-    #[serde(rename = "ikDhPub")]
-    pub ik_dh_pub: String,
-    #[serde(rename = "ekPub")]
-    pub ek_pub: String,
-    #[serde(rename = "spkId")]
-    pub spk_id: u32,
-    #[serde(rename = "opkId")]
-    pub opk_id: Option<u32>,
-}
 
 /// Human-verifiable fingerprint bound to ALL three public keys (ik_sign, ik_dh,
 /// nostr), so comparing it out-of-band actually detects a swapped DH/Nostr key.
@@ -384,6 +350,12 @@ pub async fn connect_relays(
     expected_handle: String,
 ) {
     let changes = Arc::new(connection_changes(Arc::clone(&events), state_inner.clone()));
+    let listening = {
+        let mut inner = state_inner.lock().await;
+        let listening = crate::mailboxes::listened(&mut inner, unix_now());
+        save_ratchets(&inner);
+        listening
+    };
     let mut clients = Vec::new();
     let mut seen = std::collections::HashSet::new();
     for relay_url in relays {
@@ -401,26 +373,11 @@ pub async fn connect_relays(
         };
         let options = relay_options(&relay_url, &connector, &ready, &net, Some(on_state));
         let client = NostrClient::start(&relay_url, on_event, options);
-        // Catch up on messages sent while this device was offline: the
-        // whole window on the first connection, and on every reconnect
-        // only what this relay may not have delivered yet (so the window
-        // does not grow with uptime). Duplicate event ids and ratchet
-        // state are checked before anything reaches the UI. Sent once the
-        // socket is up.
-        let _ = client
-            .subscribe_catching_up(
-                &NostrFilter {
-                    kinds: Some(vec![TRINO_KIND]),
-                    p_tag: Some(vec![expected_nostr_pub.clone()]),
-                    ..Default::default()
-                },
-                CatchUp {
-                    max_window_secs: CATCH_UP_WINDOW_SECS,
-                    overlap_secs: CLOCK_SKEW_SECS,
-                },
-            )
-            .await;
-        clients.push(client);
+        // P1 (§3.6): the mailboxes of today and yesterday, padded, since
+        // the start of yesterday less the tolerance; what came while this
+        // device was off is in there too. Sent once the socket is up.
+        let subscribed = client.subscribe_p1(&listening.0, listening.1).await;
+        clients.push((client, subscribed.unwrap_or_default()));
     }
 
     let mut inner = state_inner.lock().await;
@@ -430,8 +387,12 @@ pub async fn connect_relays(
         .is_some_and(|identity| hex::encode(identity.nostr.pub_bytes) == expected_nostr_pub)
         && inner.handle.as_deref() == Some(expected_handle.as_str());
     if same_identity {
-        inner.relays.extend(clients);
+        inner
+            .relays
+            .extend(clients.iter().map(|(client, _)| Arc::clone(client)));
         drop(inner);
+        // -- P1 -- The list renewed at random moments, and every epoch.
+        crate::mailboxes::keep_listening(state_inner.clone(), clients, listening.0);
         // The UI learns how many relays there are before any is up.
         changes.poke();
         // -- CE-6 -- The warnings' mailboxes, on connections of their own.
@@ -446,7 +407,7 @@ pub async fn connect_relays(
         crate::report::watch(events, state_inner, reports, expected_nostr_pub);
     } else {
         drop(inner);
-        for client in clients {
+        for (client, _) in clients {
             client.close();
         }
     }
@@ -556,7 +517,7 @@ pub async fn inspect_relays(
             Ok(client) => {
                 let _ = client
                     .subscribe(&NostrFilter {
-                        kinds: Some(vec![TRINO_KIND]),
+                        kinds: Some(vec![KIND_MESSAGE]),
                         limit: Some(40),
                         ..Default::default()
                     })
@@ -605,114 +566,60 @@ pub async fn stop_inspecting(state: &Engine) {
 }
 
 /// `connect_node`: a session with the contact `handle`, its handshake sent,
-/// unless there is one already; either way `handle` becomes the current peer.
+/// unless there is one already or starting; either way `handle` becomes the
+/// current peer.
 pub async fn connect(state: &Engine, handle: String) -> Result<(), String> {
-    let mut inner = state.inner.lock().await;
-    let identity = inner.identity.as_ref().ok_or("vault sealed")?.clone();
-    let friend = inner.friends.get(&handle).ok_or("unknown node")?.clone();
-    // UR-2: no handshake goes to someone you blocked.
-    if crate::block::friend_blocked(&inner, &friend) {
-        return Err(crate::send::SendError::Blocked.to_string());
+    {
+        let mut inner = state.inner.lock().await;
+        let friend = inner.friends.get(&handle).ok_or("unknown node")?;
+        // UR-2: no handshake goes to someone you blocked.
+        if crate::block::friend_blocked(&inner, friend) {
+            return Err(crate::send::SendError::Blocked.to_string());
+        }
+        inner.current_peer = Some(handle.clone());
+        if has_session(&inner, &handle) {
+            return Ok(());
+        }
     }
-
-    if inner.ratchets.contains_key(&handle) {
-        inner.current_peer = Some(handle);
-        return Ok(());
-    }
-
-    let init = initiate(&identity, &friend.bundle).map_err(|e| e.to_string())?;
-    let spk_pub = decode_array_32(&friend.bundle.spk_pub).map_err(|e| e.to_string())?;
-    let state_ratchet = init_initiator(init.master_secret, spk_pub).map_err(|e| e.to_string())?;
-    inner.ratchets.insert(handle.clone(), state_ratchet);
-    inner
-        .associated_data
-        .insert(handle.clone(), init.associated_data.clone());
-    inner.current_peer = Some(handle.clone());
-    save_ratchets(&inner);
-
-    let handshake = WireHandshake {
-        ik_dh_pub: init.message.ik_dh_pub,
-        ek_pub: init.message.ek_pub,
-        spk_id: init.message.spk_id,
-        opk_id: init.message.opk_id,
-    };
-    drop(inner);
-
-    send_cipher_inner(state, &handle, b"__trino_handshake__", Some(handshake))
+    start_handshake(state, &handle)
         .await
-        .map_err(|e| e.to_string())?;
-    Ok(())
+        .map_err(|e| e.to_string())
 }
 
 /// `resync_session`: a fresh handshake with `handle`, whatever session
 /// there was.
 pub async fn resync(state: &Engine, handle: String) -> Result<(), String> {
-    let mut inner = state.inner.lock().await;
-    let identity = inner.identity.as_ref().ok_or("vault sealed")?.clone();
-    let friend = inner.friends.get(&handle).ok_or("unknown node")?.clone();
-    // UR-2: no handshake goes to someone you blocked.
-    if crate::block::friend_blocked(&inner, &friend) {
-        return Err(crate::send::SendError::Blocked.to_string());
+    {
+        let mut inner = state.inner.lock().await;
+        let friend = inner.friends.get(&handle).ok_or("unknown node")?;
+        // UR-2: no handshake goes to someone you blocked.
+        if crate::block::friend_blocked(&inner, friend) {
+            return Err(crate::send::SendError::Blocked.to_string());
+        }
+        inner.current_peer = Some(handle.clone());
     }
-
-    inner.ratchets.remove(&handle);
-    inner.associated_data.remove(&handle);
-
-    let init = initiate(&identity, &friend.bundle).map_err(|e| e.to_string())?;
-    let spk_pub = decode_array_32(&friend.bundle.spk_pub).map_err(|e| e.to_string())?;
-    let state_ratchet = init_initiator(init.master_secret, spk_pub).map_err(|e| e.to_string())?;
-    inner.ratchets.insert(handle.clone(), state_ratchet);
-    inner
-        .associated_data
-        .insert(handle.clone(), init.associated_data.clone());
-    inner.current_peer = Some(handle.clone());
-    save_ratchets(&inner);
-
-    let handshake = WireHandshake {
-        ik_dh_pub: init.message.ik_dh_pub,
-        ek_pub: init.message.ek_pub,
-        spk_id: init.message.spk_id,
-        opk_id: init.message.opk_id,
-    };
-    drop(inner);
-
     dbg_log("RESYNC: forcing a fresh handshake");
-    send_cipher_inner(state, &handle, b"__trino_handshake__", Some(handshake))
+    start_handshake(state, &handle)
         .await
-        .map_err(|e| e.to_string())?;
-    Ok(())
+        .map_err(|e| e.to_string())
 }
 
-/// Establish a pairwise session with `handle` (initiate + send handshake) if none.
+/// Establish a session with `handle` (its P1 handshake sent) if there is
+/// none and none is starting.
 pub async fn ensure_session(state: &Engine, handle: &str) -> Result<(), SendError> {
-    let failed = |e: &dyn std::fmt::Display| SendError::Failed(e.to_string());
-    let handshake = {
-        let mut inner = state.inner.lock().await;
-        if inner.ratchets.contains_key(handle) {
+    {
+        let inner = state.inner.lock().await;
+        if inner.identity.is_none() {
+            return Err(SendError::Sealed);
+        }
+        if !inner.friends.contains_key(handle) {
+            return Err(SendError::UnknownContact);
+        }
+        if has_session(&inner, handle) {
             return Ok(());
         }
-        let identity = inner.identity.as_ref().ok_or(SendError::Sealed)?.clone();
-        let friend = inner
-            .friends
-            .get(handle)
-            .ok_or(SendError::UnknownContact)?
-            .clone();
-        let init = initiate(&identity, &friend.bundle).map_err(|e| failed(&e))?;
-        let spk_pub = decode_array_32(&friend.bundle.spk_pub).map_err(|e| failed(&e))?;
-        let ratchet = init_initiator(init.master_secret, spk_pub).map_err(|e| failed(&e))?;
-        inner.ratchets.insert(handle.to_string(), ratchet);
-        inner
-            .associated_data
-            .insert(handle.to_string(), init.associated_data.clone());
-        save_ratchets(&inner);
-        WireHandshake {
-            ik_dh_pub: init.message.ik_dh_pub,
-            ek_pub: init.message.ek_pub,
-            spk_id: init.message.spk_id,
-            opk_id: init.message.opk_id,
-        }
-    };
-    publish_sealed(state, handle, b"__trino_handshake__", Some(handshake)).await
+    }
+    start_handshake(state, handle).await
 }
 
 /// `ensure_session`, for the callers that answer with a string.
@@ -722,94 +629,116 @@ pub async fn ensure_session_inner(state: &Engine, handle: &str) -> Result<(), St
         .map_err(|e| e.to_string())
 }
 
+/// Whether `handle` has a P1 session, or one starting (a PQ-11 handshake
+/// waiting for its reply).
+pub fn has_session(inner: &InnerState, handle: &str) -> bool {
+    inner
+        .ratchets
+        .get(handle)
+        .is_some_and(crate::ratchet::RatchetState::is_p1)
+        || inner.mailboxes.pq11.contains_key(handle)
+}
+
+/// A P1 handshake to `handle` (`p1::initiate`), published to every relay
+/// of the session; whatever session there was is replaced.
+async fn start_handshake(state: &Engine, handle: &str) -> Result<(), SendError> {
+    let ts = net_now(state)?;
+    let (event, relays) = {
+        let mut inner = state.inner.lock().await;
+        if inner.relays.is_empty() {
+            return Err(SendError::NoRelays);
+        }
+        let event = crate::p1::initiate(&mut inner, handle, ts)?;
+        save_ratchets(&inner);
+        (event, inner.relays.clone())
+    };
+    crate::diag::note_with("send", &[("handshake", &true), ("relays", &relays.len())]);
+    for relay in &relays {
+        let _ = relay.publish(&event).await;
+    }
+    Ok(())
+}
+
 pub fn unix_now() -> i64 {
     chrono::Utc::now().timestamp()
 }
 
-/// Encrypt `plaintext` for `handle` into a signed event dated `created_at`
-/// (now when `None`), and return it with the relays to send it to.
+/// The network time to send with (design P1 §3.5): the local clock with
+/// the offset the network's answers give. Nothing is sent while the clock
+/// is off by more than an hour and no answer says by how much.
+pub fn net_now(state: &Engine) -> Result<i64, SendError> {
+    let local = unix_now();
+    let clock = state.net_clock();
+    if !clock.may_send(local) {
+        return Err(SendError::ClockSkewed);
+    }
+    Ok(clock.now(local))
+}
+
+/// The network time now, as well as it is known (no check): the time a
+/// message is dated with. `seal_for` refuses to send while it is unknown
+/// and the clock is far off.
+pub fn net_time(state: &Engine) -> i64 {
+    state.net_clock().now(unix_now())
+}
+
+/// The step and kind of a message by what it carries (R-22): every call
+/// signal at 16 KiB as a 21059, every file announcement and profile at
+/// 40 KiB, the rest at the smallest step it fits.
+pub fn step_for(plaintext: &[u8]) -> (Option<Step>, u32) {
+    let ty = serde_json::from_slice::<serde_json::Value>(plaintext)
+        .ok()
+        .and_then(|value| {
+            value
+                .get("ty")
+                .and_then(|ty| ty.as_str())
+                .map(str::to_string)
+        });
+    match ty.as_deref() {
+        Some("call") => (Some(Step::K16), KIND_CALL),
+        Some("file" | "profile") => (Some(Step::K40), KIND_MESSAGE),
+        _ => (None, KIND_MESSAGE),
+    }
+}
+
+/// Encrypt `plaintext` for `handle` into a P1 event dated `ts` (network
+/// time; now when `None`), and return it with the relays to send it to.
 ///
 /// Every outgoing message of a contact passes here. A text, group or file
 /// message also says that this Trino reads profiles, and which revision of
 /// the contact's profile it holds (K12, `profile::with_caps`); the rest goes
-/// as it is. The session moves on only when the event fits a relay
-/// (`MAX_EVENT_BYTES`), so a message refused for its size costs no ratchet
-/// step. With `need_relay_up`, nothing is encrypted while no relay is up.
+/// as it is. The session moves on only when the message fits its step, so
+/// one refused for its size costs no ratchet step. With `need_relay_up`,
+/// nothing is encrypted while no relay is up.
 pub async fn seal_for(
     state: &Engine,
     handle: &str,
     plaintext: &[u8],
-    handshake: Option<WireHandshake>,
-    created_at: Option<i64>,
+    ts: Option<i64>,
     need_relay_up: bool,
 ) -> Result<(NostrEvent, Vec<Arc<NostrClient>>), SendError> {
-    let failed = |e: &dyn std::fmt::Display| SendError::Failed(e.to_string());
+    let now = net_now(state)?;
+    let ts = ts.unwrap_or(now);
     let mut inner = state.inner.lock().await;
-    let identity = inner.identity.as_ref().ok_or(SendError::Sealed)?;
-    let signing_key = Zeroizing::new(identity.nostr.priv_bytes);
-    let signing_pub = identity.nostr.pub_bytes;
-    let recipient = inner
-        .friends
-        .get(handle)
-        .ok_or(SendError::UnknownContact)?
-        .bundle
-        .nostr_pub
-        .clone();
+    if inner.identity.is_none() {
+        return Err(SendError::Sealed);
+    }
+    if !inner.friends.contains_key(handle) {
+        return Err(SendError::UnknownContact);
+    }
     let relays = inner.relays.clone();
     if relays.is_empty() {
         return Err(SendError::NoRelays);
     }
-    let ad = inner
-        .associated_data
-        .get(handle)
-        .ok_or(SendError::NoSession)?
-        .clone();
-    // A copy: the session itself only moves on once the event fits.
-    let mut ratchet = inner
-        .ratchets
-        .get(handle)
-        .ok_or(SendError::NoSession)?
-        .clone();
     if need_relay_up && !relays.iter().any(|relay| relay.is_connected()) {
         return Err(SendError::Offline);
     }
-
-    let plaintext = profile::with_caps(&inner.profiles, handle, plaintext);
-    let ct: EncryptedMessage =
-        ratchet_encrypt(&mut ratchet, &plaintext, &ad).map_err(|e| failed(&e))?;
-    let is_handshake = handshake.is_some();
-    let payload = WirePayload {
-        header: WireHeader {
-            dh_pub: ct.header.dh_pub,
-            pn: ct.header.pn,
-            n: ct.header.n,
-        },
-        nonce: ct.nonce,
-        ciphertext: ct.ciphertext,
-        handshake,
-    };
-    let payload_json = serde_json::to_string(&payload).map_err(|e| failed(&e))?;
-    let event = build_and_sign_event(
-        &signing_key,
-        &signing_pub,
-        TRINO_KIND,
-        &payload_json,
-        vec![vec!["p".to_string(), recipient]],
-        created_at,
-    )
-    .map_err(|e| failed(&e))?;
-    if event_frame_bytes(&event) > MAX_EVENT_BYTES {
-        // The advanced copy of the session is dropped, and wiped with it.
-        return Err(SendError::TooLong);
-    }
-
-    inner.ratchets.insert(handle.to_string(), ratchet);
+    let plaintext = Zeroizing::new(profile::with_caps(&inner.profiles, handle, plaintext));
+    let (step, kind) = step_for(&plaintext);
+    let event = crate::p1::seal(&mut inner, handle, &plaintext, step, kind, ts)?;
     save_ratchets(&inner); // sending chain advanced — persist it
     drop(inner);
-    crate::diag::note_with(
-        "send",
-        &[("handshake", &is_handshake), ("relays", &relays.len())],
-    );
+    crate::diag::note_with("send", &[("handshake", &false), ("relays", &relays.len())]);
     Ok((event, relays))
 }
 
@@ -818,16 +747,15 @@ pub fn event_frame_bytes(event: &NostrEvent) -> usize {
     serde_json::json!(["EVENT", event]).to_string().len()
 }
 
-/// Encrypt and publish without waiting for any relay: handshakes, call
-/// signals, rosters and resends, as before K4. A relay that is down gets it
-/// once it is back.
+/// Encrypt and publish without waiting for any relay: call signals,
+/// rosters and resends, as before K4. A relay that is down gets it once it
+/// is back.
 pub async fn publish_sealed(
     state: &Engine,
     handle: &str,
     plaintext: &[u8],
-    handshake: Option<WireHandshake>,
 ) -> Result<(), SendError> {
-    let (event, relays) = seal_for(state, handle, plaintext, handshake, None, false).await?;
+    let (event, relays) = seal_for(state, handle, plaintext, None, false).await?;
     for relay in &relays {
         let _ = relay.publish(&event).await;
     }
@@ -839,16 +767,16 @@ pub async fn send_cipher_inner(
     state: &Engine,
     handle: &str,
     plaintext: &[u8],
-    handshake: Option<WireHandshake>,
 ) -> Result<(), String> {
-    publish_sealed(state, handle, plaintext, handshake)
+    publish_sealed(state, handle, plaintext)
         .await
         .map_err(|e| e.to_string())
 }
 
-/// What a relay of the session delivered: admitted, decrypted and kept, and
-/// told to the UI through `events`. A contact holding an older profile gets
-/// ours again through `resend_profile`.
+/// What a relay of the session delivered: admitted through P1's mailboxes
+/// (`p1::open`), decrypted and kept, and told to the UI through `events`.
+/// A contact holding an older profile gets ours again through
+/// `resend_profile`.
 pub async fn handle_incoming_event(
     events: &dyn EventSink,
     resend_profile: &profile::Resend,
@@ -864,215 +792,73 @@ pub async fn handle_incoming_event(
             return;
         }
     };
+    let now = unix_now();
     // -- CE-6 (RC-08) -- A warning to a trusted contact is signed with a key
-    // of one use: it goes to its mailbox's handler before any sender lookup.
-    if crate::alert::route(events, &mut inner, &event, chrono::Utc::now().timestamp()) {
+    // of one use: it goes to its mailbox's handler before any mailbox of
+    // the session (it moves to P1 with P1-20).
+    if crate::alert::route(events, &mut inner, &event, now) {
         return;
     }
-    let my_pub = hex::encode(identity.nostr.pub_bytes);
-    let friend = match admit_event(&mut inner, &event, &my_pub) {
-        Admission::Process(friend) => *friend,
-        Admission::Stranger => {
-            dbg_log("  DROP: sender not a known friend -> emitting handshake-needed");
-            events.emit(
-                "handshake-needed",
-                &HandshakeNeededEvent {
-                    from_pubkey: event.pubkey.clone(),
-                },
-            );
-            return;
-        }
-        Admission::Drop(reason) => {
-            dbg_log(reason);
-            return;
-        }
-    };
-    // Persist the event id (only a contact's, see admit_event) before
-    // processing, so a restart cannot process the same event twice. This is
-    // dedup, not replay protection: the cache is bounded, which is why
-    // handshakes also pass `judge_handshake`.
-    save_ratchets(&inner);
-    dbg_log("  sender is a contact");
-
-    let payload: WirePayload = match serde_json::from_str(&event.content) {
-        Ok(p) => p,
-        Err(_) => {
-            dbg_log("  DROP: payload JSON parse failed");
-            return;
-        }
-    };
-
-    if let Some(hs) = &payload.handshake {
-        // PINNING (TOFU): the identity DH key in an incoming handshake must match
-        // the one we pinned when we added this contact. The ik_dh_pub is stable
-        // (only ek/spk rotate), so a legit re-handshake or auto-heal always
-        // matches — a mismatch means someone is trying to silently replace the
-        // session with a different identity. Reject it.
-        if hs.ik_dh_pub != friend.bundle.ik_dh_pub {
-            dbg_log(
-                "  DROP: handshake ik_dh_pub does not match the pinned bundle (impersonation?)",
-            );
-            // K8: the UI says so, at most once every 10 minutes per contact.
-            // The handshake is still dropped.
-            let now = chrono::Utc::now().timestamp();
-            if crate::contacts::should_report_key_mismatch(
-                &mut inner.key_mismatch_at,
-                &friend.handle,
-                now,
-            ) {
-                events.emit(
-                    "contact-key-mismatch",
-                    &crate::contacts::ContactKeyMismatchEvent {
-                        handle: friend.handle.clone(),
-                    },
-                );
-            }
-            return;
-        }
-        // REPLAY GATE: relay traffic is public and the dedup cache is bounded,
-        // so an old handshake of this contact can be fed to us again. Only a
-        // fresh one that is newer than every handshake already accepted from
-        // them may (re)start a session. The event and its ciphertext are
-        // dropped with it: they belong to a session we are not going to have.
-        let now = chrono::Utc::now().timestamp();
-        let mark = inner.handshake_marks.get(&friend.bundle.nostr_pub);
-        if let Err(rejection) = judge_handshake(mark, event.created_at, &hs.ek_pub, now) {
-            match rejection {
-                HandshakeRejection::Stale { age } => {
-                    crate::diag::note_with("  DROP: stale handshake", &[("age_s", &age)])
+    let (handle, envelope, ts, established, replies, devices_changed) =
+        match crate::p1::open(&mut inner, &event, now) {
+            crate::p1::Opened::Contact {
+                handle,
+                envelope,
+                ts,
+                established,
+                replies,
+                devices_changed,
+            } => (handle, envelope, ts, established, replies, devices_changed),
+            crate::p1::Opened::Undecryptable { handle, ts } => {
+                // AUTO-HEAL, as before P1: only a recent message that the
+                // session cannot open may tear it down, so an old one fed
+                // again cannot wipe the session over and over.
+                let age = now - ts;
+                if (-AUTO_HEAL_MAX_AGE_SECS..=AUTO_HEAL_MAX_AGE_SECS).contains(&age) {
+                    trigger_resync(&mut inner, events, &handle);
+                } else {
+                    crate::diag::note_with(
+                        "  stale undecryptable event dropped without auto-heal",
+                        &[("age_s", &age)],
+                    );
                 }
-                HandshakeRejection::FromTheFuture { ahead } => crate::diag::note_with(
-                    "  DROP: handshake from the future",
-                    &[("ahead_s", &ahead)],
-                ),
-                HandshakeRejection::NotNewer { .. } => {
-                    dbg_log("  DROP: handshake not newer than the last one accepted")
-                }
-            }
-            return;
-        }
-        record_handshake(
-            &mut inner.handshake_marks,
-            &friend.bundle.nostr_pub,
-            event.created_at,
-            &hs.ek_pub,
-        );
-        save_ratchets(&inner); // the mark must survive a restart
-        let have_session = inner.ratchets.contains_key(&friend.handle);
-        // Glare resolution: if BOTH peers initiated a handshake at the same time we
-        // end up with two incompatible sessions. Deterministic tie-break: the
-        // session initiated by the LOWER nostr pubkey wins. So if the peer's pubkey
-        // sorts below ours, we YIELD — accept their handshake and replace our own.
-        let peer_wins = friend.bundle.nostr_pub.as_str() < my_pub.as_str();
-        crate::diag::note_with(
-            "  handshake present",
-            &[
-                ("spk_id", &hs.spk_id),
-                ("has_session", &have_session),
-                ("peer_wins", &peer_wins),
-            ],
-        );
-        if !have_session || peer_wins {
-            let (identity_after, ratchet, associated_data) =
-                match respond_to_handshake(&identity, hs) {
-                    Ok(answer) => answer,
-                    Err(_) => {
-                        dbg_log("  DROP: X3DH respond() failed");
-                        return;
-                    }
-                };
-            inner.identity = Some(identity_after);
-            inner.ratchets.insert(friend.handle.clone(), ratchet);
-            inner
-                .associated_data
-                .insert(friend.handle.clone(), associated_data);
-            save_ratchets(&inner);
-            dbg_log("  responder ratchet established");
-            // Fresh session: replay any buffered outgoing so messages the peer
-            // lost during the desync get re-delivered (deduped by id).
-            events.emit("session-established", &friend.handle);
-        }
-    }
-
-    let ad = match inner.associated_data.get(&friend.handle).cloned() {
-        Some(a) => a,
-        None => {
-            dbg_log("  DROP: no associated_data (no session) — auto-healing");
-            trigger_resync(&mut inner, events, &friend.handle);
-            return;
-        }
-    };
-    let has_ratchet = inner.ratchets.contains_key(&friend.handle);
-    if !has_ratchet {
-        dbg_log("  DROP: no ratchet for friend — auto-healing");
-        trigger_resync(&mut inner, events, &friend.handle);
-        return;
-    }
-    let ratchet = inner.ratchets.get_mut(&friend.handle).unwrap();
-    let msg = EncryptedMessage {
-        header: MessageHeader {
-            dh_pub: payload.header.dh_pub,
-            pn: payload.header.pn,
-            n: payload.header.n,
-        },
-        nonce: payload.nonce,
-        ciphertext: payload.ciphertext,
-    };
-    let plain = match ratchet_decrypt(ratchet, &msg, &ad) {
-        Ok(p) => p,
-        Err(RatchetError::Replay { .. }) => {
-            crate::diag::note_with(
-                "  skip: replayed ciphertext",
-                &[("n", &msg.header.n), ("pn", &msg.header.pn)],
-            );
-            return;
-        }
-        Err(_) => {
-            crate::diag::note_with(
-                "  DROP: ratchet_decrypt failed",
-                &[("n", &msg.header.n), ("pn", &msg.header.pn)],
-            );
-            // AUTO-HEAL: a decrypt failure means our ratchet diverged from the
-            // peer's (a lost message, a crash mid-save, call-signal flooding…).
-            // Drop the broken session and ask the UI to re-handshake. The
-            // deterministic pubkey tie-break then reconverges both sides on one
-            // session. Rate-limited so a burst of undecryptable events (or a
-            // hostile sender) can't trigger a re-handshake storm.
-            //
-            // FRESHNESS GATE (anti-DoS): only a RECENT undecryptable message may
-            // tear down a session. Relay traffic is public, so anyone could
-            // record an old ciphertext of ours, flood `seen_events` until its id
-            // is evicted, and replay it — it is too old to be caught by the
-            // replay detector, fails AEAD, and would wipe the session. Repeat
-            // forever = permanent loss of service. Genuine desyncs surface on
-            // live messages; stale ones from the 24h catch-up window are just
-            // dropped.
-            let now = chrono::Utc::now().timestamp();
-            let age = now - event.created_at;
-            if !(-AUTO_HEAL_MAX_AGE_SECS..=AUTO_HEAL_MAX_AGE_SECS).contains(&age) {
-                crate::diag::note_with(
-                    "  stale undecryptable event dropped without auto-heal",
-                    &[("age_s", &age)],
-                );
+                save_ratchets(&inner);
                 return;
             }
-            let last = *inner.resync_at.get(&friend.handle).unwrap_or(&0);
-            if now - last > 20 {
-                inner.resync_at.insert(friend.handle.clone(), now);
-                inner.ratchets.remove(&friend.handle);
-                inner.associated_data.remove(&friend.handle);
+            crate::p1::Opened::Drop(why) => {
+                dbg_log(why);
+                // The duplicate markers of what was looked at are kept.
                 save_ratchets(&inner);
-                dbg_log("  AUTO-HEAL: cleared a desynced session, requesting resync");
-                events.emit("resync-needed", &friend.handle);
+                return;
             }
-            return;
-        }
-    };
-    save_ratchets(&inner); // receiving chain advanced — persist it
-    if plain == b"__trino_handshake__" {
-        dbg_log("  OK: handshake message decrypted (no UI emit)");
-        return;
+        };
+    save_ratchets(&inner);
+    if devices_changed && crate::storage::persist_account(&inner).is_err() {
+        dbg_log("the contact's device list could not be saved");
     }
+    if !replies.is_empty() {
+        let relays = inner.relays.clone();
+        tokio::spawn(async move {
+            for reply in &replies {
+                for relay in &relays {
+                    let _ = relay.publish(reply).await;
+                }
+            }
+        });
+    }
+    if established {
+        dbg_log("  session established");
+        // Fresh session: replay any buffered outgoing so messages the peer
+        // lost during the desync get re-delivered (deduped by id).
+        events.emit("session-established", &handle);
+    }
+    let Some(plain) = envelope else {
+        return;
+    };
+    let Some(friend) = inner.friends.get(&handle).cloned() else {
+        return;
+    };
+    dbg_log("  sender is a contact");
     // -- UR-2 (R-04) -- Of someone blocked, only the rosters of a group
     // they administer and you are in; before the profile's hook, so nothing
     // of theirs is read or answered.
@@ -1082,7 +868,7 @@ pub async fn handle_incoming_event(
     // -- UR-3 -- Of a contact a group made and you did not accept, what is
     // of the group goes on; what they send apart goes to Solicitudes, and
     // their profile and warnings are not read.
-    if crate::group_contacts::on_message(events, &mut inner, &friend, &plain, event.created_at) {
+    if crate::group_contacts::on_message(events, &mut inner, &friend, &plain, ts) {
         return;
     }
     // -- W8 (K12) -- A profile message ends here, never as text; text, group
@@ -1093,7 +879,7 @@ pub async fn handle_incoming_event(
         &mut inner,
         &friend.handle,
         &plain,
-        event.created_at,
+        ts,
     ) {
         return;
     }
@@ -1101,18 +887,30 @@ pub async fn handle_incoming_event(
     if crate::alert::on_message(events, &mut inner, &friend, &plain) {
         return;
     }
+    dispatch(events, &mut inner, &identity, &friend, &plain, ts);
+}
 
-    match decode_envelope(&plain) {
+/// What a contact's envelope says, sent at `ts` (the sender's network
+/// time): kept and told to the UI.
+fn dispatch(
+    events: &dyn EventSink,
+    inner: &mut InnerState,
+    identity: &Identity,
+    friend: &crate::state::FriendRecord,
+    plain: &[u8],
+    ts: i64,
+) {
+    match decode_envelope(plain) {
         Envelope::Text { body, id } => {
             // Drop duplicates (a resend after auto-heal replays the same id).
             if !id.is_empty() && !inner.remember_message_id(id.clone()) {
                 dbg_log("  skip: duplicate message id");
                 return;
             }
-            save_ratchets(&inner);
+            save_ratchets(inner);
             dbg_log("  OK: text received");
             record_history(
-                &mut inner,
+                inner,
                 friend.handle.clone(),
                 HistItem {
                     side: "them".into(),
@@ -1120,7 +918,7 @@ pub async fn handle_incoming_event(
                     text: Some(body.clone()),
                     file: None,
                     call: None,
-                    ts: event.created_at,
+                    ts,
                 },
             );
             events.emit(
@@ -1128,7 +926,7 @@ pub async fn handle_incoming_event(
                 &IncomingMessageEvent {
                     from_handle: friend.handle.clone(),
                     text: body,
-                    timestamp: event.created_at,
+                    timestamp: ts,
                 },
             );
         }
@@ -1144,7 +942,7 @@ pub async fn handle_incoming_event(
             }
             dbg_log("  OK: group message received");
             record_history(
-                &mut inner,
+                inner,
                 group_convo(&gid),
                 HistItem {
                     side: "them".into(),
@@ -1152,7 +950,7 @@ pub async fn handle_incoming_event(
                     text: Some(body.clone()),
                     file: None,
                     call: None,
-                    ts: event.created_at,
+                    ts,
                 },
             );
             events.emit(
@@ -1161,12 +959,12 @@ pub async fn handle_incoming_event(
                     gid,
                     from_handle: friend.handle.clone(),
                     text: body,
-                    timestamp: event.created_at,
+                    timestamp: ts,
                 },
             );
         }
         Envelope::Roster { roster } => {
-            accept_incoming_roster(events, &mut inner, &identity, &friend, roster);
+            accept_incoming_roster(events, inner, identity, friend, roster);
         }
         Envelope::File { file, gid, body: _ } => {
             let file = sanitize_file_ref(file);
@@ -1188,7 +986,7 @@ pub async fn handle_incoming_event(
             };
             let from = gid.as_ref().map(|_| friend.handle.clone());
             record_history(
-                &mut inner,
+                inner,
                 convo,
                 HistItem {
                     side: "them".into(),
@@ -1196,7 +994,7 @@ pub async fn handle_incoming_event(
                     text: None,
                     file: Some(file.clone()),
                     call: None,
-                    ts: event.created_at,
+                    ts,
                 },
             );
             events.emit(
@@ -1205,17 +1003,17 @@ pub async fn handle_incoming_event(
                     from_handle: friend.handle.clone(),
                     gid,
                     file,
-                    timestamp: event.created_at,
+                    timestamp: ts,
                 },
             );
         }
         Envelope::Call { call } => {
             // Call signals (SDP offer/answer, ICE) are only meaningful in real
-            // time. The catch-up subscription delivers old ones again after a
-            // restart or reconnect, so a stale offer would occupy the call
-            // state and make live calls read
-            // as "busy". Drop stale/future-dated and malformed signals.
-            let age = chrono::Utc::now().timestamp() - event.created_at;
+            // time: a stale offer would occupy the call state and make live
+            // calls read as "busy". Their age is by the sender's network
+            // time (design P1 §2.2). Stale, future-dated and malformed
+            // signals are dropped.
+            let age = unix_now() - ts;
             if !(-60..=60).contains(&age) {
                 crate::diag::note_with("  stale call signal ignored", &[("age_s", &age)]);
             } else if validate_call_signal(&call).is_err() {
@@ -1448,10 +1246,10 @@ pub(crate) mod tests {
     use crate::group::{GroupRoster, MemberBundle};
     use crate::identity::{create_identity, public_bundle_for};
     use crate::nostr::test_relay::{Answer, TestRelay};
-    use crate::ratchet::RatchetState;
     use crate::state::FriendRecord;
 
     pub(crate) const NOW: i64 = 1_760_000_000;
+    use crate::groups::record_handshake;
 
     pub(crate) fn ik(id: &Identity) -> String {
         hex::encode(id.ik_sign.pub_bytes)
@@ -1484,50 +1282,111 @@ pub(crate) mod tests {
         roster
     }
 
-    /// `add_session`, plus the contact's own side of that session, so a test
-    /// reads what was sent as the contact's Trino would.
+    /// A contact's own Trino, as the tests read and write with it: its
+    /// session state, where this side is the contact "me".
+    pub(crate) struct Peer {
+        pub inner: InnerState,
+    }
+
+    impl Peer {
+        /// Moves this side's session with "me" into `state`, the contact's
+        /// own session, under `handle`: its device, its contact record (with
+        /// the list it holds), the session and its handshake marks.
+        pub(crate) fn move_into(mut self, state: &mut InnerState, handle: &str) {
+            state.device = self.inner.device.take();
+            let mut record = self.inner.friends.remove("me").unwrap();
+            record.handle = handle.to_string();
+            state.friends.insert(handle.to_string(), record);
+            if let Some(ratchet) = self.inner.ratchets.remove("me") {
+                state.ratchets.insert(handle.to_string(), ratchet);
+            }
+            if let Some(ad) = self.inner.associated_data.remove("me") {
+                state.associated_data.insert(handle.to_string(), ad);
+            }
+            state
+                .handshake_marks
+                .extend(self.inner.handshake_marks.drain());
+        }
+    }
+
+    /// Whether `inner` listens to the mailbox `event` goes to, today or
+    /// yesterday: the event is for it.
+    pub(crate) fn listens(inner: &InnerState, event: &NostrEvent) -> bool {
+        let Some(tag) = trino_core::p1::event::mailbox_of(&event.clone().into()) else {
+            return false;
+        };
+        let today = trino_core::p1::mailbox::epoch_of(unix_now() as u64);
+        [today, today - 1].into_iter().any(|e| {
+            crate::mailboxes::table::Table::of(inner, e)
+                .route(&tag)
+                .is_some()
+        })
+    }
+
+    /// A session of before P1: a ratchet with no mailbox chain.
+    pub(crate) fn plain_ratchet() -> crate::ratchet::RatchetState {
+        crate::ratchet::init_initiator([7; 32], create_identity().ik_dh.pub_bytes).unwrap()
+    }
+
+    /// This device of `me` in `inner`, if it has none yet.
+    pub(crate) fn with_device(inner: &mut InnerState, me: &Identity) {
+        if inner.device.is_none() {
+            inner.device = Some(crate::device::tests::own_device_of(me, unix_now()));
+        }
+    }
+
+    /// `contact` as `handle`, with a P1 session open (this side started it,
+    /// as `connect_node` does), plus the contact's own side of it, so a test
+    /// reads what was sent as the contact's Trino would. Both hold the
+    /// other's list and prekeys.
     pub(crate) fn add_session_read_by(
         inner: &mut InnerState,
         me: &Identity,
         contact: &Identity,
         handle: &str,
-    ) -> (RatchetState, Vec<u8>) {
+    ) -> (Peer, Vec<u8>) {
+        let now = unix_now();
+        with_device(inner, me);
+        let mut theirs = InnerState {
+            identity: Some(contact.clone()),
+            device: Some(crate::device::tests::own_device_of(contact, now)),
+            ..InnerState::default()
+        };
+        theirs.friends.insert("me".to_string(), friend(me, "me"));
+        let mine = inner.device.as_ref().unwrap().full_bundle();
+        crate::device::take_bundle(&mut theirs, "me", mine, now as u64).unwrap();
         inner
             .friends
             .insert(handle.to_string(), friend(contact, handle));
-        let bundle = public_bundle_for(contact);
-        let init = initiate(me, &bundle).unwrap();
-        let spk = decode_array_32(&bundle.spk_pub).unwrap();
-        inner.ratchets.insert(
-            handle.to_string(),
-            init_initiator(init.master_secret, spk).unwrap(),
-        );
-        inner
-            .associated_data
-            .insert(handle.to_string(), init.associated_data);
-        let handshake = WireHandshake {
-            ik_dh_pub: init.message.ik_dh_pub,
-            ek_pub: init.message.ek_pub,
-            spk_id: init.message.spk_id,
-            opk_id: init.message.opk_id,
-        };
-        let (_, ratchet, associated_data) = respond_to_handshake(contact, &handshake).unwrap();
-        (ratchet, associated_data)
+        let hers = theirs.device.as_ref().unwrap().full_bundle();
+        crate::device::take_bundle(inner, handle, hers, now as u64).unwrap();
+        let hello = crate::p1::initiate(inner, handle, now).unwrap();
+        for reply in replies_of(crate::p1::open(&mut theirs, &hello, now)) {
+            for back in replies_of(crate::p1::open(inner, &reply, now)) {
+                replies_of(crate::p1::open(&mut theirs, &back, now));
+            }
+        }
+        let ad = theirs.associated_data["me"].clone();
+        (Peer { inner: theirs }, ad)
     }
 
-    /// What `event` carries, decrypted by its recipient's side of the session.
-    pub(crate) fn opened_by(event: &NostrEvent, ratchet: &mut RatchetState, ad: &[u8]) -> Vec<u8> {
-        let payload: WirePayload = serde_json::from_str(&event.content).unwrap();
-        let message = EncryptedMessage {
-            header: MessageHeader {
-                dh_pub: payload.header.dh_pub,
-                pn: payload.header.pn,
-                n: payload.header.n,
-            },
-            nonce: payload.nonce,
-            ciphertext: payload.ciphertext,
-        };
-        ratchet_decrypt(ratchet, &message, ad).unwrap()
+    /// What an admitted event answered.
+    fn replies_of(opened: crate::p1::Opened) -> Vec<NostrEvent> {
+        match opened {
+            crate::p1::Opened::Contact { replies, .. } => replies,
+            other => panic!("not admitted: {other:?}"),
+        }
+    }
+
+    /// What `event` carries, opened by its recipient's side of the session.
+    pub(crate) fn opened_by(event: &NostrEvent, peer: &mut Peer, _ad: &[u8]) -> Vec<u8> {
+        match crate::p1::open(&mut peer.inner, event, unix_now()) {
+            crate::p1::Opened::Contact {
+                envelope: Some(envelope),
+                ..
+            } => envelope.to_vec(),
+            other => panic!("nothing to read: {other:?}"),
+        }
     }
 
     /// The unlocked session of `me`, sending through `relays`. It has no
@@ -1539,6 +1398,7 @@ pub(crate) mod tests {
             inner.identity = Some(me.clone());
             inner.handle = Some("me".to_string());
             inner.relays = relays;
+            with_device(&mut inner, me);
         }
         state
     }
@@ -1553,18 +1413,6 @@ pub(crate) mod tests {
 
     fn nostr_hex(id: &Identity) -> String {
         hex::encode(id.nostr.pub_bytes)
-    }
-
-    fn event_to(sender: &Identity, to: &str, kind: u32, created_at: i64) -> NostrEvent {
-        build_and_sign_event(
-            &sender.nostr.priv_bytes,
-            &sender.nostr.pub_bytes,
-            kind,
-            "{}",
-            vec![vec!["p".to_string(), to.to_string()]],
-            Some(created_at),
-        )
-        .unwrap()
     }
 
     #[test]
@@ -1669,12 +1517,18 @@ pub(crate) mod tests {
 
         // A call signal and a roster, as send_call_signal and
         // groups_cmds::send_roster send them, this identity's profile,
-        send_cipher_inner(&state, "bob", &call, None).await.unwrap();
-        send_cipher_inner(&state, "bob", &roster, None)
-            .await
-            .unwrap();
+        send_cipher_inner(&state, "bob", &call).await.unwrap();
+        send_cipher_inner(&state, "bob", &roster).await.unwrap();
         profile::send_profile(&state, vec!["bob".to_string()]).await;
-        // and the handshake that opens a session with carol.
+        // and the handshake that opens a session with carol, who holds this
+        // device's bundle as her code would give it.
+        let mine = state.inner.lock().await.device.clone().unwrap();
+        let mut carol_side = side_of(&mine, &me, &carol);
+        {
+            let carols = carol_side.inner.device.as_ref().unwrap().full_bundle();
+            let mut inner = state.inner.lock().await;
+            crate::device::take_bundle(&mut inner, "carol", carols, unix_now() as u64).unwrap();
+        }
         ensure_session(&state, "carol").await.unwrap();
         wait_until("the four events", || relay.events().len() == 4).await;
 
@@ -1693,14 +1547,20 @@ pub(crate) mod tests {
         assert!(received.consumed && received.save, "bob's Trino refused it");
         assert_eq!(bobs_profiles.contacts["me"].rev, 3);
         assert_eq!(bobs_profiles.contacts["me"].name.as_deref(), Some("me"));
-        // carol reads the handshake as it was.
-        let payload: WirePayload = serde_json::from_str(&events[3].content).unwrap();
-        let (_, mut carol_side, carol_ad) =
-            respond_to_handshake(&carol, payload.handshake.as_ref().unwrap()).unwrap();
-        assert_eq!(
-            opened_by(&events[3], &mut carol_side, &carol_ad),
-            b"__trino_handshake__"
-        );
+        // Carol opens the handshake: a session starts, with no text in it.
+        match crate::p1::open(&mut carol_side.inner, &events[3], unix_now()) {
+            crate::p1::Opened::Contact {
+                established,
+                envelope,
+                ..
+            } => {
+                assert!(established);
+                assert!(envelope.is_none());
+            }
+            other => panic!("carol could not open it: {other:?}"),
+        }
+        // The call signal went as a 21059.
+        assert_eq!(events[0].kind, crate::p1::KIND_CALL);
     }
 
     // ---- M4-0b: what the session hears goes to the UI through the sink ----
@@ -1728,56 +1588,41 @@ pub(crate) mod tests {
         let mut inner = state_with(&[friend(contact, handle)]);
         inner.identity = Some(me.clone());
         inner.handle = Some("me".to_string());
+        with_device(&mut inner, me);
         inner
     }
 
-    /// `receiving`, holding the responder's side of a session `contact`
-    /// started; with the contact's side, to write to `me` with.
+    /// `receiving`, with a P1 session with `contact`; with the contact's
+    /// side, to write to `me` with.
     pub(crate) fn receiving_in_session(
         me: &Identity,
         contact: &Identity,
         handle: &str,
-    ) -> (InnerState, RatchetState, Vec<u8>) {
-        let mut theirs = InnerState::default();
-        let (mine, ad) = add_session_read_by(&mut theirs, contact, me, "me");
-        let their_side = theirs.ratchets.remove("me").unwrap();
+    ) -> (InnerState, Peer, Vec<u8>) {
         let mut inner = receiving(me, contact, handle);
-        inner.ratchets.insert(handle.to_string(), mine);
-        inner.associated_data.insert(handle.to_string(), ad.clone());
-        (inner, their_side, ad)
+        let (peer, ad) = add_session_read_by(&mut inner, me, contact, handle);
+        (inner, peer, ad)
     }
 
-    /// `plain` as `sender`'s Trino sends it to `to`: encrypted with
-    /// `ratchet` and `ad`, with `handshake`, signed and dated `created_at`.
+    /// `plain` as the contact's Trino sends it to `me`, dated `created_at`
+    /// (its network time). With an `ad` other than the session's, the
+    /// contact's side seals with it: the receiver's ratchet cannot open it.
     pub(crate) fn sealed_event(
-        sender: &Identity,
-        to: &Identity,
-        ratchet: &mut RatchetState,
+        _sender: &Identity,
+        _to: &Identity,
+        peer: &mut Peer,
         ad: &[u8],
         plain: &[u8],
-        handshake: Option<WireHandshake>,
         created_at: i64,
     ) -> NostrEvent {
-        let ct = ratchet_encrypt(ratchet, plain, ad).unwrap();
-        let payload = WirePayload {
-            header: WireHeader {
-                dh_pub: ct.header.dh_pub,
-                pn: ct.header.pn,
-                n: ct.header.n,
-            },
-            nonce: ct.nonce,
-            ciphertext: ct.ciphertext,
-            handshake,
-        };
-        build_and_sign_event(
-            &sender.nostr.priv_bytes,
-            &sender.nostr.pub_bytes,
-            TRINO_KIND,
-            &serde_json::to_string(&payload).unwrap(),
-            vec![vec!["p".to_string(), nostr_hex(to)]],
-            Some(created_at),
-        )
-        .unwrap()
+        let real = peer.inner.associated_data["me"].clone();
+        peer.inner
+            .associated_data
+            .insert("me".to_string(), ad.to_vec());
+        let (step, kind) = step_for(plain);
+        let event = crate::p1::seal(&mut peer.inner, "me", plain, step, kind, created_at).unwrap();
+        peer.inner.associated_data.insert("me".to_string(), real);
+        event
     }
 
     /// `handle_incoming_event` on `event`, for `inner`: what the UI heard,
@@ -1808,7 +1653,7 @@ pub(crate) mod tests {
             id: "m1".to_string(),
         });
         let at = unix_now();
-        let sent = sealed_event(&bob, &me, &mut bob_side, &ad, &plain, None, at);
+        let sent = sealed_event(&bob, &me, &mut bob_side, &ad, &plain, at);
 
         let (events, asked, inner) = heard(inner, sent).await;
 
@@ -1830,7 +1675,7 @@ pub(crate) mod tests {
         inner.profiles.rev = 10;
         let plain = br#"{"ty":"text","body":"hola","id":"m1","prof":{"v":1,"have":3}}"#;
         let at = unix_now();
-        let sent = sealed_event(&bob, &me, &mut bob_side, &ad, plain, None, at);
+        let sent = sealed_event(&bob, &me, &mut bob_side, &ad, plain, at);
 
         let (events, asked, _) = heard(inner, sent).await;
 
@@ -1848,98 +1693,97 @@ pub(crate) mod tests {
     }
 
     #[tokio::test]
-    async fn a_strangers_event_goes_to_the_ui_as_handshake_needed() {
+    async fn an_event_to_no_mailbox_of_this_session_is_dropped_in_silence() {
+        // P1 (R-27): a stranger reaches no mailbox here, and "intentó
+        // escribirte" is gone; nothing goes to the UI.
         let (me, eve) = (create_identity(), create_identity());
-        let inner = InnerState {
-            identity: Some(me.clone()),
-            ..InnerState::default()
-        };
+        let inner = receiving(&me, &eve, "eve");
+        let elsewhere =
+            crate::nostr::seal_p1(crate::p1::KIND_MESSAGE, unix_now(), &[7; 32], &[0u8; 1024])
+                .unwrap();
 
-        let (events, _, _) = heard(inner, event_to(&eve, &nostr_hex(&me), TRINO_KIND, NOW)).await;
+        let (events, _, inner) = heard(inner, elsewhere).await;
 
-        assert_eq!(
-            events,
-            [named(
-                "handshake-needed",
-                &format!(r#"{{"from_pubkey":"{}"}}"#, nostr_hex(&eve))
-            )]
-        );
+        assert!(events.is_empty(), "{events:?}");
+        assert!(inner.ratchets.is_empty());
     }
 
-    /// The handshake `contact` sends to start a session with `me`, and the
-    /// contact's side of that session.
-    fn handshake_to(me: &Identity, contact: &Identity) -> (WireHandshake, RatchetState, Vec<u8>) {
-        let bundle = public_bundle_for(me);
-        let init = initiate(contact, &bundle).unwrap();
-        let spk = decode_array_32(&bundle.spk_pub).unwrap();
-        let ratchet = init_initiator(init.master_secret, spk).unwrap();
-        let handshake = WireHandshake {
-            ik_dh_pub: init.message.ik_dh_pub,
-            ek_pub: init.message.ek_pub,
-            spk_id: init.message.spk_id,
-            opk_id: init.message.opk_id,
+    /// The handshake `contact` sends to start a session with `me`, whose
+    /// device is `mine` (the contact holds its bundle; `me` holds nothing
+    /// of the contact's account yet), and the contact's side.
+    fn handshake_to(
+        mine: &crate::device::OwnDevice,
+        me: &Identity,
+        contact: &Identity,
+    ) -> (NostrEvent, Peer) {
+        let mut side = side_of(mine, me, contact);
+        let hello = crate::p1::initiate(&mut side.inner, "me", unix_now()).unwrap();
+        (hello, side)
+    }
+
+    /// The contact's Trino, holding the bundle of `me`'s device `mine`, with
+    /// no session yet.
+    fn side_of(mine: &crate::device::OwnDevice, me: &Identity, contact: &Identity) -> Peer {
+        let now = unix_now();
+        let mut theirs = InnerState {
+            identity: Some(contact.clone()),
+            device: Some(crate::device::tests::own_device_of(contact, now)),
+            ..InnerState::default()
         };
-        (handshake, ratchet, init.associated_data)
+        theirs.friends.insert("me".to_string(), friend(me, "me"));
+        crate::device::take_bundle(&mut theirs, "me", mine.full_bundle(), now as u64).unwrap();
+        Peer { inner: theirs }
     }
 
     #[tokio::test]
     async fn a_contacts_handshake_goes_to_the_ui_as_session_established() {
         let (me, bob) = (create_identity(), create_identity());
-        let (handshake, mut bob_side, ad) = handshake_to(&me, &bob);
-        let plain = b"__trino_handshake__";
-        let sent = sealed_event(
-            &bob,
-            &me,
-            &mut bob_side,
-            &ad,
-            plain,
-            Some(handshake),
-            unix_now(),
-        );
+        let inner = receiving(&me, &bob, "bob");
+        let (hello, _bob_side) = handshake_to(inner.device.as_ref().unwrap(), &me, &bob);
 
-        let (events, _, inner) = heard(receiving(&me, &bob, "bob"), sent).await;
+        let (events, _, inner) = heard(inner, hello).await;
 
         assert_eq!(events, [named("session-established", r#""bob""#)]);
         assert!(inner.ratchets.contains_key("bob"));
+        // His list, pinned to the keys of the code he was added with.
+        assert!(inner.friends["bob"].devices.is_some());
     }
 
     #[tokio::test]
-    async fn a_handshake_with_another_key_goes_to_the_ui_as_contact_key_mismatch() {
+    async fn a_handshake_from_another_device_key_reaches_no_mailbox() {
+        // P1: the introduction mailbox is between the device keys pinned on
+        // both sides; a handshake from another key lands where nobody here
+        // listens, and nothing is taken or said.
         let (me, bob) = (create_identity(), create_identity());
-        let (mut handshake, mut bob_side, ad) = handshake_to(&me, &bob);
-        handshake.ik_dh_pub = public_bundle_for(&create_identity()).ik_dh_pub;
-        let sent = sealed_event(
-            &bob,
-            &me,
-            &mut bob_side,
-            &ad,
-            b"__trino_handshake__",
-            Some(handshake),
-            unix_now(),
-        );
+        let inner = receiving(&me, &bob, "bob");
+        let mut impostor = bob.clone();
+        impostor.ik_dh = create_identity().ik_dh;
+        let (hello, _) = handshake_to(inner.device.as_ref().unwrap(), &me, &impostor);
 
-        let (events, _, _) = heard(receiving(&me, &bob, "bob"), sent).await;
+        let (events, _, inner) = heard(inner, hello).await;
 
-        assert_eq!(
-            events,
-            [named("contact-key-mismatch", r#"{"handle":"bob"}"#)]
-        );
+        assert!(events.is_empty(), "{events:?}");
+        assert!(inner.ratchets.is_empty());
+        assert!(inner.friends["bob"].devices.is_none());
     }
 
     #[tokio::test]
-    async fn a_message_without_a_session_goes_to_the_ui_as_resync_needed() {
+    async fn a_message_after_this_side_lost_its_session_is_dropped_in_silence() {
+        // P1: without the session, its mailbox is not listened to; the
+        // contact gets a handshake from this side instead (`on_load`).
         let (me, bob) = (create_identity(), create_identity());
-        let (_, mut bob_side, ad) = receiving_in_session(&me, &bob, "bob");
+        let (mut inner, mut bob_side, ad) = receiving_in_session(&me, &bob, "bob");
+        inner.ratchets.remove("bob");
+        inner.associated_data.remove("bob");
         let plain = encode_envelope(&Envelope::Text {
             body: "hola".to_string(),
             id: "m1".to_string(),
         });
-        let sent = sealed_event(&bob, &me, &mut bob_side, &ad, &plain, None, unix_now());
+        let sent = sealed_event(&bob, &me, &mut bob_side, &ad, &plain, unix_now());
 
-        // No session with bob here (`trigger_resync`).
-        let (events, _, _) = heard(receiving(&me, &bob, "bob"), sent).await;
+        let (events, _, _) = heard(inner, sent).await;
 
-        assert_eq!(events, [named("resync-needed", r#""bob""#)]);
+        assert!(events.is_empty(), "{events:?}");
     }
 
     #[tokio::test]
@@ -1951,7 +1795,7 @@ pub(crate) mod tests {
             id: "m1".to_string(),
         });
         // Sealed with associated data of another session: the AEAD fails.
-        let sent = sealed_event(&bob, &me, &mut bob_side, b"other", &plain, None, unix_now());
+        let sent = sealed_event(&bob, &me, &mut bob_side, b"other", &plain, unix_now());
 
         let (events, _, inner) = heard(inner, sent).await;
 
@@ -1966,7 +1810,7 @@ pub(crate) mod tests {
         let roster = roster_of(&bob, &[(&me, "me"), (&ana, "ana")]);
         let gid = roster.group_id.clone();
         let plain = encode_envelope(&Envelope::Roster { roster });
-        let sent = sealed_event(&bob, &me, &mut bob_side, &ad, &plain, None, unix_now());
+        let sent = sealed_event(&bob, &me, &mut bob_side, &ad, &plain, unix_now());
 
         let (events, _, inner) = heard(inner, sent).await;
 
@@ -2012,7 +1856,15 @@ pub(crate) mod tests {
     #[test]
     fn what_the_inspector_sees_goes_to_the_ui_as_relay_event() {
         let (alice, bob) = (create_identity(), create_identity());
-        let seen = event_to(&alice, &nostr_hex(&bob), TRINO_KIND, NOW);
+        let seen = crate::nostr::build_and_sign_event(
+            &alice.nostr.priv_bytes,
+            &alice.nostr.pub_bytes,
+            crate::p1::KIND_MESSAGE,
+            "{}",
+            vec![vec!["p".to_string(), nostr_hex(&bob)]],
+            Some(NOW),
+        )
+        .unwrap();
         let sink = RecordingSink::new();
 
         let on_event = inspector_events(sink.clone(), "wss://relay.example".to_string());

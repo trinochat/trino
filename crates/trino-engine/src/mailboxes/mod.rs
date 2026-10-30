@@ -111,13 +111,86 @@ pub fn on_load<R: Rng + CryptoRng>(inner: &mut InnerState, now: i64, rng: &mut R
     dropped
 }
 
+/// What the session asks every relay for at network time `now` (§3.6):
+/// the mailboxes of today and of yesterday, each epoch's padded to a
+/// multiple of 16 with its own padding (the same on every relay and after
+/// every reconnect), sorted; and the `since` that covers yesterday with the
+/// tolerance. The padding of older epochs goes.
+pub fn listened(inner: &mut InnerState, now: i64) -> (Vec<[u8; 32]>, i64) {
+    let today = trino_core::p1::mailbox::epoch_of(u64::try_from(now).unwrap_or(0));
+    let yesterday = today.saturating_sub(1);
+    inner.mailboxes.purge(today);
+    let mut rng = rand::rngs::OsRng;
+    let mut all = Vec::new();
+    for e in [yesterday, today] {
+        let real = table::Table::of(inner, e).mailboxes();
+        all.extend(inner.mailboxes.pads.of(e, &mut rng).fill(&real));
+    }
+    all.sort_unstable();
+    all.dedup();
+    (all, schedule::since_of(yesterday))
+}
+
+/// A relay's client and its P1 subscriptions (kind, id).
+pub type Listening = (
+    std::sync::Arc<crate::nostr::NostrClient>,
+    Vec<(u32, String)>,
+);
+
+/// Renews what `clients` listen to while they are the session's: at
+/// random moments (exponential, mean 5 min; R-09), only when the list
+/// changed (a new session, a contact added or blocked, a new epoch). The
+/// old subscription is closed and the new one goes under a new id.
+pub fn keep_listening(
+    inner: std::sync::Arc<tokio::sync::Mutex<InnerState>>,
+    clients: Vec<Listening>,
+    asked: Vec<[u8; 32]>,
+) {
+    tokio::spawn(async move {
+        let mut clients = clients;
+        let mut asked = asked;
+        loop {
+            let wait = schedule::renewal_wait(&mut rand::rngs::OsRng, false);
+            tokio::time::sleep(wait).await;
+            let (wanted, since) = {
+                let mut guard = inner.lock().await;
+                let ours = clients.iter().all(|(client, _)| {
+                    guard
+                        .relays
+                        .iter()
+                        .any(|relay| std::sync::Arc::ptr_eq(relay, client))
+                });
+                if guard.identity.is_none() || !ours {
+                    return;
+                }
+                let wanted = listened(&mut guard, chrono::Utc::now().timestamp());
+                crate::session::save_ratchets(&guard);
+                wanted
+            };
+            if !schedule::needs_renewal(&asked, &wanted) {
+                continue;
+            }
+            for (client, subscribed) in &mut clients {
+                for (_, id) in subscribed.drain(..) {
+                    let _ = client.unsubscribe(&id);
+                }
+                *subscribed = client
+                    .subscribe_p1(&wanted, since)
+                    .await
+                    .unwrap_or_default();
+            }
+            asked = wanted;
+        }
+    });
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::block::BlockedIdentity;
     use crate::identity::{create_identity, Identity};
     use crate::ratchet::RatchetState;
-    use crate::session::tests::{add_session_read_by, friend, state_with};
+    use crate::session::tests::{friend, state_with};
     use crate::session::{load_ratchets, RatchetsFile, RATCHETS_VERSION};
     use crate::store::session::Found;
     use rand::rngs::StdRng;
@@ -133,9 +206,8 @@ mod tests {
     }
 
     /// A session of `me`'s, of before P1 or (with `p1`) on P1.
-    fn session(me: &Identity, p1: bool) -> RatchetState {
-        let other = create_identity();
-        let (mut state, _) = add_session_read_by(&mut InnerState::default(), me, &other, "x");
+    fn session(_me: &Identity, p1: bool) -> RatchetState {
+        let mut state = crate::session::tests::plain_ratchet();
         if p1 {
             state
                 .attach_session(trino_core::pqxdh::SUITE, &[5; 32], E, E)
@@ -263,5 +335,50 @@ mod tests {
         inner.mailboxes.handshakes_due.insert("ana".into(), NOW);
         crate::session::clear_sensitive_state(&mut inner);
         assert_eq!(inner.mailboxes, MailboxState::default());
+    }
+
+    #[test]
+    fn the_session_listens_to_its_mailboxes_of_today_and_yesterday_padded() {
+        let (me, ana) = (create_identity(), create_identity());
+        let mut inner = state_with(&[friend(&ana, "ana")]);
+        inner.identity = Some(me.clone());
+        let now = schedule::epoch_start(E) + 3600;
+
+        let (asked, since) = listened(&mut inner, now);
+
+        // Ana's introduction mailbox of each day, padded to 16 each.
+        assert_eq!(asked.len(), 32);
+        for e in [E - 1, E] {
+            let real = table::Table::of(&inner, e).mailboxes();
+            assert_eq!(real.len(), 1);
+            assert!(asked.contains(&real[0]));
+        }
+        assert_eq!(since, schedule::since_of(E - 1));
+        // The same list again, as on every relay and every reconnect (test 12).
+        assert_eq!(listened(&mut inner, now + 60).0, asked);
+        // A new epoch drops the oldest day and its padding.
+        let (next, _) = listened(&mut inner, now + 86_400);
+        assert_eq!(next.len(), 32);
+        let today = table::Table::of(&inner, E).mailboxes()[0];
+        assert!(next.contains(&today));
+        assert!(!inner.mailboxes.pads.epochs().contains(&(E - 1)));
+    }
+
+    #[test]
+    fn the_messages_no_longer_use_kind_4848() {
+        // Test 22: no constant, filter or event of kind 4848 in the
+        // messages; only the emergency warning keeps it until P1-20.
+        for (name, source) in [
+            ("session.rs", include_str!("../session.rs")),
+            ("send.rs", include_str!("../send.rs")),
+            ("p1.rs", include_str!("../p1.rs")),
+            ("nostr.rs", include_str!("../nostr.rs")),
+            ("groups.rs", include_str!("../groups.rs")),
+            ("profile.rs", include_str!("../profile.rs")),
+            ("block.rs", include_str!("../block.rs")),
+        ] {
+            assert!(!source.contains("4848"), "{name}");
+            assert!(!source.contains("TRINO_KIND"), "{name}");
+        }
     }
 }

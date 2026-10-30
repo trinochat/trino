@@ -639,7 +639,7 @@ pub async fn send_profile(state: &Engine, targets: Vec<String>) {
     for handle in targets {
         let sent: Result<(), String> = async {
             ensure_session_inner(state, &handle).await?;
-            send_cipher_inner(state, &handle, &message, None).await
+            send_cipher_inner(state, &handle, &message).await
         }
         .await;
         if sent.is_err() {
@@ -1205,7 +1205,8 @@ mod tests {
         let code: String = body.split_whitespace().collect();
         let (Some(hook), Some(decoded)) = (
             code.find("ifprofile::on_message("),
-            code.find("matchdecode_envelope(&plain)"),
+            code.find("matchdecode_envelope(&plain)")
+                .or_else(|| code.find("matchdecode_envelope(plain)")),
         ) else {
             return false;
         };
@@ -1224,8 +1225,11 @@ mod tests {
         let start = session
             .find("async fn handle_incoming_event(")
             .expect("the receive path");
+        // The receive path ends in `dispatch`, which decodes the envelope.
         let body = &session[start..];
-        let body = &body[..body.find("\n}\n").expect("its end")];
+        let dispatch = body.find("\nfn dispatch(").expect("its dispatch");
+        let end = dispatch + body[dispatch..].find("\n}\n").expect("its end");
+        let body = &body[..end];
 
         assert!(the_hook_comes_first(body));
         // The check sees the hook below the decoding, or one that does not
@@ -2209,37 +2213,21 @@ mod tests {
         }
     }
 
-    /// `plain` encrypted and wrapped as send_cipher_inner does, as a relay
-    /// receives it. The ratchet writes the ciphertext in hex, so every byte
-    /// of the message counts twice on the wire.
+    /// `plain` sealed as send_cipher_inner seals it under P1 (a profile at
+    /// its 40 KiB step), as a relay receives it.
     fn relay_frame_bytes(plain: &[u8]) -> usize {
-        let (me, peer) = (create_identity(), create_identity());
-        let bundle = public_bundle_for(&peer);
-        let init = crate::x3dh::initiate(&me, &bundle).unwrap();
-        let spk = crate::identity::decode_array_32(&bundle.spk_pub).unwrap();
-        let mut ratchet = crate::ratchet::init_initiator(init.master_secret, spk).unwrap();
-        let ct =
-            crate::ratchet::ratchet_encrypt(&mut ratchet, plain, &init.associated_data).unwrap();
-        let payload = crate::session::WirePayload {
-            header: crate::session::WireHeader {
-                dh_pub: ct.header.dh_pub,
-                pn: u32::MAX,
-                n: u32::MAX,
-            },
-            nonce: ct.nonce,
-            ciphertext: ct.ciphertext,
-            handshake: None,
-        };
-        let event = crate::nostr::build_and_sign_event(
-            &me.nostr.priv_bytes,
-            &me.nostr.pub_bytes,
-            crate::nostr::TRINO_KIND,
-            &serde_json::to_string(&payload).unwrap(),
-            vec![vec!["p".to_string(), hex::encode(peer.nostr.pub_bytes)]],
-            None,
+        let (mut ana, _bea) = crate::p1::tests::talking(true);
+        let (step, kind) = crate::session::step_for(plain);
+        let event = crate::p1::seal(
+            &mut ana.inner,
+            "bea",
+            plain,
+            step,
+            kind,
+            crate::p1::tests::NOW,
         )
         .unwrap();
-        serde_json::json!(["EVENT", event]).to_string().len()
+        crate::session::event_frame_bytes(&event)
     }
 
     /// The JSON object on a line of the doc: from its first `{` to its last `}`.

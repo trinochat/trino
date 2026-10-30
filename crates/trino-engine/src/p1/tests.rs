@@ -84,15 +84,17 @@ fn contact(opened: Opened) -> Admitted {
             ts,
             established,
             replies,
+            ..
         } => (handle, envelope, ts, established, replies),
         Opened::Drop(why) => panic!("dropped: {why}"),
+        Opened::Undecryptable { .. } => panic!("undecryptable"),
     }
 }
 
 fn dropped(opened: Opened) -> &'static str {
     match opened {
         Opened::Drop(why) => why,
-        Opened::Contact { .. } => panic!("admitted"),
+        _ => panic!("admitted"),
     }
 }
 
@@ -531,4 +533,23 @@ fn without_a_list_of_the_contact_there_is_no_handshake() {
         initiate(&mut ana.inner, "nadie", NOW).unwrap_err(),
         SendError::UnknownContact
     );
+}
+
+#[test]
+fn a_handshake_from_prekeys_held_before_a_rotation_still_opens() {
+    // H1 under P1: the contact rotated both prekeys since; the retired ones
+    // are kept 45 days and open the handshake.
+    let (mut ana, mut bea) = ana_and_bea(true);
+    let later = NOW + trino_core::identity_v2::SPK_ROTATION_SECS;
+    assert!(bea
+        .inner
+        .device
+        .as_mut()
+        .unwrap()
+        .identity
+        .device
+        .rotate_prekeys_if_due_with_rng(later, &mut drbg()));
+    let hello = initiate(&mut ana.inner, "bea", later).unwrap();
+    let (.., established, _) = contact(open(&mut bea.inner, &hello, later + 5));
+    assert!(established);
 }

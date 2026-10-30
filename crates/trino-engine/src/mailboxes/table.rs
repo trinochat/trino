@@ -138,7 +138,12 @@ impl Table {
         let mut friends: Vec<_> = inner
             .friends
             .values()
-            .filter(|friend| !friend_blocked(inner, friend))
+            // Of someone blocked, only an administrator of a group you are
+            // in is listened to, for its rosters (UR-2, R-04).
+            .filter(|friend| {
+                !friend_blocked(inner, friend)
+                    || crate::block::administers_a_group(inner, &friend.bundle.ik_sign_pub)
+            })
             .collect();
         friends.sort_by(|a, b| a.added_at.cmp(&b.added_at).then(a.handle.cmp(&b.handle)));
         let peers = friends.into_iter().filter_map(|friend| {
@@ -497,12 +502,7 @@ mod tests {
         let (me, ana) = (create_identity(), create_identity());
         let mut inner = state_with(&[friend(&ana, "ana")]);
         inner.identity = Some(me.clone());
-        let (state, _) = crate::session::tests::add_session_read_by(
-            &mut InnerState::default(),
-            &me,
-            &ana,
-            "ana",
-        );
+        let state = crate::session::tests::plain_ratchet();
         // A session of before P1: introductions only.
         inner.ratchets.insert("ana".into(), state.clone());
         assert_eq!(Table::of(&inner, E).mailboxes().len(), 1);

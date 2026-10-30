@@ -785,9 +785,8 @@ mod tests {
             persist_account(&a).unwrap();
             b.handle = Some("Bob".into());
             b.relay_urls = vec![relay.url.clone()];
-            b.friends.insert("Ana".into(), friend(&me, "Ana"));
-            b.ratchets.insert("Ana".into(), ratchet);
-            b.associated_data.insert("Ana".into(), ad);
+            let _ = ad;
+            ratchet.move_into(&mut b, "Ana");
         }
         crate::session::connect_relays(
             bob_sink.clone(),

@@ -229,7 +229,7 @@ mod tests {
     fn mara_from_familia(
         me: &Identity,
         mara: &Identity,
-    ) -> (InnerState, crate::ratchet::RatchetState, Vec<u8>, String) {
+    ) -> (InnerState, crate::session::tests::Peer, Vec<u8>, String) {
         let ana = create_identity();
         let (mut inner, side, ad) = receiving_in_session(me, mara, "mara");
         let roster = roster_of(&ana, &[(me, "me"), (mara, "mara")]);
@@ -319,7 +319,7 @@ mod tests {
             id: "m1".into(),
         });
         let at = unix_now();
-        let event = sealed_event(&mara, &me, &mut side, &ad, &plain, None, at);
+        let event = sealed_event(&mara, &me, &mut side, &ad, &plain, at);
 
         let (events, asked, inner) = heard(inner, event).await;
 
@@ -361,8 +361,8 @@ mod tests {
             body: "así quedó la torta".into(),
         });
         let at = unix_now();
-        let first = sealed_event(&mara, &me, &mut side, &ad, &apart, None, at);
-        let second = sealed_event(&mara, &me, &mut side, &ad, &to_group, None, at);
+        let first = sealed_event(&mara, &me, &mut side, &ad, &apart, at);
+        let second = sealed_event(&mara, &me, &mut side, &ad, &to_group, at);
 
         let (events, _, inner) = heard(inner, first).await;
         assert_eq!(events, [named("requests-changed", r#"{"count":1}"#)]);
@@ -392,8 +392,8 @@ mod tests {
         let bye = encode_envelope(&Envelope::Call {
             call: r#"{"t":"bye","callId":"abcdefghijklmnop1234"}"#.into(),
         });
-        let first = sealed_event(&mara, &me, &mut side, &ad, &offer, None, at);
-        let second = sealed_event(&mara, &me, &mut side, &ad, &bye, None, at);
+        let first = sealed_event(&mara, &me, &mut side, &ad, &offer, at);
+        let second = sealed_event(&mara, &me, &mut side, &ad, &bye, at);
 
         let (events, _, inner) = heard(inner, first).await;
         let (more, _, inner) = heard(inner, second).await;
@@ -423,7 +423,7 @@ mod tests {
         let warning = br#"{"ty":"alert-reg","v":1}"#;
         let events: Vec<_> = [&profile[..], grp.as_bytes(), &warning[..]]
             .iter()
-            .map(|plain| sealed_event(&mara, &me, &mut side, &ad, plain, None, at))
+            .map(|plain| sealed_event(&mara, &me, &mut side, &ad, plain, at))
             .collect();
 
         let mut heard_all = Vec::new();
@@ -536,7 +536,7 @@ mod tests {
             body: "hola".into(),
             id: "m1".into(),
         });
-        let event = sealed_event(&mara, &me, &mut side, &ad, &plain, None, unix_now());
+        let event = sealed_event(&mara, &me, &mut side, &ad, &plain, unix_now());
         let (_, _, mut inner) = heard(inner, event).await;
 
         assert_eq!(accept(&mut inner, "mara", NOW).unwrap(), "mara");
@@ -567,7 +567,7 @@ mod tests {
             body: "hola".into(),
             id: "m2".into(),
         });
-        let event = sealed_event(&mara, &me, &mut side, &ad, &plain, None, unix_now());
+        let event = sealed_event(&mara, &me, &mut side, &ad, &plain, unix_now());
         let (events, _, inner) = heard(inner, event).await;
         assert_eq!(events[0].0, "message-received");
         assert_eq!(inner.history["mara"].len(), 1);

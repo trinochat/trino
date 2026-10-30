@@ -560,6 +560,12 @@ pub fn apply_loaded(
     inner.history.clear();
     load_history(inner, history);
     load_ratchets(inner, sessions);
+    // -- P1 (§9, test 23) -- The sessions of before P1 go; their contacts
+    // stay and are owed a handshake, 5–60 minutes on.
+    let dropped = crate::mailboxes::on_load(inner, now, &mut rand::rngs::OsRng);
+    if !dropped.is_empty() {
+        crate::session::save_ratchets(inner);
+    }
     // -- W8 (K12) --
     crate::profile::load_found(inner, profiles, now);
     // -- Uso responsable (UR-4) --

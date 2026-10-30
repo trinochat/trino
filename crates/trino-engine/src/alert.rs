@@ -54,7 +54,11 @@
 use crate::command_error::{CommandError, ErrorCode};
 use crate::crypto::{aes_gcm_decrypt, aes_gcm_encrypt, hkdf_expand, random_array};
 use crate::events::EventSink;
-use crate::nostr::{build_and_sign_event, NostrEvent, TRINO_KIND};
+use crate::nostr::{build_and_sign_event, NostrEvent};
+
+/// The kind of the warning's events until it moves to P1 (P1-20, design
+/// `diseno-vinculacion.md` §23.2): the messages no longer use it.
+pub const ALERT_KIND: u32 = 4848;
 use crate::state::{FriendRecord, InnerState};
 use crate::Engine;
 use serde::{Deserialize, Serialize};
@@ -684,7 +688,7 @@ pub fn seal(alert: &SharedAlert, now: i64) -> Option<NostrEvent> {
     build_and_sign_event(
         &secret,
         &xonly.serialize(),
-        TRINO_KIND,
+        ALERT_KIND,
         &content,
         vec![
             vec!["p".to_string(), mailbox.pubkey],
@@ -706,7 +710,7 @@ pub struct Opened {
 /// one of its mailboxes around `now`.
 pub fn open(key: &[u8], id: &[u8], event: &NostrEvent, now: i64) -> Option<Opened> {
     use base64::Engine;
-    if event.kind != TRINO_KIND {
+    if event.kind != ALERT_KIND {
         return None;
     }
     let to = event.recipient()?;
@@ -871,7 +875,7 @@ async fn send(state: &Engine, to: &str, wire: &Wire) -> Result<(), CommandError>
             .ok_or_else(|| CommandError::new(ErrorCode::NotFound, "no such contact"))?
     };
     crate::session::ensure_session(state, &handle).await?;
-    crate::session::publish_sealed(state, &handle, &wire.padded(), None).await?;
+    crate::session::publish_sealed(state, &handle, &wire.padded()).await?;
     Ok(())
 }
 
@@ -1219,7 +1223,7 @@ async fn listen(
         };
         let client = crate::nostr::NostrClient::start(url, on_event, options);
         let filter = crate::nostr::NostrFilter {
-            kinds: Some(vec![TRINO_KIND]),
+            kinds: Some(vec![ALERT_KIND]),
             p_tag: Some(mailboxes.to_vec()),
             ..Default::default()
         };
@@ -1457,22 +1461,33 @@ mod network_tests {
                 .as_array()
                 .is_some_and(|keys| keys.iter().any(|k| k == key))
         };
+        // P1: the session's connection asks for its contacts' mailboxes
+        // (1059 and 21059), never for the identity's key.
+        let session_req = |filter: &Value| {
+            filter["kinds"]
+                .as_array()
+                .is_some_and(|kinds| kinds.iter().any(|k| k == 1059 || k == 21059))
+        };
         wait_until("both subscriptions", || {
             let reqs = relay.reqs();
-            reqs.iter().any(|(_, f)| names(f, &bob_pub))
+            reqs.iter().any(|(_, f)| session_req(f))
                 && reqs.iter().any(|(_, f)| names(f, &mailboxes[0]))
         })
         .await;
         for (connection, filter) in relay.reqs() {
-            let key = names(&filter, &bob_pub);
+            assert!(!names(&filter, &bob_pub), "the key is asked for: {filter}");
+            let session = session_req(&filter);
             let boxes = mailboxes.iter().any(|mailbox| names(&filter, mailbox));
-            assert!(!(key && boxes), "one REQ names both: {filter}");
+            assert!(!(session && boxes), "one REQ names both: {filter}");
             if boxes {
                 let same_socket = relay
                     .reqs()
                     .iter()
-                    .any(|(other, f)| *other == connection && names(f, &bob_pub));
-                assert!(!same_socket, "the mailboxes went on the key's connection");
+                    .any(|(other, f)| *other == connection && session_req(f));
+                assert!(
+                    !same_socket,
+                    "the mailboxes went on the session's connection"
+                );
             }
         }
         let kinds = kinds_to(&test_relay::tor(), &relay);
@@ -1505,7 +1520,7 @@ mod session_tests {
     use crate::nostr::test_relay::{wait_until, Answer, TestRelay};
     use crate::profile::ContactProfile;
     use crate::session::handle_incoming_event;
-    use crate::session::tests::{add_session_read_by, friend, sending_state};
+    use crate::session::tests::{add_session_read_by, listens, sending_state};
     use std::sync::Arc;
 
     /// Ana, who sets the warning, and Bob, her contact, each with their
@@ -1545,9 +1560,8 @@ mod session_tests {
                 a.handle = Some("Ana".into());
                 b.handle = Some("Bob".into());
                 b.relay_urls = vec!["wss://bob.example".into()];
-                b.friends.insert("Ana".into(), friend(&ana_id, "Ana"));
-                b.ratchets.insert("Ana".into(), ratchet);
-                b.associated_data.insert("Ana".into(), ad);
+                let _ = ad;
+                ratchet.move_into(&mut b, "Ana");
             }
             Pair {
                 relay,
@@ -1569,12 +1583,13 @@ mod session_tests {
             let events = self.relay.events();
             let resend: crate::profile::Resend = Arc::new(|_| {});
             for event in &events[self.delivered..] {
-                let (engine, sink) =
-                    if event.recipient() == Some(&hex::encode(self.bob_id.nostr.pub_bytes)) {
-                        (&self.bob, &self.bob_sink)
-                    } else {
-                        (&self.ana, &self.ana_sink)
-                    };
+                let to_bob = event.recipient() == Some(&hex::encode(self.bob_id.nostr.pub_bytes))
+                    || listens(&*self.bob.inner.lock().await, event);
+                let (engine, sink) = if to_bob {
+                    (&self.bob, &self.bob_sink)
+                } else {
+                    (&self.ana, &self.ana_sink)
+                };
                 handle_incoming_event(&**sink, &resend, Arc::clone(&engine.inner), event.clone())
                     .await;
             }
@@ -1625,10 +1640,7 @@ mod session_tests {
         choose(&pair.ana, Some("Bob"), "hola").await.unwrap();
         wait_until("the registration", || pair.relay.events().len() == 1).await;
         let event = &pair.relay.events()[0];
-        assert_eq!(
-            event.recipient(),
-            Some(hex::encode(pair.bob_id.nostr.pub_bytes).as_str())
-        );
+        assert!(listens(&*pair.bob.inner.lock().await, event), "not to bob");
         let own = own_view(&*pair.ana.inner.lock().await).unwrap();
         assert_eq!(own.contact, "Bob");
         assert_eq!(own.state, AlertState::Waiting);
@@ -1712,8 +1724,7 @@ mod session_tests {
 
     /// The length of what the ratchet carries in `event`.
     fn sealed_len(event: &NostrEvent) -> usize {
-        let payload: crate::session::WirePayload = serde_json::from_str(&event.content).unwrap();
-        payload.ciphertext.len()
+        event.content.len()
     }
 
     /// CE-D14: on the relay, the question, its withdrawal and both answers
@@ -2198,7 +2209,7 @@ mod tests {
         let one = seal(&alert, NOW).unwrap();
         let two = seal(&alert, NOW).unwrap();
         assert!(verify_event(&one));
-        assert_eq!(one.kind, TRINO_KIND);
+        assert_eq!(one.kind, ALERT_KIND);
         assert_ne!(one.pubkey, two.pubkey, "a new key each time");
         let mailbox = mailbox(&[7u8; 32], epoch_at(NOW)).unwrap();
         assert_eq!(one.recipient(), Some(mailbox.pubkey.as_str()));

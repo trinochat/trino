@@ -15,8 +15,6 @@ use tokio_tungstenite::tungstenite::Message;
 use trino_core::p1::event as p1event;
 use trino_net::{IsoKind, Mode, Net, Session};
 
-pub const TRINO_KIND: u32 = 4848;
-
 /// The kinds P1 listens to: messages (1059) and call signals (21059).
 pub const P1_KINDS: [u32; 2] = [p1event::KIND_MESSAGE, p1event::KIND_CALL];
 
@@ -2156,6 +2154,9 @@ pub mod test_relay {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A kind of no meaning to P1, for the client's own tests.
+    const TEST_KIND: u32 = 1;
     use crate::identity::generate_nostr_keypair;
 
     #[test]
@@ -2164,13 +2165,13 @@ mod tests {
         let event = build_and_sign_event(
             &kp.priv_bytes,
             &kp.pub_bytes,
-            TRINO_KIND,
+            TEST_KIND,
             "hello nostr",
             vec![vec!["t".to_string(), "test".to_string()]],
             Some(1700000000),
         )
         .unwrap();
-        assert_eq!(event.kind, TRINO_KIND);
+        assert_eq!(event.kind, TEST_KIND);
         assert_eq!(event.content, "hello nostr");
         assert_eq!(event.pubkey.len(), 64);
         assert_eq!(event.sig.len(), 128);
@@ -2183,7 +2184,7 @@ mod tests {
         let mut event = build_and_sign_event(
             &kp.priv_bytes,
             &kp.pub_bytes,
-            TRINO_KIND,
+            TEST_KIND,
             "original",
             vec![],
             Some(1700000000),
@@ -2203,7 +2204,7 @@ mod tests {
         let event = build_and_sign_event(
             &kp.priv_bytes,
             &kp.pub_bytes,
-            TRINO_KIND,
+            TEST_KIND,
             r#"{"header":{"dhPub":"00","pn":0,"n":1},"nonce":"00","ciphertext":"00"}"#,
             vec![vec!["p".to_string(), "00".repeat(32)]],
             Some(1_782_857_351),
@@ -2228,15 +2229,7 @@ mod tests {
 
     fn tagged(tags: Vec<Vec<String>>) -> NostrEvent {
         let kp = generate_nostr_keypair();
-        build_and_sign_event(
-            &kp.priv_bytes,
-            &kp.pub_bytes,
-            TRINO_KIND,
-            "x",
-            tags,
-            Some(1),
-        )
-        .unwrap()
+        build_and_sign_event(&kp.priv_bytes, &kp.pub_bytes, TEST_KIND, "x", tags, Some(1)).unwrap()
     }
 
     #[test]
@@ -2281,7 +2274,7 @@ mod tests {
         Subscription {
             id: id.to_string(),
             filters: vec![NostrFilter {
-                kinds: Some(vec![TRINO_KIND]),
+                kinds: Some(vec![TEST_KIND]),
                 p_tag: Some(vec!["aa".repeat(32)]),
                 ..Default::default()
             }],
@@ -2359,7 +2352,7 @@ mod tests {
     fn plain_subscriptions_are_resent_unchanged() {
         let mut book = SubscriptionBook::default();
         let filter = NostrFilter {
-            kinds: Some(vec![TRINO_KIND]),
+            kinds: Some(vec![TEST_KIND]),
             limit: Some(40),
             ..Default::default()
         };
@@ -2381,7 +2374,7 @@ mod tests {
         let mut event = build_and_sign_event(
             &kp.priv_bytes,
             &kp.pub_bytes,
-            TRINO_KIND,
+            TEST_KIND,
             "real",
             vec![],
             Some(1700000000),
@@ -2428,7 +2421,7 @@ mod tests {
                 let event = build_and_sign_event(
                     &me.nostr.priv_bytes,
                     &me.nostr.pub_bytes,
-                    TRINO_KIND,
+                    TEST_KIND,
                     "x",
                     vec![],
                     None,
@@ -2576,14 +2569,14 @@ mod tests {
         // Asked for while it cannot connect yet: kept, and sent later.
         client
             .subscribe(&NostrFilter {
-                kinds: Some(vec![TRINO_KIND]),
+                kinds: Some(vec![TEST_KIND]),
                 ..Default::default()
             })
             .await
             .unwrap();
         let event = {
             let kp = generate_nostr_keypair();
-            build_and_sign_event(&kp.priv_bytes, &kp.pub_bytes, TRINO_KIND, "x", vec![], None)
+            build_and_sign_event(&kp.priv_bytes, &kp.pub_bytes, TEST_KIND, "x", vec![], None)
                 .unwrap()
         };
         client.publish(&event).await.unwrap();
@@ -3029,7 +3022,7 @@ mod tests {
 
     fn some_event() -> NostrEvent {
         let kp = generate_nostr_keypair();
-        build_and_sign_event(&kp.priv_bytes, &kp.pub_bytes, TRINO_KIND, "x", vec![], None).unwrap()
+        build_and_sign_event(&kp.priv_bytes, &kp.pub_bytes, TEST_KIND, "x", vec![], None).unwrap()
     }
 
     #[tokio::test]
@@ -3352,7 +3345,7 @@ mod tests {
         let expiration: i64 = a.tags[1][1].parse().unwrap();
         assert!(expiration >= a.created_at + 6 * 86_400);
         assert!(verify_event(&a));
-        assert!(seal_p1(TRINO_KIND, now, &mailbox, b"x").is_err());
+        assert!(seal_p1(TEST_KIND, now, &mailbox, b"x").is_err());
     }
 
     /// diseno-vinculacion.md §23.8: a call signal expires too, 1 to 2 hours

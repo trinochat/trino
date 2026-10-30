@@ -24,7 +24,7 @@
 //! What this gives back to publish (the first replies, the full lists) goes
 //! out at once; the delays of automatic answers are P1-11's.
 
-use crate::block::friend_blocked;
+use crate::block::{administers_a_group, friend_blocked};
 use crate::device::{peer_account, peer_device_dh, take_bundle, OwnDevice};
 use crate::groups::{judge_handshake, record_handshake};
 use crate::identity::KeyPair;
@@ -40,7 +40,8 @@ use trino_core::device::{
     check_peer_device, peer_classical, peer_prekeys, DeviceBundle, DeviceError,
 };
 use trino_core::kem::{drbg, KemSecret};
-use trino_core::p1::event::{mailbox_of, open_event, verify_event, Event, KIND_CALL, KIND_MESSAGE};
+use trino_core::p1::event::{mailbox_of, open_event, verify_event, Event};
+pub use trino_core::p1::event::{KIND_CALL, KIND_MESSAGE};
 use trino_core::p1::frame::{self, PartKind};
 use trino_core::p1::mailbox::{epoch_of, session_seed};
 use trino_core::p1::wire::{
@@ -98,7 +99,13 @@ pub enum Opened {
         established: bool,
         /// What this device answers, to publish now.
         replies: Vec<NostrEvent>,
+        /// The contact's device list or prekeys changed: the account file
+        /// keeps them.
+        devices_changed: bool,
     },
+    /// A message of a contact, sent at `ts`, that no session here opens:
+    /// none is held, or the ratchet failed (the caller heals it).
+    Undecryptable { handle: String, ts: i64 },
 }
 
 /// Starts a session with the contact `handle` at network time `ts`: the
@@ -296,8 +303,12 @@ pub fn open(inner: &mut InnerState, event: &NostrEvent, now: i64) -> Opened {
     let route = table.route(&tag).expect("found above");
     let handle = route.contact.clone();
     // Step 3.
+    // Step 3; of someone blocked, only what a group they administer needs
+    // (UR-2, R-04: `block::on_message` keeps their rosters only).
     match inner.friends.get(&handle) {
-        Some(friend) if !friend_blocked(inner, friend) => {}
+        Some(friend)
+            if !friend_blocked(inner, friend)
+                || administers_a_group(inner, &friend.bundle.ik_sign_pub) => {}
         _ => return Opened::Drop("blocked"),
     }
     // Steps 5 to 7.
@@ -340,16 +351,20 @@ fn on_message(inner: &mut InnerState, handle: &str, body: &[u8], ts: i64, now: i
     let Ok(body) = MessageBody::decode(body) else {
         return Opened::Drop("bad message");
     };
+    let undecryptable = || Opened::Undecryptable {
+        handle: handle.to_string(),
+        ts,
+    };
     let Some(ad) = inner.associated_data.get(handle).cloned() else {
-        return Opened::Drop("no session");
+        return undecryptable();
     };
     let Some(mut ratchet) = inner.ratchets.get(handle).cloned() else {
-        return Opened::Drop("no session");
+        return undecryptable();
     };
     let plain = match ratchet_decrypt(&mut ratchet, &body.to_ratchet(), &ad) {
         Ok(plain) => Zeroizing::new(plain),
         Err(RatchetError::Replay { .. }) => return Opened::Drop("replayed"),
-        Err(_) => return Opened::Drop("ratchet failed"),
+        Err(_) => return undecryptable(),
     };
     let Ok(parts) = frame::decode(&plain) else {
         return Opened::Drop("bad frame");
@@ -376,6 +391,7 @@ fn on_message(inner: &mut InnerState, handle: &str, body: &[u8], ts: i64, now: i
         ts,
         established: false,
         replies,
+        devices_changed: took,
     }
 }
 
@@ -433,6 +449,7 @@ fn on_handshake(inner: &mut InnerState, handle: &str, body: &[u8], ts: i64, now:
         ts,
         established: true,
         replies,
+        devices_changed: true,
     }
 }
 
@@ -512,6 +529,7 @@ fn on_pq11(inner: &mut InnerState, handle: &str, body: &[u8], ts: i64, now: i64)
         ts,
         established: true,
         replies,
+        devices_changed: true,
     }
 }
 
@@ -556,6 +574,7 @@ fn on_kem_reply(inner: &mut InnerState, handle: &str, body: &[u8], ts: i64, now:
         ts,
         established: true,
         replies,
+        devices_changed: true,
     }
 }
 

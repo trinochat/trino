@@ -1,7 +1,7 @@
 use crate::command_error::{CommandError, ErrorCode};
 use crate::events::EventSink;
 use crate::group::FileRef;
-use crate::nostr::{ready_gate, relay_connector, NostrFilter, TRINO_KIND};
+use crate::nostr::{ready_gate, relay_connector};
 use crate::state::{AppState, HistItem, InnerState};
 use crate::totp_enrollment::TotpBeginResponse;
 use serde::{Deserialize, Serialize};
@@ -852,42 +852,14 @@ pub async fn update_profile(
     Ok(())
 }
 
-#[allow(dead_code)]
-fn build_filter_for_self(nostr_pub: &str) -> NostrFilter {
-    let mut m: HashMap<String, Vec<String>> = HashMap::new();
-    m.insert("#p".to_string(), vec![nostr_pub.to_string()]);
-    NostrFilter {
-        kinds: Some(vec![TRINO_KIND]),
-        p_tag: Some(vec![nostr_pub.to_string()]),
-        ..Default::default()
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::identity::{create_identity, decode_array_32, public_bundle_for, Identity};
+    use crate::identity::{create_identity, public_bundle_for, Identity};
     use crate::nostr::NostrClient;
-    use crate::ratchet::init_initiator;
-    use crate::state::FriendRecord;
-    use crate::x3dh::initiate;
     use base64::Engine;
 
     const NOW: i64 = 1_760_000_000;
-
-    fn friend(id: &Identity, handle: &str) -> FriendRecord {
-        FriendRecord {
-            handle: handle.to_string(),
-            bundle: public_bundle_for(id),
-            added_at: 0,
-            avatar: None,
-            previous_fingerprint: None,
-            key_changed_at: None,
-            via_group: None,
-            accepted_at: Some(0),
-            devices: None,
-        }
-    }
 
     fn stun(url: &str) -> CallIceServer {
         CallIceServer {
@@ -958,19 +930,7 @@ mod tests {
 
     /// `contact` as `handle`, with a session open, as `connect_node` leaves it.
     fn add_session(inner: &mut InnerState, me: &Identity, contact: &Identity, handle: &str) {
-        inner
-            .friends
-            .insert(handle.to_string(), friend(contact, handle));
-        let bundle = public_bundle_for(contact);
-        let init = initiate(me, &bundle).unwrap();
-        let spk = decode_array_32(&bundle.spk_pub).unwrap();
-        inner.ratchets.insert(
-            handle.to_string(),
-            init_initiator(init.master_secret, spk).unwrap(),
-        );
-        inner
-            .associated_data
-            .insert(handle.to_string(), init.associated_data);
+        trino_engine::testing::p1_session(inner, me, contact, handle);
     }
 
     /// The unlocked session of `me`, sending through `relays`. It has no
@@ -995,10 +955,6 @@ mod tests {
     // ---- B1: what is kept under a contact's name stays with that contact ----
 
     /// The contact code of `id`, named `handle`, as `probe_node` reads it.
-    fn pub_hex(id: &Identity) -> String {
-        hex::encode(id.nostr.pub_bytes)
-    }
-
     fn contact_code(id: &Identity, handle: &str) -> contacts_cmds::ContactCode {
         let mut bundle = serde_json::to_value(public_bundle_for(id)).unwrap();
         bundle["handle"] = serde_json::Value::String(handle.to_string());
@@ -1092,9 +1048,10 @@ mod tests {
         );
         assert_eq!(resend_buffered(&state, "Ana trabajo").await, 1);
         crate::nostr::test_relay::wait_until("the replay", || relay.events().len() == 2).await;
+        // To Ana's mailbox, where the first one went (P1: no key in sight).
         assert_eq!(
             relay.events()[1].recipient(),
-            Some(pub_hex(&ana).as_str()),
+            relay.events()[0].recipient(),
             "the replay goes to Ana"
         );
     }
@@ -1299,9 +1256,9 @@ mod tests {
             "fan_out",
             "announce_file",
             "forward_to",
-            "admit_event",
+            "take_bundle",
             "judge_handshake",
-            "respond_to_handshake",
+            "on_handshake",
             "ingest_incoming_roster",
             "merge_group_members",
             "apply_and_send",

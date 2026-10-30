@@ -16,18 +16,19 @@ use crate::command_error::{CommandError, ErrorCode};
 use crate::envelope::{encode_envelope, Envelope};
 use crate::group::{FileRef, GroupRoster};
 use crate::identity::Identity;
-use crate::nostr::{NostrClient, NostrEvent, TRINO_KIND};
+use crate::nostr::{NostrClient, NostrEvent};
 use crate::profile;
 use crate::session::{
     checked_inline_raster, ensure_session, ensure_session_inner, event_frame_bytes, group_convo,
-    new_msg_id, publish_sealed, record_history, sanitize_file_ref, seal_for, send_cipher_inner,
-    unix_now, zeroize_file_ref, WireHeader, WirePayload, MAX_EVENT_BYTES,
+    net_time, new_msg_id, publish_sealed, record_history, sanitize_file_ref, seal_for,
+    send_cipher_inner, step_for, unix_now, zeroize_file_ref, MAX_EVENT_BYTES,
 };
 use crate::state::{HistItem, InnerState};
 use crate::Engine;
 use base64::Engine as _;
 use serde::Serialize;
 use std::sync::Arc;
+use trino_core::p1::wire::Step;
 use zeroize::{Zeroize, Zeroizing};
 
 /// Why a message was not sent.
@@ -166,7 +167,7 @@ pub async fn send_text(
         refuse_blocked(&inner, handle)?;
         session_key(&inner).ok_or(SendError::Sealed)?
     };
-    let sent = send_acked(state, handle, &env, unix_now(), wait).await;
+    let sent = send_acked(state, handle, &env, net_time(state), wait).await;
     let mut inner = same_session(state, session).await?;
     let receipt = sent?;
     remember_outgoing(&mut inner, handle, id, std::mem::take(&mut *env));
@@ -213,7 +214,7 @@ pub async fn send_group_text(
         (targets, env, identity.nostr.pub_bytes)
     };
     crate::diag::note_with("group send", &[("members", &targets.len())]);
-    let sent = fan_out(state, &targets, &env, unix_now(), wait).await;
+    let sent = fan_out(state, &targets, &env, net_time(state), wait).await;
     let mut inner = same_session(state, session).await?;
     let receipt = sent?;
     if only.is_none() {
@@ -354,7 +355,7 @@ pub async fn announce_file(
         session_key(&inner).ok_or(SendError::Sealed)?
     };
     let sent = match ensure_session(state, handle).await {
-        Ok(()) => send_acked(state, handle, &env, unix_now(), wait).await,
+        Ok(()) => send_acked(state, handle, &env, net_time(state), wait).await,
         Err(error) => Err(error),
     };
     let mut inner = match same_session(state, session).await {
@@ -403,7 +404,7 @@ pub async fn announce_group_file(
         let targets = member_handles(&inner, roster, &my_ik, only);
         (targets, env, identity.nostr.pub_bytes)
     };
-    let sent = fan_out(state, &targets, &env, unix_now(), wait).await;
+    let sent = fan_out(state, &targets, &env, net_time(state), wait).await;
     let mut inner = match same_session(state, session).await {
         Ok(inner) => inner,
         Err(ended) => {
@@ -463,7 +464,7 @@ pub async fn forward_to(
     });
     for handle in &handles {
         ensure_session(state, handle).await?;
-        publish_sealed(state, handle, &env, None).await?;
+        publish_sealed(state, handle, &env).await?;
     }
     let mut inner = state.inner.lock().await;
     record_history(
@@ -497,25 +498,31 @@ pub fn largest_frame_bytes(plaintext: &[u8], ts: i64) -> usize {
     );
     let bare = br#"{"ty":"text"}"#;
     let announcement = profile::with_caps(&profiles, "", bare).len() - bare.len();
-    let payload = WirePayload {
-        header: WireHeader {
-            dh_pub: "0".repeat(64),
-            pn: u32::MAX,
-            n: u32::MAX,
-        },
-        // AES-GCM, as `ratchet_encrypt` uses it: a 12-byte nonce, and the
-        // plaintext with its 16-byte tag, both in hex.
-        nonce: "0".repeat(24),
-        ciphertext: "0".repeat((plaintext.len() + announcement + 16) * 2),
-        handshake: None,
+    // P1 (§2.3): the frame of the ratchet's plaintext (its header and one
+    // part), AES-GCM's tag, the ratchet header, and the step that takes it.
+    let frame = 2 + 5 + plaintext.len() + announcement;
+    let body = 32 + 4 + 4 + 12 + frame + 16;
+    let step = match step_for(plaintext).0 {
+        Some(step) if body <= step.capacity() => Some(step),
+        Some(_) => None,
+        None => Step::smallest_for(body),
     };
+    let Some(step) = step else {
+        return usize::MAX;
+    };
+    // NIP-44 v2 over a frame of the step's length: version, nonce, the
+    // length prefix, the frame and the MAC, in base64.
+    let payload = 1 + 32 + 2 + step.frame_len() + 32;
     let event = NostrEvent {
         id: "0".repeat(64),
         pubkey: "0".repeat(64),
         created_at: ts,
-        kind: TRINO_KIND,
-        tags: vec![vec!["p".to_string(), "0".repeat(64)]],
-        content: serde_json::to_string(&payload).unwrap_or_default(),
+        kind: crate::p1::KIND_CALL,
+        tags: vec![
+            vec!["p".to_string(), "0".repeat(64)],
+            vec!["expiration".to_string(), ts.to_string()],
+        ],
+        content: "0".repeat(payload.div_ceil(3) * 4),
         sig: "0".repeat(128),
     };
     event_frame_bytes(&event)
@@ -530,7 +537,7 @@ pub async fn send_acked(
     ts: i64,
     wait: std::time::Duration,
 ) -> Result<SendReceipt, SendError> {
-    let (event, relays) = seal_for(state, handle, plaintext, None, Some(ts), true).await?;
+    let (event, relays) = seal_for(state, handle, plaintext, Some(ts), true).await?;
     let accepted_by = first_acceptance(&relays, &event, wait).await?;
     Ok(SendReceipt {
         ts: event.created_at,
@@ -745,7 +752,7 @@ pub async fn resend_buffered(state: &Engine, handle: &str) -> usize {
     }
     crate::diag::note_with("RESEND buffered messages", &[("count", &items.len())]);
     for env in &items {
-        let _ = send_cipher_inner(state, handle, env, None).await;
+        let _ = send_cipher_inner(state, handle, env).await;
     }
     items.len()
 }
@@ -781,7 +788,7 @@ pub async fn call_signal(state: &Engine, handle: &str, payload: String) -> Resul
         .map_err(|e| e.to_string())?;
     ensure_session_inner(state, handle).await?;
     let env = encode_envelope(&Envelope::Call { call: payload });
-    send_cipher_inner(state, handle, &env, None).await
+    send_cipher_inner(state, handle, &env).await
 }
 
 #[cfg(test)]
@@ -793,43 +800,46 @@ mod tests {
     use crate::envelope::decode_envelope;
     use crate::group;
     use crate::identity::create_identity;
-    use crate::identity::{decode_array_32, public_bundle_for};
     use crate::nostr::test_relay::{unreachable_client, Answer, TestRelay};
-    use crate::ratchet::init_initiator;
     use crate::session::forget_session;
     use crate::session::tests::{
         add_session_read_by, friend, ik, opened_by, roster_of, sending_state, NOW,
     };
     use crate::turn::TurnGate;
-    use crate::x3dh::initiate;
 
     /// How long these tests wait for an OK that will not come.
     const SHORT_WAIT: std::time::Duration = std::time::Duration::from_millis(300);
 
     /// `contact` as `handle`, with a session open, as `connect_node` leaves it.
     fn add_session(inner: &mut InnerState, me: &Identity, contact: &Identity, handle: &str) {
-        inner
-            .friends
-            .insert(handle.to_string(), friend(contact, handle));
-        let bundle = public_bundle_for(contact);
-        let init = initiate(me, &bundle).unwrap();
-        let spk = decode_array_32(&bundle.spk_pub).unwrap();
-        inner.ratchets.insert(
-            handle.to_string(),
-            init_initiator(init.master_secret, spk).unwrap(),
-        );
-        inner
-            .associated_data
-            .insert(handle.to_string(), init.associated_data);
+        crate::session::tests::add_session_read_by(inner, me, contact, handle);
     }
 
-    /// How many messages the session with `handle` has sent.
+    /// How many messages the session with `handle` has sent since it was
+    /// set up (the setup sends one: this device's full list, P1-8).
     async fn sent_so_far(state: &Engine, handle: &str) -> u32 {
-        state.inner.lock().await.ratchets[handle].sending_msg_number
+        state.inner.lock().await.ratchets[handle].sending_msg_number - 1
     }
 
-    fn pub_hex(id: &Identity) -> String {
-        hex::encode(id.nostr.pub_bytes)
+    /// The mailbox (the `p` tag) this session sends to `handle` today.
+    async fn mailbox_hex(state: &Engine, handle: &str) -> String {
+        let inner = state.inner.lock().await;
+        let device = inner.device.as_ref().unwrap();
+        let theirs = crate::device::peer_device_dh(&inner.friends[handle]).unwrap();
+        let chain = inner.ratchets[handle].session.as_ref().unwrap();
+        let e = trino_core::p1::mailbox::epoch_of(unix_now() as u64);
+        let mailbox = crate::mailboxes::table::outgoing_session(device.dev_dh(), &theirs, chain, e)
+            .unwrap()
+            .unwrap();
+        hex::encode(mailbox.tag)
+    }
+
+    /// `state` sends through a new relay that answers with `answer`.
+    async fn through(state: &Engine, answer: Answer) -> (TestRelay, Arc<NostrClient>) {
+        let relay = TestRelay::start(answer).await;
+        let client = relay.client().await;
+        state.inner.lock().await.relays.push(Arc::clone(&client));
+        (relay, client)
     }
 
     #[tokio::test]
@@ -846,8 +856,13 @@ mod tests {
         assert_eq!(receipt.accepted_by, std::slice::from_ref(&relay.url));
         let events = relay.events();
         assert_eq!(events.len(), 1);
-        assert_eq!(events[0].created_at, receipt.ts);
-        assert_eq!(events[0].recipient(), Some(pub_hex(&bob).as_str()));
+        // P1 (§2.1): the event's own time is up to 5 minutes back; the
+        // message's is in its inner frame.
+        assert!((0..=300).contains(&(receipt.ts - events[0].created_at)));
+        assert_eq!(
+            events[0].recipient(),
+            Some(mailbox_hex(&state, "bob").await.as_str())
+        );
         let inner = state.inner.lock().await;
         let stored = inner.history["bob"].last().unwrap();
         assert_eq!(stored.ts, receipt.ts, "stored with the time of the receipt");
@@ -896,15 +911,15 @@ mod tests {
         let state = sending_state(&me, vec![relay.client().await]).await;
         add_session(&mut *state.inner.lock().await, &me, &bob, "bob");
 
-        // About 80 KB once encrypted and hex-encoded: relays drop it unseen.
-        let error = send_text(&state, "bob", "x".repeat(40_000), SHORT_WAIT)
+        // More than P1's largest step (40 KiB): relays would drop it unseen.
+        let error = send_text(&state, "bob", "x".repeat(41_000), SHORT_WAIT)
             .await
             .unwrap_err();
 
         assert_eq!(error, SendError::TooLong);
         assert_eq!(sent_so_far(&state, "bob").await, 0);
         assert!(relay.events().is_empty());
-        // About 40 KB fits, on the same session.
+        // About 20 KB fits, on the same session.
         send_text(&state, "bob", "x".repeat(20_000), SHORT_WAIT)
             .await
             .unwrap();
@@ -953,9 +968,10 @@ mod tests {
     async fn a_group_message_reaches_every_member_it_can_whatever_happens_to_one() {
         let me = create_identity();
         let others = [create_identity(), create_identity(), create_identity()];
-        let relay = TestRelay::start(Answer::RejectTo(pub_hex(&others[1]))).await;
-        let state = sending_state(&me, vec![relay.client().await]).await;
+        let state = sending_state(&me, vec![]).await;
         let gid = group_of_three(&state, &me, &others).await;
+        let carol = mailbox_hex(&state, "carol").await;
+        let (relay, _) = through(&state, Answer::RejectTo(carol)).await;
 
         let receipt = send_group_text(&state, &gid, "hola grupo".to_string(), None, SHORT_WAIT)
             .await
@@ -965,7 +981,9 @@ mod tests {
         assert_eq!(receipt.failed, ["carol"]);
         let events = relay.events();
         assert_eq!(events.len(), 3, "every member was tried");
-        assert!(events.iter().all(|e| e.created_at == receipt.ts));
+        assert!(events
+            .iter()
+            .all(|e| (0..=300).contains(&(receipt.ts - e.created_at))));
         let inner = state.inner.lock().await;
         let stored = inner.history[&group_convo(&gid)].last().unwrap();
         assert_eq!(stored.ts, receipt.ts);
@@ -989,7 +1007,10 @@ mod tests {
         assert!(receipt.failed.is_empty());
         let events = relay.events();
         assert_eq!(events.len(), 1);
-        assert_eq!(events[0].recipient(), Some(pub_hex(&others[1]).as_str()));
+        assert_eq!(
+            events[0].recipient(),
+            Some(mailbox_hex(&state, "carol").await.as_str())
+        );
         assert!(
             !state
                 .inner
@@ -1158,8 +1179,8 @@ mod tests {
         let state = sending_state(&me, vec![relay.client().await]).await;
         let gid = group_of_three(&state, &me, &others).await;
 
-        // About 80 KB once encrypted and hex-encoded, as for one contact.
-        let error = send_group_text(&state, &gid, "x".repeat(40_000), None, SHORT_WAIT)
+        // More than P1's largest step, as for one contact.
+        let error = send_group_text(&state, &gid, "x".repeat(41_000), None, SHORT_WAIT)
             .await
             .unwrap_err();
 
@@ -1182,9 +1203,9 @@ mod tests {
         let relay = TestRelay::start(Answer::Accept).await;
         let state = sending_state(&me, vec![relay.client().await]).await;
         let gid = group_of_three(&state, &me, &others).await;
-        // A sticker whose 40,000-character data URL goes as its preview.
+        // A sticker whose 41,000-character data URL goes as its preview.
         let file = FileRef {
-            thumb: Some(preview_of(40_000)),
+            thumb: Some(preview_of(41_000)),
             ..sample_file()
         };
 
@@ -1211,7 +1232,7 @@ mod tests {
                 "sticker.png",
                 "image/png",
                 &data,
-                Some(preview_of(40_000)),
+                Some(preview_of(41_000)),
                 to_group,
             )
             .await;
@@ -1261,8 +1282,9 @@ mod tests {
             announcement_fits(&name, mime, &data, Some(&"t".repeat(chars)), Some(&gid))
         };
         assert!(fits(max), "a preview of {max} characters");
-        // The check can fail: a preview a fifth longer does not fit.
-        assert!(!fits(max * 6 / 5));
+        // The check can fail: under P1 the announcement is binary in its
+        // 40 KiB step (no hex any more), so a preview twice as long does not.
+        assert!(!fits(max * 2));
     }
 
     #[tokio::test]
@@ -1310,7 +1332,7 @@ mod tests {
             let plaintext = encode_envelope(&envelope);
             let ts = unix_now();
 
-            let (event, _) = seal_for(&state, "bob", &plaintext, None, Some(ts), true)
+            let (event, _) = seal_for(&state, "bob", &plaintext, Some(ts), true)
                 .await
                 .unwrap();
 
@@ -1447,10 +1469,10 @@ mod tests {
     async fn group_waiting_for_dave() -> (Arc<Engine>, String, TestRelay, Arc<NostrClient>) {
         let me = create_identity();
         let others = [create_identity(), create_identity(), create_identity()];
-        let relay = TestRelay::start(Answer::SilentTo(pub_hex(&others[2]))).await;
-        let client = relay.client().await;
-        let state = Arc::new(sending_state(&me, vec![Arc::clone(&client)]).await);
+        let state = Arc::new(sending_state(&me, vec![]).await);
         let gid = group_of_three(&state, &me, &others).await;
+        let dave = mailbox_hex(&state, "dave").await;
+        let (relay, client) = through(&state, Answer::SilentTo(dave)).await;
         (state, gid, relay, client)
     }
 
@@ -1594,9 +1616,10 @@ mod tests {
                 .iter()
                 .find(|m| m.ik_sign_pub != ik(&me));
             assert_eq!(first.unwrap().ik_sign_pub, ik(&others[0]));
+            // Under P1: no session, and no list of his to start one.
             inner.ratchets.remove("bob");
             inner.associated_data.remove("bob");
-            inner.friends.get_mut("bob").unwrap().bundle.spk_sig = "00".repeat(64);
+            inner.friends.get_mut("bob").unwrap().devices = None;
         }
 
         let info = crate::groups::add_member(&state, &gid, "eve", |_| Ok(()))
@@ -1608,9 +1631,9 @@ mod tests {
             &state.inner.lock().await.groups[&gid],
             &ik(&eve)
         ));
-        // carol and dave get the roster; eve gets the handshake that opens
-        // her session, then the roster.
-        crate::nostr::test_relay::wait_until("the rosters", || relay.events().len() == 4).await;
+        // carol and dave get the roster. Eve, whose list nothing brought yet
+        // (a roster with certificates does, VI-6), cannot be reached either.
+        crate::nostr::test_relay::wait_until("the rosters", || relay.events().len() == 2).await;
         let mut reached: Vec<String> = relay
             .events()
             .iter()
@@ -1618,10 +1641,8 @@ mod tests {
             .collect();
         reached.sort();
         let mut expected = vec![
-            pub_hex(&others[1]),
-            pub_hex(&others[2]),
-            pub_hex(&eve),
-            pub_hex(&eve),
+            mailbox_hex(&state, "carol").await,
+            mailbox_hex(&state, "dave").await,
         ];
         expected.sort();
         assert_eq!(reached, expected);
@@ -1774,7 +1795,7 @@ mod tests {
             assert!(receipt.failed.is_empty(), "{:?}", receipt.failed);
         }
         wait_until("the forwards", || relay.events().len() == 6).await;
-        let carol = pub_hex(&others[1]);
+        let carol = mailbox_hex(&state, "carol").await;
         assert!(relay
             .events()
             .iter()

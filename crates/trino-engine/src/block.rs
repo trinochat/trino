@@ -677,11 +677,9 @@ mod tests {
     use super::*;
     use crate::group;
     use crate::groups::{
-        admit_event, ingest_incoming_roster, merge_group_members, take_group_invite, Admission,
-        RosterOutcome,
+        ingest_incoming_roster, merge_group_members, take_group_invite, RosterOutcome,
     };
     use crate::identity::{create_identity, Identity};
-    use crate::nostr::{build_and_sign_event, TRINO_KIND};
     use crate::requests::{self, Incoming, Via};
     use crate::session::fp;
     use crate::session::tests::{friend, ik, member, roster_of, NOW};
@@ -736,16 +734,16 @@ mod tests {
         BlockTarget::Contact(handle.to_string())
     }
 
-    fn event_from(sender: &Identity, me: &Identity) -> crate::nostr::NostrEvent {
-        build_and_sign_event(
-            &sender.nostr.priv_bytes,
-            &sender.nostr.pub_bytes,
-            TRINO_KIND,
-            "{}",
-            vec![vec!["p".to_string(), nostr_hex(me)]],
-            Some(NOW),
-        )
-        .unwrap()
+    /// Whether this session listens to `handle`'s mailboxes: P1's
+    /// admission, steps 2 and 3 (a blocked contact is not in the table).
+    fn listened_to(inner: &InnerState, handle: &str) -> bool {
+        let e = trino_core::p1::mailbox::epoch_of(NOW as u64);
+        let table = crate::mailboxes::table::Table::of(inner, e);
+        table.mailboxes().iter().any(|tag| {
+            table
+                .route(tag)
+                .is_some_and(|route| route.contact == handle)
+        })
     }
 
     /// An identity with `other`'s DH or Nostr key in its own bundle, its
@@ -876,14 +874,8 @@ mod tests {
         block(&mut inner, &contact("ana"), BlockOrigin::Contact, NOW).unwrap();
 
         // Their events get in only because of that group (R-04).
-        let mine = nostr_hex(&me);
-        let from_admin = admit_event(&mut inner, &event_from(&admin, &me), &mine);
-        let from_ana = admit_event(&mut inner, &event_from(&ana, &me), &mine);
-        assert!(
-            matches!(from_admin, Admission::Process(_)),
-            "{from_admin:?}"
-        );
-        assert!(matches!(from_ana, Admission::Drop(_)), "{from_ana:?}");
+        assert!(listened_to(&inner, "admin"));
+        assert!(!listened_to(&inner, "ana"));
         assert!(administers_a_group(&inner, &ik(&admin)));
         assert!(!administers_a_group(&inner, &ik(&ana)));
 
@@ -963,11 +955,7 @@ mod tests {
         assert_eq!(entry.nostr_pub, None, "not proven");
         assert!(entry.unproven.contains(&nostr_hex(&carol)));
         assert!(!inner.blocked.blocks_nostr(&nostr_hex(&carol)));
-        let out = admit_event(&mut inner, &event_from(&carol, &me), &nostr_hex(&me));
-        assert!(
-            matches!(&out, Admission::Process(f) if f.handle == "carol"),
-            "{out:?}"
-        );
+        assert!(listened_to(&inner, "carol"));
     }
 
     #[test]
@@ -1021,8 +1009,7 @@ mod tests {
         assert_eq!((of(&cami).ik_dh, of(&cami).nostr_pub), (None, None));
         assert_eq!(of(&cami).unproven.len(), 2);
         // Blocked anyway, by the identity key.
-        let out = admit_event(&mut inner, &event_from(&cami, &me), &nostr_hex(&me));
-        assert!(matches!(out, Admission::Drop(_)), "{out:?}");
+        assert!(!listened_to(&inner, "cami"));
     }
 
     // ---- Design test 11: someone who is not a contact ----
@@ -1134,8 +1121,7 @@ mod tests {
             NOW,
         );
         assert!(matches!(again, requests::Received::Dropped(_)));
-        let out = admit_event(&mut inner, &event_from(&ana, &me), &nostr_hex(&me));
-        assert!(matches!(out, Admission::Drop(_)), "{out:?}");
+        assert!(!listened_to(&inner, "ana"));
         // A request that is not there.
         let nobody = BlockTarget::Request(ik(&create_identity()));
         assert_eq!(
@@ -1191,13 +1177,12 @@ mod tests {
         request_from(&mut inner, &ana, "ana", Via::Name);
         requests::delete(&mut inner, &ik(&ana), NOW).unwrap();
 
-        let mine = nostr_hex(&me);
-        for (who, name) in [(&juan, "juan"), (&ana, "ana")] {
-            let out = admit_event(&mut inner, &event_from(who, &me), &mine);
-            assert!(matches!(out, Admission::Drop(_)), "{name}: {out:?}");
+        // Under P1 none of them has a mailbox here: nothing of theirs is
+        // even opened, and a stranger is no notice any more (R-27).
+        for name in ["juan", "ana", "nadie"] {
+            assert!(!listened_to(&inner, name), "{name}");
         }
-        let out = admit_event(&mut inner, &event_from(&nadie, &me), &mine);
-        assert!(matches!(out, Admission::Stranger), "{out:?}");
+        let _ = nadie;
     }
 
     #[test]
@@ -1395,7 +1380,7 @@ mod session_tests {
     use crate::nostr::test_relay::{wait_until, Answer, TestRelay};
     use crate::send::{send_group_text, send_text};
     use crate::session::handle_incoming_event;
-    use crate::session::tests::{add_session_read_by, friend, roster_of, sending_state, NOW};
+    use crate::session::tests::{add_session_read_by, roster_of, sending_state, NOW};
     use std::sync::Arc;
 
     #[tokio::test]
@@ -1411,9 +1396,8 @@ mod session_tests {
             let mut a = ana.inner.lock().await;
             let mut b = bob.inner.lock().await;
             let (ratchet, ad) = add_session_read_by(&mut a, &ana_id, &bob_id, "bob");
-            b.friends.insert("ana".into(), friend(&ana_id, "ana"));
-            b.ratchets.insert("ana".into(), ratchet);
-            b.associated_data.insert("ana".into(), ad);
+            let _ = ad;
+            ratchet.move_into(&mut b, "ana");
             a.groups.insert(gid.clone(), roster.clone());
             b.groups.insert(gid.clone(), roster.clone());
             let target = BlockTarget::Contact("ana".into());

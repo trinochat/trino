@@ -13,15 +13,12 @@ use crate::envelope::{encode_envelope, Envelope};
 use crate::events::EventSink;
 use crate::group::{self, GroupError, GroupRoster, MemberBundle, RosterDecision};
 use crate::identity::{decode_array_32, public_bundle_for, verify_bundle_binding, Identity};
-use crate::nostr::{NostrEvent, TRINO_KIND};
-use crate::ratchet::{init_responder, RatchetState};
 use crate::session::{
     dbg_log, ensure_session_inner, fp, group_convo, sanitize_roster, save_history,
-    send_cipher_inner, zeroize_file_ref, WireHandshake, CATCH_UP_WINDOW_SECS, CLOCK_SKEW_SECS,
+    send_cipher_inner, zeroize_file_ref, CATCH_UP_WINDOW_SECS, CLOCK_SKEW_SECS,
 };
 use crate::state::{FriendRecord, GroupInvite, HandshakeMark, InnerState};
 use crate::storage::persist_account;
-use crate::x3dh::{respond, InitialMessage, X3dhError};
 use crate::Engine;
 use serde::Serialize;
 use std::collections::HashMap;
@@ -110,70 +107,6 @@ pub fn group_info(roster: &GroupRoster, my_ik: &str) -> GroupInfo {
     }
 }
 
-/// What to do with a signature-verified event from a relay, decided before any
-/// of its content is looked at.
-#[derive(Debug)]
-pub enum Admission {
-    /// From a contact and not seen before: process it.
-    Process(Box<FriendRecord>),
-    /// From someone who is not a contact.
-    Stranger,
-    /// Ignore it; the reason is only for the log.
-    Drop(&'static str),
-}
-
-/// Checks run in this order, and the event id is remembered only at the very
-/// end:
-/// 1. kind and recipient (`my_pub`): a relay can feed us a contact's events
-///    addressed to someone else, such as group fan-out copies, which could
-///    never decrypt and would tear our session down;
-/// 2. blocked sender, then contact lookup: the dedup cache is bounded, so
-///    letting strangers' events in would let anyone flush it and replay a
-///    contact's old events past it.
-///
-/// Blocked means by identity (UR-2, `block.rs`): a blocked Nostr key, or a
-/// contact whose identity is blocked. A blocked contact who administers a
-/// group you are in still gets in, for that group's rosters only (R-04);
-/// `handle_incoming_event` reads nothing else of theirs.
-pub fn admit_event(inner: &mut InnerState, event: &NostrEvent, my_pub: &str) -> Admission {
-    if event.kind != TRINO_KIND {
-        return Admission::Drop("not a trino event");
-    }
-    if event.recipient() != Some(my_pub) {
-        return Admission::Drop("addressed to someone else");
-    }
-    let friend = inner
-        .friends
-        .values()
-        .find(|f| f.bundle.nostr_pub == event.pubkey)
-        .cloned();
-    let blocked = inner.blocked.blocks_nostr(&event.pubkey)
-        || friend
-            .as_ref()
-            .is_some_and(|f| crate::block::friend_blocked(inner, f));
-    let their_rosters = friend
-        .as_ref()
-        .is_some_and(|f| crate::block::administers_a_group(inner, &f.bundle.ik_sign_pub));
-    if blocked && !their_rosters {
-        return Admission::Drop("sender is blocked");
-    }
-    let Some(friend) = friend else {
-        // Someone blocked by a key nothing proved, or whose request you
-        // deleted: dropped as a stranger's, but without "intentó
-        // escribirte" (UR-2, UR-4).
-        if inner.blocked.names_unproven(&event.pubkey)
-            || inner.requests.deleted_nostr(&event.pubkey)
-        {
-            return Admission::Drop("blocked or a deleted request: no notice");
-        }
-        return Admission::Stranger;
-    };
-    if !inner.remember_event(event.id.clone()) {
-        return Admission::Drop("duplicate event (already seen from another relay)");
-    }
-    Admission::Process(Box::new(friend))
-}
-
 /// Why an incoming handshake was not allowed to (re)start a session.
 #[derive(Debug, PartialEq)]
 pub enum HandshakeRejection {
@@ -230,31 +163,6 @@ pub fn record_handshake(
     {
         mark.ek_pubs.push(ek_pub.to_string());
     }
-}
-
-/// Answer a contact's handshake: run X3DH as responder and start our ratchet.
-/// Returns the identity after the exchange (it may have consumed a one-time
-/// prekey), the ratchet and the associated data.
-///
-/// The ratchet starts from the signed prekey the handshake actually used,
-/// which after a rotation is often a retired one: the peer's ratchet starts
-/// from the public half of the prekey in the bundle it cached.
-pub fn respond_to_handshake(
-    identity: &Identity,
-    hs: &WireHandshake,
-) -> Result<(Identity, RatchetState, Vec<u8>), X3dhError> {
-    let mut identity = identity.clone();
-    let resp = respond(
-        &mut identity,
-        &InitialMessage {
-            ik_dh_pub: hs.ik_dh_pub.clone(),
-            ek_pub: hs.ek_pub.clone(),
-            spk_id: hs.spk_id,
-            opk_id: hs.opk_id,
-        },
-    )?;
-    let ratchet = init_responder(resp.master_secret, resp.spk_keypair);
-    Ok((identity, ratchet, resp.associated_data))
 }
 
 /// Where an incoming roster ended up. Produced by the pure
@@ -945,7 +853,7 @@ pub async fn send_roster(state: &Engine, roster: &GroupRoster, targets: &[String
     for handle in targets {
         let sent: Result<(), String> = async {
             ensure_session_inner(state, handle).await?;
-            send_cipher_inner(state, handle, &envelope, None).await
+            send_cipher_inner(state, handle, &envelope).await
         }
         .await;
         if sent.is_err() {
@@ -1619,9 +1527,6 @@ mod tests {
 
     use crate::group::roster_signing_bytes;
     use crate::identity::{ed25519_sign, generate_nostr_keypair, generate_x25519};
-    use crate::nostr::build_and_sign_event;
-    use crate::ratchet::{init_initiator, ratchet_decrypt, ratchet_encrypt};
-    use crate::x3dh::initiate;
 
     fn state_with(friends: &[FriendRecord]) -> InnerState {
         let mut inner = InnerState::default();
@@ -1961,96 +1866,6 @@ mod tests {
         );
     }
 
-    // ---- Admission of relay events (M1, H2 event cache) ----
-
-    fn nostr_hex(id: &Identity) -> String {
-        hex::encode(id.nostr.pub_bytes)
-    }
-
-    fn event_to(sender: &Identity, to: &str, kind: u32, created_at: i64) -> NostrEvent {
-        build_and_sign_event(
-            &sender.nostr.priv_bytes,
-            &sender.nostr.pub_bytes,
-            kind,
-            "{}",
-            vec![vec!["p".to_string(), to.to_string()]],
-            Some(created_at),
-        )
-        .unwrap()
-    }
-
-    #[test]
-    fn a_contacts_event_is_admitted_once() {
-        let (me, alice) = (create_identity(), create_identity());
-        let mut inner = state_with(&[friend(&alice, "alice")]);
-        let event = event_to(&alice, &nostr_hex(&me), TRINO_KIND, NOW);
-
-        let first = admit_event(&mut inner, &event, &nostr_hex(&me));
-        assert!(
-            matches!(&first, Admission::Process(f) if f.handle == "alice"),
-            "{first:?}"
-        );
-        let again = admit_event(&mut inner, &event, &nostr_hex(&me));
-        assert!(matches!(again, Admission::Drop(_)), "{again:?}");
-    }
-
-    #[test]
-    fn a_contacts_event_addressed_to_someone_else_is_dropped() {
-        // A group fan-out copy meant for another member, fed to us by a relay:
-        // trying to decrypt it would fail and tear our session down.
-        let (me, alice, carol) = (create_identity(), create_identity(), create_identity());
-        let mut inner = state_with(&[friend(&alice, "alice")]);
-        let event = event_to(&alice, &nostr_hex(&carol), TRINO_KIND, NOW);
-
-        let out = admit_event(&mut inner, &event, &nostr_hex(&me));
-        assert!(matches!(out, Admission::Drop(_)), "{out:?}");
-        assert!(inner.seen_events.is_empty());
-    }
-
-    #[test]
-    fn a_contacts_event_of_another_kind_is_dropped() {
-        let (me, alice) = (create_identity(), create_identity());
-        let mut inner = state_with(&[friend(&alice, "alice")]);
-        let event = event_to(&alice, &nostr_hex(&me), 1, NOW);
-
-        let out = admit_event(&mut inner, &event, &nostr_hex(&me));
-        assert!(matches!(out, Admission::Drop(_)), "{out:?}");
-        assert!(inner.seen_events.is_empty());
-    }
-
-    #[test]
-    fn strangers_events_never_enter_the_seen_cache() {
-        // Otherwise anyone can flush the bounded cache and replay our contacts'
-        // old events.
-        let (me, stranger) = (create_identity(), create_identity());
-        let mut inner = state_with(&[]);
-        for n in 0..3 {
-            let event = event_to(&stranger, &nostr_hex(&me), TRINO_KIND, NOW + n);
-            let out = admit_event(&mut inner, &event, &nostr_hex(&me));
-            assert!(matches!(out, Admission::Stranger), "{out:?}");
-        }
-        assert!(inner.seen_events.is_empty());
-        assert!(inner.seen_event_order.is_empty());
-    }
-
-    #[test]
-    fn blocked_contacts_events_never_enter_the_seen_cache() {
-        let (me, alice) = (create_identity(), create_identity());
-        let mut inner = state_with(&[friend(&alice, "alice")]);
-        inner
-            .blocked
-            .insert(crate::block::BlockedIdentity::before_ur2(
-                nostr_hex(&alice),
-                None,
-                NOW,
-            ));
-        let event = event_to(&alice, &nostr_hex(&me), TRINO_KIND, NOW);
-
-        let out = admit_event(&mut inner, &event, &nostr_hex(&me));
-        assert!(matches!(out, Admission::Drop(_)), "{out:?}");
-        assert!(inner.seen_events.is_empty());
-    }
-
     // ---- Handshake replay gate (H2) ----
 
     #[test]
@@ -2127,40 +1942,5 @@ mod tests {
         }
         assert!(judge_handshake(marks.get("alice"), NOW, "ek-extra", NOW).is_err());
         assert_eq!(marks["alice"].ek_pubs.len(), MAX_SAME_SECOND_HANDSHAKES);
-    }
-
-    // ---- Responder ratchet after a prekey rotation (H1) ----
-
-    #[test]
-    fn a_handshake_from_a_bundle_cached_before_rotation_decrypts() {
-        let alice = create_identity();
-        let mut bob = create_identity();
-        let cached = public_bundle_for(&bob);
-        let rotate_at = bob.signed_prekey.created_at + crate::identity::SPK_ROTATION_SECS;
-        assert!(crate::identity::rotate_signed_prekey_if_due(
-            &mut bob, rotate_at
-        ));
-
-        // Alice opens a session from the bundle she cached, as connect_node does.
-        let init = initiate(&alice, &cached).unwrap();
-        let spk_pub = decode_array_32(&cached.spk_pub).unwrap();
-        let mut alice_ratchet = init_initiator(init.master_secret, spk_pub).unwrap();
-        let first = ratchet_encrypt(
-            &mut alice_ratchet,
-            b"__trino_handshake__",
-            &init.associated_data,
-        )
-        .unwrap();
-        let hs = WireHandshake {
-            ik_dh_pub: init.message.ik_dh_pub,
-            ek_pub: init.message.ek_pub,
-            spk_id: init.message.spk_id,
-            opk_id: init.message.opk_id,
-        };
-
-        let (_bob, mut bob_ratchet, ad) = respond_to_handshake(&bob, &hs).unwrap();
-        let plain = ratchet_decrypt(&mut bob_ratchet, &first, &ad)
-            .expect("the first message of the new session must decrypt");
-        assert_eq!(plain, b"__trino_handshake__");
     }
 }
