@@ -10,4 +10,5 @@
 //! the plans these functions give.
 
 pub mod clock;
+pub mod pad;
 pub mod table;
