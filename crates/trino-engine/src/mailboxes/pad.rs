@@ -64,7 +64,7 @@ impl Padding {
         if real.is_empty() && used == 0 {
             return Vec::new();
         }
-        while (real.len() + used) % PAD_MULTIPLE != 0 {
+        while !(real.len() + used).is_multiple_of(PAD_MULTIPLE) {
             used += 1;
         }
         self.used = u32::try_from(used).unwrap_or(u32::MAX);
@@ -145,8 +145,8 @@ mod tests {
         for n in [1u8, 5, 15, 16, 17, 40] {
             let real = reals(n);
             let list = pad.fill(&real);
-            assert_eq!(list.len() % PAD_MULTIPLE, 0, "{n}");
-            assert!(list.len() >= real.len() + 1 || real.len() % PAD_MULTIPLE == 0);
+            assert!(list.len().is_multiple_of(PAD_MULTIPLE), "{n}");
+            assert!(list.len() > real.len() || real.len().is_multiple_of(PAD_MULTIPLE));
             for value in list.iter().filter(|value| !real.contains(value)) {
                 XOnlyPublicKey::from_slice(value).expect("a valid x-only point");
             }
@@ -184,7 +184,7 @@ mod tests {
         for n in [5u8, 6, 4, 20, 3] {
             let real = reals(n);
             let list = pad.fill(&real);
-            assert_eq!(list.len() % PAD_MULTIPLE, 0);
+            assert!(list.len().is_multiple_of(PAD_MULTIPLE));
             let padding: HashSet<_> = list.iter().filter(|v| !real.contains(v)).copied().collect();
             assert!(
                 seen_padding.is_subset(&padding),
