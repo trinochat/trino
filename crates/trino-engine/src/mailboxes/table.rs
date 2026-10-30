@@ -142,7 +142,7 @@ impl Table {
             .collect();
         friends.sort_by(|a, b| a.added_at.cmp(&b.added_at).then(a.handle.cmp(&b.handle)));
         let peers = friends.into_iter().filter_map(|friend| {
-            let dh = decode_array_32(&friend.bundle.ik_dh_pub).ok()?;
+            let dh = crate::device::peer_device_dh(friend)?;
             let sessions = inner
                 .ratchets
                 .get(&friend.handle)

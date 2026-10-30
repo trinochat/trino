@@ -1471,6 +1471,7 @@ pub(crate) mod tests {
             key_changed_at: None,
             via_group: None,
             accepted_at: Some(0),
+            devices: None,
         }
     }
 

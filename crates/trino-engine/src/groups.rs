@@ -552,6 +552,7 @@ pub fn merge_group_members(
                 via_group: Some(roster.group_id.clone()),
                 // UR-3: limited until you accept them (`group_contacts.rs`).
                 accepted_at: None,
+                devices: None,
             },
         );
     }
@@ -1065,6 +1066,7 @@ mod tests {
             key_changed_at: None,
             via_group: None,
             accepted_at: Some(0),
+            devices: None,
         }
     }
 

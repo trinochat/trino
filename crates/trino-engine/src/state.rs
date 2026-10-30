@@ -234,6 +234,15 @@ pub struct FriendRecord {
     /// none, and reads as accepted (U6, `ACCEPTED_BEFORE_UR3`).
     #[serde(default = "accepted_before_ur3")]
     pub accepted_at: Option<i64>,
+    /// The contact's account under P1 (`device.rs`): the chain of its
+    /// device lists and its newest prekeys. `None` until its first list
+    /// arrives; left out for a contact of before P1.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        with = "crate::device::serde_peer"
+    )]
+    pub devices: Option<crate::device::PeerDevices>,
 }
 
 /// What `accepted_at` says of a contact kept before UR-3: accepted, at a

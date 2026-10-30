@@ -178,6 +178,7 @@ mod tests {
                     key_changed_at: None,
                     via_group: Some("g1".into()),
                     accepted_at: None,
+                    devices: None,
                 },
             );
         }
