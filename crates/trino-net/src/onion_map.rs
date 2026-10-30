@@ -18,11 +18,12 @@ pub const ONION_DEADLINE: Duration = Duration::from_secs(45);
 /// - relay.trinochat.org: Trino's own relay, whose onion was deployed on
 ///   10 Oct 2026 (trino-infra docs/spec.md §5).
 /// - nostr.oxtr.dev: the onion its web server announces in
-///   `Onion-Location` (9 Oct 2026). Through Tor exits it answered 4 times
-///   in 15 (spike S6), so it is only worth it by its onion; that its onion
-///   serves the relay is not checked yet, so it is not a default relay
-///   (decision 13 as of 14 Oct), and a person who adds it falls back to
-///   its domain through Tor.
+///   `Onion-Location` (9 Oct 2026). Through Tor exits its domain answered
+///   4 times in 15 (spike S6) and 1 in 3 on 29 Oct, so it is worth it by
+///   its onion: on 29 Oct the onion connected 4 times in 4 and passed the
+///   whole P1 battery of the relay spike (`spike-relays.md`, third part).
+///   It is a default relay since then (decision 13 as of 29 Oct); if the
+///   onion fails, its domain is tried through Tor.
 const ONIONS: &[(&str, &str)] = &[
     (
         "wss://relay.trinochat.org",

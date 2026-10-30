@@ -341,38 +341,64 @@ pub fn tor_home() -> PathBuf {
     trino_home().join(TOR_DIR)
 }
 
-/// The relays of a new account (Tor design decision 13, as updated on 14
-/// Oct 2026): none behind Cloudflare, which also fronts TURN and would see
-/// a call's IP next to the account's traffic (R-02); all three answered
-/// through Tor exits 9 or 10 times in 10 (spike S6). relay.damus.io only if
-/// the person adds it; nostr.oxtr.dev only by its onion once checked;
-/// offchain.pub not at all (0 in 15 through Tor).
+/// The relays of a new account (Tor design decision 13, as updated on 29
+/// Oct 2026 with David's approval): the ones the relay spike of 29 Oct
+/// (`research_notes/P1 metadatos/spike-relays.md`, third part) measured
+/// through Tor serving P1, none behind Cloudflare, which also fronts TURN
+/// and would see a call's IP next to the account's traffic (R-02).
+///
+/// - nostr.oxtr.dev, nostr.21crypto.ch, freelay.sovbit.host and
+///   relay.notoshi.win took 1059 up to 40 KiB and 21059 with an
+///   expiration, kept the 21059, honoured NIP-40 and paged right with
+///   `until`. Through Tor, oxtr is reached by its onion (4 of 4 that
+///   night); its domain hardly answers through exits.
+/// - relay.westernbtc.com, for mailboxes only: it asks to sign up for
+///   21059, which the engine learns the first times (`RelayCaps::writable`)
+///   and stops sending there.
+///
+/// The spike S6 of 14 Oct had nos.lol, relay.snort.social and nostr.mom
+/// answering through Tor exits 9 or 10 times in 10; on 29 Oct nos.lol and
+/// nostr.mom did not connect through Tor at all, and relay.snort.social
+/// broke `until` paging and ignored NIP-40. relay.damus.io only if the
+/// person adds it (its AUTH for reading 1059 fails); offchain.pub not at
+/// all (0 in 15 through Tor).
 pub fn default_relays() -> Vec<String> {
     vec![
-        "wss://nos.lol".to_string(),
-        "wss://relay.snort.social".to_string(),
-        "wss://nostr.mom".to_string(),
+        "wss://nostr.oxtr.dev".to_string(),
+        "wss://nostr.21crypto.ch".to_string(),
+        "wss://freelay.sovbit.host".to_string(),
+        "wss://relay.notoshi.win".to_string(),
+        "wss://relay.westernbtc.com".to_string(),
     ]
 }
 
-/// What `default_relays` was before decision 13. No screen ever let anyone
-/// choose relays, so an account holding exactly these has the old
-/// defaults, not a choice.
-const EARLIER_DEFAULT_RELAYS: [&str; 3] = [
-    "wss://relay.damus.io",
-    "wss://nos.lol",
-    "wss://relay.snort.social",
+/// What `default_relays` was before: before decision 13, and from 14 Oct
+/// 2026. No screen ever let anyone choose relays, so an account holding
+/// exactly one of these has old defaults, not a choice.
+const EARLIER_DEFAULT_RELAYS: [[&str; 3]; 2] = [
+    [
+        "wss://relay.damus.io",
+        "wss://nos.lol",
+        "wss://relay.snort.social",
+    ],
+    [
+        "wss://nos.lol",
+        "wss://relay.snort.social",
+        "wss://nostr.mom",
+    ],
 ];
 
 /// The relays a session connects to: the account's own, except none or
-/// the old defaults, which become today's (decision 13 is for everyone,
-/// design §17.2). Old and new share nos.lol and relay.snort.social, so
-/// contacts on an earlier version are still reached.
+/// old defaults, which become today's (decision 13 is for everyone,
+/// design §17.2). The defaults of 29 Oct share no relay with the earlier
+/// ones: P1 changes the protocol anyway, and 0.1.0 was never published.
 pub fn relays_to_use(account: &[String]) -> Vec<String> {
-    let earlier = account.len() == EARLIER_DEFAULT_RELAYS.len()
-        && EARLIER_DEFAULT_RELAYS
-            .iter()
-            .all(|relay| account.iter().any(|own| own == relay));
+    let earlier = EARLIER_DEFAULT_RELAYS.iter().any(|old| {
+        account.len() == old.len()
+            && old
+                .iter()
+                .all(|relay| account.iter().any(|own| own == relay))
+    });
     if account.is_empty() || earlier {
         default_relays()
     } else {
@@ -415,25 +441,31 @@ mod tests {
         );
     }
 
-    /// Tor design decision 13, as updated on 14 Oct 2026 (spike S6).
+    /// Tor design decision 13, as updated on 29 Oct 2026 (the relay spike,
+    /// third part; approved by David).
     #[test]
-    fn the_default_relays_are_none_behind_cloudflare() {
+    fn the_default_relays_are_the_ones_p1_was_measured_on_through_tor() {
         assert_eq!(
             default_relays(),
             [
-                "wss://nos.lol",
-                "wss://relay.snort.social",
-                "wss://nostr.mom"
+                "wss://nostr.oxtr.dev",
+                "wss://nostr.21crypto.ch",
+                "wss://freelay.sovbit.host",
+                "wss://relay.notoshi.win",
+                "wss://relay.westernbtc.com",
             ]
         );
         for relay in default_relays() {
             assert!(!relay.contains("damus"), "damus only if added by hand");
             assert!(!relay.contains("offchain"));
-            assert!(
-                !relay.contains("oxtr"),
-                "oxtr only by its onion, once checked"
-            );
+            assert!(!relay.contains("primal"), "behind Cloudflare");
+            for gone in ["nos.lol", "snort", "nostr.mom"] {
+                assert!(!relay.contains(gone), "{gone} failed P1 through Tor");
+            }
         }
+        // Through Tor, oxtr is reached by its onion: its domain hardly
+        // answers through exits.
+        assert!(trino_net::onion_map::onion_of("wss://nostr.oxtr.dev").is_some());
     }
 
     #[test]
@@ -455,5 +487,27 @@ mod tests {
         assert_eq!(relays_to_use(&own), own);
         let more = [earlier.to_vec(), vec!["wss://nostr.mom".to_string()]].concat();
         assert_eq!(relays_to_use(&more), more);
+    }
+
+    /// The defaults of 14 Oct 2026 (decision 13 then) were never a choice
+    /// either: an account created with them gets today's.
+    #[test]
+    fn an_account_with_the_defaults_of_14_oct_gets_todays() {
+        let october = [
+            "wss://nos.lol",
+            "wss://relay.snort.social",
+            "wss://nostr.mom",
+        ]
+        .map(String::from);
+        assert_eq!(relays_to_use(&october), default_relays());
+        let mut shuffled = october.to_vec();
+        shuffled.rotate_left(1);
+        assert_eq!(relays_to_use(&shuffled), default_relays());
+        // Two of them are not the defaults: they are the account's own.
+        assert_eq!(relays_to_use(&october[..2]), october[..2].to_vec());
+        // Nor today's defaults in another order.
+        let mut today = default_relays();
+        today.reverse();
+        assert_eq!(relays_to_use(&today), today);
     }
 }

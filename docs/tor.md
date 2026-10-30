@@ -210,11 +210,17 @@ a mano.
 
 ## Relays por defecto
 
-nos.lol, relay.snort.social y nostr.mom: ninguno detrás de Cloudflare, que
-también ve las llamadas, y los tres respondieron por Tor 9 o 10 veces de 10
-(spike S6). relay.damus.io solo si lo agregas; una cuenta con los tres de
-antes (damus, nos.lol y snort) pasa a los nuevos, con los que comparte nos.lol
-y snort.
+Desde el 29 oct 2026: nostr.oxtr.dev (con Tor, por su onion),
+nostr.21crypto.ch, freelay.sovbit.host, relay.notoshi.win y
+relay.westernbtc.com (este solo para buzones: pide registrarse para los
+21059, y el motor lo aprende y deja de mandarlos ahí). Ninguno está detrás de
+Cloudflare, que también ve las llamadas, y los cinco sirvieron para P1 por Tor
+en la prueba de esa noche. Los de antes (nos.lol, relay.snort.social y
+nostr.mom) habían respondido por Tor 9 o 10 veces de 10 en el spike S6, pero
+el 29 oct nos.lol y nostr.mom no conectaron por Tor y snort rompía la
+paginación. relay.damus.io solo si lo agregas. Una cuenta con cualquiera de
+las listas de antes (damus, nos.lol y snort; o nos.lol, snort y nostr.mom)
+pasa a la nueva.
 
 ## Puentes (TOR-7)
 
