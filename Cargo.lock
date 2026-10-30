@@ -8344,13 +8344,14 @@ dependencies = [
 [[package]]
 name = "trino-core"
 version = "0.1.0"
-source = "git+https://github.com/trinochat/trino-core?rev=b5a7782d212af380a76d0c595bc9f1e12ba16b0f#b5a7782d212af380a76d0c595bc9f1e12ba16b0f"
+source = "git+https://github.com/trinochat/trino-core?rev=c6b3eda8ef26b9697bf79fd419f9115c98187c5d#c6b3eda8ef26b9697bf79fd419f9115c98187c5d"
 dependencies = [
  "aes-gcm",
  "argon2",
  "base64 0.22.1",
  "chacha20 0.9.1",
  "chrono",
+ "curve25519-dalek",
  "ed25519-dalek",
  "hex",
  "hkdf",
@@ -8366,6 +8367,7 @@ dependencies = [
  "serde_json",
  "sha1",
  "sha2",
+ "subtle",
  "thiserror 1.0.69",
  "x25519-dalek",
  "zeroize",
