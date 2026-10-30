@@ -11,4 +11,5 @@
 
 pub mod clock;
 pub mod pad;
+pub mod schedule;
 pub mod table;
