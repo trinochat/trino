@@ -30,9 +30,13 @@ pub const RATE_LIMIT_MAX: Duration = Duration::from_secs(30 * 60);
 pub const BAN_FIRST: Duration = Duration::from_secs(10 * 60);
 pub const BAN_MAX: Duration = Duration::from_secs(6 * 3600);
 /// The pace between sends grows by this factor at most.
-pub const MAX_PACE_FACTOR: u32 = 16;
+pub const MAX_PACE_FACTOR: u32 = 256;
 /// Acceptances in a row that halve the pace factor again.
-pub const PACE_RELAX_AFTER: u32 = 20;
+pub const PACE_RELAX_AFTER: u32 = 50;
+/// Each throttle multiplies the pace factor by this: two in a row slow a
+/// burst of 32 every 100 ms (the default) down to 2 every 1.6 s, before a
+/// relay that bans at the third gets there.
+pub const PACE_STRETCH: u32 = 4;
 
 /// Why a relay refused a query or an event, from its NIP-01 prefix.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -102,6 +106,8 @@ struct State {
     throttles: BTreeMap<Option<u32>, Throttle>,
     pace_factor: u32,
     accepted_in_a_row: u32,
+    /// Kinds it has taken at least once.
+    accepted_kinds: std::collections::BTreeSet<u32>,
     keepalive: Option<Duration>,
 }
 
@@ -204,7 +210,16 @@ impl RelayCaps {
             .min(max);
         let until = now + wait;
         state.throttles.insert(key, Throttle { until, streak });
-        state.pace_factor = (state.pace_factor.max(1) * 2).min(MAX_PACE_FACTOR);
+        // A kind refused from its first event is refused as a kind (one
+        // relay in the spike did that with 21059): only that kind waits.
+        let a_pace = ban || kind.is_none_or(|kind| state.accepted_kinds.contains(&kind));
+        if a_pace {
+            state.pace_factor = state
+                .pace_factor
+                .max(1)
+                .saturating_mul(PACE_STRETCH)
+                .min(MAX_PACE_FACTOR);
+        }
         state.accepted_in_a_row = 0;
         if ban {
             Throttled::Banned(until)
@@ -219,6 +234,7 @@ impl RelayCaps {
         let mut state = self.state();
         if let Some(kind) = kind {
             state.throttles.remove(&Some(kind));
+            state.accepted_kinds.insert(kind);
         }
         state.accepted_in_a_row += 1;
         if state.accepted_in_a_row >= PACE_RELAX_AFTER {
@@ -344,8 +360,9 @@ mod tests {
         let caps = RelayCaps::new();
         let now = Instant::now();
         assert_eq!(caps.pace_gap(S), S);
+        caps.event_accepted(Some(1059));
         caps.event_refused(Some(1059), "rate-limited: x", now);
-        assert_eq!(caps.pace_gap(S), 2 * S);
+        assert_eq!(caps.pace_gap(S), PACE_STRETCH * S);
         for _ in 0..10 {
             caps.event_refused(Some(1059), "rate-limited: x", now);
         }
@@ -354,6 +371,23 @@ mod tests {
             caps.event_accepted(Some(1059));
         }
         assert_eq!(caps.pace_gap(S), MAX_PACE_FACTOR / 2 * S);
+        caps.event_refused(None, "banned: x", now);
+        assert_eq!(caps.pace_gap(S), MAX_PACE_FACTOR * S);
+    }
+
+    #[test]
+    fn a_kind_refused_from_its_first_event_does_not_slow_the_others() {
+        // A relay that rate-limits every event of a kind, even the first
+        // one on a quiet connection, refuses the kind: not a pace.
+        let caps = RelayCaps::new();
+        let now = Instant::now();
+        for _ in 0..5 {
+            caps.event_refused(Some(21059), "rate-limited: slow down matey", now);
+        }
+        assert_eq!(caps.pace_gap(S), S);
+        assert!(caps.write_blocked(21059, now).is_some());
+        caps.event_refused(None, "rate-limited: of an unknown kind", now);
+        assert_eq!(caps.pace_gap(S), PACE_STRETCH * S);
     }
 
     #[test]

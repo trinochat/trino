@@ -1,11 +1,11 @@
 use crate::crypto::sha256;
-use crate::relay_caps::RelayCaps;
+use crate::relay_caps::{RelayCaps, Throttled};
 use futures_util::future::BoxFuture;
 use futures_util::{SinkExt, StreamExt};
 use secp256k1::{Keypair, Message as SecpMessage, Secp256k1};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex as StdMutex};
 use std::time::{Duration, Instant};
@@ -679,6 +679,26 @@ pub fn relay_deadline(url: &str) -> Duration {
     trino_net::onion_map::relay_deadline(url, CONNECT_DEADLINE)
 }
 
+/// How fast a client sends events to one relay: up to `burst` at once,
+/// then one every `gap`. After the relay throttles, the gap stretches and
+/// the burst shrinks by the same factor (`RelayCaps::pace_gap`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Pace {
+    pub burst: u32,
+    pub gap: Duration,
+}
+
+/// The pace by default: 32 at once, then 10 a second, so the copies of a
+/// group of 96 still go out within a send's 10 s. A relay that throttles
+/// stretches it (`relay_caps::PACE_STRETCH`): in the relay spike one
+/// rate-limited after about 6 events in 10 s and banned at the third time,
+/// and 4 s apart, 9 of 9 went through. The planner of P1-11 spreads a
+/// group's copies on top of this.
+pub const PACE: Pace = Pace {
+    burst: 32,
+    gap: Duration::from_millis(100),
+};
+
 /// How long a REQ may go unanswered. Through Tor the relays of the spike
 /// sent EOSE within 5 s, and a REQ goes out only once the socket is up.
 pub const ANSWER_DEADLINE: Duration = Duration::from_secs(60);
@@ -719,6 +739,8 @@ pub struct ClientOptions {
     /// subscription is CLOSEd and dropped, and its kinds are marked
     /// unanswered in `caps`. `None` waits for ever.
     pub answer_deadline: Option<Duration>,
+    /// How fast events go out to the relay.
+    pub pace: Pace,
 }
 
 impl ClientOptions {
@@ -735,6 +757,7 @@ impl ClientOptions {
             quiet: false,
             caps: RelayCaps::new(),
             answer_deadline: Some(ANSWER_DEADLINE),
+            pace: PACE,
         }
     }
 }
@@ -793,6 +816,10 @@ pub enum Ack {
     Accepted,
     /// The relay refused it.
     Rejected,
+    /// The relay is throttling us (`rate-limited:` or `banned:`), now or
+    /// for a while: it was refused, or not sent. Keep it, and try another
+    /// relay, or this one once `RelayCaps::write_blocked` says so.
+    Throttled,
     /// No answer in time, or no socket to ask on.
     NoAnswer,
 }
@@ -823,8 +850,55 @@ fn is_duplicate(message: Option<&str>) -> bool {
     message.is_some_and(|message| message.starts_with("duplicate:"))
 }
 
+/// An EVENT waiting to go out.
+struct Outgoing {
+    payload: String,
+    /// Not sent once this has passed: nobody waits for its answer.
+    expires: Option<Instant>,
+}
+
+/// The events a client may still send right away (a token bucket):
+/// `Pace::burst` at most, one more every gap.
+struct Bucket {
+    tokens: u32,
+    /// When the last token was counted in.
+    since: Instant,
+}
+
+impl Bucket {
+    fn full(burst: u32) -> Self {
+        Bucket {
+            tokens: burst,
+            since: Instant::now(),
+        }
+    }
+
+    /// When the next event may go out with this `burst` and `gap`.
+    fn ready_at(&mut self, burst: u32, gap: Duration, now: Instant) -> Instant {
+        let gap = gap.max(Duration::from_micros(1));
+        let earned = (now.saturating_duration_since(self.since).as_nanos() / gap.as_nanos())
+            .min(u128::from(u32::MAX)) as u32;
+        if earned > 0 {
+            self.tokens = self.tokens.saturating_add(earned).min(burst);
+            self.since += gap * earned;
+        }
+        if self.tokens >= burst {
+            self.since = now;
+        }
+        if self.tokens > 0 {
+            now
+        } else {
+            self.since + gap
+        }
+    }
+
+    fn take(&mut self) {
+        self.tokens = self.tokens.saturating_sub(1);
+    }
+}
+
 enum ClientCommand {
-    Send(String),
+    Send(Outgoing),
     Subscribe(Subscription),
     /// CLOSE a subscription and forget it.
     Unsubscribe(String),
@@ -919,8 +993,18 @@ impl NostrClient {
     }
 
     /// Send `event`, or keep it until the relay is up again: at most
-    /// `MAX_QUEUED_WHILE_DOWN` of them while it is down.
+    /// `MAX_QUEUED_WHILE_DOWN` of them while it is down. It goes out at the
+    /// client's pace (`ClientOptions::pace`).
     pub async fn publish(&self, event: &NostrEvent) -> Result<(), NostrError> {
+        self.publish_until(event, None)
+    }
+
+    /// `publish`, dropped instead of sent if its turn comes after `expires`.
+    fn publish_until(
+        &self,
+        event: &NostrEvent,
+        expires: Option<Instant>,
+    ) -> Result<(), NostrError> {
         if !self.is_connected() && self.queued.load(Ordering::SeqCst) >= MAX_QUEUED_WHILE_DOWN {
             return Err(NostrError::Send(
                 "the relay is down and keeps no more events".to_string(),
@@ -929,7 +1013,7 @@ impl NostrClient {
         let payload = serde_json::json!(["EVENT", event]).to_string();
         self.queued.fetch_add(1, Ordering::SeqCst);
         self.sender
-            .send(ClientCommand::Send(payload))
+            .send(ClientCommand::Send(Outgoing { payload, expires }))
             .map_err(|e| {
                 self.queued.fetch_sub(1, Ordering::SeqCst);
                 NostrError::Send(e.to_string())
@@ -937,21 +1021,56 @@ impl NostrClient {
         Ok(())
     }
 
-    /// Publish `event` and wait up to `wait` for this relay's OK (K4).
+    /// Publish `event` and wait up to `wait` for this relay's OK (K4). An
+    /// event still waiting its turn (`ClientOptions::pace`) when `wait` is
+    /// over is never sent: a send shown as failed does not go out later.
+    ///
+    /// The answer teaches the relay's `caps`: a `rate-limited:` holds that
+    /// kind back, a `banned:` every kind, for a while that grows each time
+    /// in a row, and both stretch the pace (`RelayCaps::event_refused`).
+    /// While held back, an event is not sent at all: `Ack::Throttled`.
     pub async fn publish_acked(&self, event: &NostrEvent, wait: Duration) -> Ack {
+        let kind = Some(event.kind);
+        if self
+            .caps
+            .write_blocked(event.kind, Instant::now())
+            .is_some()
+        {
+            return Ack::Throttled;
+        }
         let (answer, answered) = oneshot::channel();
         lock_pending(&self.pending_ok).insert(event.id.clone(), answer);
         let _waiting = PendingOk {
             pending: &self.pending_ok,
             id: &event.id,
         };
-        if self.publish(event).await.is_err() {
+        if self
+            .publish_until(event, Some(Instant::now() + wait))
+            .is_err()
+        {
             return Ack::NoAnswer;
         }
         match tokio::time::timeout(wait, answered).await {
-            Ok(Ok((true, _))) => Ack::Accepted,
-            Ok(Ok((false, message))) if is_duplicate(message.as_deref()) => Ack::Accepted,
-            Ok(Ok((false, _))) => Ack::Rejected,
+            Ok(Ok((true, _))) => {
+                self.caps.event_accepted(kind);
+                Ack::Accepted
+            }
+            Ok(Ok((false, message))) if is_duplicate(message.as_deref()) => {
+                self.caps.event_accepted(kind);
+                Ack::Accepted
+            }
+            Ok(Ok((false, message))) => {
+                let message = message.unwrap_or_default();
+                match self.caps.event_refused(kind, &message, Instant::now()) {
+                    Throttled::No => Ack::Rejected,
+                    Throttled::RateLimited(_) | Throttled::Banned(_) => {
+                        if !self.quiet {
+                            dlog("EVENT refused: the relay is throttling");
+                        }
+                        Ack::Throttled
+                    }
+                }
+            }
             // The deadline, or a connection task that ended.
             Ok(Err(_)) | Err(_) => Ack::NoAnswer,
         }
@@ -1097,6 +1216,12 @@ impl Connection {
             answer_deadline: self.options.answer_deadline,
             ..Default::default()
         };
+        // Events taken from the channel, waiting their turn; kept across
+        // sockets like the channel itself.
+        let mut outbox = Outbox {
+            events: VecDeque::new(),
+            bucket: Bucket::full(self.options.pace.burst),
+        };
         let mut route = self.options.route.clone();
         // A socket handed in was opened the way the route says now.
         let mut next = first.map(|ws| (ws, route.as_mut().map(|r| *r.borrow_and_update())));
@@ -1116,7 +1241,14 @@ impl Connection {
             backoff = self.options.reconnection;
             self.set_connected(true);
             let end = self
-                .serve(ws, &mut book, &mut receiver, &mut route, opened)
+                .serve(
+                    ws,
+                    &mut book,
+                    &mut outbox,
+                    &mut receiver,
+                    &mut route,
+                    opened,
+                )
                 .await;
             self.set_connected(false);
             match end {
@@ -1126,6 +1258,44 @@ impl Connection {
                 Served::Moved => at_once = true,
             }
         }
+    }
+
+    /// The pace now: the options', stretched by what the relay did.
+    fn pace(&self) -> (u32, Duration) {
+        let base = self.options.pace;
+        let gap = self.options.caps.pace_gap(base.gap);
+        let factor = (gap.as_nanos() / base.gap.as_nanos().max(1)).max(1);
+        let burst = (u128::from(base.burst) / factor).max(1) as u32;
+        (burst, gap)
+    }
+
+    /// When the next queued event may go out; `None` with nothing queued.
+    fn next_turn(&self, outbox: &mut Outbox) -> Option<Instant> {
+        if outbox.events.is_empty() {
+            return None;
+        }
+        let (burst, gap) = self.pace();
+        Some(outbox.bucket.ready_at(burst, gap, Instant::now()))
+    }
+
+    /// The next event to send, if its turn has come: the ones whose answer
+    /// nobody waits for any more are dropped on the way.
+    fn take_turn(&self, outbox: &mut Outbox) -> Option<String> {
+        let now = Instant::now();
+        let (burst, gap) = self.pace();
+        if outbox.bucket.ready_at(burst, gap, now) > now {
+            return None;
+        }
+        while let Some(outgoing) = outbox.events.pop_front() {
+            self.queued.fetch_sub(1, Ordering::SeqCst);
+            if outgoing.expires.is_some_and(|expires| expires <= now) {
+                self.note("EVENT dropped: its answer is no longer awaited");
+                continue;
+            }
+            outbox.bucket.take();
+            return Some(outgoing.payload);
+        }
+        None
     }
 
     /// Keep `connected` and tell `on_state`, on changes only.
@@ -1204,6 +1374,7 @@ impl Connection {
         &self,
         ws: WsStream,
         book: &mut SubscriptionBook,
+        outbox: &mut Outbox,
         receiver: &mut mpsc::UnboundedReceiver<ClientCommand>,
         route: &mut Option<watch::Receiver<Mode>>,
         opened: Option<Mode>,
@@ -1217,6 +1388,7 @@ impl Connection {
         ping.tick().await; // discard the immediate first tick
         loop {
             let due = book.next_due();
+            let turn = self.next_turn(outbox);
             tokio::select! {
                 incoming = read.next() => match incoming {
                     Some(Ok(Message::Text(text))) => {
@@ -1249,10 +1421,14 @@ impl Connection {
                     }
                 },
                 cmd = receiver.recv() => match cmd {
-                    Some(ClientCommand::Send(text)) => {
-                        self.queued.fetch_sub(1, Ordering::SeqCst);
-                        if write.send(Message::Text(text)).await.is_err() {
-                            return Served::Dropped; // socket dead → reconnect
+                    Some(ClientCommand::Send(outgoing)) => {
+                        outbox.events.push_back(outgoing);
+                        // At once, if its turn has come: a timer would add
+                        // a tick to each event.
+                        while let Some(outgoing) = self.take_turn(outbox) {
+                            if write.send(Message::Text(outgoing)).await.is_err() {
+                                return Served::Dropped; // socket dead → reconnect
+                            }
                         }
                     }
                     Some(ClientCommand::Subscribe(sub)) => {
@@ -1271,10 +1447,25 @@ impl Connection {
                         }
                     }
                     Some(ClientCommand::Close) | None => {
+                        // What is queued goes out before the close.
+                        let now = Instant::now();
+                        while let Some(outgoing) = outbox.events.pop_front() {
+                            self.queued.fetch_sub(1, Ordering::SeqCst);
+                            if outgoing.expires.is_none_or(|expires| expires > now) {
+                                let _ = write.send(Message::Text(outgoing.payload)).await;
+                            }
+                        }
                         let _ = write.close().await;
                         return Served::Closed; // shut down for good
                     }
                 },
+                () = until_due(turn) => {
+                    while let Some(outgoing) = self.take_turn(outbox) {
+                        if write.send(Message::Text(outgoing)).await.is_err() {
+                            return Served::Dropped; // socket dead → reconnect
+                        }
+                    }
+                }
                 () = until_due(due) => {
                     for (close, kinds) in book.expire(Instant::now()) {
                         self.note("REQ unanswered in time, closed");
@@ -1302,6 +1493,12 @@ impl Connection {
 /// Resolves once the client is closed, or dropped.
 async fn until_closed(closed: &mut watch::Receiver<bool>) {
     let _ = closed.wait_for(|closed| *closed).await;
+}
+
+/// The events a client's connection task holds until their turn.
+struct Outbox {
+    events: VecDeque<Outgoing>,
+    bucket: Bucket,
 }
 
 /// How serving a socket ended.
@@ -1480,6 +1677,8 @@ pub mod test_relay {
         /// A filter with both `until` and `limit` gets only the events whose
         /// `created_at` is exactly `until`: short pages.
         pub broken_paging: bool,
+        /// An EVENT of one of these kinds is refused with this message.
+        pub refused_kinds: Vec<(u32, String)>,
     }
 
     pub struct TestRelay {
@@ -1487,6 +1686,7 @@ pub mod test_relay {
         /// Its host, as the tests' Tor records the connections to it.
         pub host: String,
         events: Arc<StdMutex<Vec<NostrEvent>>>,
+        arrivals: Arc<StdMutex<Vec<Instant>>>,
         reqs: Arc<StdMutex<Vec<(usize, Value)>>>,
         frames: Arc<StdMutex<Vec<Frame>>>,
         kicks: Arc<Notify>,
@@ -1506,6 +1706,7 @@ pub mod test_relay {
     struct Shared {
         answer: Answer,
         events: Arc<StdMutex<Vec<NostrEvent>>>,
+        arrivals: Arc<StdMutex<Vec<Instant>>>,
         reqs: Arc<StdMutex<Vec<(usize, Value)>>>,
         frames: Arc<StdMutex<Vec<Frame>>>,
         kicks: Arc<Notify>,
@@ -1564,6 +1765,7 @@ pub mod test_relay {
             let shared = Shared {
                 answer,
                 events: Arc::default(),
+                arrivals: Arc::default(),
                 reqs: Arc::default(),
                 frames: Arc::default(),
                 kicks: Arc::new(Notify::new()),
@@ -1575,6 +1777,7 @@ pub mod test_relay {
                 url,
                 host,
                 events: Arc::clone(&shared.events),
+                arrivals: Arc::clone(&shared.arrivals),
                 reqs: Arc::clone(&shared.reqs),
                 frames: Arc::clone(&shared.frames),
                 kicks: Arc::clone(&shared.kicks),
@@ -1592,6 +1795,11 @@ pub mod test_relay {
         /// The events it received, in order.
         pub fn events(&self) -> Vec<NostrEvent> {
             self.events.lock().unwrap().clone()
+        }
+
+        /// When each of the events it received arrived, in order.
+        pub fn arrivals(&self) -> Vec<Instant> {
+            self.arrivals.lock().unwrap().clone()
         }
 
         /// Every REQ it received, in order: the number of its connection,
@@ -1679,6 +1887,7 @@ pub mod test_relay {
         let Shared {
             answer,
             events,
+            arrivals,
             reqs,
             frames,
             kicks,
@@ -1726,6 +1935,20 @@ pub mod test_relay {
                         continue;
                     };
                     events.lock().unwrap().push(event.clone());
+                    arrivals.lock().unwrap().push(Instant::now());
+                    if let Some((_, message)) =
+                        quirks.refused_kinds.iter().find(|(k, _)| *k == event.kind)
+                    {
+                        let refused = serde_json::json!(["OK", event.id, false, message]);
+                        if write
+                            .send(Message::Text(refused.to_string()))
+                            .await
+                            .is_err()
+                        {
+                            return;
+                        }
+                        continue;
+                    }
                     if serving {
                         let _ = live.send(event.clone());
                     }
@@ -1827,6 +2050,11 @@ pub mod test_relay {
             quiet: false,
             caps: RelayCaps::new(),
             answer_deadline: Some(Duration::from_secs(5)),
+            // Unpaced, unless a test is about the pace.
+            pace: Pace {
+                burst: 1_000_000,
+                gap: Duration::from_millis(1),
+            },
         }
     }
 
@@ -2353,6 +2581,7 @@ mod tests {
             quiet: false,
             caps: RelayCaps::new(),
             answer_deadline: None,
+            pace: PACE,
         };
 
         let client = NostrClient::start("ws://relay.trino.invalid", ignore_events(), options);
@@ -3282,6 +3511,144 @@ mod tests {
         wait_until("the backdated message", || seen.lock().unwrap().len() == 1).await;
         client.close();
         sender.close();
+    }
+
+    // ---- The pace of sends, and relays that throttle ----
+
+    fn throttling(kind: u32, message: &str) -> TestRelay {
+        TestRelay::quirky(
+            Answer::Accept,
+            test_relay::Quirks {
+                refused_kinds: vec![(kind, message.to_string())],
+                ..Default::default()
+            },
+        )
+    }
+
+    fn sealed(kind: u32) -> NostrEvent {
+        let now = chrono::Utc::now().timestamp();
+        seal_p1(kind, now, &generate_nostr_keypair().pub_bytes, b"x").unwrap()
+    }
+
+    #[tokio::test]
+    async fn a_rate_limited_kind_waits_and_the_other_kinds_go_on() {
+        let relay = throttling(p1event::KIND_CALL, "rate-limited: slow down matey");
+        let client = relay.client().await;
+        let wait = Duration::from_secs(5);
+        assert_eq!(
+            client
+                .publish_acked(&sealed(p1event::KIND_CALL), wait)
+                .await,
+            Ack::Throttled
+        );
+        assert!(client
+            .caps()
+            .write_blocked(p1event::KIND_CALL, Instant::now())
+            .is_some());
+        // Not sent again while it waits: refused here, at once.
+        assert_eq!(
+            client
+                .publish_acked(&sealed(p1event::KIND_CALL), wait)
+                .await,
+            Ack::Throttled
+        );
+        assert_eq!(
+            client
+                .publish_acked(&sealed(p1event::KIND_MESSAGE), wait)
+                .await,
+            Ack::Accepted
+        );
+        let kinds: Vec<u32> = relay.events().iter().map(|e| e.kind).collect();
+        assert_eq!(kinds, [p1event::KIND_CALL, p1event::KIND_MESSAGE]);
+        // Refused from its first event: the kind waits, not the pace.
+        let gap = Duration::from_millis(10);
+        assert_eq!(client.caps().pace_gap(gap), gap);
+        client.close();
+    }
+
+    #[tokio::test]
+    async fn a_ban_holds_every_send_to_that_relay() {
+        let relay = throttling(
+            p1event::KIND_MESSAGE,
+            "banned: too many rate-limit violations",
+        );
+        let client = relay.client().await;
+        let wait = Duration::from_secs(5);
+        assert_eq!(
+            client
+                .publish_acked(&sealed(p1event::KIND_MESSAGE), wait)
+                .await,
+            Ack::Throttled
+        );
+        assert_eq!(
+            client
+                .publish_acked(&sealed(p1event::KIND_CALL), wait)
+                .await,
+            Ack::Throttled
+        );
+        assert_eq!(relay.events().len(), 1);
+        client.close();
+    }
+
+    #[tokio::test]
+    async fn sends_go_out_in_a_burst_and_then_at_the_pace() {
+        let relay = TestRelay::start(Answer::Accept).await;
+        let options = ClientOptions {
+            pace: Pace {
+                burst: 2,
+                gap: Duration::from_millis(100),
+            },
+            ..quick_options(None)
+        };
+        let client = NostrClient::start(&relay.url, ignore_events(), options);
+        wait_until("the client to connect", || client.is_connected()).await;
+        for _ in 0..5 {
+            client
+                .publish(&sealed(p1event::KIND_MESSAGE))
+                .await
+                .unwrap();
+        }
+        wait_until("the five events", || relay.events().len() == 5).await;
+        let at = relay.arrivals();
+        assert!(at[1] - at[0] < Duration::from_millis(60), "the burst");
+        for pair in at[1..].windows(2) {
+            assert!(pair[1] - pair[0] >= Duration::from_millis(80), "{at:?}");
+        }
+        client.close();
+    }
+
+    #[tokio::test]
+    async fn an_event_still_waiting_its_turn_when_its_answer_is_due_is_not_sent() {
+        let relay = TestRelay::start(Answer::Accept).await;
+        let options = ClientOptions {
+            pace: Pace {
+                burst: 1,
+                gap: Duration::from_millis(400),
+            },
+            ..quick_options(None)
+        };
+        let client = NostrClient::start(&relay.url, ignore_events(), options);
+        wait_until("the client to connect", || client.is_connected()).await;
+        let first = sealed(p1event::KIND_MESSAGE);
+        let late = sealed(p1event::KIND_MESSAGE);
+        assert_eq!(
+            client.publish_acked(&first, Duration::from_secs(5)).await,
+            Ack::Accepted
+        );
+        assert_eq!(
+            client
+                .publish_acked(&late, Duration::from_millis(100))
+                .await,
+            Ack::NoAnswer
+        );
+        tokio::time::sleep(Duration::from_millis(700)).await;
+        let ids: Vec<String> = relay.events().into_iter().map(|e| e.id).collect();
+        assert_eq!(
+            ids,
+            [first.id],
+            "a send shown as failed never goes out later"
+        );
+        client.close();
     }
 
     // ---- P1-6: the one-shot catch-up, paged with `until` (R-20) ----
