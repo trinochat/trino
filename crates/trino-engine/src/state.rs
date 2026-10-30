@@ -124,6 +124,10 @@ pub struct InnerState {
     /// Until when (unix seconds) Settings' "Qué pasa en la red" stays open
     /// after the passphrase opened it; 0 for closed. Memory only.
     pub alert_settings_until: i64,
+    // -- P1 --
+    /// The mailboxes' padding, duplicate markers and owed handshakes
+    /// (`mailboxes`). Persisted ENCRYPTED in ratchets.bin.
+    pub mailboxes: crate::mailboxes::MailboxState,
 }
 
 const SEEN_EVENT_CAP: usize = 4096;

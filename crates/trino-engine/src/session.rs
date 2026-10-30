@@ -339,6 +339,8 @@ pub fn clear_sensitive_state(inner: &mut InnerState) {
     inner.current_peer = None;
     inner.resync_at.clear();
     inner.handshake_marks.clear();
+    // The padding seeds wipe themselves on drop.
+    inner.mailboxes = Default::default();
     inner.clear_seen_ids();
     // -- W8 --
     inner.key_mismatch_at.clear();
@@ -1301,8 +1303,15 @@ pub fn load_history(inner: &mut InnerState, found: Found) {
     }
 }
 
+/// The version of the sessions file this code writes: 2 adds P1's
+/// mailboxes (design P1 §9). A file without one is of before P1.
+pub const RATCHETS_VERSION: u32 = 2;
+
 #[derive(serde::Serialize, serde::Deserialize, Default)]
 pub struct RatchetsFile {
+    /// 0 (absent) for a file of before P1; a newer one is not read.
+    #[serde(default)]
+    pub version: u32,
     pub ratchets: HashMap<String, crate::ratchet::RatchetState>,
     #[serde(default)]
     pub associated_data: HashMap<String, Vec<u8>>,
@@ -1314,6 +1323,9 @@ pub struct RatchetsFile {
     /// load; such contacts start without a mark (see HANDSHAKE_MAX_AGE_SECS).
     #[serde(default)]
     pub handshake_marks: HashMap<String, HandshakeMark>,
+    /// P1's padding, duplicate markers and owed handshakes.
+    #[serde(default)]
+    pub mailboxes: crate::mailboxes::MailboxState,
 }
 
 impl RatchetsFile {
@@ -1324,6 +1336,8 @@ impl RatchetsFile {
             seen_events: inner.seen_event_order.iter().cloned().collect(),
             seen_msg_ids: inner.seen_msg_id_order.iter().cloned().collect(),
             handshake_marks: inner.handshake_marks.clone(),
+            version: RATCHETS_VERSION,
+            mailboxes: inner.mailboxes.clone(),
         }
     }
 
@@ -1331,6 +1345,7 @@ impl RatchetsFile {
         inner.ratchets = self.ratchets;
         inner.associated_data = self.associated_data;
         inner.handshake_marks = self.handshake_marks;
+        inner.mailboxes = self.mailboxes;
         inner.clear_seen_ids();
         for id in self.seen_events {
             inner.remember_event(id);
@@ -1362,6 +1377,18 @@ pub fn load_ratchets(inner: &mut InnerState, found: Found) {
     let Found::Ready(json) = found else {
         return;
     };
+    #[derive(serde::Deserialize)]
+    struct Version {
+        #[serde(default)]
+        version: u32,
+    }
+    // A newer version may not even parse as this one; it is held whole,
+    // never read in part nor written over (design P1 §9).
+    if serde_json::from_slice::<Version>(&json).is_ok_and(|v| v.version > RATCHETS_VERSION) {
+        dbg_log("the sessions are of a newer version: kept as they are");
+        inner.storage.hold(&Slot::Sessions);
+        return;
+    }
     match serde_json::from_slice::<RatchetsFile>(&json) {
         Ok(file) => file.restore_into(inner),
         Err(_) => {
