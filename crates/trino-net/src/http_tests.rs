@@ -698,6 +698,55 @@ async fn a_request_waits_for_a_starting_tor_and_its_deadlines_count_from_ready()
     let _ = std::fs::remove_dir_all(home);
 }
 
+// ---- The network time of P1 (§3.5) ----
+
+#[tokio::test]
+async fn the_date_of_an_answer_is_kept_for_the_network_time() {
+    let tor = Mock::new();
+    let date = "Wed, 29 Oct 2026 22:15:03 GMT";
+    mock_http::serve(
+        &tor,
+        "https://a.trino.invalid",
+        vec![
+            mock_http::response("200 OK", &format!("Date: {date}\r\n"), b"one"),
+            mock_http::response("404 Not Found", "", b"two"),
+            mock_http::response("200 OK", &format!("Date: {}\r\n", "x".repeat(65)), b""),
+        ],
+    );
+    let client = client(&tor);
+    for _ in 0..3 {
+        within(client.send(
+            Request::get("https://a.trino.invalid/x").unwrap(),
+            &iso(),
+            QUICK,
+        ))
+        .await
+        .unwrap();
+    }
+    let dates = client.net().dates();
+    assert_eq!(dates.len(), 1, "{dates:?}");
+    assert_eq!(dates[0].1, date);
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs() as i64;
+    assert!((now - dates[0].0).abs() < 60);
+}
+
+#[test]
+fn only_the_newest_dates_are_kept_and_never_a_strange_one() {
+    let net = Net::new();
+    for i in 0..(DATES_KEPT as i64 + 3) {
+        net.saw_date_at(i, &format!("Wed, 29 Oct 2026 22:15:{i:02} GMT"));
+    }
+    net.saw_date_at(100, "Wed, 29 Oct 2026\n22:15:03 GMT");
+    net.saw_date_at(101, &"9".repeat(DATE_MAX_LEN + 1));
+    let dates = net.dates();
+    assert_eq!(dates.len(), DATES_KEPT);
+    assert_eq!(dates[0].0, 3);
+    assert_eq!(dates.last().unwrap().0, DATES_KEPT as i64 + 2);
+}
+
 #[tokio::test]
 async fn a_request_with_no_tor_started_is_not_ready_at_once() {
     let client = HttpClient::new(Net::new());

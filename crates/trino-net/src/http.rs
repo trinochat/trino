@@ -417,6 +417,14 @@ impl HttpClient {
             .map_err(|_| HttpError::Timeout)?
             .map_err(|_| HttpError::Network)?;
         let (head, body) = answer.into_parts();
+        // The app's network time (P1 §3.5): only the value, and only that.
+        if let Some(date) = head
+            .headers
+            .get(header::DATE)
+            .and_then(|value| value.to_str().ok())
+        {
+            self.net.saw_date(date);
+        }
         Ok(Response {
             status: head.status,
             headers: head.headers,

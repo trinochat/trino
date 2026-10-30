@@ -247,7 +247,15 @@ pub struct Net {
     /// Tests run a fake bridge program with these arguments.
     #[cfg(test)]
     pt_args: Mutex<Vec<std::ffi::OsString>>,
+    /// The newest `Date` headers of the HTTP answers, with the local clock
+    /// when each came: the app's network time comes from them (P1 §3.5).
+    dates: Mutex<std::collections::VecDeque<(i64, String)>>,
 }
+
+/// How many `Date` headers a `Net` keeps: the newest.
+pub const DATES_KEPT: usize = 9;
+/// A `Date` header longer than this is not kept (an IMF-fixdate is 29).
+pub const DATE_MAX_LEN: usize = 64;
 
 /// What a start launched besides Tor, stopped and destroyed with it.
 #[derive(Default)]
@@ -285,6 +293,7 @@ impl Default for Net {
             extras: Mutex::new(Extras::default()),
             #[cfg(test)]
             pt_args: Mutex::new(Vec::new()),
+            dates: Mutex::new(std::collections::VecDeque::new()),
         }
     }
 }
@@ -362,6 +371,35 @@ impl Net {
             direct,
             ..Net::default()
         })
+    }
+
+    /// An HTTP answer came with this `Date` header now.
+    pub(crate) fn saw_date(&self, value: &str) {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |since| {
+                i64::try_from(since.as_secs()).unwrap_or(i64::MAX)
+            });
+        self.saw_date_at(now, value);
+    }
+
+    /// An HTTP answer came with this `Date` header at local time `local`
+    /// (unix seconds). Only a short, printable value is kept.
+    pub fn saw_date_at(&self, local: i64, value: &str) {
+        if value.len() > DATE_MAX_LEN || !value.bytes().all(|b| (b' '..=b'~').contains(&b)) {
+            return;
+        }
+        let mut dates = lock(&self.dates);
+        if dates.len() == DATES_KEPT {
+            dates.pop_front();
+        }
+        dates.push_back((local, value.to_string()));
+    }
+
+    /// The `Date` headers kept, oldest first, each with the local clock
+    /// when it came. Never anything else of the answer.
+    pub fn dates(&self) -> Vec<(i64, String)> {
+        lock(&self.dates).iter().cloned().collect()
     }
 
     /// Where this `Net` keeps Tor's files, if it has Tor.

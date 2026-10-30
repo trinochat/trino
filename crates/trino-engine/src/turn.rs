@@ -14,6 +14,7 @@
 
 use crate::command_error::{CommandError, ErrorCode};
 use crate::crypto::sha256;
+use crate::mailboxes::clock::http_date;
 use crate::nostr::build_and_sign_event;
 use base64::Engine;
 use serde::{Deserialize, Serialize};
@@ -355,13 +356,6 @@ fn parse_credentials(
         ice_servers,
         expires_at: now + lifetime,
     })
-}
-
-/// An HTTP `Date` header (IMF-fixdate is RFC 2822 with `GMT`) in unix seconds.
-fn http_date(value: &str) -> Option<i64> {
-    chrono::DateTime::parse_from_rfc2822(value.trim())
-        .ok()
-        .map(|date| date.timestamp())
 }
 
 /// The Worker's `{"error":"<code>"}`, kept only if it is a plain snake_case code.

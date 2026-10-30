@@ -17,6 +17,14 @@
 //! up to 3 h off that nobody noticed (§3.5), through `since`.
 
 use std::collections::VecDeque;
+
+/// An HTTP `Date` header (IMF-fixdate is RFC 2822 with `GMT`) in unix
+/// seconds.
+pub fn http_date(value: &str) -> Option<i64> {
+    chrono::DateTime::parse_from_rfc2822(value.trim())
+        .ok()
+        .map(|date| date.timestamp())
+}
 use trino_core::p1::mailbox::epoch_of;
 
 /// Past this offset Settings › Red shows the clock as off.
@@ -115,6 +123,25 @@ impl NetClock {
         } else {
             Skew::Fine
         }
+    }
+
+    /// The clock of what `net` saw: the `Date` headers of its HTTP
+    /// answers, and whether Arti says this computer's clock is off.
+    pub fn of_net(net: &trino_net::Net) -> NetClock {
+        let mut clock = NetClock::default();
+        for (local, value) in net.dates() {
+            if let Some(server) = http_date(&value) {
+                clock.sample(local, server);
+            }
+        }
+        clock.set_tor_skewed(matches!(
+            net.status_now(),
+            trino_net::NetStatus::Blocked {
+                kind: trino_net::BlockKind::ClockSkewed,
+                ..
+            }
+        ));
+        clock
     }
 
     /// Whether a message may go out at `local_now`.
@@ -224,6 +251,19 @@ mod tests {
         clock.set_tor_skewed(false);
         let later = NOW + SAMPLE_FRESH_SECS + 60;
         assert_eq!(clock.skew(later), Skew::TooFar { secs: Some(5_000) });
+    }
+
+    #[test]
+    fn the_net_s_dates_set_the_network_time() {
+        let net = trino_net::Net::new();
+        net.saw_date_at(NOW, "Thu, 09 Oct 2025 06:53:20 GMT"); // NOW - 7_200
+        net.saw_date_at(NOW + 1, "not a date");
+        net.saw_date_at(NOW + 2, "Thu, 09 Oct 2025 06:53:22 GMT");
+        let clock = NetClock::of_net(&net);
+        assert_eq!(clock.offset(NOW + 2), Some(7_200));
+        assert!(clock.may_send(NOW + 2));
+        assert_eq!(http_date("Thu, 09 Oct 2025 08:53:20 GMT"), Some(NOW));
+        assert_eq!(http_date("10:53"), None);
     }
 
     #[test]

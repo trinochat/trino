@@ -34,6 +34,11 @@ pub struct Engine {
 }
 
 impl Engine {
+    /// The network time as this engine's connections saw it (P1 §3.5).
+    pub fn net_clock(&self) -> crate::mailboxes::clock::NetClock {
+        crate::mailboxes::clock::NetClock::of_net(&self.net)
+    }
+
     /// An engine whose connections go through `net`; nothing else differs
     /// from `Engine::default()`.
     pub fn with_net(net: Arc<Net>) -> Self {
