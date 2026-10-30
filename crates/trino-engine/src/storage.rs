@@ -72,6 +72,7 @@ pub fn account_of(inner: &InnerState) -> AccountFile {
         alerts: inner.alerts.clone(),
         reports: inner.reports.clone(),
         age: inner.age.clone(),
+        own_list: inner.device.as_ref().map(crate::device::stored_list),
     }
 }
 
@@ -424,6 +425,7 @@ pub fn load_legacy(files: &DataFiles, identity: &Identity) -> Result<LoadedSessi
         alerts: Default::default(),
         reports: Default::default(),
         age: None,
+        own_list: None,
     };
 
     let mut legacy = legacy_files(files, identity)?;
@@ -508,6 +510,10 @@ pub fn apply_loaded(
     profiles: Found,
     now: i64,
 ) {
+    // P1-8: a first device list is signed only over an account file that
+    // was read: one waiting for the user's choice may hold the list signed
+    // already (`merge_account` opens it then).
+    let read = account.is_some();
     // Design §6.1: with no account to use, the session opens as "anon"
     // with the default relays, and the user can name it in the settings.
     let account = account.unwrap_or_else(|| AccountFile {
@@ -521,6 +527,8 @@ pub fn apply_loaded(
         created_at: now,
         ..AccountFile::default()
     });
+    // P1-8: this device and its list, which the account file keeps.
+    let signed_list = read && crate::device::open(inner, account.own_list.as_deref(), now);
     inner.handle = Some(account.handle);
     inner.avatar = sanitized_inline_raster(account.avatar);
     inner.relay_urls = account.relays;
@@ -561,6 +569,9 @@ pub fn apply_loaded(
     // of 16 or 17 is closed to strangers before anything reaches it.
     if crate::age::apply(inner, now) && persist_account(inner).is_err() {
         crate::session::dbg_log("the age could not be saved");
+    }
+    if signed_list && persist_account(inner).is_err() {
+        crate::session::dbg_log("the device list could not be saved");
     }
 }
 
@@ -912,6 +923,12 @@ pub fn choose_in(
 /// unlocking: its profile, and every contact, group and invitation the
 /// session does not have.
 pub fn merge_account(inner: &mut InnerState, account: AccountFile) {
+    // P1-8: the device opens with the list this account kept, or its
+    // first one now.
+    if inner.device.is_none() {
+        let now = chrono::Utc::now().timestamp();
+        crate::device::open(inner, account.own_list.as_deref(), now);
+    }
     inner.handle = Some(account.handle);
     inner.avatar = sanitized_inline_raster(account.avatar);
     inner.relay_urls = account.relays;

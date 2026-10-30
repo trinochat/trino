@@ -357,6 +357,8 @@ pub fn clear_sensitive_state(inner: &mut InnerState) {
     inner.report_watch.notify_waiters();
     // -- UR-10 --
     inner.age = None;
+    // -- P1-8 -- The device's keys wipe themselves on drop.
+    inner.device = None;
 }
 
 /// The relay connections of a session `open_session` just opened: what

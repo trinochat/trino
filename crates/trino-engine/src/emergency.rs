@@ -39,6 +39,7 @@ use crate::vault_v3::{EmergencyVault, NewAccount, OpenVault};
 use std::collections::BTreeMap;
 use std::io;
 use std::path::Path;
+use trino_core::identity_v2::IdentityV2;
 use zeroize::Zeroizing;
 
 /// Steps E2 to E6, once `vault` opened with the emergency key and its code
@@ -71,7 +72,8 @@ pub(crate) fn take_place<D: Disk + Clone>(
     // E2, in memory.
     let inherited = SharedApp::from_bytes(vault.shared_app());
     let identity = create_identity();
-    let (account, prefs) = empty_account(inherited.as_ref(), &identity, now);
+    let (device, account, prefs) = empty_account(inherited.as_ref(), &identity, now)
+        .map_err(|error| CommandError::io(&error))?;
     // B1 (CE-6): what the network action needs is taken from `inherited`
     // here, before the vault of before goes; with no action chosen, none.
     // The empty account's block has none.
@@ -79,12 +81,16 @@ pub(crate) fn take_place<D: Disk + Clone>(
     let shared = SharedApp::new(&account.handle, account.created_at, &prefs, &account.relays);
     let keys = StoreKeys::generate();
     let record = keys.to_vault_app();
-    let new_vault = vault.into_empty_account(&NewAccount {
+    let mut new_vault = vault.into_empty_account(&NewAccount {
         identity: &identity,
         app: Some(&record),
         shared_app: &shared.to_bytes(),
         id_vault: *keys.id_vault(),
     })?;
+    // P1-8: its identity v2 from the start, as a new account's, so its
+    // first unlock (E6) seals nothing again and notes nothing a real
+    // unlock would not.
+    new_vault.set_identity_v2(Some(device))?;
     let aside = other_store_name();
 
     // E3.
@@ -105,13 +111,17 @@ pub(crate) fn take_place<D: Disk + Clone>(
     Ok((new_vault, alert))
 }
 
-/// E2: the empty account's `account.bin` and preferences for `identity`,
-/// with what it inherits through the shared block of the vault of before.
+/// E2: the empty account's device, `account.bin` and preferences for
+/// `identity`, with what it inherits through the shared block of the vault
+/// of before. The device and its first list are made as a new account's
+/// (P1-8).
 fn empty_account(
     inherited: Option<&SharedApp>,
     identity: &Identity,
     now: i64,
-) -> (AccountFile, BTreeMap<String, String>) {
+) -> io::Result<(IdentityV2, AccountFile, BTreeMap<String, String>)> {
+    let (device, own_list) = crate::device::first_of(identity, now)
+        .ok_or_else(|| io::Error::other("the device list could not be signed"))?;
     let account = AccountFile {
         handle: display_handle(inherited.map_or("", |shared| &shared.name)),
         nostr_pub: hex::encode(identity.nostr.pub_bytes),
@@ -120,12 +130,13 @@ fn empty_account(
             .filter(|relays| !relays.is_empty())
             .unwrap_or_else(default_relays),
         created_at: inherited.map_or(now, |shared| shared.created_at),
+        own_list: Some(own_list),
         ..AccountFile::default()
     };
     let prefs = inherited
         .map(|shared| shared.prefs_for(&account.nostr_pub))
         .unwrap_or_default();
-    (account, prefs)
+    Ok((device, account, prefs))
 }
 
 #[cfg(test)]
@@ -174,7 +185,7 @@ fn even_out_in<D: Disk + Clone>(
     // E2.
     let inherited = SharedApp::from_bytes(vault.shared_app());
     let identity = create_identity();
-    let (account, prefs) = empty_account(inherited.as_ref(), &identity, now);
+    let (_device, account, prefs) = empty_account(inherited.as_ref(), &identity, now)?;
     let header = vault_header(vault.bytes(), identity.signed_prekey.id);
     let aside = other_store_name();
     // E3.
@@ -1171,6 +1182,24 @@ mod tests {
                 assert!(!next_path(&ana.files.vault).exists());
             }
         }
+    }
+
+    /// P1-8: the empty account is born as a new account is, with this
+    /// device's identity v2 in its vault and its first list in its account
+    /// file, so its first session writes nothing a real one would not.
+    #[test]
+    fn the_empty_account_has_its_device_and_list_from_the_start() {
+        let scratch = ScratchDir::new("emergency-device");
+        let ana = Ana::new(scratch.path(), false);
+        let (identity, _, loaded) = ana.unlock(EMERGENCY).unwrap();
+        let loaded = loaded.unwrap();
+        let kept = loaded.account.as_ref().unwrap().own_list.clone().unwrap();
+        let list = trino_core::device::DeviceList::decode(&hex::decode(kept).unwrap()).unwrap();
+        assert_eq!(list.body.account, identity.ik_sign.pub_bytes);
+        assert_eq!(list.body.entries[0].dev_dh, identity.ik_dh.pub_bytes);
+        let vault = loaded.vault.as_ref().unwrap();
+        let v2 = vault.vault.identity_v2().unwrap();
+        assert_eq!(v2.device.dev_dh.pub_bytes, identity.ik_dh.pub_bytes);
     }
 
     /// Design §12.2, test 30, and CE-D8: tor/ is the device's, and the path

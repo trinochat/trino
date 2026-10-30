@@ -224,6 +224,7 @@ pub fn read_legacy(
             alerts: Default::default(),
             reports: Default::default(),
             age: None,
+            own_list: None,
         });
     }
 
@@ -895,6 +896,7 @@ mod tests {
                 alerts: Default::default(),
                 reports: Default::default(),
                 age: None,
+                own_list: None,
             },
             history,
             sessions,

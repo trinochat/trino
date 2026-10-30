@@ -238,7 +238,7 @@ pub fn create_account_vault(
     let created_at = chrono::Utc::now().timestamp();
     let relays = default_relays();
     let shared = SharedApp::new(handle, created_at, &Default::default(), &relays).to_bytes();
-    let vault = create_vault_v3(
+    let mut vault = create_vault_v3(
         &NewAccount {
             identity: &identity,
             app: Some(&app),
@@ -248,11 +248,17 @@ pub fn create_account_vault(
         totp_secret,
         passphrase,
     )?;
+    // P1-8: this device's identity v2 and its first list, sealed and
+    // written with the rest from the start.
+    let (device, own_list) = crate::device::first_of(&identity, created_at)
+        .ok_or_else(|| CommandError::internal("the device list could not be signed"))?;
+    vault.set_identity_v2(Some(device))?;
     let account = AccountFile {
         handle: handle.to_string(),
         nostr_pub: hex::encode(identity.nostr.pub_bytes),
         relays,
         created_at,
+        own_list: Some(own_list),
         ..AccountFile::default()
     };
     let json = Zeroizing::new(
@@ -648,6 +654,13 @@ pub(crate) fn unlock_v3(
 
     let mut identity = vault.identity().clone();
     let mut changed = false;
+    // P1-8 (§13.1): the identity v2, made from this one the first time, and
+    // its prekeys rotated when due.
+    match crate::device::ensure_in_vault(&mut vault, &identity, now) {
+        Ok(true) => changed = true,
+        Ok(false) => {}
+        Err(_) => dbg_log("the device identity does not fit the vault"),
+    }
     if crate::identity::rotate_signed_prekey_if_due(&mut identity, now) {
         if vault.set_identity(identity.clone()).is_ok() {
             changed = true;
@@ -1131,6 +1144,70 @@ mod tests {
             again.unwrap().report.is_empty(),
             "the rotation was not noted"
         );
+    }
+
+    /// P1-8 (§13.1): a new account and every unlock after it hold this
+    /// device's identity v2 in the vault and its list in the account file,
+    /// and the list is signed once.
+    #[tokio::test]
+    async fn the_unlock_opens_this_device_with_its_list() {
+        let scratch = ScratchDir::new("device-v2");
+        let files = data_files_in(scratch.path().join("home"));
+        let (identity, _) =
+            create_account(&files, "ana", PASSPHRASE, None, crate::vault_file::write).unwrap();
+        let in_vault = open_vault_v3_identity_v2(&files);
+        assert_eq!(in_vault, Some(identity.ik_dh.pub_bytes));
+
+        let (me, totp, loaded) = unlock_files(&files, PASSPHRASE, None, false, NOW).unwrap();
+        // Signed with the account, so its first unlock writes nothing more.
+        let created = loaded
+            .as_ref()
+            .unwrap()
+            .account
+            .as_ref()
+            .unwrap()
+            .own_list
+            .clone();
+        assert!(created.is_some(), "the new account has no device list");
+        let inner = tokio::sync::Mutex::new(InnerState::default());
+        open_session(&inner, me, totp, loaded, |_| {})
+            .await
+            .unwrap();
+        let first = {
+            let open = inner.lock().await;
+            let device = open.device.clone().expect("no device after the unlock");
+            assert_eq!(device.dev_dh().pub_bytes, identity.ik_dh.pub_bytes);
+            assert_eq!(device.account(), identity.ik_sign.pub_bytes);
+            device.list
+        };
+        assert_eq!(created, Some(hex::encode(first.encode())));
+        drop(inner);
+
+        let (me, totp, loaded) = unlock_files(&files, PASSPHRASE, None, false, NOW + 60).unwrap();
+        let kept = loaded
+            .as_ref()
+            .unwrap()
+            .account
+            .as_ref()
+            .unwrap()
+            .own_list
+            .clone();
+        assert_eq!(kept, Some(hex::encode(first.encode())));
+        let inner = tokio::sync::Mutex::new(InnerState::default());
+        open_session(&inner, me, totp, loaded, |_| {})
+            .await
+            .unwrap();
+        assert_eq!(inner.lock().await.device.as_ref().unwrap().list, first);
+    }
+
+    /// The `dev_dh` of the identity v2 the vault at `files` holds.
+    fn open_vault_v3_identity_v2(files: &DataFiles) -> Option<[u8; 32]> {
+        match crate::vault_file::open(&files.vault, PASSPHRASE, None) {
+            Ok(crate::vault_file::OpenedVault::V3(vault)) => vault
+                .identity_v2()
+                .map(|identity| identity.device.dev_dh.pub_bytes),
+            _ => None,
+        }
     }
 
     #[test]

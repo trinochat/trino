@@ -91,6 +91,11 @@ pub struct AccountFile {
     /// reads as 18 or more.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub age: Option<crate::age::Age>,
+    /// This account's device list, signed by its account key, in hex
+    /// (`device.rs`). Left out for an account of before P1, which signs
+    /// its first one at the next unlock.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub own_list: Option<String>,
 }
 
 /// What a sticker's file holds. Its id is the start of the image's SHA-256,

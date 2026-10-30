@@ -128,6 +128,9 @@ pub struct InnerState {
     /// The mailboxes' padding, duplicate markers and owed handshakes
     /// (`mailboxes`). Persisted ENCRYPTED in ratchets.bin.
     pub mailboxes: crate::mailboxes::MailboxState,
+    /// This device's identity v2 and its account's list (`device.rs`):
+    /// from the vault and the account file at unlock. Memory only here.
+    pub device: Option<crate::device::OwnDevice>,
 }
 
 const SEEN_EVENT_CAP: usize = 4096;
