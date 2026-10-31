@@ -48,7 +48,7 @@ use trino_core::p1::wire::{
     open_inner, seal_inner, HandshakeBody, HandshakePq11Body, InnerType, KemReplyBody, MessageBody,
     Step, WireError, KEM_CT_LEN,
 };
-use trino_core::pqxdh::{self, SUITE};
+use trino_core::pqxdh::{self, PeerClassical, PeerPrekeys, SUITE};
 use zeroize::Zeroizing;
 
 /// The step of a full device list in its own envelope (§21.4).
@@ -113,16 +113,33 @@ pub enum Opened {
 pub fn initiate(inner: &mut InnerState, handle: &str, ts: i64) -> Result<NostrEvent, SendError> {
     let device = inner.device.as_ref().ok_or(SendError::Sealed)?;
     let friend = inner.friends.get(handle).ok_or(SendError::UnknownContact)?;
-    let devices = friend.devices.as_ref().ok_or(SendError::NoPrekeys)?;
     let their_dh = peer_device_dh(friend).ok_or(SendError::NoPrekeys)?;
+    // P1-13a: a code pasted for the contact goes first (its primary and
+    // prekey, with no post-quantum one: PQ-11); then its list.
+    let peer = match (&friend.from_code, &friend.devices) {
+        (Some(code), _) => Peer::Classical(PeerClassical {
+            account: code.account,
+            dev_sign: code.entry.dev_sign,
+            dev_dh: code.entry.dev_dh,
+            spk: code.spk.clone(),
+        }),
+        (None, Some(devices)) => match peer_prekeys(&devices.bundle, &devices.chain, &their_dh) {
+            Ok(peer) => Peer::Full(peer),
+            Err(DeviceError::NoPqPrekey) => Peer::Classical(
+                peer_classical(&devices.bundle, &devices.chain, &their_dh).map_err(failed)?,
+            ),
+            Err(error) => return Err(failed(error)),
+        },
+        (None, None) => return Err(SendError::NoPrekeys),
+    };
     let me = device.account();
     let my_dh = device.dev_dh().clone();
     let e = epoch_of(net_u64(ts)?);
     let intro = outgoing_intro(&my_dh, &their_dh, e).map_err(failed)?;
     let list = own_list_part(device, false)?;
     let mut rng = drbg();
-    let (event, session) = match peer_prekeys(&devices.bundle, &devices.chain, &their_dh) {
-        Ok(peer) => {
+    let (event, session) = match peer {
+        Peer::Full(peer) => {
             let init = pqxdh::initiate_with_rng(&me, &my_dh, &peer, &mut rng).map_err(failed)?;
             let mut ratchet = init_initiator(*init.sk, peer.spk.public).map_err(failed)?;
             let m0 = ratchet_encrypt(&mut ratchet, &list, &init.ad).map_err(failed)?;
@@ -143,9 +160,7 @@ pub fn initiate(inner: &mut InnerState, handle: &str, ts: i64) -> Result<NostrEv
             let event = seal_p1(KIND_MESSAGE, ts, &intro.tag, &frame).map_err(failed)?;
             (event, Started::Session(Box::new(ratchet), init.ad.clone()))
         }
-        Err(DeviceError::NoPqPrekey) => {
-            let peer =
-                peer_classical(&devices.bundle, &devices.chain, &their_dh).map_err(failed)?;
+        Peer::Classical(peer) => {
             let init =
                 pqxdh::initiate_pq11_with_rng(&me, &my_dh, &peer, &mut rng).map_err(failed)?;
             let mut ratchet = init_initiator(*init.sk0, peer.spk.public).map_err(failed)?;
@@ -171,7 +186,6 @@ pub fn initiate(inner: &mut InnerState, handle: &str, ts: i64) -> Result<NostrEv
             };
             (event, Started::Pq11(Box::new(pending)))
         }
-        Err(error) => return Err(failed(error)),
     };
     forget_session(inner, handle);
     match session {
@@ -185,6 +199,13 @@ pub fn initiate(inner: &mut InnerState, handle: &str, ts: i64) -> Result<NostrEv
     }
     inner.mailboxes.unverified.insert(handle.to_string());
     Ok(event)
+}
+
+/// Whose prekeys a handshake starts from: with the post-quantum one (a
+/// normal handshake), or without (PQ-11).
+enum Peer {
+    Full(PeerPrekeys),
+    Classical(PeerClassical),
 }
 
 /// What starting a handshake leaves.

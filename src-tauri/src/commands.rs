@@ -99,6 +99,9 @@ pub struct NodeInfo {
     /// The contact's Trino announced that it reads profile messages, so
     /// this identity's profile reaches it (K12).
     pub profile_sync: bool,
+    /// Nothing of the contact's account under P1 and no session (P1-13a):
+    /// one of the two has to paste the other's new code.
+    pub needs_code: bool,
 }
 
 #[tauri::command]
@@ -276,15 +279,39 @@ pub async fn probe_node(
     handle: String,
     replace_existing: Option<bool>,
 ) -> Result<NodeInfo, CommandError> {
-    let code = contacts_cmds::parse_contact_code(&bundle_json)?;
+    let pasted = contacts_cmds::parse_pasted(&bundle_json)?;
     let mut inner = state.inner.lock().await;
     if inner.identity.is_none() {
         return Err(contacts_cmds::sealed());
     }
     let now = chrono::Utc::now().timestamp();
     let replace = replace_existing.unwrap_or(false);
-    let (handle, added) = contacts_cmds::add_contact(&mut inner, code, &handle, replace, now)?;
+    let (handle, added) = match pasted {
+        contacts_cmds::Pasted::Bundle(code) => {
+            contacts_cmds::add_contact(&mut inner, code, &handle, replace, now)?
+        }
+        // P1-13a: the contact of the code's account starts its handshake
+        // from it.
+        contacts_cmds::Pasted::V3(code) => contacts_cmds::add_v3(&mut inner, code, &handle, now)?,
+    };
     persist_account(&inner).map_err(|e| CommandError::new(ErrorCode::Io, e))?;
+    if added == contacts_cmds::Added::Reconnected {
+        let friend = inner
+            .friends
+            .get(&handle)
+            .ok_or_else(|| CommandError::internal("the contact was not stored"))?;
+        let node = contacts_cmds::node_info(&inner, friend);
+        drop(inner);
+        // Its handshake now; one that cannot go yet (no relay, the clock)
+        // goes with the first message, as any other.
+        if trino_engine::session::ensure_session(&state, &handle)
+            .await
+            .is_err()
+        {
+            crate::diag::note("the handshake from a code did not go yet");
+        }
+        return Ok(node);
+    }
     if added != contacts_cmds::Added::Refreshed {
         // The old session is gone, and what the old keys shared: the
         // replaced contact's, or what a contact removed before left under

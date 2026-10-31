@@ -174,6 +174,9 @@ pub enum PeerError {
     KeyChange,
     /// The list's rules refused it.
     Refused(DeviceError),
+    /// The list is older than the `trino3:` code pasted for the contact,
+    /// or at its place with another hash (P1-13a).
+    BehindCode,
 }
 
 /// `A` of the contact: of its chain, or the `ik_sign` pinned when it was
@@ -242,9 +245,20 @@ pub fn take_bundle(
             (chain, accepted)
         }
     };
+    // P1-13a: the list the code named, or a newer one; the code is done.
+    if let Some(code) = &friend.from_code {
+        let held = chain.current();
+        let at = (held.body.gen, held.body.seq);
+        let named = (code.gen, code.seq);
+        let hash = &held.hash()[..crate::contact_code::LIST_HASH_LEN];
+        if at < named || (at == named && hash != code.list_hash) {
+            return Err(PeerError::BehindCode);
+        }
+    }
     let bundle = keep_pq_prekeys(bundle, friend.devices.as_ref().map(|held| &held.bundle));
     if let Some(friend) = inner.friends.get_mut(handle) {
         friend.devices = Some(PeerDevices { chain, bundle });
+        friend.from_code = None;
     }
     Ok(accepted)
 }

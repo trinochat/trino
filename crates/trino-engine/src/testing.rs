@@ -58,6 +58,7 @@ pub fn p1_session(
         via_group: None,
         accepted_at: Some(0),
         devices: None,
+        from_code: None,
     };
     let mut theirs = crate::state::InnerState {
         identity: Some(contact.clone()),

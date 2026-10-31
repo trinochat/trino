@@ -246,6 +246,15 @@ pub struct FriendRecord {
         with = "crate::device::serde_peer"
     )]
     pub devices: Option<crate::device::PeerDevices>,
+    /// The contact's `trino3:` code, pasted here (P1-13a), until a list of
+    /// its account at least as new as the code arrives: the handshake
+    /// starts from its primary and prekey, and the list must not be older.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        with = "crate::contact_code::serde_code"
+    )]
+    pub from_code: Option<crate::contact_code::CodeV3>,
 }
 
 /// What `accepted_at` says of a contact kept before UR-3: accepted, at a

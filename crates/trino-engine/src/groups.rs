@@ -461,6 +461,7 @@ pub fn merge_group_members(
                 // UR-3: limited until you accept them (`group_contacts.rs`).
                 accepted_at: None,
                 devices: None,
+                from_code: None,
             },
         );
     }
@@ -975,6 +976,7 @@ mod tests {
             via_group: None,
             accepted_at: Some(0),
             devices: None,
+            from_code: None,
         }
     }
 

@@ -179,6 +179,7 @@ mod tests {
                     via_group: Some("g1".into()),
                     accepted_at: None,
                     devices: None,
+                    from_code: None,
                 },
             );
         }

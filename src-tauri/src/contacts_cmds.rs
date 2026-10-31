@@ -13,6 +13,7 @@ use crate::state::{AppState, FriendRecord, InnerState};
 use serde::Serialize;
 use std::collections::HashMap;
 use tauri::State;
+use trino_engine::contact_code::{self, CodeError, CodeV3, ReconnectError};
 pub(crate) use trino_engine::contacts::{check_local_handle, not_found, sealed};
 use trino_engine::group_contacts::{self, is_limited};
 
@@ -62,6 +63,9 @@ pub(crate) enum Added {
     /// accepted now, under the name chosen if it was free, with what its
     /// request held in its chat.
     Accepted,
+    /// A `trino3:` code of a contact's account (P1-13a): that contact, under
+    /// its name, now starts its handshake from the code.
+    Reconnected,
 }
 
 fn invalid_code(message: &str) -> CommandError {
@@ -206,6 +210,93 @@ pub(crate) fn parse_contact_code(bundle_json: &str) -> Result<ContactCode, Comma
     })
 }
 
+/// A pasted code, read (P1-13a): a `trino3:` code, checked, or a bundle in
+/// JSON, the code of before, still read for what passes one.
+pub(crate) enum Pasted {
+    Bundle(ContactCode),
+    V3(CodeV3),
+}
+
+/// Reads a pasted code. A `trino1:` or `trino2:` code, or one whose
+/// signatures do not hold, is `invalid_code`; the screen tells a code of
+/// before apart itself (`isOldContactCode`).
+pub(crate) fn parse_pasted(input: &str) -> Result<Pasted, CommandError> {
+    if input.trim_start().starts_with('{') {
+        return parse_contact_code(input).map(Pasted::Bundle);
+    }
+    let code = CodeV3::decode(input).map_err(|error| match error {
+        CodeError::Old => invalid_code("a code of an earlier version"),
+        _ => invalid_code("not a trino3: code"),
+    })?;
+    code.verify()
+        .map_err(|_| invalid_code("the code's signatures do not verify"))?;
+    Ok(Pasted::V3(code))
+}
+
+/// The contact of the code's account, or why there is none to take it:
+/// your own code, or someone new.
+fn v3_holder<'a>(inner: &'a InnerState, code: &CodeV3) -> Result<&'a FriendRecord, CommandError> {
+    let own = inner
+        .device
+        .as_ref()
+        .is_some_and(|device| device.account() == code.account);
+    if own {
+        return Err(invalid_code("this is your own code"));
+    }
+    contact_code::holder(inner, code)
+        .and_then(|handle| inner.friends.get(&handle))
+        // P1-13a: a new contact by trino3: waits for David's decision on
+        // its Nostr key (the code carries none).
+        .ok_or_else(|| invalid_code("a new contact by trino3: is not added yet"))
+}
+
+/// What `preview_contact` says of a `trino3:` code: the contact of its
+/// account. Reads only.
+pub(crate) fn preview_v3(
+    inner: &InnerState,
+    code: &CodeV3,
+) -> Result<ContactPreview, CommandError> {
+    let friend = v3_holder(inner, code)?;
+    let (ik_sign, ik_dh, nostr) = bundle_keys(&friend.bundle)
+        .ok_or_else(|| invalid_code("the contact's keys do not decode"))?;
+    // One a group made is no contact of yours yet: adding accepts them.
+    let existing = (!is_limited(friend)).then(|| ExistingContact {
+        handle: friend.handle.clone(),
+        same_keys: true,
+        blocked: trino_engine::block::friend_blocked(inner, friend),
+    });
+    Ok(ContactPreview {
+        handle: friend.handle.clone(),
+        fingerprint: fp(&ik_sign, &ik_dh, &nostr),
+        identity_digest: identity_digest(&ik_sign, &ik_dh, &nostr),
+        existing,
+    })
+}
+
+/// Adds a `trino3:` code: the contact of its account starts its handshake
+/// from it (`contact_code::reconnect`), under the name it has, whatever
+/// `handle` says. One a group made is accepted too (UR-3).
+pub(crate) fn add_v3(
+    inner: &mut InnerState,
+    code: CodeV3,
+    handle: &str,
+    now: i64,
+) -> Result<(String, Added), CommandError> {
+    let _ = handle;
+    let friend = v3_holder(inner, &code)?;
+    let name = friend.handle.clone();
+    let limited = is_limited(friend);
+    contact_code::reconnect(inner, &name, code).map_err(|error| match error {
+        ReconnectError::Unknown => not_found("unknown contact"),
+        ReconnectError::KeyChange => invalid_code("the code's device is not the contact's"),
+        ReconnectError::Fork => invalid_code("the code's list is not the contact's"),
+    })?;
+    if limited {
+        group_contacts::accept(inner, &name, now)?;
+    }
+    Ok((name, Added::Reconnected))
+}
+
 /// Who the code is, and who already has its keys or its name. Reads only.
 pub(crate) fn preview(inner: &InnerState, code: &ContactCode) -> ContactPreview {
     let (ik_sign, ik_dh, nostr) = &code.keys;
@@ -280,6 +371,7 @@ pub(crate) fn add_contact(
                 via_group: None,
                 accepted_at: Some(now),
                 devices: None,
+                from_code: None,
             },
         );
         return Ok((handle, Added::New));
@@ -422,12 +514,16 @@ pub async fn preview_contact(
     state: State<'_, AppState>,
     bundle_json: String,
 ) -> Result<ContactPreview, CommandError> {
-    let code = parse_contact_code(&bundle_json)?;
+    // P1-13a: a trino3: code, or a bundle in JSON as before.
+    let pasted = parse_pasted(&bundle_json)?;
     let inner = state.inner.lock().await;
     if inner.identity.is_none() {
         return Err(sealed());
     }
-    Ok(preview(&inner, &code))
+    match pasted {
+        Pasted::Bundle(code) => Ok(preview(&inner, &code)),
+        Pasted::V3(code) => preview_v3(&inner, &code),
+    }
 }
 
 /// The user saw that a contact's keys changed (K8).
@@ -508,6 +604,7 @@ pub(super) fn node_info(inner: &InnerState, friend: &FriendRecord) -> NodeInfo {
         profile_name: shared.and_then(|profile| profile.name.clone()),
         about: shared.and_then(|profile| profile.about.clone()),
         profile_sync: shared.is_some_and(|profile| profile.caps >= super::profile::PROFILE_V),
+        needs_code: contact_code::needs_code(inner, &friend.handle),
     }
 }
 
@@ -538,6 +635,7 @@ mod tests {
             via_group: None,
             accepted_at: Some(0),
             devices: None,
+            from_code: None,
         }
     }
 
@@ -1348,5 +1446,133 @@ mod tests {
             .blocks_identity(&public_bundle_for(&ana).ik_sign_pub));
         add_contact(&mut inner, code_of(&ana, "ana"), "ana-vieja", false, NOW).unwrap();
         assert!(node_info(&inner, &inner.friends["ana-vieja"]).blocked);
+    }
+
+    // ---- P1-13a: the trino3: code -------------------------------------------
+
+    use trino_engine::contact_code::CodeV3;
+    use trino_engine::testing::own_device;
+
+    const P1_NOW: i64 = 1_793_000_000;
+
+    /// This identity's session, with its device, and Ana as a contact of
+    /// before P1 (nothing of her account under P1).
+    fn me_with_ana(me: &Identity, ana: &Identity) -> InnerState {
+        let mut inner = InnerState {
+            identity: Some(me.clone()),
+            device: Some(own_device(me, P1_NOW)),
+            ..Default::default()
+        };
+        inner.friends.insert("ana".into(), friend(ana, "ana"));
+        inner
+    }
+
+    /// The trino3: code `who` shares.
+    fn v3_of(who: &Identity) -> String {
+        CodeV3::of(&own_device(who, P1_NOW), [0x99; 32], [0xAA; 32])
+            .unwrap()
+            .encode()
+    }
+
+    fn v3(text: &str) -> CodeV3 {
+        match parse_pasted(text).unwrap() {
+            Pasted::V3(code) => code,
+            Pasted::Bundle(_) => panic!("read as a bundle"),
+        }
+    }
+
+    #[test]
+    fn a_trino3_code_of_a_contact_previews_as_it_and_reconnects_it() {
+        let (me, ana) = (create_identity(), create_identity());
+        let mut inner = me_with_ana(&me, &ana);
+        assert!(node_info(&inner, &inner.friends["ana"]).needs_code);
+
+        let code = v3(&format!("  {}\n", v3_of(&ana)));
+        let seen = preview_v3(&inner, &code).unwrap();
+        assert_eq!(seen.handle, "ana");
+        assert_eq!(seen.fingerprint, fingerprint_of(&ana));
+        assert_eq!(seen.identity_digest, digest_of(&ana));
+        assert_eq!(
+            seen.existing,
+            Some(ExistingContact {
+                handle: "ana".into(),
+                same_keys: true,
+                blocked: false,
+            })
+        );
+        assert!(
+            inner.friends["ana"].from_code.is_none(),
+            "a preview saves nothing"
+        );
+
+        // The name typed does not matter: it is Ana's chat, kept as it is.
+        let added = add_v3(&mut inner, code.clone(), "Anita", NOW).unwrap();
+        assert_eq!(added, ("ana".to_string(), Added::Reconnected));
+        assert_eq!(inner.friends.len(), 1, "no second contact");
+        assert_eq!(inner.friends["ana"].from_code, Some(code));
+        assert!(!node_info(&inner, &inner.friends["ana"]).needs_code);
+    }
+
+    #[test]
+    fn a_trino3_code_of_someone_new_is_not_added_yet() {
+        let (me, ana, bob) = (create_identity(), create_identity(), create_identity());
+        let mut inner = me_with_ana(&me, &ana);
+        let code = v3(&v3_of(&bob));
+        assert_eq!(
+            preview_v3(&inner, &code).unwrap_err().code,
+            ErrorCode::InvalidCode
+        );
+        assert_eq!(
+            add_v3(&mut inner, code, "bob", NOW).unwrap_err().code,
+            ErrorCode::InvalidCode
+        );
+        assert_eq!(inner.friends.len(), 1);
+    }
+
+    #[test]
+    fn your_own_trino3_code_is_refused() {
+        let (me, ana) = (create_identity(), create_identity());
+        let mut inner = me_with_ana(&me, &ana);
+        let code = v3(&v3_of(&me));
+        assert_eq!(
+            preview_v3(&inner, &code).unwrap_err().code,
+            ErrorCode::InvalidCode
+        );
+        assert_eq!(
+            add_v3(&mut inner, code, "yo", NOW).unwrap_err().code,
+            ErrorCode::InvalidCode
+        );
+        assert_eq!(inner.friends.len(), 1);
+    }
+
+    #[test]
+    fn a_trino3_code_with_another_device_of_the_account_is_refused() {
+        let (me, ana) = (create_identity(), create_identity());
+        let mut inner = me_with_ana(&me, &ana);
+        let mut other = ana.clone();
+        other.ik_dh = create_identity().ik_dh;
+        let code = v3(&v3_of(&other));
+        assert_eq!(
+            add_v3(&mut inner, code, "ana", NOW).unwrap_err().code,
+            ErrorCode::InvalidCode
+        );
+        assert!(inner.friends["ana"].from_code.is_none());
+    }
+
+    #[test]
+    fn a_pasted_code_is_read_as_trino3_or_a_bundle_and_nothing_else() {
+        let ana = create_identity();
+        // A bundle in JSON is still read, for what passes one.
+        assert!(matches!(
+            parse_pasted(&code_json(&ana, "ana")).unwrap(),
+            Pasted::Bundle(_)
+        ));
+        let invalid = |text: &str| parse_pasted(text).err().map(|error| error.code);
+        assert_eq!(invalid("trino2:AQNhbmE"), Some(ErrorCode::InvalidCode));
+        assert_eq!(invalid("hola"), Some(ErrorCode::InvalidCode));
+        // One whose entry does not verify.
+        let mut code = v3(&v3_of(&ana));
+        code.entry.d_sig[0] ^= 1;
+        assert_eq!(invalid(&code.encode()), Some(ErrorCode::InvalidCode));
     }
 }

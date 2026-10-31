@@ -597,6 +597,7 @@ pub fn accept(inner: &mut InnerState, key: &str, now: i64) -> Result<String, Com
                     via_group: None,
                     accepted_at: Some(now),
                     devices: None,
+                    from_code: None,
                 },
             );
             handle

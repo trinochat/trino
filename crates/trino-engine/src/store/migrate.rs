@@ -827,6 +827,7 @@ mod tests {
             via_group: None,
             accepted_at: Some(0),
             devices: None,
+            from_code: None,
         };
         let friends = FriendsFile {
             handle: config.handle.clone(),

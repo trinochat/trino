@@ -26,11 +26,12 @@
 //! is signed by it. Who `A` is, is what the person pasting trusts: the
 //! list the device then sends must be signed by `A` (RV-06).
 
-use crate::device::OwnDevice;
+use crate::device::{peer_account, peer_device_dh, OwnDevice};
 use crate::state::InnerState;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use base64::Engine as _;
 use serde::{Deserialize, Serialize};
+use std::cmp::Ordering;
 use trino_core::device::list::ENTRY_LEN;
 use trino_core::device::Entry;
 use trino_core::identity::{generate_nostr_keypair, generate_x25519, KeyPair};
@@ -176,6 +177,108 @@ impl CodeV3 {
         self.spk
             .verify(&self.entry.dev_sign)
             .map_err(|_| CodeError::Prekey)
+    }
+}
+
+// ---- A contact's code ------------------------------------------------------
+
+/// Why a code does not reconnect the contact of its account.
+#[derive(Debug, PartialEq, Eq)]
+pub enum ReconnectError {
+    /// No such contact.
+    Unknown,
+    /// The code's primary is not the device held for the contact (the
+    /// `ik_dh` pinned when it was added, or its list's primary): a change
+    /// of keys (K8, §13.2), never taken in silence.
+    KeyChange,
+    /// The code names the list held, by its `gen` and `seq`, with another
+    /// hash: two lists of one account at one place (§3.5).
+    Fork,
+}
+
+/// The contact whose account is the code's `A`, by its name here.
+pub fn holder(inner: &InnerState, code: &CodeV3) -> Option<String> {
+    inner
+        .friends
+        .values()
+        .find(|friend| peer_account(friend) == Some(code.account))
+        .map(|friend| friend.handle.clone())
+}
+
+/// Takes `code` (checked) for the contact `handle` of its account: the
+/// handshake starts from it until a list at least as new arrives. True if
+/// it was kept; false if the list held is newer than the code already,
+/// which then adds nothing.
+pub fn reconnect(
+    inner: &mut InnerState,
+    handle: &str,
+    code: CodeV3,
+) -> Result<bool, ReconnectError> {
+    let friend = inner.friends.get(handle).ok_or(ReconnectError::Unknown)?;
+    if peer_account(friend) != Some(code.account) {
+        return Err(ReconnectError::Unknown);
+    }
+    // Until device linking (VI-9) a contact is one device: the code's
+    // primary has to be it.
+    if peer_device_dh(friend) != Some(code.entry.dev_dh) {
+        return Err(ReconnectError::KeyChange);
+    }
+    if let Some(devices) = &friend.devices {
+        let held = devices.chain.current();
+        let at = (held.body.gen, held.body.seq);
+        match (code.gen, code.seq).cmp(&at) {
+            Ordering::Less => return Ok(false),
+            Ordering::Equal if held.hash()[..LIST_HASH_LEN] != code.list_hash => {
+                return Err(ReconnectError::Fork)
+            }
+            Ordering::Equal
+                if devices
+                    .chain
+                    .device_for_dh(&code.entry.dev_dh)
+                    .map(|entry| entry.dev_sign)
+                    != Some(code.entry.dev_sign) =>
+            {
+                return Err(ReconnectError::KeyChange)
+            }
+            _ => {}
+        }
+    }
+    if let Some(friend) = inner.friends.get_mut(handle) {
+        friend.from_code = Some(code);
+    }
+    Ok(true)
+}
+
+/// Whether the contact `handle` needs a new code (P1-13a): nothing of its
+/// account under P1 (no list, no code) and no session, as a contact
+/// migrated from before P1 until one side pastes the other's code.
+pub fn needs_code(inner: &InnerState, handle: &str) -> bool {
+    inner.friends.get(handle).is_some_and(|friend| {
+        friend.devices.is_none()
+            && friend.from_code.is_none()
+            && !crate::session::has_session(inner, handle)
+    })
+}
+
+/// `FriendRecord::from_code` in the account file: the code as text.
+pub mod serde_code {
+    use super::CodeV3;
+    use serde::de::Error as _;
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+
+    pub fn serialize<S: Serializer>(
+        code: &Option<CodeV3>,
+        serializer: S,
+    ) -> Result<S::Ok, S::Error> {
+        code.as_ref().map(CodeV3::encode).serialize(serializer)
+    }
+
+    pub fn deserialize<'de, D: Deserializer<'de>>(
+        deserializer: D,
+    ) -> Result<Option<CodeV3>, D::Error> {
+        Option::<String>::deserialize(deserializer)?
+            .map(|text| CodeV3::decode(&text).map_err(|_| D::Error::custom("not a trino3: code")))
+            .transpose()
     }
 }
 
@@ -482,6 +585,203 @@ mod tests {
 
         inner.device = None;
         assert!(share_code(&inner).is_err(), "sealed");
+    }
+
+    // ---- A contact's code (P1-13a.3) ---------------------------------------
+
+    use crate::nostr::NostrEvent;
+    use crate::p1::tests::{person, Person};
+    use crate::p1::{initiate, open, seal, Opened, KIND_MESSAGE};
+    use crate::send::SendError;
+    use crate::state::FriendRecord;
+
+    /// The code `who` shares.
+    fn code_of(who: &Person) -> CodeV3 {
+        CodeV3::of(who.device(), [0x99; 32], [0xAA; 32]).unwrap()
+    }
+
+    /// What an admitted event gives: the envelope, whether it started a
+    /// session, and the replies. Panics if it was dropped.
+    fn admitted(opened: Opened) -> (Option<Vec<u8>>, bool, Vec<NostrEvent>) {
+        match opened {
+            Opened::Contact {
+                envelope,
+                established,
+                replies,
+                ..
+            } => (envelope.map(|e| e.to_vec()), established, replies),
+            Opened::Drop(why) => panic!("dropped: {why}"),
+            Opened::Undecryptable { .. } => panic!("undecryptable"),
+        }
+    }
+
+    /// Ana and Bea, contacts of each other since before P1: neither holds
+    /// anything of the other's account under P1.
+    fn migrated() -> (Person, Person) {
+        let mut ana = person();
+        let mut bea = person();
+        ana.add("bea", &bea, None);
+        bea.add("ana", &ana, None);
+        (ana, bea)
+    }
+
+    #[test]
+    fn one_side_pasting_the_other_s_code_reconnects_both() {
+        let (mut ana, mut bea) = migrated();
+        assert!(needs_code(&ana.inner, "bea"));
+        assert!(needs_code(&bea.inner, "ana"));
+        assert_eq!(
+            initiate(&mut bea.inner, "ana", NOW).unwrap_err(),
+            SendError::NoPrekeys
+        );
+
+        // Bea pastes Ana's code: it is Ana's account, and it reconnects her.
+        let code = code_of(&ana);
+        assert_eq!(holder(&bea.inner, &code), Some("ana".to_string()));
+        assert_eq!(holder(&ana.inner, &code), None, "nobody here is Ana");
+        assert_eq!(reconnect(&mut bea.inner, "ana", code.clone()), Ok(true));
+        assert_eq!(bea.inner.friends.len(), 1);
+        assert_eq!(bea.inner.friends["ana"].from_code, Some(code));
+        assert!(!needs_code(&bea.inner, "ana"));
+
+        // Her handshake is PQ-11 (the code has no post-quantum prekey).
+        let hello = initiate(&mut bea.inner, "ana", NOW).unwrap();
+        assert!(bea.inner.mailboxes.pq11.contains_key("ana"));
+        let (_, established, replies) = admitted(open(&mut ana.inner, &hello, NOW + 5));
+        assert!(established, "Ana's chat opens when the handshake arrives");
+        assert!(!needs_code(&ana.inner, "bea"));
+        assert_eq!(replies.len(), 2, "the type 4 and Ana's full list");
+
+        let (_, established, back) = admitted(open(&mut bea.inner, &replies[0], NOW + 10));
+        assert!(established);
+        let held = &bea.inner.friends["ana"];
+        assert!(held.devices.is_some(), "Ana's list, taken");
+        assert_eq!(held.from_code, None, "the code is no longer needed");
+        admitted(open(&mut bea.inner, &replies[1], NOW + 11));
+        for event in &back {
+            admitted(open(&mut ana.inner, event, NOW + 12));
+        }
+
+        // And they talk both ways.
+        let hello_ana: &[u8] = b"{\"a\":1}";
+        let to_ana = seal(
+            &mut bea.inner,
+            "ana",
+            hello_ana,
+            None,
+            KIND_MESSAGE,
+            NOW + 20,
+        )
+        .unwrap();
+        let (envelope, _, _) = admitted(open(&mut ana.inner, &to_ana, NOW + 21));
+        assert_eq!(envelope.as_deref(), Some(hello_ana));
+        let hello_bea: &[u8] = b"{\"b\":2}";
+        let to_bea = seal(
+            &mut ana.inner,
+            "bea",
+            hello_bea,
+            None,
+            KIND_MESSAGE,
+            NOW + 30,
+        )
+        .unwrap();
+        let (envelope, _, _) = admitted(open(&mut bea.inner, &to_bea, NOW + 31));
+        assert_eq!(envelope.as_deref(), Some(hello_bea));
+    }
+
+    #[test]
+    fn a_code_whose_primary_is_not_the_device_pinned_is_a_change_of_keys() {
+        let (ana, mut bea) = migrated();
+        // Ana's account key, another X25519 key: not the device Bea pinned.
+        let mut other = ana.v1.clone();
+        other.ik_dh = create_identity().ik_dh;
+        let impostor = own_device_of(&other, NOW);
+        let code = CodeV3::of(&impostor, [1; 32], [2; 32]).unwrap();
+        code.verify().unwrap();
+        assert_eq!(holder(&bea.inner, &code), Some("ana".to_string()));
+        assert_eq!(
+            reconnect(&mut bea.inner, "ana", code.clone()),
+            Err(ReconnectError::KeyChange)
+        );
+        assert_eq!(bea.inner.friends["ana"].from_code, None);
+        assert_eq!(
+            reconnect(&mut bea.inner, "nadie", code),
+            Err(ReconnectError::Unknown)
+        );
+    }
+
+    #[test]
+    fn a_code_against_the_list_held_is_kept_only_if_it_agrees() {
+        let (ana, mut bea) = migrated();
+        // Bea already holds Ana's list.
+        let hers = ana.device().compact_bundle();
+        crate::device::take_bundle(&mut bea.inner, "ana", hers, NOW as u64).unwrap();
+        let code = code_of(&ana);
+        // The same list: kept (its prekey may be newer).
+        assert_eq!(reconnect(&mut bea.inner, "ana", code.clone()), Ok(true));
+        // The same place in the chain with another hash: a fork.
+        bea.inner.friends.get_mut("ana").unwrap().from_code = None;
+        let mut forked = code.clone();
+        forked.list_hash[0] ^= 1;
+        assert_eq!(
+            reconnect(&mut bea.inner, "ana", forked),
+            Err(ReconnectError::Fork)
+        );
+        // Older than the list held: nothing to take.
+        let mut older = code;
+        older.seq = 0;
+        assert_eq!(reconnect(&mut bea.inner, "ana", older), Ok(false));
+        assert_eq!(bea.inner.friends["ana"].from_code, None);
+    }
+
+    #[test]
+    fn a_first_list_older_than_the_code_does_not_open_the_session() {
+        let (mut ana, mut bea) = migrated();
+        // A code that says Ana's list is at seq 5; her device sends seq 1.
+        let mut code = code_of(&ana);
+        code.seq = 5;
+        reconnect(&mut bea.inner, "ana", code).unwrap();
+        let hello = initiate(&mut bea.inner, "ana", NOW).unwrap();
+        let (_, _, replies) = admitted(open(&mut ana.inner, &hello, NOW + 5));
+        match open(&mut bea.inner, &replies[0], NOW + 10) {
+            Opened::Drop(why) => assert_eq!(why, "first reply without a list that checks"),
+            _ => panic!("admitted a list older than the code"),
+        }
+        assert!(bea.inner.friends["ana"].devices.is_none());
+        assert!(bea.inner.friends["ana"].from_code.is_some());
+    }
+
+    #[test]
+    fn the_code_is_kept_with_the_contact() {
+        let (ana, mut bea) = migrated();
+        reconnect(&mut bea.inner, "ana", code_of(&ana)).unwrap();
+        let record = bea.inner.friends["ana"].clone();
+        let json = serde_json::to_value(&record).unwrap();
+        assert_eq!(json["fromCode"], code_of(&ana).encode());
+        let back: FriendRecord = serde_json::from_value(json.clone()).unwrap();
+        assert_eq!(back.from_code, record.from_code);
+        // A record without it reads as one without it, and one that does
+        // not read is refused whole.
+        let mut plain = json.clone();
+        plain.as_object_mut().unwrap().remove("fromCode");
+        let plain: FriendRecord = serde_json::from_value(plain).unwrap();
+        assert!(plain.from_code.is_none());
+        assert!(serde_json::to_value(&plain)
+            .unwrap()
+            .get("fromCode")
+            .is_none());
+        let mut bad = json;
+        bad["fromCode"] = serde_json::Value::String("trino3:AAAA".into());
+        assert!(serde_json::from_value::<FriendRecord>(bad).is_err());
+    }
+
+    #[test]
+    fn a_contact_with_a_list_needs_no_code() {
+        let (mut ana, bea) = migrated();
+        assert!(!needs_code(&ana.inner, "nadie"));
+        let hers = bea.device().compact_bundle();
+        crate::device::take_bundle(&mut ana.inner, "bea", hers, NOW as u64).unwrap();
+        assert!(!needs_code(&ana.inner, "bea"), "it holds her list");
     }
 
     #[test]
