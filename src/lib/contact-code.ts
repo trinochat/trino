@@ -1,4 +1,7 @@
-// Contact codes. `trino1:<base64url(bundle without avatar)>` is the JSON
+// Contact codes. `trino3:` (P1-13a) is the only one shared and added now:
+// the backend makes it (share_bundle) and reads it (preview_contact); here
+// it is read for its shape, and the codes of before are told apart so the
+// screen can say so. `trino1:<base64url(bundle without avatar)>` is the JSON
 // bundle, moved out of App.tsx unchanged; `trino2:` (T9) packs the same keys
 // into a versioned binary, about 370 characters instead of 870, and is the
 // only one shared now. Both, and a raw JSON bundle, are still read.
@@ -284,3 +287,118 @@ export function formatFingerprint(fingerprint: string): string {
  * and the share panel import this, so they follow it.
  */
 export const toShareCode: (bundleJson: string) => string = toCompactCodeV2;
+
+/*
+ * trino3: base64url, without padding, of these 434 bytes (P1-13a;
+ * diseno-vinculacion.md §13.3), as crates/trino-engine/src/contact_code.rs
+ * writes them:
+ *
+ *   version  1    1
+ *   account  32   A, the account key
+ *   gen      4    the generation of its list, big-endian
+ *   seq      8    its seq, big-endian
+ *   listHash 16   the first 16 bytes of the list's SHA-256
+ *   entry    209  the primary's entry
+ *   spk      100  the primary's signed prekey
+ *   r        32   this code's request mailbox
+ *   rDh      32   this code's request key
+ *
+ * No name, no photo and no device list. The backend checks the signatures.
+ */
+
+const V3_PREFIX = 'trino3:';
+const V3_VERSION = 1;
+const V3_ENTRY_LEN = 209;
+const V3_SPK_LEN = 100;
+export const V3_LENGTH = 1 + 32 + 4 + 8 + 16 + V3_ENTRY_LEN + V3_SPK_LEN + 32 + 32;
+
+/** A `trino3:` code, its byte fields in lowercase hex. */
+export interface CodeV3 {
+  account: string;
+  gen: number;
+  seq: bigint;
+  listHash: string;
+  entry: string;
+  spk: string;
+  r: string;
+  rDh: string;
+}
+
+/** The text of a `trino3:` code, or '' if a field is not hex of its length or a number out of range. */
+export function encodeCodeV3(code: CodeV3): string {
+  if (!Number.isInteger(code.gen) || code.gen < 0 || code.gen > 0xffffffff) return '';
+  if (code.seq < 0n || code.seq > 0xffffffffffffffffn) return '';
+  const out = new Uint8Array(V3_LENGTH);
+  const view = new DataView(out.buffer);
+  out[0] = V3_VERSION;
+  let offset = 1;
+  const put = (hex: string, length: number): boolean => {
+    const bytes = hexToBytes(hex, length);
+    if (!bytes) return false;
+    out.set(bytes, offset);
+    offset += length;
+    return true;
+  };
+  if (!put(code.account, 32)) return '';
+  view.setUint32(offset, code.gen, false);
+  view.setBigUint64(offset + 4, code.seq, false);
+  offset += 12;
+  for (const [hex, length] of v3FieldsAfterSeq(code)) {
+    if (!put(hex, length)) return '';
+  }
+  return V3_PREFIX + bytesToB64url(out);
+}
+
+/** The byte fields after `seq`, in order, with their length. */
+function v3FieldsAfterSeq(code: CodeV3): [string, number][] {
+  return [
+    [code.listHash, 16],
+    [code.entry, V3_ENTRY_LEN],
+    [code.spk, V3_SPK_LEN],
+    [code.r, 32],
+    [code.rDh, 32],
+  ];
+}
+
+/** A pasted `trino3:` code, spaces and line breaks ignored, or null if it is not a whole one of a known version. */
+export function decodeCodeV3(input: string): CodeV3 | null {
+  const code = input.replace(/\s+/g, '');
+  if (code.slice(0, V3_PREFIX.length).toLowerCase() !== V3_PREFIX) return null;
+  const text = code.slice(V3_PREFIX.length);
+  // No padding: the code never has it (contact_code.rs refuses it too).
+  if (text.includes('=')) return null;
+  const bytes = b64urlToBytes(text);
+  if (!bytes || bytes.length !== V3_LENGTH || bytes[0] !== V3_VERSION) return null;
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  let offset = 1;
+  const take = (length: number) => {
+    const hex = bytesToHex(bytes.subarray(offset, offset + length));
+    offset += length;
+    return hex;
+  };
+  const account = take(32);
+  const gen = view.getUint32(offset, false);
+  const seq = view.getBigUint64(offset + 4, false);
+  offset += 12;
+  return {
+    account,
+    gen,
+    seq,
+    listHash: take(16),
+    entry: take(V3_ENTRY_LEN),
+    spk: take(V3_SPK_LEN),
+    r: take(32),
+    rDh: take(32),
+  };
+}
+
+/**
+ * Whether a pasted text is a code of before: `trino1:` or `trino2:` with
+ * something after, or a bundle pasted as JSON. The screen says it is of an
+ * earlier version instead of invalid.
+ */
+export function isOldContactCode(input: string): boolean {
+  const code = input.replace(/\s+/g, '').toLowerCase();
+  if (/^trino[12]:./.test(code)) return true;
+  return readJson(input) !== null;
+}

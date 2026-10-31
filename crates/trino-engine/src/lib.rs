@@ -24,6 +24,7 @@ pub mod bridges;
 pub mod call_log;
 pub mod command_error;
 pub mod connection;
+pub mod contact_code;
 pub mod contacts;
 pub mod device;
 pub mod diag;

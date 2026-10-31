@@ -1,7 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import {
   CONTACT_CODE_READERS,
+  V3_LENGTH,
   b64urlDecode,
+  decodeCodeV3,
+  encodeCodeV3,
+  isOldContactCode,
   b64urlEncode,
   formatFingerprint,
   fromCompactCode,
@@ -251,5 +255,76 @@ describe('toShareCode', () => {
   it('is the trino2: code', () => {
     expect(toShareCode(SAMPLE_V2)).toBe(V2_CODE);
     expect(toShareCode('not json')).toBe('');
+  });
+});
+
+// trino3: (P1-13a). The same fixed vector as contact_code.rs: every field a
+// byte pattern, computed apart from both.
+const V3_VECTOR =
+  'trino3:ARERERERERERERERERERERERERERERERERERERERERERAAAAAQAAAAAAAAACIiIiIiIiIiIiIiIiIiIiIgECAwQBMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzNERERERERERERERERERERERERERERERERERERERERERAAAAAEAAAAAAAAAAVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmCgsMDXd3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3iIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiJmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqo';
+
+const V3_FIELDS = {
+  account: '11'.repeat(32),
+  gen: 1,
+  seq: 2n,
+  listHash: '22'.repeat(16),
+  // id 01020304, flags 01 (primary), dev_sign, dev_dh, since (1, 1), d_sig, dh_sig.
+  entry:
+    '0102030401' + '33'.repeat(32) + '44'.repeat(32) + '00000001' + '0000000000000001' + '55'.repeat(64) + '66'.repeat(64),
+  // id 0a0b0c0d, key, signature.
+  spk: '0a0b0c0d' + '77'.repeat(32) + '88'.repeat(64),
+  r: '99'.repeat(32),
+  rDh: 'aa'.repeat(32),
+};
+
+describe('trino3:', () => {
+  it('encodes and decodes the fixed vector', () => {
+    expect(V3_LENGTH).toBe(434);
+    expect(V3_VECTOR.length).toBe(7 + 579);
+    expect(encodeCodeV3(V3_FIELDS)).toBe(V3_VECTOR);
+    expect(decodeCodeV3(V3_VECTOR)).toEqual(V3_FIELDS);
+  });
+
+  it('reads a code a chat app wrapped, with its prefix in capitals', () => {
+    const wrapped = ['  TRINO3:' + V3_VECTOR.slice(7, 200), V3_VECTOR.slice(200, 400), ' ' + V3_VECTOR.slice(400) + ' '];
+    expect(decodeCodeV3(wrapped.join('\n'))).toEqual(V3_FIELDS);
+    expect(decodeCodeV3(wrapped.join('\r\n'))).toEqual(V3_FIELDS);
+  });
+
+  it('refuses another length, another version, padding and what is not base64url', () => {
+    const b64 = V3_VECTOR.slice(7).replace(/-/g, '+').replace(/_/g, '/');
+    const bytes = Uint8Array.from(atob(b64 + '='.repeat((4 - (b64.length % 4)) % 4)), c => c.charCodeAt(0));
+    const text = (b: Uint8Array) =>
+      'trino3:' + btoa(String.fromCharCode(...b)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+    expect(text(bytes)).toBe(V3_VECTOR);
+    expect(decodeCodeV3(text(bytes.subarray(0, V3_LENGTH - 1)))).toBeNull();
+    expect(decodeCodeV3(text(Uint8Array.from([...bytes, 0])))).toBeNull();
+    const v2 = Uint8Array.from(bytes);
+    v2[0] = 2;
+    expect(decodeCodeV3(text(v2))).toBeNull();
+    expect(decodeCodeV3(V3_VECTOR + '=')).toBeNull();
+    expect(decodeCodeV3('trino3:###')).toBeNull();
+    expect(decodeCodeV3(V3_VECTOR.slice(7))).toBeNull();
+    expect(decodeCodeV3('')).toBeNull();
+  });
+
+  it('writes nothing for a field that does not fit', () => {
+    expect(encodeCodeV3({ ...V3_FIELDS, account: 'zz' })).toBe('');
+    expect(encodeCodeV3({ ...V3_FIELDS, entry: V3_FIELDS.entry.slice(2) })).toBe('');
+    expect(encodeCodeV3({ ...V3_FIELDS, gen: 2 ** 32 })).toBe('');
+    expect(encodeCodeV3({ ...V3_FIELDS, seq: 2n ** 64n })).toBe('');
+    expect(encodeCodeV3({ ...V3_FIELDS, seq: -1n })).toBe('');
+  });
+
+  it('tells the codes of before apart', () => {
+    expect(isOldContactCode(SAMPLE_BUNDLE)).toBe(true);
+    expect(isOldContactCode(`  ${SAMPLE_BUNDLE}\n`)).toBe(true);
+    expect(isOldContactCode(SAMPLE_CODE)).toBe(true);
+    expect(isOldContactCode(V2_CODE)).toBe(true);
+    expect(isOldContactCode('TRINO2:AQNhbmE')).toBe(true);
+    expect(isOldContactCode(V3_VECTOR)).toBe(false);
+    expect(isOldContactCode('hola')).toBe(false);
+    expect(isOldContactCode('{"a":1}')).toBe(false);
+    expect(isOldContactCode('trino1:')).toBe(false);
   });
 });
