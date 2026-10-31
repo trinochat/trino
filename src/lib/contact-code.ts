@@ -171,48 +171,6 @@ export function toCompactCodeV2(bundleJson: string): string {
   return V2_PREFIX + bytesToB64url(out);
 }
 
-/** The bundle JSON inside a `trino2:` code, or null if it is not a whole one of a known version. */
-function readCodeV2(input: string): string | null {
-  const code = input.replace(/\s+/g, '');
-  if (code.slice(0, V2_PREFIX.length).toLowerCase() !== V2_PREFIX) return null;
-  const bytes = b64urlToBytes(code.slice(V2_PREFIX.length));
-  if (!bytes || bytes.length < 2 || bytes[0] !== V2_VERSION) return null;
-  const nameLength = bytes[1]!;
-  if (bytes.length !== 2 + nameLength + V2_KEYS_LENGTH) return null;
-  let handle: string;
-  try {
-    handle = new TextDecoder('utf-8', { fatal: true }).decode(bytes.subarray(2, 2 + nameLength));
-  } catch {
-    return null;
-  }
-  const keys: Record<string, string> = {};
-  let offset = 2 + nameLength;
-  const take = (list: readonly (readonly [string, number])[]) => {
-    for (const [key, length] of list) {
-      keys[key] = bytesToHex(bytes.subarray(offset, offset + length));
-      offset += length;
-    }
-  };
-  take(V2_KEYS_BEFORE_SPK_ID);
-  const spkId = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength).getUint32(offset, false);
-  offset += 4;
-  take(V2_KEYS_AFTER_SPK_ID);
-  // The keys in the order serde_json prints share_bundle's (sorted), with the
-  // one-time prekey it never offers.
-  return JSON.stringify({
-    handle,
-    idSig: keys.idSig,
-    ikDhPub: keys.ikDhPub,
-    ikSignPub: keys.ikSignPub,
-    nostrPub: keys.nostrPub,
-    opkId: null,
-    opkPub: null,
-    spkId,
-    spkPub: keys.spkPub,
-    spkSig: keys.spkSig,
-  });
-}
-
 /** Whether a text is a JSON object with an identity key, as every bundle has. */
 function isBundleJson(text: string): boolean {
   try {
@@ -228,43 +186,46 @@ function isBundleJson(text: string): boolean {
   }
 }
 
-/** The bundle JSON inside a `trino1:` code, or null if it is not one or holds no bundle. */
-function readCodeV1(input: string): string | null {
-  const code = input.replace(/\s+/g, '');
-  if (code.slice(0, 7).toLowerCase() !== 'trino1:') return null;
-  const json = fromCompactCode('trino1:' + code.slice(7));
-  return json !== null && isBundleJson(json) ? json : null;
-}
-
 /** A bundle pasted as JSON, as the first versions shared it. */
 function readJson(input: string): string | null {
   const text = input.trim();
   return text.startsWith('{') && isBundleJson(text) ? text : null;
 }
 
-export type ContactCodeFormat = 'trino2' | 'trino1' | 'json';
+/**
+ * A pasted `trino3:` code as the backend takes it: without spaces or line
+ * breaks, its prefix in lower case; null if it is not a whole one.
+ */
+function readCodeV3(input: string): string | null {
+  if (decodeCodeV3(input) === null) return null;
+  const code = Array.from(input)
+    .filter(char => char.trim() !== '')
+    .join('');
+  return V3_PREFIX + code.slice(V3_PREFIX.length);
+}
+
+export type ContactCodeFormat = 'trino3';
 
 export interface ContactCodeReader {
   format: ContactCodeFormat;
-  /** The bundle JSON in a pasted text, or null if the text is not this kind of code. */
+  /** What goes to the backend for a pasted text, or null if the text is not this kind of code. */
   read(input: string): string | null;
 }
 
 /**
- * Every kind of code a pasted text can be, newest first. The seam of the
- * invitation links (plan-cambios-11oct §8): a link becomes one more reader
- * here, and the screens that call parseContactCode stay as they are.
+ * Every kind of code a pasted text can be, newest first: `trino3:` only
+ * since P1-13a (the codes of before carry no prekeys of P1; the screen
+ * tells them apart with isOldContactCode). The seam of the invitation
+ * links (plan-cambios-11oct §8): a link becomes one more reader here, and
+ * the screens that call parseContactCode stay as they are.
  */
-export const CONTACT_CODE_READERS: readonly ContactCodeReader[] = [
-  { format: 'trino2', read: readCodeV2 },
-  { format: 'trino1', read: readCodeV1 },
-  { format: 'json', read: readJson },
-];
+export const CONTACT_CODE_READERS: readonly ContactCodeReader[] = [{ format: 'trino3', read: readCodeV3 }];
 
 /**
- * The bundle in a pasted code, and which kind of code it was, or null.
- * Spaces and line breaks inside a code are ignored, as when a chat app wraps
- * it. Nothing here checks the signatures: preview_contact does (K8).
+ * What a pasted code sends to the backend (named `bundleJson`, as when it
+ * was the bundle), and which kind of code it was, or null. Spaces and line
+ * breaks inside a code are ignored, as when a chat app wraps it. Nothing
+ * here checks the signatures: preview_contact does (K8).
  */
 export function parseContactCode(input: string): { bundleJson: string; format: ContactCodeFormat } | null {
   for (const reader of CONTACT_CODE_READERS) {

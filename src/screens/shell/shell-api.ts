@@ -44,6 +44,7 @@ export type ShellApi = Pick<
   | 'importSticker'
   | 'deleteSticker'
   | 'listCallHistory'
+  | 'shareBundle'
 >;
 
 /** The `on*` functions of lib/api.ts that the shell listens to. */

@@ -89,6 +89,7 @@ import { RequestPane, RequestsList, useRequests, type RequestsApi } from '../req
 import { ReportDialog, type ReportDialogApi } from '../report/ReportDialog';
 import { candidatesOf, type ReportCandidate } from '../report/report-model';
 import { clipboard } from '../../lib/clipboard';
+import { toShareCode } from '../../lib/contact-code';
 import type { GroupMember } from '../../lib/api';
 import type { Msg } from '../types';
 
@@ -708,6 +709,7 @@ export function ShellScreen(props: ShellScreenProps) {
             trust: conv.trust[ref.handle] ?? 'unverified',
             ttlSeconds: prefs.getTtl(key),
             blocked: contact?.blocked ?? false,
+            needsCode: contact?.needs_code === true,
           }
         : {
             kind: 'group',
@@ -743,6 +745,15 @@ export function ShellScreen(props: ShellScreenProps) {
         header.trust === 'keyChanged' && { onAcknowledgeKeyChange: () => void conv.acknowledgeKeyChange(ref.handle) }),
       ...(single && { onBack: back }),
       ...(props.report && { onReport: (msgKey: string) => void reportMessage(ref, msgKey) }),
+      // P1-13a: your trino3: code, or where to paste theirs.
+      ...(ref.kind === 'contact' && {
+        onCopyMyCode: async () => {
+          const code = toShareCode(await api.shareBundle());
+          if (code === '') throw new Error('no code to share');
+          await clipboard.copyText(code);
+        },
+        onPasteCode: () => setOverlay({ kind: 'contacts', tab: 'add' }),
+      }),
       fetchFile: (file, maxBytes) =>
         maxBytes === undefined
           ? api.fetchFile(file.url, file.key, file.sha256, file.mime)

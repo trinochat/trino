@@ -79,6 +79,9 @@ export function buildInboxItems(sources: InboxSources): InboxItem[] {
         name: node.handle,
         avatar: { initials: identityInitials(node.handle), kind: 'person', ...(node.avatar && { src: node.avatar }) },
         ...(msg && { preview: previewOf(msg, false, t), lastTs: msg.ts }),
+        // P1-13a: until one of the two pastes the other's new code, the
+        // line says so instead of the last message.
+        ...(node.needs_code && { preview: t('inbox.needsCode') }),
         ...shared(key),
         ...(nodeTrust && { trust: nodeTrust }),
       },

@@ -43,6 +43,8 @@ const KEYS: string[] = [
   'contacts.add.nameInvalidError',
   'contacts.add.failed',
   'contacts.add.added',
+  // P1-13a: a code of an earlier version.
+  'contacts.add.oldCode',
   // Under the add and share panels: no messages from strangers in this batch.
   'contacts.mutualNote',
   // The dialog and its tabs (Contacts:40-51).

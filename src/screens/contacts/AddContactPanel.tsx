@@ -84,7 +84,7 @@ export function AddContactPanel({ api, onContactAdded }: AddContactPanelProps) {
     dispatch({ type: 'reset' });
   };
 
-  const invalid = state.kind === 'invalid';
+  const invalid = state.kind === 'invalid' || state.kind === 'old';
   return (
     <div className="flex flex-col gap-4">
       <div className="flex flex-col gap-1.5">
@@ -110,7 +110,7 @@ export function AddContactPanel({ api, onContactAdded }: AddContactPanelProps) {
       {invalid && (
         <p id={errorId} role="alert" className={ERROR_LINE}>
           <CircleAlert {...iconSize('md', 'mt-0.5 shrink-0')} aria-hidden="true" />
-          <span>{t('contacts.add.invalid')}</span>
+          <span>{t(state.kind === 'old' ? 'contacts.add.oldCode' : 'contacts.add.invalid')}</span>
         </p>
       )}
       {state.kind === 'checking' && (

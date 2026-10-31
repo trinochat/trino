@@ -19,6 +19,7 @@ import type {
 import { ShellScreen, type ShellScreenProps } from './ShellScreen';
 import { fakeNet, UPDATES } from '../net/test-support';
 import { appearanceHost, fakeApi, fakeEvents, fakePrefs } from './test-fakes';
+import { SAMPLE_CODE_V3 } from '../../lib/contact-code-test-support';
 import type { InboxListProps } from '../inbox/InboxList';
 import { fakeRequestsApi, request } from '../requests/test-support';
 
@@ -183,6 +184,28 @@ describe('ShellScreen: the chat of each conversation', () => {
     act(() => lastProps(slots.chat).onSendText('hola'));
     await waitFor(() => expect(api.sendMessage).toHaveBeenCalledWith('Ana', expect.any(String)));
     expect(message().value).toBe('hola Ana');
+  });
+
+  // P1-13a: a contact that needs a new code.
+  it('tells the chat a contact needs a new code, and where each way out goes', async () => {
+    const writeText = vi.fn(async (_text: string) => {});
+    Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText } });
+    const { slots, api } = setup({}, { nodes: [node('Ana', { needs_code: true }), node('Bea')] });
+    api.shareBundle.mockResolvedValue(SAMPLE_CODE_V3);
+    fireEvent.click(await row('Ana'));
+    const ana = lastProps(slots.chat);
+    expect(ana.header).toMatchObject({ kind: 'contact', name: 'Ana', needsCode: true });
+    await act(() => ana.onCopyMyCode!());
+    expect(api.shareBundle).toHaveBeenCalledTimes(1);
+    expect(writeText).toHaveBeenCalledWith(SAMPLE_CODE_V3);
+    // A code that is not a whole one is not copied.
+    api.shareBundle.mockResolvedValue('');
+    await expect(ana.onCopyMyCode!()).rejects.toThrow();
+    act(() => ana.onPasteCode!());
+    expect(screen.getByTestId('contacts').getAttribute('data-tab')).toBe('add');
+
+    fireEvent.click(await row('Bea'));
+    expect(lastProps(slots.chat).header).toMatchObject({ kind: 'contact', name: 'Bea', needsCode: false });
   });
 
   it('gives the chat what it needs from the shell', async () => {

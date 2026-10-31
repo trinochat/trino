@@ -127,6 +127,19 @@ describe('buildInboxItems', () => {
     expect(preview('grp:g1')).toBe('Papá: Llego a las 7');
   });
 
+  it('says a contact needs your new code in place of its last message (P1-13a)', () => {
+    const items = buildInboxItems(
+      sources({
+        nodes: [node('ana', { needs_code: true }), node('bea')],
+        messages: { 'ana': [text('them', T0, 'hola')], 'bea': [text('them', T0 - 5, 'buenas')] },
+      }),
+    );
+    const of = (name: string) => items.find(item => item.name === name);
+    expect(of('ana')?.preview).toBe('Necesita tu código nuevo');
+    expect(of('ana')?.lastTs).toBe(T0);
+    expect(of('bea')?.preview).toBe('buenas');
+  });
+
   it('carries the draft, the unread count, the trust and the muted groups and channel', () => {
     const items = buildInboxItems(
       sources({

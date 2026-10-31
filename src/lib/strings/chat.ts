@@ -23,6 +23,10 @@ export const chat: AreaStrings = {
     'chat2.keyChangedBanner':
       'El código de seguridad de {name} cambió. Antes de enviarle algo privado, llámale y comparen los símbolos de la llamada.',
     'chat2.understood': 'Entendido',
+    'chat2.needsCode':
+      'Trino cambió la forma de conectar. Para seguir hablando, mándale tu código nuevo a {name} o pídele el suyo. Solo hace falta uno de los dos.',
+    'chat2.copyMyCode': 'Copiar mi código',
+    'chat2.pasteTheirCode': 'Pegar el código de {name}',
     'chat2.blockedNote': 'Bloqueaste a este contacto: sus mensajes no te llegan. Para escribirle, desbloquéalo en sus detalles.',
     'chat2.openDetails': 'Ver detalles',
     'chat2.endedNote': 'Ya no eres parte de este grupo: no puedes escribir en él. Sus mensajes siguen en este equipo.',
@@ -173,6 +177,10 @@ export const chat: AreaStrings = {
     'chat2.keyChangedBanner':
       'The security code of {name} changed. Before you send them anything private, call them and compare the symbols of the call.',
     'chat2.understood': 'Got it',
+    'chat2.needsCode':
+      'Trino changed the way it connects. To keep talking, send {name} your new code or ask for theirs. Only one of you needs to.',
+    'chat2.copyMyCode': 'Copy my code',
+    'chat2.pasteTheirCode': "Paste {name}'s code",
     'chat2.blockedNote': 'You blocked this contact: their messages do not reach you. To write to them, unblock them in their details.',
     'chat2.openDetails': 'See details',
     'chat2.endedNote': 'You are no longer in this group, so you cannot write in it. Its messages stay on this device.',
@@ -323,6 +331,10 @@ export const chat: AreaStrings = {
     'chat2.keyChangedBanner':
       'O código de segurança de {name} mudou. Antes de enviar algo privado, ligue e comparem os símbolos da chamada.',
     'chat2.understood': 'Entendi',
+    'chat2.needsCode':
+      'O Trino mudou a forma de conectar. Para continuar conversando, mande seu código novo para {name} ou peça o código dessa pessoa. Basta um dos dois.',
+    'chat2.copyMyCode': 'Copiar meu código',
+    'chat2.pasteTheirCode': 'Colar o código de {name}',
     'chat2.blockedNote':
       'Você bloqueou este contato: as mensagens dessa pessoa não chegam até você. Para escrever, desbloqueie nos detalhes.',
     'chat2.openDetails': 'Ver detalhes',

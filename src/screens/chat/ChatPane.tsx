@@ -26,7 +26,7 @@ import { useEffect, useId, useMemo, useRef, useState } from 'react';
 import { clipboard } from '../../lib/clipboard';
 import { convoKey } from '../../lib/convo';
 import { useT } from '../../lib/i18n';
-import { Button, Dialog, iconSize } from '../../ui';
+import { Button, Dialog, FOCUS_RING, cx, iconSize } from '../../ui';
 import type { ChatPaneProps, ReplyRef } from '../types';
 import { ChatHeader } from './ChatHeader';
 import { Composer } from './composer/Composer';
@@ -35,6 +35,9 @@ import { KeyChangeBanner } from './KeyChangeBanner';
 import type { MessageActions } from './MessageItem';
 import { MessageList } from './MessageList';
 import { useComposerRows } from './use-composer-rows';
+
+/** A text action in the accent, as the other links of the app (P1-13a's notice). */
+const TEXT_ACTION = cx('min-h-11 rounded-ui px-2 text-ui-md font-semibold text-ui-accent-text hover:underline', FOCUS_RING);
 
 /** How long "Mensaje copiado." stays, in ms. */
 const NOTICE_MS = 4000;
@@ -113,6 +116,8 @@ export function ChatPane(props: ChatPaneProps) {
 
   const contact = header.kind === 'contact';
   const blocked = header.kind === 'contact' && header.blocked;
+  // P1-13a: no session can start until one of the two pastes the other's new code.
+  const needsCode = header.kind === 'contact' && header.needsCode === true;
   const ended = header.kind === 'group' && header.ended;
   const call = contact && !blocked ? onCall : undefined;
   const writable = !blocked && !ended;
@@ -187,6 +192,27 @@ export function ChatPane(props: ChatPaneProps) {
       <div className="flex flex-wrap items-center justify-center gap-3 border-t border-ui-line px-4 py-3 text-center text-ui-md text-ui-muted">
         <p className="min-w-0 flex-[1_1_16rem]">{t('chat2.blockedNote')}</p>
         <Button onClick={props.onOpenDetails}>{t('chat2.openDetails')}</Button>
+      </div>
+    );
+  } else if (needsCode) {
+    const copyMyCode = () => {
+      props.onCopyMyCode?.().then(
+        () => setNotice({ tone: 'status', text: t('contacts.share.copied') }),
+        () => setNotice({ tone: 'alert', text: t('contacts.share.copyFailed') }),
+      );
+    };
+    footer = (
+      <div className="flex flex-col items-center gap-1 border-t border-ui-line px-4 py-3 text-center text-ui-md leading-normal text-ui-muted">
+        <p className="m-0 max-w-prose">{t('chat2.needsCode', { name: header.name })}</p>
+        <div className="flex flex-wrap items-center justify-center gap-x-1">
+          <button type="button" className={TEXT_ACTION} onClick={copyMyCode}>
+            {t('chat2.copyMyCode')}
+          </button>
+          <span aria-hidden="true">·</span>
+          <button type="button" className={TEXT_ACTION} onClick={() => props.onPasteCode?.()}>
+            {t('chat2.pasteTheirCode', { name: header.name })}
+          </button>
+        </div>
       </div>
     );
   } else if (ended) {

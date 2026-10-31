@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { ContactPreview } from '../../lib/api';
 import { toCompactCodeV2 } from '../../lib/contact-code';
+import { SAMPLE_CODE_V3 } from '../../lib/contact-code-test-support';
 import {
   ADD_CONTACT_IDLE,
   addContactReducer,
@@ -23,7 +24,9 @@ const BUNDLE = JSON.stringify({
   spkPub: 'e7'.repeat(32),
   spkSig: '0f'.repeat(64),
 });
-const CODE = toCompactCodeV2(BUNDLE);
+/** A code of before (trino2:), which is no code to add any more (P1-13a). */
+const OLD_CODE = toCompactCodeV2(BUNDLE);
+const CODE = SAMPLE_CODE_V3;
 
 const preview = (existing: ContactPreview['existing'] = null, handle = 'Ana Torres'): ContactPreview => ({
   handle,
@@ -52,8 +55,15 @@ describe('addContactReducer', () => {
   it('checks a pasted code, and calls a text that is no code invalid', () => {
     const checking = run([{ type: 'input', text: CODE }]);
     expect(checking.kind).toBe('checking');
-    expect(checking.kind === 'checking' && JSON.parse(checking.bundleJson).handle).toBe('Ana Torres');
+    expect(checking.kind === 'checking' && checking.bundleJson).toBe(CODE);
     expect(run([{ type: 'input', text: 'hola' }])).toEqual({ kind: 'invalid' });
+  });
+
+  it('says a code of before is of an earlier version, and checks nothing', () => {
+    expect(OLD_CODE.startsWith('trino2:')).toBe(true);
+    expect(run([{ type: 'input', text: OLD_CODE }])).toEqual({ kind: 'old' });
+    expect(run([{ type: 'input', text: BUNDLE }])).toEqual({ kind: 'old' });
+    expect(run([{ type: 'input', text: OLD_CODE }, { type: 'input', text: CODE }]).kind).toBe('checking');
   });
 
   it('keeps checking the same code when only the spaces around it change', () => {

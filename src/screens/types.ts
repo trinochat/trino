@@ -154,7 +154,16 @@ export interface UnlockScreenProps {
 
 /* Chat (W3) */
 export type ChatHeaderInfo =
-  | { kind: 'contact'; name: string; avatarSrc?: string; trust: Trust; ttlSeconds: number; blocked: boolean }
+  | {
+      kind: 'contact';
+      name: string;
+      avatarSrc?: string;
+      trust: Trust;
+      ttlSeconds: number;
+      blocked: boolean;
+      /** Nothing of the contact's account under P1 and no session (P1-13a): one of the two pastes the other's new code. */
+      needsCode?: boolean;
+    }
   | {
       kind: 'group';
       name: string;
@@ -216,6 +225,10 @@ export interface ChatPaneProps {
    * emergency key. The chat asks; the answer goes through here.
    */
   onEmergencyAnswer?(accept: boolean): Promise<void>;
+  /** P1-13a: copies your trino3: code, for a contact that needs it. */
+  onCopyMyCode?(): Promise<void>;
+  /** P1-13a: where to paste the contact's new code (Contactos › Agregar). */
+  onPasteCode?(): void;
 }
 export interface ChannelViewProps {
   announcements: readonly Announcement[];

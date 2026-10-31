@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import type { CommandError, ContactPreview, NodeInfo } from '../../lib/api';
 import { toCompactCodeV2 } from '../../lib/contact-code';
+import { SAMPLE_CODE_V3 } from '../../lib/contact-code-test-support';
 import { I18nContext, makeT } from '../../lib/i18n';
 import { AddContactPanel } from './AddContactPanel';
 
@@ -20,7 +21,9 @@ const BUNDLE = JSON.stringify({
   spkPub: 'e7'.repeat(32),
   spkSig: '0f'.repeat(64),
 });
-const CODE = toCompactCodeV2(BUNDLE);
+/** A code of before (trino2:), which is no code to add any more (P1-13a). */
+const OLD_CODE = toCompactCodeV2(BUNDLE);
+const CODE = SAMPLE_CODE_V3;
 
 const preview = (existing: ContactPreview['existing'] = null): ContactPreview => ({
   handle: 'Ana Torres',
@@ -53,6 +56,17 @@ const codeBox = () => screen.getByRole('textbox', { name: 'Pega el código de la
 const paste = (text: string) => fireEvent.change(codeBox(), { target: { value: text } });
 
 describe('AddContactPanel', () => {
+  it('says in red, under the field, that a code of before is of an earlier version', () => {
+    const { api } = mount();
+    paste(OLD_CODE);
+    const alert = screen.getByRole('alert');
+    expect(alert.textContent).toBe('Este código es de una versión anterior de Trino. Pídele uno nuevo.');
+    expect(alert.className).toContain('text-ui-danger');
+    expect(codeBox().getAttribute('aria-invalid')).toBe('true');
+    expect(codeBox().getAttribute('aria-describedby')).toBe(alert.id);
+    expect(api.previewContact).not.toHaveBeenCalled();
+  });
+
   // The shell may hand the same API over in a new object on every render.
   it('checks a code once, even when its parent passes the API in a new object each render', async () => {
     let answer!: (p: ContactPreview) => void;
@@ -76,7 +90,7 @@ describe('AddContactPanel', () => {
     const { api } = mount();
     paste(CODE);
     expect(await screen.findByText('Código válido')).toBeTruthy();
-    expect(api.previewContact).toHaveBeenCalledWith(JSON.stringify(JSON.parse(BUNDLE)));
+    expect(api.previewContact).toHaveBeenCalledWith(CODE);
     expect(screen.getByText('Ana Torres')).toBeTruthy();
     expect(screen.getByText('Su clave')).toBeTruthy();
     expect(screen.getByText('7F3A 91C2 0B5E D4A8')).toBeTruthy();

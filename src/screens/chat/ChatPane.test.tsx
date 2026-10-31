@@ -177,6 +177,37 @@ describe('ChatPane', () => {
   });
 
   // UR-2 (PropBloquear card 5): one grey line, and the details, where "Salir del grupo" is.
+  // P1-13a: a contact of before P1, until one of the two pastes the other's code.
+  it('says in place of the composer that the contact needs a new code, with both ways out', async () => {
+    const onCopyMyCode = vi.fn(async () => {});
+    const onPasteCode = vi.fn();
+    show({ header: { ...ANA, needsCode: true }, onCopyMyCode, onPasteCode });
+    expect(box()).toBeNull();
+    expect(screen.getByText('Perfecto, nos vemos el jueves')).toBeTruthy();
+    const note = screen.getByText(
+      'Trino cambió la forma de conectar. Para seguir hablando, mándale tu código nuevo a Ana Torres o pídele el suyo. Solo hace falta uno de los dos.',
+    );
+    expect(note.closest('div')!.className).toContain('text-ui-muted');
+    const paste = screen.getByRole('button', { name: 'Pegar el código de Ana Torres' });
+    const copy = screen.getByRole('button', { name: 'Copiar mi código' });
+    for (const action of [paste, copy]) expect(action.className).toContain('text-ui-accent-text');
+    fireEvent.click(paste);
+    expect(onPasteCode).toHaveBeenCalledTimes(1);
+    fireEvent.click(copy);
+    expect(onCopyMyCode).toHaveBeenCalledTimes(1);
+    expect(await screen.findByText('Código copiado.')).toBeTruthy();
+  });
+
+  it('says so when your code cannot be copied, and writes as usual once the contact has a session', async () => {
+    show({ header: { ...ANA, needsCode: true }, onCopyMyCode: async () => Promise.reject(new Error('no')), onPasteCode: vi.fn() });
+    fireEvent.click(screen.getByRole('button', { name: 'Copiar mi código' }));
+    expect((await screen.findByRole('alert')).textContent).toContain('No se pudo copiar.');
+    cleanup();
+    show({ header: { ...ANA, needsCode: false } });
+    expect(box()).not.toBeNull();
+    expect(screen.queryByRole('button', { name: 'Copiar mi código' })).toBeNull();
+  });
+
   it('says in a group that someone you blocked is in it', () => {
     const onOpenDetails = vi.fn();
     show({ convo: { kind: 'group', gid: 'g1' }, header: { ...FAMILIA, hasBlocked: true }, onCall: undefined, onOpenDetails });

@@ -13,6 +13,8 @@ const KEYS: string[] = [
   'inbox.unread',
   'inbox.group',
   'inbox.muted',
+  // P1-13a: the line of a contact that needs a new code.
+  'inbox.needsCode',
   // The right-click menu of a row (MC-2).
   'inbox.rowMenu',
   'inbox.mute',

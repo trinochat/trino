@@ -122,8 +122,6 @@ const SAMPLE_V2_FIELDS = {
   spkSig: '0f1e2d3c4b5a69788796a5b4c3d2e1f0'.repeat(4),
 };
 const SAMPLE_V2 = JSON.stringify({ avatar: 'data:image/png;base64,iVBORw0KGgo=', ...SAMPLE_V2_FIELDS });
-/** What `share_bundle` would give without the avatar: the bundle JSON a trino2: code carries. */
-const SAMPLE_V2_NO_AVATAR = JSON.stringify(SAMPLE_V2_FIELDS);
 
 const V2_CODE = [
   'trino2:AQtNYXLDrWEg8J-QpjtqJ7zOtqQtYqOo0CpvDXNlMhV3HeJDpjrASKGLWdopj0DFrbaPJWJK5bIU6nZ6bslNgp09e14a0bpvPiE4',
@@ -136,10 +134,6 @@ const V2_CODE = [
 function v2Bytes(code: string): Uint8Array {
   const b64 = code.slice('trino2:'.length).replace(/-/g, '+').replace(/_/g, '/');
   return Uint8Array.from(atob(b64 + '='.repeat((4 - (b64.length % 4)) % 4)), c => c.charCodeAt(0));
-}
-function v2Code(bytes: Uint8Array): string {
-  const b64 = btoa(String.fromCharCode(...bytes));
-  return 'trino2:' + b64.replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 }
 
 describe('toCompactCodeV2', () => {
@@ -155,8 +149,8 @@ describe('toCompactCodeV2', () => {
 
   it('cuts a name longer than 255 bytes at a whole character', () => {
     const long = JSON.stringify({ ...SAMPLE_V2_FIELDS, handle: '🐦'.repeat(200) });
-    const parsed = parseContactCode(toCompactCodeV2(long));
-    expect(JSON.parse(parsed!.bundleJson).handle).toBe('🐦'.repeat(63));
+    const bytes = v2Bytes(toCompactCodeV2(long));
+    expect(new TextDecoder().decode(bytes.subarray(2, 2 + bytes[1]!))).toBe('🐦'.repeat(63));
   });
 
   it('gives an empty string for what is not a whole bundle', () => {
@@ -175,60 +169,33 @@ describe('toCompactCodeV2', () => {
 
   it('takes a bundle without a name as one with an empty name', () => {
     const { handle: _handle, ...withoutHandle } = SAMPLE_V2_FIELDS;
-    const parsed = parseContactCode(toCompactCodeV2(JSON.stringify(withoutHandle)));
-    expect(JSON.parse(parsed!.bundleJson).handle).toBe('');
+    expect(v2Bytes(toCompactCodeV2(JSON.stringify(withoutHandle)))[1]).toBe(0);
   });
 });
 
 describe('parseContactCode', () => {
-  it('reads a trino2: code back into the bundle share_bundle gave, without the avatar', () => {
-    expect(parseContactCode(V2_CODE)).toEqual({ bundleJson: SAMPLE_V2_NO_AVATAR, format: 'trino2' });
+  // P1-13a: only trino3: is added now. The code itself is what goes to the
+  // backend (preview_contact, probe_node), with no spaces and its prefix in
+  // lower case.
+  it('reads a trino3: code, as the backend takes it', () => {
+    expect(parseContactCode(V3_VECTOR)).toEqual({ bundleJson: V3_VECTOR, format: 'trino3' });
+    const wrapped = ['  TRINO3:' + V3_VECTOR.slice(7, 200), ' ' + V3_VECTOR.slice(200) + ' ', ''].join('\r\n');
+    expect(parseContactCode(wrapped)).toEqual({ bundleJson: V3_VECTOR, format: 'trino3' });
   });
 
-  it('still reads trino1: codes and raw JSON bundles', () => {
-    expect(parseContactCode(SAMPLE_CODE)).toEqual({ bundleJson: fromCompactCode(SAMPLE_CODE), format: 'trino1' });
-    expect(parseContactCode(`  ${SAMPLE_V2}\n`)).toEqual({ bundleJson: SAMPLE_V2, format: 'json' });
-  });
-
-  it('ignores spaces and line breaks inside a pasted code, and the case of its prefix', () => {
-    const wrapped = V2_CODE.slice(0, 60) + '\n  ' + V2_CODE.slice(60, 200) + ' \r\n' + V2_CODE.slice(200);
-    expect(parseContactCode(wrapped)?.bundleJson).toBe(SAMPLE_V2_NO_AVATAR);
-    expect(parseContactCode('TRINO2:' + V2_CODE.slice(7))?.format).toBe('trino2');
-  });
-
-  it('rejects a version it does not know', () => {
-    const bytes = v2Bytes(V2_CODE);
-    bytes[0] = 2;
-    expect(parseContactCode(v2Code(bytes))).toBeNull();
-    bytes[0] = 0;
-    expect(parseContactCode(v2Code(bytes))).toBeNull();
-  });
-
-  it('rejects every truncated code', () => {
-    const cut = Array.from({ length: V2_CODE.length - 'trino2:'.length }, (_, i) => V2_CODE.slice(0, 7 + i))
-      .filter(code => parseContactCode(code) !== null);
-    expect(cut).toEqual([]);
-  });
-
-  it('rejects corrupt codes: other characters, extra bytes, a name that is not UTF-8', () => {
-    expect(parseContactCode('trino2:AQtN@XLDrWEg')).toBeNull();
-    expect(parseContactCode(V2_CODE.slice(0, 40) + '+' + V2_CODE.slice(41))).toBeNull();
-    expect(parseContactCode(v2Code(Uint8Array.from([...v2Bytes(V2_CODE), 0, 0, 0])))).toBeNull();
-    const bytes = v2Bytes(V2_CODE);
-    bytes[2] = 0xff;
-    expect(parseContactCode(v2Code(bytes))).toBeNull();
-    const longer = v2Bytes(V2_CODE);
-    longer[1] = 200;
-    expect(parseContactCode(v2Code(longer))).toBeNull();
+  it('reads no code of before: the screen says it is of an earlier version', () => {
+    for (const old of [V2_CODE, SAMPLE_CODE, SAMPLE_V2, `  ${SAMPLE_V2}\n`]) {
+      expect(parseContactCode(old)).toBeNull();
+      expect(isOldContactCode(old)).toBe(true);
+    }
   });
 
   it('rejects what is not a contact code', () => {
     expect(parseContactCode('')).toBeNull();
     expect(parseContactCode('   ')).toBeNull();
     expect(parseContactCode('hola')).toBeNull();
-    expect(parseContactCode('trino1:@@@')).toBeNull();
-    // trino1: and JSON that decode, but to no bundle.
-    expect(parseContactCode('trino1:YQ')).toBeNull();
+    expect(parseContactCode('trino3:@@@')).toBeNull();
+    expect(parseContactCode(V3_VECTOR.slice(0, -4))).toBeNull();
     expect(parseContactCode('{"hola":1}')).toBeNull();
     expect(parseContactCode('[1,2]')).toBeNull();
   });
@@ -236,9 +203,9 @@ describe('parseContactCode', () => {
   // The seam for the invitation links (plan-cambios-11oct §8): another reader
   // joins the list, and the screens that call parseContactCode stay the same.
   it('tries one reader per format, newest first', () => {
-    expect(CONTACT_CODE_READERS.map(reader => reader.format)).toEqual(['trino2', 'trino1', 'json']);
-    expect(CONTACT_CODE_READERS[0]!.read(V2_CODE)).toBe(SAMPLE_V2_NO_AVATAR);
-    expect(CONTACT_CODE_READERS[0]!.read(SAMPLE_CODE)).toBeNull();
+    expect(CONTACT_CODE_READERS.map(reader => reader.format)).toEqual(['trino3']);
+    expect(CONTACT_CODE_READERS[0]!.read(V3_VECTOR)).toBe(V3_VECTOR);
+    expect(CONTACT_CODE_READERS[0]!.read(V2_CODE)).toBeNull();
   });
 });
 

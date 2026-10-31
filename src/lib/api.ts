@@ -299,6 +299,9 @@ export interface NodeInfo {
   profile_name?: string | null;
   about?: string | null;
   profile_sync?: boolean;
+  // P1-13a: nothing of the contact's account under P1 and no session yet;
+  // one of the two has to paste the other's new code.
+  needs_code?: boolean;
 }
 
 export interface ProfileResponse {

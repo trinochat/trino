@@ -8,10 +8,10 @@
  * only bring the contact's code up to date (`conflictOf`).
  */
 import { isCommandError, type ContactPreview } from '../../lib/api';
-import { parseContactCode } from '../../lib/contact-code';
+import { isOldContactCode, parseContactCode } from '../../lib/contact-code';
 
 export interface AddContactCard {
-  /** The bundle in the pasted code. */
+  /** What goes to the backend for the pasted code: the trino3: code itself (P1-13a). */
   bundleJson: string;
   /** What the backend read in it. */
   preview: ContactPreview;
@@ -50,6 +50,8 @@ export type AddContactState =
   | { kind: 'idle' }
   /** The pasted text is no code, or the backend refused its signatures. */
   | { kind: 'invalid' }
+  /** A code of before (trino1:, trino2: or a bundle in JSON): it carries no keys of P1 (P1-13a). */
+  | { kind: 'old' }
   | { kind: 'checking'; bundleJson: string }
   /** The check failed for another reason; it can be retried. */
   | { kind: 'checkFailed'; bundleJson: string }
@@ -150,7 +152,7 @@ export function addContactReducer(state: AddContactState, event: AddContactEvent
     case 'input': {
       if (event.text.trim() === '') return ADD_CONTACT_IDLE;
       const code = parseContactCode(event.text);
-      if (!code) return { kind: 'invalid' };
+      if (!code) return isOldContactCode(event.text) ? { kind: 'old' } : { kind: 'invalid' };
       const current = state.kind === 'ready' || state.kind === 'adding' ? state.card.bundleJson : undefined;
       const pending = state.kind === 'checking' || state.kind === 'checkFailed' ? state.bundleJson : undefined;
       if (code.bundleJson === current || code.bundleJson === pending) return state;

@@ -139,6 +139,7 @@ export function fakeApi(): FakeApi {
     }),
     deleteSticker: vi.fn(async () => {}),
     listCallHistory: vi.fn(async () => []),
+    shareBundle: vi.fn(async () => ''),
   };
 }
 
