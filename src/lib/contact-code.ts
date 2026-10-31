@@ -283,10 +283,15 @@ export function formatFingerprint(fingerprint: string): string {
 }
 
 /**
- * The code the new screens share and show: `trino2:` only. W1's last step
- * and the share panel import this, so they follow it.
+ * The code the new screens share and show, from what share_bundle (or the
+ * new account) gives: the `trino3:` code itself (P1-13a), trimmed, or ''
+ * if it is not a whole one. W1's last step and the share panel import
+ * this, so they follow it.
  */
-export const toShareCode: (bundleJson: string) => string = toCompactCodeV2;
+export function toShareCode(shared: string): string {
+  const code = shared.trim();
+  return decodeCodeV3(code) !== null ? code : '';
+}
 
 /*
  * trino3: base64url, without padding, of these 434 bytes (P1-13a;

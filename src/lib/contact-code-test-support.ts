@@ -1,0 +1,8 @@
+/**
+ * A `trino3:` code for the tests of the screens that show or read one: the
+ * fixed vector of contact-code.test.ts and contact_code.rs (every field a
+ * byte pattern), shaped as share_bundle gives it. Its signatures do not
+ * verify; the screens never check them (preview_contact does).
+ */
+export const SAMPLE_CODE_V3 =
+  'trino3:ARERERERERERERERERERERERERERERERERERERERERERAAAAAQAAAAAAAAACIiIiIiIiIiIiIiIiIiIiIgECAwQBMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzNERERERERERERERERERERERERERERERERERERERERERAAAAAEAAAAAAAAAAVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmCgsMDXd3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3iIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiJmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqo';

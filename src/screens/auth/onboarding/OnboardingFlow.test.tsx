@@ -9,6 +9,7 @@ import type { OnboardingApi } from '../../types';
 import { classesOf, fakeAppearanceHost, renderAuth, resetDocument } from '../test-harness';
 import { CONSENT_STORAGE_KEY, PRIVACY_POLICY_URL, type ConsentStorage } from './consent';
 import { OnboardingFlow } from './OnboardingFlow';
+import { SAMPLE_CODE_V3 } from '../../../lib/contact-code-test-support';
 
 const PASS = 'caballo-correcto-bateria';
 const PHOTO = 'data:image/jpeg;base64,/9j/AAAA';
@@ -24,20 +25,9 @@ const CREATED: ForgeResponse = {
   relay_connection_started: true,
   prefs_import: 'pending',
   custom_data_dir: false,
-  // A whole bundle, as forge returns it (own_bundle_json): a trino2 code
-  // carries every key, so toShareCode gives '' for anything less (W4).
-  bundle_json: JSON.stringify({
-    handle: 'Rechita',
-    idSig: 'd4'.repeat(64),
-    ikDhPub: '8f'.repeat(32),
-    ikSignPub: '3b'.repeat(32),
-    nostrPub: 'a1'.repeat(32),
-    opkId: null,
-    opkPub: null,
-    spkId: 7,
-    spkPub: 'e7'.repeat(32),
-    spkSig: '0f'.repeat(64),
-  }),
+  // The trino3: code, as forge returns it (P1-13a): toShareCode gives ''
+  // for anything less than a whole one.
+  bundle_json: SAMPLE_CODE_V3,
 };
 const failure = (code: CommandErrorCode): CommandError => ({ code, message: 'for the log' });
 
@@ -152,7 +142,7 @@ describe('OnboardingFlow, the whole way', () => {
     expect(heading().textContent).toBe('Todo listo');
     expect(screen.queryByText(/^Paso/)).toBeNull();
     const code = toShareCode(CREATED.bundle_json);
-    expect(code.startsWith('trino2:')).toBe(true);
+    expect(code.startsWith('trino3:')).toBe(true);
     expect(screen.getByText(code)).toBeTruthy();
     expect(api.updateProfile).not.toHaveBeenCalled();
     click('Ir a mis chats');

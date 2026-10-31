@@ -5,20 +5,10 @@ import type { ProfileResponse } from '../../lib/api';
 import { toShareCode } from '../../lib/contact-code';
 import { I18nContext, makeT } from '../../lib/i18n';
 import { ShareCodePanel, type ShareCodePanelProps } from './ShareCodePanel';
+import { SAMPLE_CODE_V3 } from '../../lib/contact-code-test-support';
 
-const BUNDLE = JSON.stringify({
-  avatar: 'data:image/png;base64,iVBORw0KGgo=',
-  handle: 'Ana Torres',
-  idSig: 'd4'.repeat(64),
-  ikDhPub: '8f'.repeat(32),
-  ikSignPub: '3b'.repeat(32),
-  nostrPub: 'a1'.repeat(32),
-  opkId: null,
-  opkPub: null,
-  spkId: 7,
-  spkPub: 'e7'.repeat(32),
-  spkSig: '0f'.repeat(64),
-});
+/** What share_bundle gives: the trino3: code (P1-13a). */
+const BUNDLE = SAMPLE_CODE_V3;
 const CODE = toShareCode(BUNDLE);
 const PROFILE: ProfileResponse = {
   handle: 'Ana Torres',
@@ -81,7 +71,7 @@ describe('ShareCodePanel', () => {
     expect(shareBundle).toHaveBeenCalledTimes(1);
   });
 
-  it('shows your trino2 code as a QR code in the QR frame, black on white from the tokens', async () => {
+  it('shows your trino3 code as a QR code in the QR frame, black on white from the tokens', async () => {
     mount();
     const qr = await screen.findByRole('img', { name: 'Tu código QR' });
     expect(qr.className).toContain('bg-ui-qr-paper');
@@ -91,7 +81,7 @@ describe('ShareCodePanel', () => {
     expect(svg.getAttribute('class')).toBe('h-full w-full');
     expect(svg.querySelector('path[fill="currentColor"]')).not.toBeNull();
     expect(screen.getByText(CODE)).toBeTruthy();
-    expect(CODE.startsWith('trino2:')).toBe(true);
+    expect(CODE.startsWith('trino3:')).toBe(true);
   });
 
   it('copies the code', async () => {

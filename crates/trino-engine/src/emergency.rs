@@ -131,6 +131,8 @@ fn empty_account(
             .unwrap_or_else(default_relays),
         created_at: inherited.map_or(now, |shared| shared.created_at),
         own_list: Some(own_list),
+        // P1-13a: request keys, as a new account's.
+        code_keys: vec![crate::contact_code::CodeKey::generate(now)],
         ..AccountFile::default()
     };
     let prefs = inherited
@@ -1193,6 +1195,8 @@ mod tests {
         let (identity, _, loaded) = ana.unlock(EMERGENCY).unwrap();
         let loaded = loaded.unwrap();
         let kept = loaded.account.as_ref().unwrap().own_list.clone().unwrap();
+        // P1-13a: and its request keys, as a new account's.
+        assert_eq!(loaded.account.as_ref().unwrap().code_keys.len(), 1);
         let list = trino_core::device::DeviceList::decode(&hex::decode(kept).unwrap()).unwrap();
         assert_eq!(list.body.account, identity.ik_sign.pub_bytes);
         assert_eq!(list.body.entries[0].dev_dh, identity.ik_dh.pub_bytes);

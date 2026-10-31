@@ -73,6 +73,7 @@ pub fn account_of(inner: &InnerState) -> AccountFile {
         reports: inner.reports.clone(),
         age: inner.age.clone(),
         own_list: inner.device.as_ref().map(crate::device::stored_list),
+        code_keys: inner.code_keys.clone(),
     }
 }
 
@@ -426,6 +427,7 @@ pub fn load_legacy(files: &DataFiles, identity: &Identity) -> Result<LoadedSessi
         reports: Default::default(),
         age: None,
         own_list: None,
+        code_keys: Vec::new(),
     };
 
     let mut legacy = legacy_files(files, identity)?;
@@ -529,6 +531,10 @@ pub fn apply_loaded(
     });
     // P1-8: this device and its list, which the account file keeps.
     let signed_list = read && crate::device::open(inner, account.own_list.as_deref(), now);
+    // P1-13a: the request keys the account file keeps; an account of
+    // before gets its first ones now.
+    inner.code_keys = account.code_keys;
+    let new_keys = read && crate::contact_code::ensure_key(&mut inner.code_keys, now);
     inner.handle = Some(account.handle);
     inner.avatar = sanitized_inline_raster(account.avatar);
     inner.relay_urls = account.relays;
@@ -576,7 +582,7 @@ pub fn apply_loaded(
     if crate::age::apply(inner, now) && persist_account(inner).is_err() {
         crate::session::dbg_log("the age could not be saved");
     }
-    if signed_list && persist_account(inner).is_err() {
+    if (signed_list || new_keys) && persist_account(inner).is_err() {
         crate::session::dbg_log("the device list could not be saved");
     }
 }
@@ -934,6 +940,11 @@ pub fn merge_account(inner: &mut InnerState, account: AccountFile) {
     if inner.device.is_none() {
         let now = chrono::Utc::now().timestamp();
         crate::device::open(inner, account.own_list.as_deref(), now);
+    }
+    // P1-13a: the request keys of the account chosen, if the session
+    // has none yet.
+    if inner.code_keys.is_empty() {
+        inner.code_keys = account.code_keys;
     }
     inner.handle = Some(account.handle);
     inner.avatar = sanitized_inline_raster(account.avatar);

@@ -27,10 +27,13 @@
 //! list the device then sends must be signed by `A` (RV-06).
 
 use crate::device::OwnDevice;
+use crate::state::InnerState;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use base64::Engine as _;
+use serde::{Deserialize, Serialize};
 use trino_core::device::list::ENTRY_LEN;
 use trino_core::device::Entry;
+use trino_core::identity::{generate_nostr_keypair, generate_x25519, KeyPair};
 use trino_core::pqxdh::{SignedSpk, SIGNED_SPK_LEN};
 
 /// What every `trino3:` code starts with.
@@ -173,6 +176,101 @@ impl CodeV3 {
         self.spk
             .verify(&self.entry.dev_sign)
             .map_err(|_| CodeError::Prekey)
+    }
+}
+
+// ---- This account's request keys ------------------------------------------
+
+/// One code's request keys (§11.2): `R`, the secp256k1 mailbox requests
+/// by that code arrive at, and `R_dh`, the X25519 key they are sealed to.
+/// They are the account's, kept in the account file; receiving requests
+/// by code is P1-13's. One is made with the account (or at the first
+/// unlock of an account of before) and every code shared carries the
+/// newest, until P1-13 lets the user revoke it and make another.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CodeKey {
+    #[serde(with = "hex_pair")]
+    pub r: KeyPair,
+    #[serde(with = "hex_pair")]
+    pub r_dh: KeyPair,
+    pub created_at: i64,
+}
+
+impl PartialEq for CodeKey {
+    fn eq(&self, other: &Self) -> bool {
+        self.r.priv_bytes == other.r.priv_bytes
+            && self.r.pub_bytes == other.r.pub_bytes
+            && self.r_dh.priv_bytes == other.r_dh.priv_bytes
+            && self.r_dh.pub_bytes == other.r_dh.pub_bytes
+            && self.created_at == other.created_at
+    }
+}
+
+impl CodeKey {
+    /// A new pair of request keys, made at `now`.
+    pub fn generate(now: i64) -> CodeKey {
+        CodeKey {
+            r: generate_nostr_keypair(),
+            r_dh: generate_x25519(),
+            created_at: now,
+        }
+    }
+}
+
+/// Makes this account's first request keys if it has none. True when it
+/// made them, so the account file has to be written.
+pub fn ensure_key(keys: &mut Vec<CodeKey>, now: i64) -> bool {
+    if !keys.is_empty() {
+        return false;
+    }
+    keys.push(CodeKey::generate(now));
+    true
+}
+
+/// The `trino3:` code this device shares (`share_bundle`): its account's
+/// primary and the newest request keys.
+pub fn share_code(inner: &InnerState) -> Result<String, String> {
+    let device = inner.device.as_ref().ok_or("vault sealed")?;
+    let key = inner.code_keys.last().ok_or("no request keys yet")?;
+    let code = CodeV3::of(device, key.r.pub_bytes, key.r_dh.pub_bytes)
+        .ok_or("this device is not its account's primary")?;
+    Ok(code.encode())
+}
+
+/// A key pair in the account file: both halves in hex.
+mod hex_pair {
+    use serde::de::Error as _;
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+    use trino_core::identity::KeyPair;
+    use zeroize::{Zeroize, ZeroizeOnDrop, Zeroizing};
+
+    #[derive(Serialize, Deserialize, Zeroize, ZeroizeOnDrop)]
+    struct Stored {
+        secret: String,
+        public: String,
+    }
+
+    pub fn serialize<S: Serializer>(pair: &KeyPair, serializer: S) -> Result<S::Ok, S::Error> {
+        Stored {
+            secret: hex::encode(pair.priv_bytes),
+            public: hex::encode(pair.pub_bytes),
+        }
+        .serialize(serializer)
+    }
+
+    pub fn deserialize<'de, D: Deserializer<'de>>(deserializer: D) -> Result<KeyPair, D::Error> {
+        let stored = Stored::deserialize(deserializer)?;
+        let bytes = |text: &str| -> Result<[u8; 32], D::Error> {
+            let raw = Zeroizing::new(hex::decode(text).map_err(D::Error::custom)?);
+            raw.as_slice()
+                .try_into()
+                .map_err(|_| D::Error::custom("a key is 32 bytes"))
+        };
+        Ok(KeyPair {
+            priv_bytes: bytes(&stored.secret)?,
+            pub_bytes: bytes(&stored.public)?,
+        })
     }
 }
 
@@ -324,6 +422,66 @@ mod tests {
         let back = CodeV3::decode(&text).unwrap();
         assert_eq!(back, code);
         back.verify().unwrap();
+    }
+
+    #[test]
+    fn a_code_key_holds_a_mailbox_key_and_an_x25519_key() {
+        let key = CodeKey::generate(NOW);
+        assert_eq!(key.created_at, NOW);
+        // R is a secp256k1 key whose x-only public half is its tag.
+        let secp = secp256k1::Secp256k1::new();
+        let pair = secp256k1::Keypair::from_seckey_slice(&secp, &key.r.priv_bytes).unwrap();
+        assert_eq!(pair.x_only_public_key().0.serialize(), key.r.pub_bytes);
+        // R_dh agrees with any X25519 key from both ends.
+        let other = trino_core::identity::generate_x25519();
+        assert_eq!(
+            trino_core::identity::x25519_derive_shared(&key.r_dh.priv_bytes, &other.pub_bytes),
+            trino_core::identity::x25519_derive_shared(&other.priv_bytes, &key.r_dh.pub_bytes)
+        );
+        assert_ne!(CodeKey::generate(NOW).r.pub_bytes, key.r.pub_bytes);
+
+        let json = serde_json::to_value(&key).unwrap();
+        assert_eq!(json["r"]["public"], hex::encode(key.r.pub_bytes));
+        assert_eq!(json["createdAt"], NOW);
+        let back: CodeKey = serde_json::from_value(json.clone()).unwrap();
+        assert_eq!(back, key);
+        let mut short = json;
+        short["rDh"]["secret"] = serde_json::Value::String("00".into());
+        assert!(serde_json::from_value::<CodeKey>(short).is_err());
+    }
+
+    #[test]
+    fn an_account_gets_its_request_keys_once() {
+        let mut keys = Vec::new();
+        assert!(ensure_key(&mut keys, NOW));
+        assert_eq!(keys.len(), 1);
+        let first = keys[0].clone();
+        assert!(!ensure_key(&mut keys, NOW + 60));
+        assert_eq!(keys, vec![first]);
+    }
+
+    #[test]
+    fn the_shared_code_carries_this_device_and_the_newest_request_keys() {
+        let v1 = create_identity();
+        let mut inner = InnerState {
+            identity: Some(v1.clone()),
+            device: Some(own_device_of(&v1, NOW)),
+            ..Default::default()
+        };
+        assert!(share_code(&inner).is_err(), "no request keys yet");
+        let old = CodeKey::generate(NOW - 10);
+        let new = CodeKey::generate(NOW);
+        inner.code_keys = vec![old, new.clone()];
+
+        let text = share_code(&inner).unwrap();
+        let code = CodeV3::decode(&text).unwrap();
+        code.verify().unwrap();
+        assert_eq!(code.account, v1.ik_sign.pub_bytes);
+        assert_eq!(code.entry.dev_dh, v1.ik_dh.pub_bytes);
+        assert_eq!((code.r, code.r_dh), (new.r.pub_bytes, new.r_dh.pub_bytes));
+
+        inner.device = None;
+        assert!(share_code(&inner).is_err(), "sealed");
     }
 
     #[test]

@@ -225,6 +225,7 @@ pub fn read_legacy(
             reports: Default::default(),
             age: None,
             own_list: None,
+            code_keys: Vec::new(),
         });
     }
 
@@ -898,6 +899,7 @@ mod tests {
                 reports: Default::default(),
                 age: None,
                 own_list: None,
+                code_keys: Vec::new(),
             },
             history,
             sessions,

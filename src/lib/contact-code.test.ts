@@ -14,6 +14,7 @@ import {
   toCompactCodeV2,
   toShareCode,
 } from './contact-code';
+import { SAMPLE_CODE_V3 } from './contact-code-test-support';
 
 // Characterization of the `trino1:` contact code as App.tsx produced it at
 // e5794e2. The expected values come from running that code on this sample, so
@@ -251,17 +252,20 @@ describe('formatFingerprint', () => {
 
 describe('toShareCode', () => {
   // The code the new screens share and show (W1's last step, W4's share
-  // panel). Only trino2: is shared; trino1: and JSON are still read.
-  it('is the trino2: code', () => {
-    expect(toShareCode(SAMPLE_V2)).toBe(V2_CODE);
+  // panel): share_bundle gives the trino3: code itself (P1-13a). Only a
+  // whole one is shown; a bundle of before is no code to share.
+  it('is the trino3: code share_bundle gives', () => {
+    expect(toShareCode(V3_VECTOR)).toBe(V3_VECTOR);
+    expect(toShareCode(` ${V3_VECTOR}\n`)).toBe(V3_VECTOR);
+    expect(toShareCode(V3_VECTOR.slice(0, -1))).toBe('');
+    expect(toShareCode(SAMPLE_V2)).toBe('');
     expect(toShareCode('not json')).toBe('');
   });
 });
 
 // trino3: (P1-13a). The same fixed vector as contact_code.rs: every field a
 // byte pattern, computed apart from both.
-const V3_VECTOR =
-  'trino3:ARERERERERERERERERERERERERERERERERERERERERERAAAAAQAAAAAAAAACIiIiIiIiIiIiIiIiIiIiIgECAwQBMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzNERERERERERERERERERERERERERERERERERERERERERAAAAAEAAAAAAAAAAVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmCgsMDXd3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3iIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiJmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqo';
+const V3_VECTOR = SAMPLE_CODE_V3;
 
 const V3_FIELDS = {
   account: '11'.repeat(32),

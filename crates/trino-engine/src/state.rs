@@ -131,6 +131,9 @@ pub struct InnerState {
     /// This device's identity v2 and its account's list (`device.rs`):
     /// from the vault and the account file at unlock. Memory only here.
     pub device: Option<crate::device::OwnDevice>,
+    /// This account's request keys, one per code shared, the newest last
+    /// (`contact_code.rs`, P1-13a): from the account file at unlock.
+    pub code_keys: Vec<crate::contact_code::CodeKey>,
 }
 
 const SEEN_EVENT_CAP: usize = 4096;

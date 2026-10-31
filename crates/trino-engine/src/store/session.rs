@@ -96,6 +96,11 @@ pub struct AccountFile {
     /// its first one at the next unlock.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub own_list: Option<String>,
+    /// This account's request keys, one per code shared (P1-13a,
+    /// `contact_code.rs`). Left out for an account of before, which gets
+    /// its first ones at the next unlock.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub code_keys: Vec<crate::contact_code::CodeKey>,
 }
 
 /// What a sticker's file holds. Its id is the start of the image's SHA-256,

@@ -4,7 +4,7 @@
  * since Settings shows it too as "Tu código QR" (renderShareCode), so it
  * loads what it shows and needs no dialog around it.
  *
- * Only `trino2:` is shared (toShareCode). The QR code sits in QR_FRAME,
+ * Only `trino3:` is shared (toShareCode, P1-13a). The QR code sits in QR_FRAME,
  * black on white in every theme and under forced colours; the frame gives
  * it its size in rem, and the PNG of "Guardar QR" comes from a QRCodeCanvas
  * drawn off screen at file resolution, in the QR tokens' colours.

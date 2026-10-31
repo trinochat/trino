@@ -142,7 +142,8 @@ export interface UnsealResponse {
 }
 
 // What `forge` returns: the session it opened, as `unseal` describes it, and
-// the new identity's bundle to share.
+// the new account's code to share: `trino3:` since P1-13a (the field keeps
+// the name it had when it held the bundle in JSON).
 export interface ForgeResponse extends UnsealResponse {
   bundle_json: string;
 }

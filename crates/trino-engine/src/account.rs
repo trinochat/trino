@@ -84,6 +84,8 @@ pub struct UnsealResponse {
 pub struct ForgeResponse {
     #[serde(flatten)]
     pub session: UnsealResponse,
+    /// The new account's `trino3:` code (P1-13a); the field keeps the name
+    /// it had when it held the bundle in JSON.
     pub bundle_json: String,
 }
 
@@ -259,6 +261,8 @@ pub fn create_account_vault(
         relays,
         created_at,
         own_list: Some(own_list),
+        // P1-13a: the first code's request keys, with the account.
+        code_keys: vec![crate::contact_code::CodeKey::generate(created_at)],
         ..AccountFile::default()
     };
     let json = Zeroizing::new(
@@ -529,7 +533,6 @@ pub async fn forge_identity(
     // Sealed into the vault now. On failure it stays, so a retry needs no
     // new QR code.
     state.inner.lock().await.totp_enrollment.clear();
-    let bundle_json = own_bundle_json(&identity, &handle, None).map_err(CommandError::internal)?;
     // A new session never inherits TURN credentials (lock and wipe clear them too).
     state.turn.clear();
     let session = open_session(
@@ -553,6 +556,9 @@ pub async fn forge_identity(
     if crate::bridges::keep_first_run_lines(&*state.inner.lock().await, &state.net).is_err() {
         crate::diag::note("the first run's bridges could not be sealed");
     }
+    // P1-13a: the trino3: code to share, from the session just opened.
+    let bundle_json = crate::contact_code::share_code(&*state.inner.lock().await)
+        .map_err(CommandError::internal)?;
     Ok(ForgeResponse {
         session,
         bundle_json,
@@ -898,14 +904,10 @@ pub async fn unseal_in(
     Ok(opened)
 }
 
-/// `share_bundle`: this identity's bundle as contacts get it.
+/// `share_bundle`: this account's contact code, `trino3:` (P1-13a). The
+/// bundle of before (`own_bundle_json`) is no code to share any more.
 pub fn share_bundle(inner: &InnerState) -> Result<String, String> {
-    let identity = inner.identity.as_ref().ok_or("vault sealed")?;
-    own_bundle_json(
-        identity,
-        inner.handle.as_deref().unwrap_or_default(),
-        inner.avatar.as_deref(),
-    )
+    crate::contact_code::share_code(inner)
 }
 
 /// `wipe`, after the host cleared what it keeps outside the data folder:
@@ -1198,6 +1200,68 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(inner.lock().await.device.as_ref().unwrap().list, first);
+    }
+
+    /// P1-13a: a new account is born with its request keys, so its first
+    /// unlock writes nothing more, and `share_bundle` gives its `trino3:`
+    /// code with them. An account of before gets them at its next unlock,
+    /// written then and kept after.
+    #[tokio::test]
+    async fn the_account_has_request_keys_from_the_start_or_its_next_unlock() {
+        use crate::contact_code::CodeV3;
+        let scratch = ScratchDir::new("code-keys");
+        let files = data_files_in(scratch.path().join("home"));
+        create_account(&files, "ana", PASSPHRASE, None, crate::vault_file::write).unwrap();
+        let keys_in = |loaded: &Option<LoadedSession>| {
+            loaded
+                .as_ref()
+                .unwrap()
+                .account
+                .as_ref()
+                .unwrap()
+                .code_keys
+                .clone()
+        };
+
+        let (me, totp, loaded) = unlock_files(&files, PASSPHRASE, None, false, NOW).unwrap();
+        let born = keys_in(&loaded);
+        assert_eq!(born.len(), 1, "a new account has its request keys");
+        let inner = tokio::sync::Mutex::new(InnerState::default());
+        open_session(&inner, me.clone(), totp, loaded, |_| {})
+            .await
+            .unwrap();
+        {
+            let open = inner.lock().await;
+            assert_eq!(open.code_keys, born);
+            let code = CodeV3::decode(&share_bundle(&open).unwrap()).unwrap();
+            code.verify().unwrap();
+            assert_eq!(code.account, me.ik_sign.pub_bytes);
+            assert_eq!(
+                (code.r, code.r_dh),
+                (born[0].r.pub_bytes, born[0].r_dh.pub_bytes)
+            );
+        }
+        // As an account of before kept it: without them.
+        {
+            let mut open = inner.lock().await;
+            open.code_keys.clear();
+            crate::storage::persist_account(&open).unwrap();
+        }
+        drop(inner);
+
+        let (me, totp, loaded) = unlock_files(&files, PASSPHRASE, None, false, NOW + 60).unwrap();
+        assert!(keys_in(&loaded).is_empty());
+        let inner = tokio::sync::Mutex::new(InnerState::default());
+        open_session(&inner, me, totp, loaded, |_| {})
+            .await
+            .unwrap();
+        let made = inner.lock().await.code_keys.clone();
+        assert_eq!(made.len(), 1, "the unlock makes them");
+        assert_ne!(made, born);
+        drop(inner);
+
+        let (_, _, loaded) = unlock_files(&files, PASSPHRASE, None, false, NOW + 120).unwrap();
+        assert_eq!(keys_in(&loaded), made, "and writes them");
     }
 
     /// The `dev_dh` of the identity v2 the vault at `files` holds.

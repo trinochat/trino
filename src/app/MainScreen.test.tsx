@@ -29,6 +29,7 @@ import { ToastProvider } from '../ui';
 import type { Capabilities } from './capabilities';
 import type { EmergencyAlertsBackend } from './emergency-alerts';
 import { MainScreen, type MainApi, type MainDeps, type MainProps } from './MainScreen';
+import { SAMPLE_CODE_V3 } from '../lib/contact-code-test-support';
 
 // The chats of the redesign (plan §4, I6; plan-cambios-11oct §7, I6): W2's
 // shell with the screens of every other unit in its slots, over a fake
@@ -86,18 +87,8 @@ const PROFILE: ProfileResponse = {
   about: '',
   sync: 1,
 };
-const BUNDLE = JSON.stringify({
-  handle: 'rechita',
-  idSig: 'd4'.repeat(64),
-  ikDhPub: '8f'.repeat(32),
-  ikSignPub: '3b'.repeat(32),
-  nostrPub: 'a1'.repeat(32),
-  opkId: null,
-  opkPub: null,
-  spkId: 7,
-  spkPub: 'e7'.repeat(32),
-  spkSig: '0f'.repeat(64),
-});
+/** What share_bundle gives: the trino3: code (P1-13a). */
+const BUNDLE = SAMPLE_CODE_V3;
 
 const node = (handle: string, extra: Partial<NodeInfo> = {}): NodeInfo => ({
   handle,
@@ -678,7 +669,7 @@ describe('MainScreen: Settings in the main pane', () => {
     const pane = await openSettings();
     expect(within(sidebar()).getByRole('button', { name: 'Ajustes' })).toBeTruthy();
     fireEvent.click(await within(pane).findByRole('button', { name: 'Mostrar tu código QR' }));
-    expect(await within(pane).findByText(/^trino2:/)).toBeTruthy();
+    expect(await within(pane).findByText(/^trino3:/)).toBeTruthy();
     expect(settings.shareBundle).toHaveBeenCalled();
   });
 

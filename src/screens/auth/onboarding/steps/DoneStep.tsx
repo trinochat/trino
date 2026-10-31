@@ -1,7 +1,7 @@
 /**
  * "Todo listo" (Onboarding:174-193): the contact code to share, with Copiar
- * and "Mostrar QR", and the two ways on. The code is `toShareCode`, which W4
- * moves to trino2:. The copy is honest: both people add each other with
+ * and "Mostrar QR", and the two ways on. The code is `toShareCode`: the
+ * `trino3:` forge gives (P1-13a). The copy is honest: both people add each other with
  * their codes, since there are no message requests in this batch. When the
  * photo could not be saved, it says so without stopping anyone.
  *

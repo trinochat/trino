@@ -325,6 +325,8 @@ pub fn clear_sensitive_state(inner: &mut InnerState) {
     inner.age = None;
     // -- P1-8 -- The device's keys wipe themselves on drop.
     inner.device = None;
+    // -- P1-13a -- And so do the request keys.
+    inner.code_keys.clear();
 }
 
 /// The relay connections of a session `open_session` just opened: what

@@ -6,6 +6,7 @@ import type { GroupInvite } from '../../lib/api';
 import { I18nContext, makeT } from '../../lib/i18n';
 import type { ContactsTab } from '../types';
 import { ContactsDialog, type ContactsDialogProps } from './ContactsDialog';
+import { SAMPLE_CODE_V3 } from '../../lib/contact-code-test-support';
 
 beforeEach(() => {
   vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue(null);
@@ -15,18 +16,8 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-const BUNDLE = JSON.stringify({
-  handle: 'Ana Torres',
-  idSig: 'd4'.repeat(64),
-  ikDhPub: '8f'.repeat(32),
-  ikSignPub: '3b'.repeat(32),
-  nostrPub: 'a1'.repeat(32),
-  opkId: null,
-  opkPub: null,
-  spkId: 7,
-  spkPub: 'e7'.repeat(32),
-  spkSig: '0f'.repeat(64),
-});
+/** What share_bundle gives: the trino3: code (P1-13a). */
+const BUNDLE = SAMPLE_CODE_V3;
 
 const invite = (gid: string): GroupInvite => ({ gid, name: `Grupo ${gid}`, from_handle: 'Ana', member_count: 3, received_at: 1 });
 
